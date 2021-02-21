@@ -1,4 +1,4 @@
-FROM openpolicyagent/opa as opa
+FROM openpolicyagent/opa:0.25.2 as opa
 
 # BUILD STAGE ---------------------------------------
 # split this stage to save time and reduce image size
@@ -20,7 +20,7 @@ ARG READ_ONLY_GITHUB_TOKEN="<you must pass a token>"
 
 # clone OPA
 WORKDIR /opaclone
-RUN git clone https://github.com/open-policy-agent/opa.git
+RUN git clone --depth 1 --branch v0.25.2 https://github.com/open-policy-agent/opa.git
 
 # MAIN IMAGE ----------------------------------------
 # most of the time only this image should be built
