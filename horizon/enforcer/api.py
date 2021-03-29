@@ -2,11 +2,11 @@ import json
 
 from fastapi import APIRouter, status, Response
 from starlette import responses
+from opal_common.logger import logger
+
 from horizon.enforcer.schemas import AuthorizationQuery, AuthorizationResult
 from horizon.enforcer.client import opa
-from horizon.logger import get_logger
 
-logger = get_logger("Enforcer")
 router = APIRouter()
 
 

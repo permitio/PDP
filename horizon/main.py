@@ -1,9 +1,6 @@
 from horizon.config import OPENAPI_TAGS_METADATA
 from fastapi import FastAPI
 
-from fastapi_websocket_rpc.logger import logging_config, LoggingModes
-logging_config.set_mode(LoggingModes.UVICORN)
-
 from horizon.proxy.api import router as proxy_router
 from horizon.enforcer.api import router as enforcer_router
 from horizon.local.api import router as local_router

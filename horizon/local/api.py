@@ -1,12 +1,10 @@
 from typing import Dict, Any, List, Optional
 
 from fastapi import APIRouter, status, HTTPException
-from starlette.status import HTTP_404_NOT_FOUND
+from opal_common.logger import logger
 from horizon.local.schemas import Message, SyncedRole, SyncedUser
 from horizon.enforcer.client import opa
-from horizon.logger import get_logger
 
-logger = get_logger("Local API")
 router = APIRouter()
 
 def error_message(msg: str):
