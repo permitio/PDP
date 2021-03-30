@@ -1,3 +1,5 @@
+import requests
+
 from horizon.config import OPENAPI_TAGS_METADATA
 from fastapi import FastAPI
 
@@ -57,10 +59,13 @@ class AuthorizonSidecar:
 
     def _fetch_data_topics(self, data_topics_route: str):
         logger.info("fetching data topics from backend: {url}", url=f"{self._backend_url}/{data_topics_route}")
-        response = sync_get_from_backend(backend_url=self._backend_url, path=data_topics_route, token=self._token)
-        topics = response.get("topics", [])
-        logger.info("received data topics: {topics}", topics=topics)
-        return topics
+        try:
+            response = sync_get_from_backend(backend_url=self._backend_url, path=data_topics_route, token=self._token)
+            topics = response.get("topics", [])
+            logger.info("received data topics: {topics}", topics=topics)
+            return topics
+        except requests.RequestException as exc:
+            logger.exception("got exception while fetching data topics: {exc}", exc=exc)
 
     @property
     def app(self):
