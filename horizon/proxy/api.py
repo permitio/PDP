@@ -1,4 +1,6 @@
+import requests
 import aiohttp
+from aiohttp.client import request
 
 from fastapi import APIRouter, status, Request, HTTPException
 from opal_client.utils import proxy_response
@@ -78,3 +80,13 @@ async def proxy_request_to_cloud_service(request: Request, path: str, cloud_serv
         status_code=status.HTTP_405_METHOD_NOT_ALLOWED,
         detail="This method is not supported"
     )
+
+
+def sync_get_from_backend(backend_url: str, path: str, token: str, params=None):
+    """
+    utility method to send a GET request to backend and get the response back
+    """
+    headers = {"Authorization": f"Bearer {token}"}
+    url = f"{backend_url}/{path}"
+    response = requests.get(url, headers=headers, params=params)
+    return response.json()
