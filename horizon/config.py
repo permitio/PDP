@@ -17,6 +17,9 @@ DATA_TOPICS_ROUTE = confi.str("DATA_TOPICS_ROUTE", "policy-config/topics")
 # access token to access backend api
 CLIENT_TOKEN = confi.str("CLIENT_TOKEN", "PJUKkuwiJkKxbIoC4o4cguWxB_2gX6MyATYKc2OCM")
 
+# if enabled, will output to log more data for each "is allowed" decision
+DECISION_LOG_DEBUG_INFO = confi.bool("DECISION_LOG_DEBUG_INFO", True)
+
 # redoc configuration (openapi schema)
 OPENAPI_TAGS_METADATA = [
     {

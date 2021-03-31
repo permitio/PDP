@@ -5,6 +5,7 @@ from fastapi import APIRouter, status, Response
 from opal_client.policy_store.base_policy_store_client import BasePolicyStoreClient
 from opal_client.policy_store.opa_client import fail_silently
 from opal_client.logger import logger
+from horizon.config import DECISION_LOG_DEBUG_INFO
 
 from horizon.enforcer.schemas import AuthorizationQuery, AuthorizationResult
 
@@ -40,7 +41,9 @@ def init_enforcer_api_router(policy_store:BasePolicyStoreClient):
                 format = "<green>is allowed = {allowed} </>"
             else:
                 format = "<red>is allowed = {allowed}</>"
-            format += " | <cyan>{api_params}</> | full_input=<fg #fff980>{input}</> | debug=<fg #f7e0c1>{debug}</>"
+            format += " | <cyan>{api_params}</>"
+            if DECISION_LOG_DEBUG_INFO:
+                format += " | full_input=<fg #fff980>{input}</> | debug=<fg #f7e0c1>{debug}</>"
             logger.opt(colors=True).info(
                 format,
                 allowed=allowed,
