@@ -1,27 +1,32 @@
-import requests
-
 from horizon.config import OPENAPI_TAGS_METADATA
 from fastapi import FastAPI
 
 from opal_common.logger import logger
 from opal_client.client import OpalClient
 
-from horizon.proxy.api import router as proxy_router, sync_get_from_backend
+from horizon.proxy.api import router as proxy_router
 from horizon.enforcer.api import init_enforcer_api_router
 from horizon.local.api import init_local_cache_api_router
-from horizon.config import BACKEND_SERVICE_URL, DATA_TOPICS_ROUTE, CLIENT_TOKEN
+from horizon.topics import DataTopicsFetcher
 
 
 class AuthorizonSidecar:
-    def __init__(
-        self,
-        backend_url: str = BACKEND_SERVICE_URL,
-        backend_access_token: str = CLIENT_TOKEN,
-        data_topics_route: str = DATA_TOPICS_ROUTE,
-    ):
-        self._backend_url = backend_url
-        self._token = backend_access_token
-        data_topics = self._fetch_data_topics(data_topics_route=data_topics_route)
+    """
+    Authorizon sidecar is a thin wrapper on top of opal client.
+
+    by extending opal client, it runs:
+    - a subprocess running the OPA agent (with opal client's opa runner)
+    - policy updater
+    - data updater
+
+    it also run directly authorizon specific apis:
+    - proxy api (proxies the REST api at api.authorizon.com to the sdks)
+    - local api (wrappers on top of opa cache)
+    - enforcer api (implementation of is_allowed())
+    """
+    def __init__(self):
+        topics_fetcher = DataTopicsFetcher()
+        data_topics = topics_fetcher.fetch_topics()
         if not data_topics:
             logger.warning("reverting to default data topics")
             data_topics = None
@@ -56,16 +61,6 @@ class AuthorizonSidecar:
         app.include_router(enforcer_router, tags=["Authorization API"])
         app.include_router(local_router, prefix="/local", tags=["Local Queries"])
         app.include_router(proxy_router, tags=["Cloud API Proxy"])
-
-    def _fetch_data_topics(self, data_topics_route: str):
-        logger.info("fetching data topics from backend: {url}", url=f"{self._backend_url}/{data_topics_route}")
-        try:
-            response = sync_get_from_backend(backend_url=self._backend_url, path=data_topics_route, token=self._token)
-            topics = response.get("topics", [])
-            logger.info("received data topics: {topics}", topics=topics)
-            return topics
-        except requests.RequestException as exc:
-            logger.exception("got exception while fetching data topics: {exc}", exc=exc)
 
     @property
     def app(self):
