@@ -35,7 +35,19 @@ def init_enforcer_api_router(policy_store:BasePolicyStoreClient):
             if allowed and permission is not None and granting_role is not None:
                 debug["opa_granting_permision"] = permission
                 debug["opa_granting_role"] = granting_role
-            logger.info(f"is allowed = {allowed}", api_params=params, input=query.dict(), **debug)
+
+            if allowed:
+                format = "<green>is allowed = {allowed} </>"
+            else:
+                format = "<red>is allowed = {allowed}</>"
+            format += " | <cyan>{api_params}</> | full_input=<fg #fff980>{input}</> | debug=<fg #f7e0c1>{debug}</>"
+            logger.opt(colors=True).info(
+                format,
+                allowed=allowed,
+                api_params=params,
+                input=query.dict(),
+                debug=debug
+            )
         except:
             try:
                 body = str(response.body, "utf-8")
