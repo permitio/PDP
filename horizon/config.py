@@ -5,11 +5,11 @@ from opal_common.confi import Confi
 confi = Confi(prefix="HORIZON_")
 
 # Authorizon Sidecar configuration --------------------------------------------
-_acalla_backend_url = confi.str("BACKEND_SERVICE_URL", "http://localhost:8000")
+_backend_url = confi.str("BACKEND_SERVICE_URL", "http://localhost:8000")
 
 # backend api url, where proxy requests go
-BACKEND_SERVICE_URL = f"{_acalla_backend_url}/v1"
-BACKEND_SERVICE_LEGACY_URL = f"{_acalla_backend_url}/sdk"
+BACKEND_SERVICE_URL = f"{_backend_url}/v1"
+BACKEND_SERVICE_LEGACY_URL = f"{_backend_url}/sdk"
 
 # backend route to fetch policy data topics
 DATA_TOPICS_ROUTE = confi.str("DATA_TOPICS_ROUTE", "policy-config/topics")
