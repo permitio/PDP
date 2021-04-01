@@ -1,25 +1,26 @@
 import os
 
-_acalla_backend_url = os.environ.get("AUTHZ_SERVICE_URL", "http://localhost:8000")
-POLICY_SERVICE_LEGACY_URL = f"{_acalla_backend_url}/sdk"
-POLICY_SERVICE_URL = f"{_acalla_backend_url}/v1"
+from opal_common.confi import Confi
 
-_ws_backend_url = _acalla_backend_url.replace("https", "ws").replace("http", "ws")
-POLICY_UPDATES_WS_URL = f"{_ws_backend_url}/sdk/ws"
+confi = Confi(prefix="HORIZON_")
 
-OPA_PORT = os.environ.get("OPA_PORT", "8181")
-_opa_url = os.environ.get("OPA_SERVICE_URL", f"http://localhost:{OPA_PORT}")
-OPA_SERVICE_URL = f"{_opa_url}/v1"
+# Authorizon Sidecar configuration --------------------------------------------
+_backend_url = confi.str("BACKEND_SERVICE_URL", "http://localhost:8000")
 
-CLIENT_TOKEN = os.environ.get("CLIENT_TOKEN", "PJUKkuwiJkKxbIoC4o4cguWxB_2gX6MyATYKc2OCM")
+# backend api url, where proxy requests go
+BACKEND_SERVICE_URL = f"{_backend_url}/v1"
+BACKEND_SERVICE_LEGACY_URL = f"{_backend_url}/sdk"
 
-ALLOWED_ORIGINS = ["*"]
+# backend route to fetch policy data topics
+DATA_TOPICS_ROUTE = confi.str("DATA_TOPICS_ROUTE", "policy-config/topics")
 
-try:
-    KEEP_ALIVE_INTERVAL = int(os.environ.get("AUTHZ_KEEP_ALIVE", "0"))
-except ValueError:
-    KEEP_ALIVE_INTERVAL = 0
+# access token to access backend api
+CLIENT_TOKEN = confi.str("CLIENT_TOKEN", "PJUKkuwiJkKxbIoC4o4cguWxB_2gX6MyATYKc2OCM")
 
+# if enabled, will output to log more data for each "is allowed" decision
+DECISION_LOG_DEBUG_INFO = confi.bool("DECISION_LOG_DEBUG_INFO", True)
+
+# redoc configuration (openapi schema)
 OPENAPI_TAGS_METADATA = [
     {
         "name": "Authorization API",
