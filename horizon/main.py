@@ -1,5 +1,6 @@
 from horizon.config import OPENAPI_TAGS_METADATA
-from fastapi import FastAPI
+from fastapi import FastAPI, status
+from fastapi.responses import RedirectResponse
 
 from opal_common.logger import logger
 from opal_client.client import OpalClient
@@ -61,6 +62,17 @@ class AuthorizonSidecar:
         app.include_router(enforcer_router, tags=["Authorization API"])
         app.include_router(local_router, prefix="/local", tags=["Local Queries"])
         app.include_router(proxy_router, tags=["Cloud API Proxy"])
+
+        # TODO: remove this when clients update sdk version (legacy routes)
+        @app.post("/update_policy", status_code=status.HTTP_200_OK, include_in_schema=False)
+        async def legacy_trigger_policy_update():
+            response = RedirectResponse(url='/policy-updater/trigger')
+            return response
+
+        @app.post("/update_policy_data", status_code=status.HTTP_200_OK, include_in_schema=False)
+        async def legacy_trigger_data_update():
+            response = RedirectResponse(url='/data-updater/trigger')
+            return response
 
     @property
     def app(self):
