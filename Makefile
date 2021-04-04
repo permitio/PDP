@@ -16,6 +16,15 @@ run: ## Run the container locally
 		-p 8181:8181 \
 		authorizon/sidecar
 
+dev: ## Run the container locally
+	@docker run -it \
+		-e "OPAL_SERVER_URL=http://host.docker.internal:7002" \
+		-e "HORIZON_BACKEND_SERVICE_URL=http://host.docker.internal:8000" \
+		-e "HORIZON_CLIENT_TOKEN=$(DEV_MODE_CLIENT_TOKEN)" \
+		-p 7000:7000 \
+		-p 8181:8181 \
+		authorizon/sidecar-dev
+
 run-prod: ## Run the container against prod
 	@docker run -it \
 		-p 7000:7000 \
