@@ -19,6 +19,9 @@ class SidecarConfig(Confi):
     # if enabled, will output to log more data for each "is allowed" decision
     DECISION_LOG_DEBUG_INFO = confi.bool("DECISION_LOG_DEBUG_INFO", True)
 
+    # if enabled, sidecar will output its full config when it first loads
+    PRINT_CONFIG_ON_STARTUP = confi.bool("PRINT_CONFIG_ON_STARTUP", False)
+
     # non configurable values -------------------------------------------------
 
     # redoc configuration (openapi schema)

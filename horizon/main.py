@@ -1,10 +1,11 @@
-from horizon.config import sidecar_config
 from fastapi import FastAPI, status
 from fastapi.responses import RedirectResponse
 
 from opal_common.logger import logger
 from opal_client.client import OpalClient
+from opal_client.config import opal_common_config, opal_client_config
 
+from horizon.config import sidecar_config
 from horizon.proxy.api import router as proxy_router
 from horizon.enforcer.api import init_enforcer_api_router
 from horizon.local.api import init_local_cache_api_router
@@ -25,6 +26,14 @@ class AuthorizonSidecar:
     - enforcer api (implementation of is_allowed())
     """
     def __init__(self):
+        if sidecar_config.PRINT_CONFIG_ON_STARTUP:
+            logger.info(
+                "sidecar is loading with the following config:\n\n{sidecar_config}\n\n{opal_client_config}\n\n{opal_common_config}",
+                sidecar_config=sidecar_config.debug_repr(),
+                opal_client_config=opal_client_config.debug_repr(),
+                opal_common_config=opal_common_config.debug_repr(),
+            )
+
         topics_fetcher = DataTopicsFetcher()
         data_topics = topics_fetcher.fetch_topics()
         if not data_topics:
