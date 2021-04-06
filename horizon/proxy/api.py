@@ -4,7 +4,7 @@ from aiohttp.client import request
 from fastapi import APIRouter, status, Request, HTTPException
 from opal_client.utils import proxy_response
 
-from horizon.config import BACKEND_SERVICE_URL, BACKEND_SERVICE_LEGACY_URL
+from horizon.config import sidecar_config
 
 
 HTTP_GET = "GET"
@@ -30,13 +30,13 @@ async def cloud_proxy(request: Request, path: str):
     """
     Proxies the request to the cloud API. Actual API docs are located here: https://api.authorizon.com/redoc
     """
-    return await proxy_request_to_cloud_service(request, path, cloud_service_url=BACKEND_SERVICE_URL)
+    return await proxy_request_to_cloud_service(request, path, cloud_service_url=sidecar_config.BACKEND_SERVICE_URL)
 
 
 # TODO: remove this once we migrate all clients
 @router.api_route("/sdk/{path:path}", methods=ALL_METHODS, summary="Old Proxy Endpoint", include_in_schema=False)
 async def old_proxy(request: Request, path: str):
-    return await proxy_request_to_cloud_service(request, path, cloud_service_url=BACKEND_SERVICE_LEGACY_URL)
+    return await proxy_request_to_cloud_service(request, path, cloud_service_url=sidecar_config.BACKEND_LEGACY_URL)
 
 
 async def proxy_request_to_cloud_service(request: Request, path: str, cloud_service_url: str):

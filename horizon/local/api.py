@@ -1,11 +1,12 @@
 from typing import Dict, Any, List, Optional
 
 from fastapi import APIRouter, status, HTTPException
-from opal_client.policy_store import BasePolicyStoreClient, DEFAULT_POLICY_STORE
+from opal_client.policy_store import BasePolicyStoreClient, DEFAULT_POLICY_STORE_GETTER
 
 from horizon.local.schemas import Message, SyncedRole, SyncedUser
 
-def init_local_cache_api_router(policy_store:BasePolicyStoreClient=DEFAULT_POLICY_STORE):
+def init_local_cache_api_router(policy_store:BasePolicyStoreClient=None):
+    policy_store = policy_store or DEFAULT_POLICY_STORE_GETTER()
     router = APIRouter()
 
     def error_message(msg: str):
