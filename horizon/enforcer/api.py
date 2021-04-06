@@ -2,14 +2,15 @@ import json
 from typing import Optional, Dict
 
 from fastapi import APIRouter, status, Response
-from opal_client.policy_store.base_policy_store_client import BasePolicyStoreClient
+from opal_client.policy_store import BasePolicyStoreClient, DEFAULT_POLICY_STORE_GETTER
 from opal_client.policy_store.opa_client import fail_silently
 from opal_client.logger import logger
 from horizon.config import DECISION_LOG_DEBUG_INFO
 
 from horizon.enforcer.schemas import AuthorizationQuery, AuthorizationResult
 
-def init_enforcer_api_router(policy_store:BasePolicyStoreClient):
+def init_enforcer_api_router(policy_store:BasePolicyStoreClient=None):
+    policy_store = policy_store or DEFAULT_POLICY_STORE_GETTER()
     router = APIRouter()
 
     def log_query_and_result(query: AuthorizationQuery, response: Response):
