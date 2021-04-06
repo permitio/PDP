@@ -4,7 +4,7 @@ from typing import List
 from opal_common.logger import logger
 from tenacity import retry, wait, stop
 
-from horizon.config import BACKEND_SERVICE_URL, DATA_TOPICS_ROUTE, CLIENT_TOKEN
+from horizon.config import sidecar_config
 
 
 def blocking_get_request(url: str, token: str, params=None):
@@ -38,9 +38,9 @@ class DataTopicsFetcher:
 
     def __init__(
         self,
-        backend_url: str = BACKEND_SERVICE_URL,
-        sidecar_access_token: str = CLIENT_TOKEN,
-        data_topics_route: str = DATA_TOPICS_ROUTE,
+        backend_url: str = sidecar_config.BACKEND_SERVICE_URL,
+        sidecar_access_token: str = sidecar_config.CLIENT_TOKEN,
+        data_topics_route: str = sidecar_config.DATA_TOPICS_ROUTE,
         retry_config = None,
     ):
         """

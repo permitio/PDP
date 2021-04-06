@@ -1,4 +1,4 @@
-from horizon.config import OPENAPI_TAGS_METADATA
+from horizon.config import sidecar_config
 from fastapi import FastAPI, status
 from fastapi.responses import RedirectResponse
 
@@ -9,7 +9,6 @@ from horizon.proxy.api import router as proxy_router
 from horizon.enforcer.api import init_enforcer_api_router
 from horizon.local.api import init_local_cache_api_router
 from horizon.topics import DataTopicsFetcher
-
 
 class AuthorizonSidecar:
     """
@@ -47,7 +46,7 @@ class AuthorizonSidecar:
             "application-level authorization. The sidecar automatically handles pulling policy updates in real-time " + \
             "from a centrally managed cloud-service (api.authorizon.com)."
         app.version = "0.2.0"
-        app.openapi_tags = OPENAPI_TAGS_METADATA
+        app.openapi_tags = sidecar_config.OPENAPI_TAGS_METADATA
         return app
 
     def _configure_api_routes(self, app: FastAPI):
