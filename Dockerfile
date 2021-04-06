@@ -65,7 +65,7 @@ ENV OPAL_INLINE_OPA_LOG_FORMAT=http
 # horizon configuration -----------------------------
 # by default, the backend is at port 8000 on the docker host
 # in prod, you must pass the correct url
-ENV HORIZON_BACKEND_SERVICE_URL=https://api.authorizon.com
+ENV HORIZON_BACKEND_URL=https://api.authorizon.com
 ENV HORIZON_CLIENT_TOKEN="MUST BE DEFINED"
 # expose sidecar port
 EXPOSE 7000
