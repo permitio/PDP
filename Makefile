@@ -1,11 +1,11 @@
-.PHONY: help
+.PHONY: help build
 
 .DEFAULT_GOAL := help
 
 # DOCKER TASKS
 # Build the container
 build: ## Build the container
-	docker build -t authorizon/sidecar --build-arg READ_ONLY_GITHUB_TOKEN=$(READ_ONLY_GITHUB_TOKEN) .
+	@docker build -t authorizon/sidecar .
 
 run: ## Run the container locally
 	@docker run -it \
@@ -18,6 +18,7 @@ run: ## Run the container locally
 
 run-against-prod: ## Run the container against prod
 	@docker run -it \
+    -e "HORIZON_PRINT_CONFIG_ON_STARTUP=true" \
 		-e "HORIZON_CLIENT_TOKEN=$(AUTHORIZON_PROD_CLIENT_TOKEN)" \
 		-e "OPAL_CLIENT_TOKEN=$(OPAL_PROD_CLIENT_TOKEN)" \
 		-p 7000:7000 \

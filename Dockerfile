@@ -16,10 +16,6 @@ COPY requirements.txt requirements.txt
 # install python deps
 RUN pip install --upgrade pip && pip install --user -r requirements.txt
 
-# this will be overriden in github action
-# default value works for local runs (with private ssh key)
-ARG READ_ONLY_GITHUB_TOKEN="<you must pass a token>"
-
 # MAIN IMAGE ----------------------------------------
 # most of the time only this image should be built
 # ---------------------------------------------------
