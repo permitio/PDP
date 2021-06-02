@@ -2,6 +2,7 @@ from fastapi import FastAPI, status
 from fastapi.responses import RedirectResponse
 
 from opal_common.logger import logger
+from opal_common.confi import Confi
 from opal_client.client import OpalClient
 from opal_client.config import opal_common_config, opal_client_config
 
@@ -9,7 +10,19 @@ from horizon.config import sidecar_config
 from horizon.proxy.api import router as proxy_router
 from horizon.enforcer.api import init_enforcer_api_router
 from horizon.local.api import init_local_cache_api_router
-from horizon.topics import DataTopicsFetcher
+from horizon.startup.remote_config import RemoteConfigFetcher
+
+def apply_config(overrides_dict: dict, config_object: Confi):
+    """
+    apply config values from dict into a confi object
+    """
+    for key, value in overrides_dict.items():
+        prefixed_key = config_object._prefix_key(key)
+        if key in config_object.entries:
+            setattr(config_object, key, value)
+            logger.info(f"Overriden config key: {prefixed_key}")
+        else:
+            logger.warning(f"Ignored non-existing config key: {prefixed_key}")
 
 class AuthorizonSidecar:
     """
@@ -26,6 +39,16 @@ class AuthorizonSidecar:
     - enforcer api (implementation of is_allowed())
     """
     def __init__(self):
+        # fetch and apply config override from cloud control plane
+        remote_config = RemoteConfigFetcher().fetch_config()
+        if not remote_config:
+            logger.warning("Could not fetch config from cloud control plane, reverting to local config!")
+        else:
+            logger.info("Applying config overrides from cloud control plane...")
+            apply_config(remote_config.opal_common or {}, opal_common_config)
+            apply_config(remote_config.opal_client or {}, opal_client_config)
+            apply_config(remote_config.pdp or {}, sidecar_config)
+
         if sidecar_config.PRINT_CONFIG_ON_STARTUP:
             logger.info(
                 "sidecar is loading with the following config:\n\n{sidecar_config}\n\n{opal_client_config}\n\n{opal_common_config}",
@@ -34,13 +57,7 @@ class AuthorizonSidecar:
                 opal_common_config=opal_common_config.debug_repr(),
             )
 
-        topics_fetcher = DataTopicsFetcher()
-        data_topics = topics_fetcher.fetch_topics()
-        if not data_topics:
-            logger.warning("reverting to default data topics")
-            data_topics = None
-
-        self._opal = OpalClient(data_topics=data_topics)
+        self._opal = OpalClient()
 
         # use opal client app and add sidecar routes on top
         app: FastAPI = self._opal.app

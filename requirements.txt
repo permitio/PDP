@@ -2,7 +2,7 @@ aiohttp
 fastapi==0.62.0
 gunicorn
 ipython
-opal-client==0.0.19
+opal-client==0.1.7
 pydantic[email]
 starlette==0.13.6
 uvicorn[standard]
