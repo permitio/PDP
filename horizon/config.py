@@ -11,7 +11,7 @@ class SidecarConfig(Confi):
     BACKEND_LEGACY_URL = confi.str("BACKEND_LEGACY_URL", confi.delay("{BACKEND_URL}/sdk"))
 
     # backend route to fetch policy data topics
-    DATA_TOPICS_ROUTE = confi.str("DATA_TOPICS_ROUTE", "policy-config/topics")
+    PDP_CONFIG_ROUTE = confi.str("PDP_CONFIG_ROUTE", "pdp/config")
 
     # access token to access backend api
     CLIENT_TOKEN = confi.str("CLIENT_TOKEN", "PJUKkuwiJkKxbIoC4o4cguWxB_2gX6MyATYKc2OCM")
