@@ -1,7 +1,11 @@
+import logging
+from uuid import uuid4
+
 from fastapi import FastAPI, status
 from fastapi.responses import RedirectResponse
+from logzio.handler import LogzioHandler
 
-from opal_common.logger import logger
+from opal_common.logger import logger, Formatter
 from opal_common.confi import Confi
 from opal_client.client import OpalClient
 from opal_client.config import opal_common_config, opal_client_config
@@ -11,6 +15,7 @@ from horizon.proxy.api import router as proxy_router
 from horizon.enforcer.api import init_enforcer_api_router
 from horizon.local.api import init_local_cache_api_router
 from horizon.startup.remote_config import RemoteConfigFetcher
+
 
 def apply_config(overrides_dict: dict, config_object: Confi):
     """
@@ -58,6 +63,7 @@ class AuthorizonSidecar:
             )
 
         self._opal = OpalClient()
+        self._configure_cloud_logging(remote_config.context)
 
         # use opal client app and add sidecar routes on top
         app: FastAPI = self._opal.app
@@ -65,6 +71,39 @@ class AuthorizonSidecar:
         self._configure_api_routes(app)
 
         self._app: FastAPI = app
+
+    def _configure_cloud_logging(self, remote_context: dict = {}):
+        if not sidecar_config.CENTRAL_LOG_ENABLED:
+            return
+
+        if not sidecar_config.CENTRAL_LOG_TOKEN or len(sidecar_config.CENTRAL_LOG_TOKEN) == 0:
+            logger.warning("Centralized log is enabled, but token is not valid. Disabling sink.")
+            return
+
+        logzio_handler = LogzioHandler(
+            token=sidecar_config.CENTRAL_LOG_TOKEN,
+            logs_drain_timeout=sidecar_config.CENTRAL_LOG_DRAIN_TIMEOUT,
+            url=sidecar_config.CENTRAL_LOG_DRAIN_URL,
+        )
+        formatter = Formatter()
+
+        # adds extra context to all loggers, helps identify between different sidecars.
+        extra_context = {}
+        extra_context["run_id"] = uuid4().hex
+        extra_context.update(remote_context)
+
+        logger.info(f"Adding the following context to all loggers: {extra_context}")
+
+        logger.configure(extra=extra_context)
+        logger.add(
+            logzio_handler,
+            serialize=True,
+            level=logging.INFO,
+            format=formatter.format,
+            colorize=False, # no colors
+            enqueue=True, # make sure logging to cloud is done asyncronously and thread-safe
+            catch=True, # if sink throws exceptions, swallow them as not critical
+        )
 
     def _override_app_metadata(self, app: FastAPI):
         app.title = "Authorizon Sidecar"

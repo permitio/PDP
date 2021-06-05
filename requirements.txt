@@ -7,4 +7,5 @@ pydantic[email]
 starlette==0.13.6
 uvicorn[standard]
 requests
-tenacity
+tenacity==6.3.1
+logzio-python-handler
