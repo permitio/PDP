@@ -22,6 +22,12 @@ class SidecarConfig(Confi):
     # if enabled, sidecar will output its full config when it first loads
     PRINT_CONFIG_ON_STARTUP = confi.bool("PRINT_CONFIG_ON_STARTUP", False)
 
+    # centralized logging
+    CENTRAL_LOG_DRAIN_URL = confi.str("CENTRAL_LOG_DRAIN_URL", "https://listener.logz.io:8071")
+    CENTRAL_LOG_DRAIN_TIMEOUT = confi.int("CENTRAL_LOG_DRAIN_TIMEOUT", 5)
+    CENTRAL_LOG_TOKEN = confi.str("CENTRAL_LOG_TOKEN", None)
+    CENTRAL_LOG_ENABLED = confi.bool("CENTRAL_LOG_ENABLED", True)
+
     # non configurable values -------------------------------------------------
 
     # redoc configuration (openapi schema)

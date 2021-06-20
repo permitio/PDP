@@ -1,10 +1,12 @@
+typer
 aiohttp
 fastapi==0.62.0
 gunicorn
 ipython
-opal-client==0.1.7
+opal-client==0.1.8
 pydantic[email]
 starlette==0.13.6
 uvicorn[standard]
 requests
-tenacity
+tenacity==6.3.1
+logzio-python-handler

@@ -97,7 +97,7 @@ class RemoteConfigFetcher:
             except ValidationError as exc:
                 logger.error("got invalid config contents: {exc}", exc=exc, response=response)
                 raise
-            logger.info("received config from backend: {config}", config=sidecar_config.dict())
+            logger.info("received remote config from backend")
             return sidecar_config
         except requests.RequestException as exc:
             logger.error("got exception: {exc}", exc=exc)
