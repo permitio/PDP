@@ -53,7 +53,7 @@ def init_local_cache_api_router(policy_store:BasePolicyStoreClient=None):
             SyncedRole(
                 id=r.get("id"),
                 name=r.get("name"),
-                org_id=r.get("scope", {}).get("org", None),
+                tenant_id=r.get("scope", {}).get("tenant", None),
             )
             for r in roles
         ]
@@ -93,7 +93,7 @@ def init_local_cache_api_router(policy_store:BasePolicyStoreClient=None):
                 SyncedRole(
                     id=r.get("id"),
                     name=r.get("name"),
-                    org_id=r.get("scope", {}).get("org", None),
+                    tenant_id=r.get("scope", {}).get("tenant", None),
                 )
                 for r in roles
             ]
@@ -136,7 +136,7 @@ def init_local_cache_api_router(policy_store:BasePolicyStoreClient=None):
                 SyncedRole(
                     id=role_id,
                     name=r.get("name"),
-                    org_id=r.get("scope", {}).get("org", None),
+                    tenant_id=r.get("scope", {}).get("tenant", None),
                     metadata=role_data.get(role_id, {}).metadata,
                     permissions=role_data.get(role_id, {}).permissions,
                 )
@@ -144,26 +144,26 @@ def init_local_cache_api_router(policy_store:BasePolicyStoreClient=None):
         return roles
 
     @router.get(
-        "/users/{user_id}/organizations",
+        "/users/{user_id}/tenants",
         response_model=List[str],
         responses={
             404: error_message("User not found (i.e: not synced to Authorization service)"),
         }
     )
-    async def get_user_orgs(user_id: str):
+    async def get_user_tenants(user_id: str):
         """
-        Get orgs **assigned to user** directly from OPA cache.
-        This endpoint only returns orgs that the user **has an assigned role in**.
-        i.e: if the user is assigned to org "org1" but has no roles in that org,
-        "org1" will not be returned by this endpoint.
+        Get tenants **assigned to user** directly from OPA cache.
+        This endpoint only returns tenants that the user **has an assigned role in**.
+        i.e: if the user is assigned to tenant "tenant1" but has no roles in that tenant,
+        "tenant1" will not be returned by this endpoint.
 
         If user does not exist in OPA cache (i.e: not synced), returns 404.
         """
         result = await get_data_for_synced_user(user_id)
         roles = result.get("roles", [])
-        orgs = [r.get("scope", {}).get("org", None) for r in roles]
-        orgs = [org for org in orgs if org is not None]
-        return orgs
+        tenants = [r.get("scope", {}).get("tenant", None) for r in roles]
+        tenants = [tenant for tenant in tenants if tenant is not None]
+        return tenants
 
     @router.get(
         "/roles",

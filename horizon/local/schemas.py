@@ -12,7 +12,7 @@ class Message(BaseModel):
 class SyncedRole(BaseSchema):
     id: str
     name: str
-    org_id: Optional[str]
+    tenant_id: Optional[str]
     metadata: Optional[Dict[str, Any]]
     permissions: Optional[List[str]]
 
