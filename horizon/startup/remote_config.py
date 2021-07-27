@@ -34,12 +34,12 @@ class RemoteConfigFetcher:
     * OPAL client token - the client token is a JWT signed by the OPAL server and
     must have an `authorizon_client_id` claim.
 
-    * Client data topics - When the backend is updating a tenant-owned object,
+    * Client data topics - When the backend is updating a organization-owned object,
     the update event is published to a topic named 'policy_data/{client_id}'
-    where client_id belongs to the relevant project that belongs to said tenant.
-    Since the sidecar should only subscribe to a single tenant (and project), it must
+    where client_id belongs to the relevant project that belongs to said organization's pdp.
+    Since the sidecar should only subscribe to a single organization (and project), it must
     know the proper topic name. Otherwise opal client will receive updates for all
-    tenants (which is not secure).
+    organizations (which is not secure).
     """
     DEFAULT_RETRY_CONFIG = {
         'wait': wait.wait_random_exponential(max=10),
