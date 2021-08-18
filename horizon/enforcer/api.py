@@ -84,7 +84,7 @@ def init_enforcer_api_router(policy_store:BasePolicyStoreClient=None):
                 "query": {
                     "user": processed_query.get("user", {"id": query.user}),
                     "action": processed_query.get("action", query.action),
-                    "resource": processed_query.get("resource", query.resource.dict()),
+                    "resource": processed_query.get("resource", query.resource.dict(exclude_none=True)),
                 },
                 "debug": {
                     "warnings": raw_result.get("debug", []),

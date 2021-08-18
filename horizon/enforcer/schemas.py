@@ -9,9 +9,10 @@ class BaseSchema(BaseModel):
 
 class Resource(BaseSchema):
     type: str
-    path: str
-    instance: str
-    context: Dict[str, Any]
+    id: Optional[str] = None
+    tenant: Optional[str] = None
+    attributes: Optional[Dict[str, Any]] = None
+    context: Optional[Dict[str, Any]] = {}
 
 
 class AuthorizationQuery(BaseSchema):
