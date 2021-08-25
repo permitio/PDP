@@ -7,6 +7,9 @@
 build: ## Build the container
 	@docker build -t authorizon/sidecar .
 
+build-local: ## Build the container
+	@docker build -t authorizon/sidecar:local .
+
 run: ## Run the container locally
 	@docker run -it \
 		-e "OPAL_SERVER_URL=http://host.docker.internal:7002" \
