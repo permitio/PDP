@@ -23,7 +23,7 @@ FROM python:3.8-alpine3.11
 # bash is needed for ./start/sh script
 RUN apk add --update --no-cache bash curl
 # copy opa from official image (main binary and lib for web assembly)
-RUN curl -L -o /opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64 && chmod 755 /opa
+RUN curl -L -o /opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static && chmod 755 /opa
 # copy libraries from build stage
 COPY --from=BuildStage /root/.local /root/.local
 # copy wait-for-it (use only for development! e.g: docker compose)
