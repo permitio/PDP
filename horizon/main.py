@@ -85,7 +85,7 @@ class AuthorizonSidecar:
             logs_drain_timeout=sidecar_config.CENTRAL_LOG_DRAIN_TIMEOUT,
             url=sidecar_config.CENTRAL_LOG_DRAIN_URL,
         )
-        formatter = Formatter()
+        formatter = Formatter(opal_common_config.LOG_FORMAT)
 
         # adds extra context to all loggers, helps identify between different sidecars.
         extra_context = {}

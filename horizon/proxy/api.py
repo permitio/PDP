@@ -47,7 +47,7 @@ async def proxy_request_to_cloud_service(request: Request, path: str, cloud_serv
             detail="Must provide a bearer token!",
             headers={"WWW-Authenticate": "Bearer"}
         )
-    headers = {"Authorization": auth_header}
+    headers = dict(request.headers)
     path = f"{cloud_service_url}/{path}"
     params = dict(request.query_params) or {}
 

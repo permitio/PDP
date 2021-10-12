@@ -22,6 +22,8 @@ RUN pip install --upgrade pip && pip install --user -r requirements.txt
 FROM python:3.8-alpine3.11
 # bash is needed for ./start/sh script
 RUN apk add --update --no-cache bash curl
+# needed for rookout
+RUN apk add g++ python3-dev linux-headers
 # copy opa from official image (main binary and lib for web assembly)
 RUN curl -L -o /opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static && chmod 755 /opa
 # copy libraries from build stage
@@ -32,6 +34,8 @@ RUN chmod +x /usr/wait-for-it.sh
 # copy startup script
 COPY ./scripts/start.sh /start.sh
 RUN chmod +x /start.sh
+# copy gunicorn_config
+COPY ./scripts/gunicorn_conf.py /gunicorn_conf.py
 # copy app code
 COPY . ./
 # install sidecar package
