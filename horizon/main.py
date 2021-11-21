@@ -1,9 +1,10 @@
 import logging
+from os import environ
 from uuid import uuid4
 
 from fastapi import FastAPI, status
-from ddtrace import patch, config
 from fastapi.responses import RedirectResponse
+from logzio.handler import LogzioHandler
 
 from opal_common.logger import logger, Formatter
 from opal_common.confi import Confi
@@ -63,11 +64,13 @@ class AuthorizonSidecar:
 
         self._opal = OpalClient()
         self._configure_cloud_logging(remote_config.context)
-        # Datadog APM
-        patch(fastapi=True)
-        # Override service name
-        config.fastapi['service_name'] = 'opal-client'
-        config.fastapi['request_span_name'] = 'opal-client'
+        if "ENABLE_MONITORING" in environ:
+            from ddtrace import patch, config
+            # Datadog APM
+            patch(fastapi=True)
+            # Override service name
+            config.fastapi['service_name'] = 'opal-client'
+            config.fastapi['request_span_name'] = 'opal-client'
         # use opal client app and add sidecar routes on top
         app: FastAPI = self._opal.app
         self._override_app_metadata(app)
@@ -94,6 +97,7 @@ class AuthorizonSidecar:
 
         logger.configure(extra=extra_context)
         logger.add(
+            logzio_handler,
             serialize=True,
             level=logging.INFO,
             format=formatter.format,
