@@ -2,8 +2,8 @@ import logging
 from uuid import uuid4
 
 from fastapi import FastAPI, status
+from ddtrace import patch, config
 from fastapi.responses import RedirectResponse
-from logzio.handler import LogzioHandler
 
 from opal_common.logger import logger, Formatter
 from opal_common.confi import Confi
@@ -15,7 +15,6 @@ from horizon.proxy.api import router as proxy_router
 from horizon.enforcer.api import init_enforcer_api_router
 from horizon.local.api import init_local_cache_api_router
 from horizon.startup.remote_config import RemoteConfigFetcher
-
 
 def apply_config(overrides_dict: dict, config_object: Confi):
     """
@@ -64,7 +63,11 @@ class AuthorizonSidecar:
 
         self._opal = OpalClient()
         self._configure_cloud_logging(remote_config.context)
-
+        # Datadog APM
+        patch(fastapi=True)
+        # Override service name
+        config.fastapi['service_name'] = 'opal-client'
+        config.fastapi['request_span_name'] = 'opal-client'
         # use opal client app and add sidecar routes on top
         app: FastAPI = self._opal.app
         self._override_app_metadata(app)
@@ -80,11 +83,6 @@ class AuthorizonSidecar:
             logger.warning("Centralized log is enabled, but token is not valid. Disabling sink.")
             return
 
-        logzio_handler = LogzioHandler(
-            token=sidecar_config.CENTRAL_LOG_TOKEN,
-            logs_drain_timeout=sidecar_config.CENTRAL_LOG_DRAIN_TIMEOUT,
-            url=sidecar_config.CENTRAL_LOG_DRAIN_URL,
-        )
         formatter = Formatter(opal_common_config.LOG_FORMAT)
 
         # adds extra context to all loggers, helps identify between different sidecars.
@@ -96,7 +94,6 @@ class AuthorizonSidecar:
 
         logger.configure(extra=extra_context)
         logger.add(
-            logzio_handler,
             serialize=True,
             level=logging.INFO,
             format=formatter.format,

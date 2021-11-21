@@ -8,5 +8,5 @@ starlette==0.14.2
 uvicorn[standard]
 requests==2.25.0
 tenacity==6.3.1
-logzio-python-handler
 rook
+ddtrace
