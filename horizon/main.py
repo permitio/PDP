@@ -1,5 +1,4 @@
 import logging
-from os import environ
 from uuid import uuid4
 
 from fastapi import FastAPI, status
@@ -62,21 +61,29 @@ class AuthorizonSidecar:
                 opal_common_config=opal_common_config.debug_repr(),
             )
 
+        if opal_common_config.ENABLE_MONITORING:
+            self._configure_monitoring()
+
         self._opal = OpalClient()
         self._configure_cloud_logging(remote_config.context)
-        if "ENABLE_MONITORING" in environ and environ["ENABLE_MONITORING"].lower() != "false":
-            from ddtrace import patch, config
-            # Datadog APM
-            patch(fastapi=True)
-            # Override service name
-            config.fastapi["service_name"] = "opal-client"
-            config.fastapi["request_span_name"] = "opal-client"
+
         # use opal client app and add sidecar routes on top
         app: FastAPI = self._opal.app
         self._override_app_metadata(app)
         self._configure_api_routes(app)
 
         self._app: FastAPI = app
+
+    def _configure_monitoring(self):
+        """
+        patch fastapi to enable tracing and monitoring
+        """
+        from ddtrace import patch, config
+        # Datadog APM
+        patch(fastapi=True)
+        # Override service name
+        config.fastapi["service_name"] = "opal-client"
+        config.fastapi["request_span_name"] = "opal-client"
 
     def _configure_cloud_logging(self, remote_context: dict = {}):
         if not sidecar_config.CENTRAL_LOG_ENABLED:
@@ -86,6 +93,11 @@ class AuthorizonSidecar:
             logger.warning("Centralized log is enabled, but token is not valid. Disabling sink.")
             return
 
+        logzio_handler = LogzioHandler(
+            token=sidecar_config.CENTRAL_LOG_TOKEN,
+            logs_drain_timeout=sidecar_config.CENTRAL_LOG_DRAIN_TIMEOUT,
+            url=sidecar_config.CENTRAL_LOG_DRAIN_URL,
+        )
         formatter = Formatter(opal_common_config.LOG_FORMAT)
 
         # adds extra context to all loggers, helps identify between different sidecars.
