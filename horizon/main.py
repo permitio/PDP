@@ -16,7 +16,6 @@ from horizon.enforcer.api import init_enforcer_api_router
 from horizon.local.api import init_local_cache_api_router
 from horizon.startup.remote_config import RemoteConfigFetcher
 
-
 def apply_config(overrides_dict: dict, config_object: Confi):
     """
     apply config values from dict into a confi object
@@ -62,6 +61,9 @@ class AuthorizonSidecar:
                 opal_common_config=opal_common_config.debug_repr(),
             )
 
+        if sidecar_config.ENABLE_MONITORING:
+            self._configure_monitoring()
+
         self._opal = OpalClient()
         self._configure_cloud_logging(remote_config.context)
 
@@ -71,6 +73,17 @@ class AuthorizonSidecar:
         self._configure_api_routes(app)
 
         self._app: FastAPI = app
+
+    def _configure_monitoring(self):
+        """
+        patch fastapi to enable tracing and monitoring
+        """
+        from ddtrace import patch, config
+        # Datadog APM
+        patch(fastapi=True)
+        # Override service name
+        config.fastapi["service_name"] = "authorizon-pdp"
+        config.fastapi["request_span_name"] = "authorizon-pdp"
 
     def _configure_cloud_logging(self, remote_context: dict = {}):
         if not sidecar_config.CENTRAL_LOG_ENABLED:
