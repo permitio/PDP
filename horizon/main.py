@@ -61,7 +61,7 @@ class AuthorizonSidecar:
                 opal_common_config=opal_common_config.debug_repr(),
             )
 
-        if opal_common_config.ENABLE_MONITORING:
+        if sidecar_config.ENABLE_MONITORING:
             self._configure_monitoring()
 
         self._opal = OpalClient()

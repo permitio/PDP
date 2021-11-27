@@ -22,6 +22,9 @@ class SidecarConfig(Confi):
     # if enabled, sidecar will output its full config when it first loads
     PRINT_CONFIG_ON_STARTUP = confi.bool("PRINT_CONFIG_ON_STARTUP", False)
 
+    # enable datadog APM tracing
+    ENABLE_MONITORING = confi.bool("ENABLE_MONITORING", False)
+
     # centralized logging
     CENTRAL_LOG_DRAIN_URL = confi.str("CENTRAL_LOG_DRAIN_URL", "https://listener.logz.io:8071")
     CENTRAL_LOG_DRAIN_TIMEOUT = confi.int("CENTRAL_LOG_DRAIN_TIMEOUT", 5)
