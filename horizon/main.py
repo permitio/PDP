@@ -82,8 +82,8 @@ class AuthorizonSidecar:
         # Datadog APM
         patch(fastapi=True)
         # Override service name
-        config.fastapi["service_name"] = "opal-client"
-        config.fastapi["request_span_name"] = "opal-client"
+        config.fastapi["service_name"] = "authorizon-pdp"
+        config.fastapi["request_span_name"] = "authorizon-pdp"
 
     def _configure_cloud_logging(self, remote_context: dict = {}):
         if not sidecar_config.CENTRAL_LOG_ENABLED:
