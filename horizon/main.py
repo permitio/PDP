@@ -1,4 +1,5 @@
 import logging
+import json
 from uuid import uuid4
 
 from fastapi import FastAPI, status
@@ -11,6 +12,7 @@ from opal_client.client import OpalClient
 from opal_client.config import opal_common_config, opal_client_config
 
 from horizon.config import sidecar_config
+from horizon.enforcer.opa.config_maker import get_opa_authz_policy_file_path, get_opa_config_file_path
 from horizon.proxy.api import router as proxy_router
 from horizon.enforcer.api import init_enforcer_api_router
 from horizon.local.api import init_local_cache_api_router
@@ -52,6 +54,10 @@ class AuthorizonSidecar:
             apply_config(remote_config.opal_common or {}, opal_common_config)
             apply_config(remote_config.opal_client or {}, opal_client_config)
             apply_config(remote_config.pdp or {}, sidecar_config)
+
+        if sidecar_config.OPA_BEARER_TOKEN_REQUIRED or sidecar_config.OPA_DECISION_LOG_ENABLED:
+            # we need to pass to OPAL a custom inline OPA config to enable these features
+            self._configure_inline_opa_config()
 
         if sidecar_config.PRINT_CONFIG_ON_STARTUP:
             logger.info(
@@ -117,6 +123,34 @@ class AuthorizonSidecar:
             enqueue=True, # make sure logging to cloud is done asyncronously and thread-safe
             catch=True, # if sink throws exceptions, swallow them as not critical
         )
+
+    def _configure_inline_opa_config(self):
+        inline_opa_config={}
+
+        if sidecar_config.OPA_DECISION_LOG_ENABLED:
+            # decision logs needs to be configured via the config file
+            config_file_path = get_opa_config_file_path(sidecar_config)
+
+            # append the config file to inline OPA config
+            inline_opa_config.update({"config_file": config_file_path})
+
+        if sidecar_config.OPA_BEARER_TOKEN_REQUIRED:
+            # overrides OPAL client config so that OPAL passes the bearer token in requests
+            opal_client_config.POLICY_STORE_AUTH_TOKEN = sidecar_config.CLIENT_TOKEN
+
+            # append the bearer token authz policy to inline OPA config
+            auth_policy_file_path = get_opa_authz_policy_file_path(sidecar_config)
+            inline_opa_config.update({
+                "authorization":"basic",
+                "authentication":"token",
+                "files":[auth_policy_file_path]
+            })
+
+        config_json = json.dumps(inline_opa_config)
+        logger.info(f"setting OPAL_INLINE_OPA_CONFIG={config_json}")
+
+        # apply inline OPA config to OPAL client config var
+        opal_client_config.INLINE_OPA_CONFIG = config_json
 
     def _override_app_metadata(self, app: FastAPI):
         app.title = "Authorizon Sidecar"

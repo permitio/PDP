@@ -1,0 +1,5 @@
+default allow = false                       # Reject requests by default.
+
+allow {                                     # Allow request if...
+    "{{ bearer_token }}" == input.identity  # Identity is the secret root key.
+}
