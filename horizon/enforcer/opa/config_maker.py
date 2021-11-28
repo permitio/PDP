@@ -1,5 +1,4 @@
 import os
-from typing import Optional
 import jinja2
 
 from opal_common.logger import logger
@@ -9,6 +8,19 @@ from horizon.config import SidecarConfig
 def get_jinja_environment() -> jinja2.Environment:
     path = os.path.join(os.path.dirname(__file__), "../../static/templates")
     return jinja2.Environment(loader=jinja2.FileSystemLoader(path))
+
+
+def persist_to_file(contents: str, path: str) -> str:
+    path = os.path.expanduser(path)
+
+    # make sure the directory exists
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+
+    # persist to file
+    with open(path, 'w') as f:
+        f.write(contents)
+
+    return path
 
 
 def get_opa_config_file_path(
@@ -42,10 +54,7 @@ def get_opa_config_file_path(
         logger.error(f"could not render the template: {template_path}")
         raise
 
-    with open(target_path, 'w') as f:
-        f.write(contents)
-
-    return target_path
+    return persist_to_file(contents, target_path)
 
 def get_opa_authz_policy_file_path(
     sidecar_config: SidecarConfig,
@@ -70,7 +79,4 @@ def get_opa_authz_policy_file_path(
         logger.error(f"could not render the template: {template_path}")
         raise
 
-    with open(target_path, 'w') as f:
-        f.write(contents)
-
-    return target_path
+    return persist_to_file(contents, target_path)
