@@ -1,0 +1,13 @@
+services:
+  authorizon:
+    url: http://host.docker.internal:8000
+    credentials:
+      bearer:
+        token: "MYTOKEN"
+
+decision_logs:
+  service: authorizon
+  resource: /v1/decision_log/ingress
+  reporting:
+    min_delay_seconds: 1
+    max_delay_seconds: 10
