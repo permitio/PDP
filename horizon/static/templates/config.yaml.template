@@ -8,6 +8,9 @@ services:
     {% endif %}
 
 decision_logs:
+  {% if log_to_console %}
+  console: true
+  {% endif %}
   service: authorizon
   resource: {{ log_ingress_endpoint }}
   reporting:

@@ -1,6 +1,6 @@
 import logging
-import json
 from uuid import uuid4
+from typing import List
 
 from fastapi import FastAPI, status
 from fastapi.responses import RedirectResponse
@@ -18,6 +18,10 @@ from horizon.proxy.api import router as proxy_router
 from horizon.enforcer.api import init_enforcer_api_router
 from horizon.local.api import init_local_cache_api_router
 from horizon.startup.remote_config import RemoteConfigFetcher
+
+
+OPA_LOGGER_MODULE = "opal_client.opa.logger"
+
 
 def apply_config(overrides_dict: dict, config_object: Confi):
     """
@@ -151,7 +155,14 @@ class AuthorizonSidecar:
 
         # apply inline OPA config to OPAL client config var
         opal_client_config.INLINE_OPA_CONFIG = OpaServerOptions(**inline_opa_config)
-        opal_client_config.INLINE_OPA_LOG_FORMAT = OpaLogFormat.HTTP
+
+        # override OPAL client default config to show OPA logs
+        if sidecar_config.OPA_DECISION_LOG_CONSOLE:
+            opal_client_config.INLINE_OPA_LOG_FORMAT = OpaLogFormat.FULL
+            exclude_list: List[str] = opal_common_config.LOG_MODULE_EXCLUDE_LIST.copy()
+            if OPA_LOGGER_MODULE in exclude_list:
+                exclude_list.remove(OPA_LOGGER_MODULE)
+                opal_common_config.LOG_MODULE_EXCLUDE_LIST = exclude_list
 
     def _override_app_metadata(self, app: FastAPI):
         app.title = "Authorizon Sidecar"
