@@ -5,11 +5,12 @@ from uuid import uuid4
 from fastapi import FastAPI, status
 from fastapi.responses import RedirectResponse
 from logzio.handler import LogzioHandler
+from opal_client.opa.options import OpaServerOptions
 
 from opal_common.logger import logger, Formatter
 from opal_common.confi import Confi
 from opal_client.client import OpalClient
-from opal_client.config import opal_common_config, opal_client_config
+from opal_client.config import OpaLogFormat, opal_common_config, opal_client_config
 
 from horizon.config import sidecar_config
 from horizon.enforcer.opa.config_maker import get_opa_authz_policy_file_path, get_opa_config_file_path
@@ -146,11 +147,11 @@ class AuthorizonSidecar:
                 "files":[auth_policy_file_path]
             })
 
-        config_json = json.dumps(inline_opa_config)
-        logger.info(f"setting OPAL_INLINE_OPA_CONFIG={config_json}")
+        logger.info(f"setting OPAL_INLINE_OPA_CONFIG={inline_opa_config}")
 
         # apply inline OPA config to OPAL client config var
-        opal_client_config.INLINE_OPA_CONFIG = config_json
+        opal_client_config.INLINE_OPA_CONFIG = OpaServerOptions(**inline_opa_config)
+        opal_client_config.INLINE_OPA_LOG_FORMAT = OpaLogFormat.HTTP
 
     def _override_app_metadata(self, app: FastAPI):
         app.title = "Authorizon Sidecar"
