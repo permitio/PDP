@@ -1,0 +1,18 @@
+services:
+  authorizon:
+    url: {{ cloud_service_url }}
+    {% if bearer_token is defined %}
+    credentials:
+      bearer:
+        token: "{{ bearer_token }}"
+    {% endif %}
+
+decision_logs:
+  {% if log_to_console %}
+  console: true
+  {% endif %}
+  service: authorizon
+  resource: {{ log_ingress_endpoint }}
+  reporting:
+    min_delay_seconds: {{ min_delay_seconds }}
+    max_delay_seconds: {{ max_delay_seconds }}

@@ -31,6 +31,16 @@ class SidecarConfig(Confi):
     CENTRAL_LOG_TOKEN = confi.str("CENTRAL_LOG_TOKEN", None)
     CENTRAL_LOG_ENABLED = confi.bool("CENTRAL_LOG_ENABLED", True)
 
+    # internal OPA config
+    OPA_CONFIG_FILE_PATH = confi.str("OPA_CONFIG_FILE_PATH", "~/opa/config.yaml", description="the path on the container for OPA config file")
+    OPA_AUTH_POLICY_FILE_PATH = confi.str("OPA_AUTH_POLICY_FILE_PATH", "~/opa/basic-authz.rego", description="the path on the container for OPA authorization policy (rego file)")
+    OPA_BEARER_TOKEN_REQUIRED = confi.bool("OPA_BEARER_TOKEN_REQUIRED", True, description="if true, all API calls to OPA must provide a bearer token (the value of CLIENT_TOKEN)")
+    OPA_DECISION_LOG_ENABLED = confi.bool("OPA_DECISION_LOG_ENABLED", True, description="if true, OPA decision logs will be uploaded to the authorizon cloud console")
+    OPA_DECISION_LOG_CONSOLE = confi.bool("OPA_DECISION_LOG_CONSOLE", False, description="if true, OPA decision logs will also be printed to console (only relevant if `OPA_DECISION_LOG_ENABLED` is true)")
+    OPA_DECISION_LOG_INGRESS_ROUTE = confi.str("OPA_DECISION_LOG_INGRESS_ROUTE", "/v1/decision_logs/ingress", description="the route on the backend the decision logs will be uploaded to")
+    OPA_DECISION_LOG_MIN_DELAY = confi.int("OPA_DECISION_LOG_MIN_DELAY", 1, description="min amount of time (in seconds) to wait between decision log uploads")
+    OPA_DECISION_LOG_MAX_DELAY = confi.int("OPA_DECISION_LOG_MAX_DELAY", 10, description="max amount of time (in seconds) to wait between decision log uploads")
+
     # non configurable values -------------------------------------------------
 
     # redoc configuration (openapi schema)
