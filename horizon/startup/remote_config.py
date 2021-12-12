@@ -71,12 +71,12 @@ class RemoteConfigFetcher:
         fetches the sidecar config by identifying with the sidecar access token.
         if failed to get config from backend, returns None.
         """
-        logger.info("fetching sidecar config from backend: {url}", url=self._url)
+        logger.info("Fetching PDP config from control plane: {url}", url=self._url)
         fetch_with_retry = retry(**self._retry_config)(self._fetch_config)
         try:
             return fetch_with_retry()
         except requests.RequestException:
-            logger.warning("failed to get sidecar config")
+            logger.warning("Failed to get PDP config")
             return None
 
     def _fetch_config(self) -> RemoteConfig:
@@ -94,12 +94,13 @@ class RemoteConfigFetcher:
             response = blocking_get_request(url=self._url, token=self._token)
             try:
                 sidecar_config = RemoteConfig(**response)
+                config_context = sidecar_config.dict(include={'context'}).get('context', {})
+                logger.info(f"Received remote config with the following context: {config_context}")
             except ValidationError as exc:
-                logger.error("got invalid config contents: {exc}", exc=exc, response=response)
+                logger.error("Got invalid config contents: {exc}", exc=exc, response=response)
                 raise
-            logger.info("received remote config from backend")
             return sidecar_config
         except requests.RequestException as exc:
-            logger.error("got exception: {exc}", exc=exc)
+            logger.error("Got exception: {exc}", exc=exc)
             raise
 

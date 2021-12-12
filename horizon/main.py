@@ -1,4 +1,6 @@
+import sys
 import logging
+
 from uuid import uuid4
 from typing import List
 
@@ -50,6 +52,7 @@ class AuthorizonSidecar:
     - enforcer api (implementation of is_allowed())
     """
     def __init__(self):
+        self._setup_temp_logger()
         # fetch and apply config override from cloud control plane
         remote_config = RemoteConfigFetcher().fetch_config()
         if not remote_config:
@@ -84,6 +87,23 @@ class AuthorizonSidecar:
         self._configure_api_routes(app)
 
         self._app: FastAPI = app
+
+    def _setup_temp_logger(self):
+        """
+        until final config is set, we need to make sure sane defaults are in place
+        """
+        # Clean slate
+        logger.remove()
+        # Logger configuration
+        logger.add(
+            sys.stdout,
+            format=sidecar_config.TEMP_LOG_FORMAT,
+            level="INFO",
+            backtrace=False,
+            diagnose=False,
+            colorize=True,
+            serialize=False,
+        )
 
     def _configure_monitoring(self):
         """
@@ -151,7 +171,7 @@ class AuthorizonSidecar:
                 "files":[auth_policy_file_path]
             })
 
-        logger.info(f"setting OPAL_INLINE_OPA_CONFIG={inline_opa_config}")
+        logger.debug(f"setting OPAL_INLINE_OPA_CONFIG={inline_opa_config}")
 
         # apply inline OPA config to OPAL client config var
         opal_client_config.INLINE_OPA_CONFIG = OpaServerOptions(**inline_opa_config)
