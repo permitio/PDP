@@ -41,6 +41,9 @@ class SidecarConfig(Confi):
     OPA_DECISION_LOG_MIN_DELAY = confi.int("OPA_DECISION_LOG_MIN_DELAY", 1, description="min amount of time (in seconds) to wait between decision log uploads")
     OPA_DECISION_LOG_MAX_DELAY = confi.int("OPA_DECISION_LOG_MAX_DELAY", 10, description="max amount of time (in seconds) to wait between decision log uploads")
 
+    # temp log format (until cloud config is received)
+    TEMP_LOG_FORMAT = confi.str("TEMP_LOG_FORMAT", "<green>{time}</green> | {process} | <blue>{name: <40}</blue>|<level>{level:^6} | {message}</level>")
+
     # non configurable values -------------------------------------------------
 
     # redoc configuration (openapi schema)
