@@ -37,17 +37,24 @@ def apply_config(overrides_dict: dict, config_object: Confi):
         else:
             logger.warning(f"Ignored non-existing config key: {prefixed_key}")
 
-class AuthorizonSidecar:
+class PermitPDP:
     """
-    Authorizon sidecar is a thin wrapper on top of opal client.
+    Permit.io PDP (Policy Decision Point)
+
+    This process acts as a policy agents that is automatically configured by Permit.io cloud.
+    You only need an API key to configure this correctly.
+
+    -----
+    Implementation details:
+    The PDP is a thin wrapper on top of opal client.
 
     by extending opal client, it runs:
     - a subprocess running the OPA agent (with opal client's opa runner)
     - policy updater
     - data updater
 
-    it also run directly authorizon specific apis:
-    - proxy api (proxies the REST api at api.authorizon.com to the sdks)
+    it also run directly Permit.io specific apis:
+    - proxy api (proxies the REST api at api.permit.io to the sdks)
     - local api (wrappers on top of opa cache)
     - enforcer api (implementation of is_allowed())
     """
@@ -113,8 +120,8 @@ class AuthorizonSidecar:
         # Datadog APM
         patch(fastapi=True)
         # Override service name
-        config.fastapi["service_name"] = "authorizon-pdp"
-        config.fastapi["request_span_name"] = "authorizon-pdp"
+        config.fastapi["service_name"] = "permit-pdp"
+        config.fastapi["request_span_name"] = "permit-pdp"
 
     def _configure_cloud_logging(self, remote_context: dict = {}):
         if not sidecar_config.CENTRAL_LOG_ENABLED:
@@ -185,10 +192,10 @@ class AuthorizonSidecar:
                 opal_common_config.LOG_MODULE_EXCLUDE_LIST = exclude_list
 
     def _override_app_metadata(self, app: FastAPI):
-        app.title = "Authorizon Sidecar"
-        app.description = "This sidecar wraps Open Policy Agent (OPA) with a higher-level API intended for fine grained " + \
-            "application-level authorization. The sidecar automatically handles pulling policy updates in real-time " + \
-            "from a centrally managed cloud-service (api.authorizon.com)."
+        app.title = "Permit.io PDP"
+        app.description = "The PDP (Policy decision point) container wraps Open Policy Agent (OPA) with a higher-level API intended for fine grained " + \
+            "application-level authorization. The PDP automatically handles pulling policy updates in real-time " + \
+            "from a centrally managed cloud-service (api.permit.io)."
         app.version = "0.2.0"
         app.openapi_tags = sidecar_config.OPENAPI_TAGS_METADATA
         return app
@@ -223,5 +230,5 @@ class AuthorizonSidecar:
 
 
 # expose app for Uvicorn
-sidecar = AuthorizonSidecar()
+sidecar = PermitPDP()
 app = sidecar.app

@@ -5,10 +5,10 @@
 # DOCKER TASKS
 # Build the container
 build: ## Build the container
-	@docker build -t authorizon/sidecar .
+	@docker build -t permitio/pdp .
 
 build-local: ## Build the container
-	@docker build -t authorizon/sidecar:local .
+	@docker build -t permitio/pdp:local .
 
 run: ## Run the container locally
 	@docker run -it \
@@ -17,7 +17,7 @@ run: ## Run the container locally
 		-e "HORIZON_CLIENT_TOKEN=$(DEV_MODE_CLIENT_TOKEN)" \
 		-p 7000:7000 \
 		-p 8181:8181 \
-		authorizon/sidecar
+		permitio/pdp
 
 run-against-prod: ## Run the container against prod
 	@docker run -it \
@@ -26,4 +26,4 @@ run-against-prod: ## Run the container against prod
 		-e "OPAL_CLIENT_TOKEN=$(OPAL_PROD_CLIENT_TOKEN)" \
 		-p 7000:7000 \
 		-p 8181:8181 \
-		authorizon/sidecar
+		permitio/pdp

@@ -1,5 +1,5 @@
-# Authorizon sidecar
-The sidecar syncs with the authorization service and maintains up-to-date policy cache for open policy agent.
+# Permit.io PDP
+The PDP (Policy decision point) syncs with the authorization service and maintains up-to-date policy cache for open policy agent.
 
 ## Running locally (during development)
 ```
@@ -9,19 +9,19 @@ uvicorn horizon.main:app --reload --port=7000
 you can pass environment variables to control the behavior of the sidecar:
 e.g, running a local sidecar against production backend:
 ```
-AUTHZ_SERVICE_URL=https://api.authorizon.com CLIENT_TOKEN=<CLIENT_TOKEN> uvicorn horizon.main:app --reload --port=7000
+AUTHZ_SERVICE_URL=https://api.permit.io CLIENT_TOKEN=<CLIENT_TOKEN> uvicorn horizon.main:app --reload --port=7000
 ```
 
 ## Installing and running in production
 
 Pull the image from docker hub
 ```
-docker pull authorizon/sidecar
+docker pull permitio/pdp
 ```
 
 Run the image: don't forget to pass your authorization service API KEY:
 ```
-docker run -it -e "CLIENT_TOKEN=<YOUR API KEY>" -p 7000:7000 authorizon/sidecar
+docker run -it -e "CLIENT_TOKEN=<YOUR API KEY>" -p 7000:7000 permitio/pdp
 ```
 
 By default the image exposes port 7000 but you can change it.
