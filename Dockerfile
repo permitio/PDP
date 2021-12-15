@@ -55,7 +55,7 @@ ENV UVICORN_ASGI_APP=horizon.main:app
 ENV UVICORN_PORT=7000
 
 # opal configuration --------------------------------
-ENV OPAL_SERVER_URL=https://opal.authorizon.com
+ENV OPAL_SERVER_URL=https://opal.permit.io
 ENV OPAL_LOG_DIAGNOSE=false
 ENV OPAL_LOG_TRACEBACK=false
 ENV OPAL_LOG_MODULE_EXCLUDE_LIST="[]"
@@ -65,8 +65,8 @@ ENV OPAL_INLINE_OPA_LOG_FORMAT=http
 # horizon configuration -----------------------------
 # by default, the backend is at port 8000 on the docker host
 # in prod, you must pass the correct url
-ENV HORIZON_BACKEND_URL=https://api.authorizon.com
-ENV HORIZON_CLIENT_TOKEN="MUST BE DEFINED"
+ENV PDP_CONTROL_PLANE=https://api.permit.io
+ENV PDP_API_KEY="MUST BE DEFINED"
 # expose sidecar port
 EXPOSE 7000
 # expose opa directly

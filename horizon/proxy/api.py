@@ -28,7 +28,7 @@ router = APIRouter()
 @router.api_route("/cloud/{path:path}", methods=ALL_METHODS, summary="Proxy Endpoint")
 async def cloud_proxy(request: Request, path: str):
     """
-    Proxies the request to the cloud API. Actual API docs are located here: https://api.authorizon.com/redoc
+    Proxies the request to the cloud API. Actual API docs are located here: https://api.permit.io/redoc
     """
     return await proxy_request_to_cloud_service(request, path, cloud_service_url=sidecar_config.BACKEND_SERVICE_URL)
 

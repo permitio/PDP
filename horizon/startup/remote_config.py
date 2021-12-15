@@ -20,9 +20,9 @@ def blocking_get_request(url: str, token: str, params=None) -> dict:
 
 class RemoteConfigFetcher:
     """
-    Fetches sidecar configuration from authorizon cloud (backend).
+    Fetches sidecar configuration from Permit.io cloud (backend).
 
-    The sidecar should give a seamless experience to authorizon users,
+    The sidecar should give a seamless experience to Permit.io users,
     so they should not worry (or be aware) about OPAL and multiple config options.
 
     This config fetcher runs before the uvicorn app is running and before the asyncio
@@ -32,7 +32,7 @@ class RemoteConfigFetcher:
     Main configuation items that must be fetched remotely:
 
     * OPAL client token - the client token is a JWT signed by the OPAL server and
-    must have an `authorizon_client_id` claim.
+    must have an `permit_client_id` claim.
 
     * Client data topics - When the backend is updating a organization-owned object,
     the update event is published to a topic named 'policy_data/{client_id}'
@@ -50,8 +50,8 @@ class RemoteConfigFetcher:
     def __init__(
         self,
         backend_url: str = sidecar_config.BACKEND_SERVICE_URL,
-        sidecar_access_token: str = sidecar_config.CLIENT_TOKEN,
-        remote_config_route: str = sidecar_config.PDP_CONFIG_ROUTE,
+        sidecar_access_token: str = sidecar_config.API_KEY,
+        remote_config_route: str = sidecar_config.REMOTE_CONFIG_ENDPOINT,
         retry_config = None,
     ):
         """
