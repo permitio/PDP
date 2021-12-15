@@ -4,17 +4,17 @@ from opal_common.confi import Confi, confi
 
 
 class SidecarConfig(Confi):
-    BACKEND_URL = confi.str("BACKEND_URL", "http://localhost:8000")
+    CONTROL_PLANE = confi.str("CONTROL_PLANE", "http://localhost:8000", description="URL to the control plane that manages this PDP, typically Permit.io cloud (api.permit.io)")
 
     # backend api url, where proxy requests go
-    BACKEND_SERVICE_URL = confi.str("BACKEND_SERVICE_URL", confi.delay("{BACKEND_URL}/v1"))
-    BACKEND_LEGACY_URL = confi.str("BACKEND_LEGACY_URL", confi.delay("{BACKEND_URL}/sdk"))
+    BACKEND_SERVICE_URL = confi.str("BACKEND_SERVICE_URL", confi.delay("{CONTROL_PLANE}/v1"))
+    BACKEND_LEGACY_URL = confi.str("BACKEND_LEGACY_URL", confi.delay("{CONTROL_PLANE}/sdk"))
 
     # backend route to fetch policy data topics
-    PDP_CONFIG_ROUTE = confi.str("PDP_CONFIG_ROUTE", "pdps/me/config")
+    REMOTE_CONFIG_ENDPOINT = confi.str("REMOTE_CONFIG_ENDPOINT", "pdps/me/config")
 
     # access token to access backend api
-    CLIENT_TOKEN = confi.str("CLIENT_TOKEN", "PJUKkuwiJkKxbIoC4o4cguWxB_2gX6MyATYKc2OCM")
+    API_KEY = confi.str("API_KEY", "PJUKkuwiJkKxbIoC4o4cguWxB_2gX6MyATYKc2OCM")
 
     # if enabled, will output to log more data for each "is allowed" decision
     DECISION_LOG_DEBUG_INFO = confi.bool("DECISION_LOG_DEBUG_INFO", True)
@@ -77,4 +77,4 @@ class SidecarConfig(Confi):
         }
     ]
 
-sidecar_config = SidecarConfig(prefix="HORIZON_")
+sidecar_config = SidecarConfig(prefix="PDP_")

@@ -168,7 +168,7 @@ class PermitPDP:
 
         if sidecar_config.OPA_BEARER_TOKEN_REQUIRED:
             # overrides OPAL client config so that OPAL passes the bearer token in requests
-            opal_client_config.POLICY_STORE_AUTH_TOKEN = sidecar_config.CLIENT_TOKEN
+            opal_client_config.POLICY_STORE_AUTH_TOKEN = sidecar_config.API_KEY
 
             # append the bearer token authz policy to inline OPA config
             auth_policy_file_path = get_opa_authz_policy_file_path(sidecar_config)

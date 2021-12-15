@@ -41,8 +41,8 @@ def get_opa_config_file_path(
     try:
         template = env.get_template(template_path)
         contents = template.render(
-            cloud_service_url=sidecar_config.BACKEND_URL,
-            bearer_token=sidecar_config.CLIENT_TOKEN,
+            cloud_service_url=sidecar_config.CONTROL_PLANE,
+            bearer_token=sidecar_config.API_KEY,
             log_ingress_endpoint=sidecar_config.OPA_DECISION_LOG_INGRESS_ROUTE,
             min_delay_seconds=sidecar_config.OPA_DECISION_LOG_MIN_DELAY,
             max_delay_seconds=sidecar_config.OPA_DECISION_LOG_MAX_DELAY,
@@ -72,7 +72,7 @@ def get_opa_authz_policy_file_path(
 
     try:
         template = env.get_template(template_path)
-        contents = template.render(bearer_token=sidecar_config.CLIENT_TOKEN)
+        contents = template.render(bearer_token=sidecar_config.API_KEY)
     except jinja2.TemplateNotFound:
         logger.error(f"could not find the template: {template_path}")
         raise

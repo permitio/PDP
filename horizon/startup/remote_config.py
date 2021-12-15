@@ -50,8 +50,8 @@ class RemoteConfigFetcher:
     def __init__(
         self,
         backend_url: str = sidecar_config.BACKEND_SERVICE_URL,
-        sidecar_access_token: str = sidecar_config.CLIENT_TOKEN,
-        remote_config_route: str = sidecar_config.PDP_CONFIG_ROUTE,
+        sidecar_access_token: str = sidecar_config.API_KEY,
+        remote_config_route: str = sidecar_config.REMOTE_CONFIG_ENDPOINT,
         retry_config = None,
     ):
         """

@@ -65,8 +65,8 @@ ENV OPAL_INLINE_OPA_LOG_FORMAT=http
 # horizon configuration -----------------------------
 # by default, the backend is at port 8000 on the docker host
 # in prod, you must pass the correct url
-ENV HORIZON_BACKEND_URL=https://api.permit.io
-ENV HORIZON_CLIENT_TOKEN="MUST BE DEFINED"
+ENV PDP_CONTROL_PLANE=https://api.permit.io
+ENV PDP_API_KEY="MUST BE DEFINED"
 # expose sidecar port
 EXPOSE 7000
 # expose opa directly
