@@ -29,7 +29,7 @@ class SidecarConfig(Confi):
     CENTRAL_LOG_DRAIN_URL = confi.str("CENTRAL_LOG_DRAIN_URL", "https://listener.logz.io:8071")
     CENTRAL_LOG_DRAIN_TIMEOUT = confi.int("CENTRAL_LOG_DRAIN_TIMEOUT", 5)
     CENTRAL_LOG_TOKEN = confi.str("CENTRAL_LOG_TOKEN", None)
-    CENTRAL_LOG_ENABLED = confi.bool("CENTRAL_LOG_ENABLED", True)
+    CENTRAL_LOG_ENABLED = confi.bool("CENTRAL_LOG_ENABLED", False)
 
     # internal OPA config
     OPA_CONFIG_FILE_PATH = confi.str("OPA_CONFIG_FILE_PATH", "~/opa/config.yaml", description="the path on the container for OPA config file")
