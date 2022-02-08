@@ -33,6 +33,8 @@ jobs:
           tags: permitio/pdp:latest
           context: .
           file: ./Dockerfile
+          #All available platforms: linux/arm64,linux/amd64,linux/riscv64,linux/ppc64le,linux/s390x,linux/386,linux/arm/v7,linux/arm/v6
+          platforms: linux/arm64,linux/amd64
           build-args: |
             READ_ONLY_GITHUB_TOKEN=${{ secrets.READ_ONLY_GITHUB_TOKEN }}
       -
