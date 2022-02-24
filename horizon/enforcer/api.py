@@ -1,11 +1,12 @@
 import json
 from typing import Optional, Dict
 
-from fastapi import APIRouter, status, Response
+from fastapi import APIRouter, Depends, status, Response
 from opal_client.policy_store import BasePolicyStoreClient, DEFAULT_POLICY_STORE_GETTER
 from opal_client.policy_store.opa_client import fail_silently
 from opal_client.logger import logger
 from horizon.config import sidecar_config
+from horizon.token_utils import JWTBearer
 
 from horizon.enforcer.schemas import AuthorizationQuery, AuthorizationResult
 
@@ -66,7 +67,8 @@ def init_enforcer_api_router(policy_store:BasePolicyStoreClient=None):
             )
 
 
-    @router.post("/allowed", response_model=AuthorizationResult, status_code=status.HTTP_200_OK, response_model_exclude_none=True)
+    @router.post("/allowed", response_model=AuthorizationResult, status_code=status.HTTP_200_OK, response_model_exclude_none=True,
+                    dependencies=[Depends(JWTBearer())])
     async def is_allowed(query: AuthorizationQuery):
         async def _is_allowed():
             return await policy_store.get_data_with_input(path="rbac", input=query)
