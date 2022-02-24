@@ -12,3 +12,4 @@ Jinja2==3.0.3
 logzio-python-handler
 rook
 ddtrace
+jose
