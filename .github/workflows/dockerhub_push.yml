@@ -36,17 +36,11 @@ jobs:
         with:
           images: permitio/pdp
           tags: |
-            type=ref,event=branch
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
       - 
         name: Echo published tags
         run: |
           echo "Published docker tags: ${{ steps.meta.outputs.tags }}"
-      - 
-        name: Echo labels
-        run: |
-          echo "labels: ${{ steps.meta.outputs.labels }}"
       # -
       #   name: Build image and push
       #   id: docker_build
