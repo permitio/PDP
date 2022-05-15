@@ -51,6 +51,11 @@ async def proxy_request_to_cloud_service(request: Request, path: str, cloud_serv
     path = f"{cloud_service_url}/{path}"
     params = dict(request.query_params) or {}
 
+    # NOTE: remove host header
+    # Otherwise the ELB will get 404 error when passing the request to the k8s ingress.
+    # The ELB uses the host url to match the ingress rule to the correct k8s service.
+    headers.pop("host", None)
+
     async with aiohttp.ClientSession() as session:
         if request.method == HTTP_GET:
             async with session.get(path, headers=headers, params=params) as backend_response:
