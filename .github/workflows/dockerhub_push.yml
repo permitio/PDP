@@ -1,8 +1,6 @@
 name: Build and publish to Docker Hub
 on:
   push:
-    branches:
-      - 'master'
     tags:
       - 'v*'
 
@@ -36,6 +34,7 @@ jobs:
         with:
           images: permitio/pdp
           tags: |
+            type=ref,event=branch
             type=semver,pattern={{version}}
       - 
         name: Echo published tags
