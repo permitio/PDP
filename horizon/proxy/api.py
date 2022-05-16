@@ -1,10 +1,11 @@
 import aiohttp
-from aiohttp.client import request
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, status, Request, HTTPException
 from opal_client.utils import proxy_response
 
 from horizon.config import sidecar_config
+from opal_common.logger import logger
 
 
 HTTP_GET = "GET"
@@ -21,6 +22,8 @@ ALL_METHODS = [
     HTTP_PUT,
     HTTP_PATCH,
 ]
+
+REQUIRED_HTTP_HEADERS = {"authorization", "content-type"}
 
 router = APIRouter()
 
@@ -47,14 +50,24 @@ async def proxy_request_to_cloud_service(request: Request, path: str, cloud_serv
             detail="Must provide a bearer token!",
             headers={"WWW-Authenticate": "Bearer"}
         )
-    headers = dict(request.headers)
     path = f"{cloud_service_url}/{path}"
     params = dict(request.query_params) or {}
 
-    # NOTE: remove host header
-    # Otherwise the ELB will get 404 error when passing the request to the k8s ingress.
-    # The ELB uses the host url to match the ingress rule to the correct k8s service.
-    headers.pop("host", None)
+    original_headers = {k.lower(): v for k,v in iter(dict(request.headers).items())}
+    headers = {}
+
+    # copy only required header
+    for header_name in REQUIRED_HTTP_HEADERS:
+        headers[header_name] = original_headers[header_name]
+
+    # override host header (required by k8s ingress)
+    try:
+        headers["host"] = urlparse(cloud_service_url).netloc
+    except Exception as e:
+        # fallback
+        logger.error(f"could not urlparse cloud service url: {cloud_service_url}, exception: {e}")
+
+    logger.info(f"Proxying request: {request.method} {path}")
 
     async with aiohttp.ClientSession() as session:
         if request.method == HTTP_GET:
