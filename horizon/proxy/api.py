@@ -58,7 +58,8 @@ async def proxy_request_to_cloud_service(request: Request, path: str, cloud_serv
 
     # copy only required header
     for header_name in REQUIRED_HTTP_HEADERS:
-        headers[header_name] = original_headers[header_name]
+        if header_name in original_headers.keys():
+            headers[header_name] = original_headers[header_name]
 
     # override host header (required by k8s ingress)
     try:
