@@ -1,12 +1,16 @@
 import requests
 from typing import Optional
 
-from tenacity import retry, wait, stop
+from tenacity import retry, wait, stop, retry_if_not_exception_type
 from pydantic import ValidationError
 from opal_common.logger import logger
 
 from horizon.config import sidecar_config
 from horizon.startup.schemas import RemoteConfig
+
+
+class InvalidPDPTokenException(Exception):
+    pass
 
 
 def blocking_get_request(url: str, token: str, params=None) -> dict:
@@ -15,6 +19,10 @@ def blocking_get_request(url: str, token: str, params=None) -> dict:
     """
     headers = {"Authorization": f"Bearer {token}"} if token is not None else {}
     response = requests.get(url, headers=headers, params=params)
+
+    if response.status_code == 401:
+        raise InvalidPDPTokenException()
+
     return response.json()
 
 
@@ -42,6 +50,7 @@ class RemoteConfigFetcher:
     organizations (which is not secure).
     """
     DEFAULT_RETRY_CONFIG = {
+        'retry': retry_if_not_exception_type(InvalidPDPTokenException),
         'wait': wait.wait_random_exponential(max=10),
         'stop': stop.stop_after_attempt(10),
         'reraise': True,
@@ -92,6 +101,7 @@ class RemoteConfigFetcher:
         """
         try:
             response = blocking_get_request(url=self._url, token=self._token)
+
             try:
                 sidecar_config = RemoteConfig(**response)
                 config_context = sidecar_config.dict(include={'context'}).get('context', {})
