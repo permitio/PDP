@@ -1,12 +1,17 @@
+from typing import Dict
+
 import aiohttp
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, status, Request, HTTPException
+from fastapi import APIRouter, status, Request, HTTPException, Response
 from opal_client.utils import proxy_response
+from opal_common.logger import logger
+from opal_client.config import OpalClientConfig, opal_client_config
+from pydantic import parse_raw_as
 
 from horizon.config import sidecar_config
-from opal_common.logger import logger
 
+from horizon.enforcer.schemas import UserRoles
 
 HTTP_GET = "GET"
 HTTP_DELETE = "DELETE"
@@ -28,12 +33,29 @@ REQUIRED_HTTP_HEADERS = {"authorization", "content-type"}
 router = APIRouter()
 
 
+async def sync_user_handler(response: Response):
+    store = OpalClientConfig.load_policy_store()
+    user_roles = parse_raw_as(Dict[str, UserRoles], response.body)
+
+    for id, role in user_roles.items():
+        await store.set_policy_data(role.dict(), f"/user_roles/{id}")
+
+
+special_handlers = {
+    ("PUT", "users", sync_user_handler)
+}
+
+
 @router.api_route("/cloud/{path:path}", methods=ALL_METHODS, summary="Proxy Endpoint")
 async def cloud_proxy(request: Request, path: str):
     """
     Proxies the request to the cloud API. Actual API docs are located here: https://api.permit.io/redoc
     """
-    return await proxy_request_to_cloud_service(request, path, cloud_service_url=sidecar_config.BACKEND_SERVICE_URL)
+    response = await proxy_request_to_cloud_service(request, path, cloud_service_url=sidecar_config.BACKEND_SERVICE_URL)
+
+    for handler in special_handlers:
+        if request.method == handler[0] and request.path_params["path"] == handler[1]:
+            await handler[2](response)
 
 
 # TODO: remove this once we migrate all clients
@@ -42,7 +64,7 @@ async def old_proxy(request: Request, path: str):
     return await proxy_request_to_cloud_service(request, path, cloud_service_url=sidecar_config.BACKEND_LEGACY_URL)
 
 
-async def proxy_request_to_cloud_service(request: Request, path: str, cloud_service_url: str):
+async def proxy_request_to_cloud_service(request: Request, path: str, cloud_service_url: str) -> Response:
     auth_header = request.headers.get("Authorization")
     if auth_header is None:
         raise HTTPException(
@@ -52,6 +74,7 @@ async def proxy_request_to_cloud_service(request: Request, path: str, cloud_serv
         )
     path = f"{cloud_service_url}/{path}"
     params = dict(request.query_params) or {}
+    params['emit_data_change'] = '1'
 
     original_headers = {k.lower(): v for k,v in iter(dict(request.headers).items())}
     headers = {}
