@@ -63,6 +63,7 @@ class PermitPDP:
         self._setup_temp_logger()
         # fetch and apply config override from cloud control plane
         remote_config = RemoteConfigFetcher().fetch_config()
+
         if not remote_config:
             logger.warning("Could not fetch config from cloud control plane, reverting to local config!")
         else:
@@ -230,6 +231,10 @@ class PermitPDP:
         return self._app
 
 
-# expose app for Uvicorn
-sidecar = PermitPDP()
-app = sidecar.app
+try:
+    # expose app for Uvicorn
+    sidecar = PermitPDP()
+    app = sidecar.app
+except Exception as ex:
+    logger.critical("Sidecar failed to start because of exception: {err}", err=ex)
+    raise SystemExit(1)
