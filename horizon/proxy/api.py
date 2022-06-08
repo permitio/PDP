@@ -1,17 +1,17 @@
-from typing import Dict
+import re
+from typing import Dict, List
 
 import aiohttp
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, status, Request, HTTPException, Response
 from opal_client.utils import proxy_response
+from opal_common.schemas.store import JSONPatchAction
 from opal_common.logger import logger
 from opal_client.config import OpalClientConfig, opal_client_config
 from pydantic import parse_raw_as
 
 from horizon.config import sidecar_config
-
-from horizon.enforcer.schemas import UserRoles
 
 HTTP_GET = "GET"
 HTTP_DELETE = "DELETE"
@@ -33,16 +33,22 @@ REQUIRED_HTTP_HEADERS = {"authorization", "content-type"}
 router = APIRouter()
 
 
-async def sync_user_handler(response: Response):
-    store = OpalClientConfig.load_policy_store()
-    user_roles = parse_raw_as(Dict[str, UserRoles], response.body)
+async def patch_handler(response: Response):
+    if not status.HTTP_200_OK <= response.status_code < status.HTTP_400_BAD_REQUEST:
+        return
 
-    for id, role in user_roles.items():
-        await store.set_policy_data(role.dict(), f"/user_roles/{id}")
+    try:
+        store = OpalClientConfig.load_policy_store()
+
+        patch = parse_raw_as(List[JSONPatchAction], response.body)
+        await store.patch_data("", patch)
+    except Exception as ex:
+        logger.error("Failed to update OPAL store with: {err}", err=ex)
 
 
 special_handlers = {
-    ("PUT", "users", sync_user_handler)
+    ("PUT", re.compile("users")),
+    ("DELETE", re.compile("users\\/.+"))
 }
 
 
@@ -54,8 +60,8 @@ async def cloud_proxy(request: Request, path: str):
     response = await proxy_request_to_cloud_service(request, path, cloud_service_url=sidecar_config.BACKEND_SERVICE_URL)
 
     for handler in special_handlers:
-        if request.method == handler[0] and request.path_params["path"] == handler[1]:
-            await handler[2](response)
+        if request.method == handler[0] and handler[1].match(request.path_params["path"]):
+            await patch_handler(response)
 
 
 # TODO: remove this once we migrate all clients
