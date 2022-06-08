@@ -7,19 +7,6 @@ class BaseSchema(BaseModel):
         orm_mode = True
 
 
-class RoleDef(BaseSchema):
-    id: str
-    name: str
-    scope: Dict[str, Any] = {}
-
-
-class UserRoles(BaseSchema):
-    name: Optional[str]
-    email: Optional[str]
-    metadata: Dict[str, Any] = {}
-    roles: List[RoleDef]
-
-
 class Resource(BaseSchema):
     type: str
     id: Optional[str] = None

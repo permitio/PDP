@@ -34,6 +34,9 @@ router = APIRouter()
 
 
 async def patch_handler(response: Response):
+    """
+    Handle write APIs (from the SDK) where OpalClient will have to be manually updated from sidecar.
+    """
     if not status.HTTP_200_OK <= response.status_code < status.HTTP_400_BAD_REQUEST:
         return
 
