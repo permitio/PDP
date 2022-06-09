@@ -1,15 +1,15 @@
+import json
 import re
-from typing import Dict, List
+from typing import Dict, List, Any, Optional
 
 import aiohttp
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, status, Request, HTTPException, Response
 from opal_client.utils import proxy_response
-from opal_common.schemas.store import JSONPatchAction
 from opal_common.logger import logger
 from opal_client.config import OpalClientConfig, opal_client_config
-from pydantic import parse_raw_as
+from pydantic import parse_obj_as, BaseModel, Field
 
 from horizon.config import sidecar_config
 
@@ -30,23 +30,47 @@ ALL_METHODS = [
 
 REQUIRED_HTTP_HEADERS = {"authorization", "content-type"}
 
+
+class JSONPatchAction(BaseModel):
+    """
+    Abstract base class for JSON patch actions (RFC 6902)
+    """
+    op: str = Field(..., description="patch action to perform")
+    path: str = Field(..., description="target location in modified json")
+    value: Optional[Dict[str, Any]] = Field(None, description="json document, the operand of the action")
+
+
 router = APIRouter()
 
 
-async def patch_handler(response: Response):
+async def patch_handler(response: Response) -> Response:
     """
     Handle write APIs (from the SDK) where OpalClient will have to be manually updated from sidecar.
     """
     if not status.HTTP_200_OK <= response.status_code < status.HTTP_400_BAD_REQUEST:
-        return
+        return response
+
+    response_json = json.loads(response.body)
+
+    if "patch" not in response_json:
+        return response
+
+    patch_json = response_json["patch"]
 
     try:
         store = OpalClientConfig.load_policy_store()
 
-        patch = parse_raw_as(List[JSONPatchAction], response.body)
+        patch = parse_obj_as(List[JSONPatchAction], patch_json)
         await store.patch_data("", patch)
     except Exception as ex:
         logger.error("Failed to update OPAL store with: {err}", err=ex)
+
+    del response_json["patch"]
+    return Response(
+        json.dumps(response_json),
+        status_code=response.status_code,
+        headers=response.headers
+    )
 
 
 write_routes = {
@@ -71,7 +95,7 @@ async def cloud_proxy(request: Request, path: str):
 
     headers = {}
     if write_route:
-        headers["Accept"] = "application/json-patch+json"
+        headers["X-Include-Patch"] = "true"
 
     response = await proxy_request_to_cloud_service(request,
                                                     path,
@@ -80,6 +104,8 @@ async def cloud_proxy(request: Request, path: str):
 
     if write_route:
         await patch_handler(response)
+
+    return response
 
 
 # TODO: remove this once we migrate all clients
