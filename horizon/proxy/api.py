@@ -66,6 +66,7 @@ async def patch_handler(response: Response) -> Response:
         logger.error("Failed to update OPAL store with: {err}", err=ex)
 
     del response_json["patch"]
+    del response.headers["Content-Length"]
     return Response(
         json.dumps(response_json),
         status_code=response.status_code,
@@ -103,7 +104,7 @@ async def cloud_proxy(request: Request, path: str):
                                                     additional_headers=headers)
 
     if write_route:
-        await patch_handler(response)
+        return await patch_handler(response)
 
     return response
 
