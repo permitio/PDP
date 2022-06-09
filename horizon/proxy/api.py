@@ -49,9 +49,11 @@ async def patch_handler(response: Response):
         logger.error("Failed to update OPAL store with: {err}", err=ex)
 
 
-special_handlers = {
+write_routes = {
     ("PUT", re.compile("users")),
-    ("DELETE", re.compile("users\\/.+"))
+    ("DELETE", re.compile("users\\/.+")),
+    ("POST", re.compile("role_assignments")),
+    ("DELETE", re.compile("role_assignments"))
 }
 
 
@@ -60,20 +62,36 @@ async def cloud_proxy(request: Request, path: str):
     """
     Proxies the request to the cloud API. Actual API docs are located here: https://api.permit.io/redoc
     """
-    response = await proxy_request_to_cloud_service(request, path, cloud_service_url=sidecar_config.BACKEND_SERVICE_URL)
+    write_route = False
 
-    for handler in special_handlers:
-        if request.method == handler[0] and handler[1].match(request.path_params["path"]):
-            await patch_handler(response)
+    for route in write_routes:
+        if request.method == route[0] and route[1].match(request.path_params["path"]):
+            write_route = True
+            break
+
+    headers = {}
+    if write_route:
+        headers["Accept"] = "application/json-patch+json"
+
+    response = await proxy_request_to_cloud_service(request,
+                                                    path,
+                                                    cloud_service_url=sidecar_config.BACKEND_SERVICE_URL,
+                                                    additional_headers=headers)
+
+    if write_route:
+        await patch_handler(response)
 
 
 # TODO: remove this once we migrate all clients
 @router.api_route("/sdk/{path:path}", methods=ALL_METHODS, summary="Old Proxy Endpoint", include_in_schema=False)
 async def old_proxy(request: Request, path: str):
-    return await proxy_request_to_cloud_service(request, path, cloud_service_url=sidecar_config.BACKEND_LEGACY_URL)
+    return await proxy_request_to_cloud_service(request,
+                                                path,
+                                                cloud_service_url=sidecar_config.BACKEND_LEGACY_URL,
+                                                additional_headers={})
 
 
-async def proxy_request_to_cloud_service(request: Request, path: str, cloud_service_url: str) -> Response:
+async def proxy_request_to_cloud_service(request: Request, path: str, cloud_service_url: str, additional_headers: Dict[str, str]) -> Response:
     auth_header = request.headers.get("Authorization")
     if auth_header is None:
         raise HTTPException(
@@ -83,10 +101,9 @@ async def proxy_request_to_cloud_service(request: Request, path: str, cloud_serv
         )
     path = f"{cloud_service_url}/{path}"
     params = dict(request.query_params) or {}
-    params['emit_data_change'] = '1'
 
     original_headers = {k.lower(): v for k,v in iter(dict(request.headers).items())}
-    headers = {}
+    headers = {**additional_headers}
 
     # copy only required header
     for header_name in REQUIRED_HTTP_HEADERS:
