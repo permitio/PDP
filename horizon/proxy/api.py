@@ -6,6 +6,7 @@ import aiohttp
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, status, Request, HTTPException, Response
+from fastapi.responses import JSONResponse
 from opal_client.utils import proxy_response
 from opal_common.logger import logger
 from opal_client.config import OpalClientConfig, opal_client_config
@@ -67,10 +68,10 @@ async def patch_handler(response: Response) -> Response:
 
     del response_json["patch"]
     del response.headers["Content-Length"]
-    return Response(
-        json.dumps(response_json),
+    return JSONResponse(
+        response_json,
         status_code=response.status_code,
-        headers=response.headers
+        headers=dict(response.headers)
     )
 
 
@@ -87,12 +88,10 @@ async def cloud_proxy(request: Request, path: str):
     """
     Proxies the request to the cloud API. Actual API docs are located here: https://api.permit.io/redoc
     """
-    write_route = False
-
-    for route in write_routes:
-        if request.method == route[0] and route[1].match(request.path_params["path"]):
-            write_route = True
-            break
+    write_route = any(
+        request.method == route[0] and route[1].match(request.path_params["path"])
+        for route in write_routes
+    )
 
     headers = {}
     if write_route:
@@ -130,7 +129,7 @@ async def proxy_request_to_cloud_service(request: Request, path: str, cloud_serv
     params = dict(request.query_params) or {}
 
     original_headers = {k.lower(): v for k,v in iter(dict(request.headers).items())}
-    headers = {**additional_headers}
+    headers = additional_headers
 
     # copy only required header
     for header_name in REQUIRED_HTTP_HEADERS:
