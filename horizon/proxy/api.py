@@ -1,12 +1,18 @@
+import json
+import re
+from typing import Dict, List, Any, Optional
+
 import aiohttp
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, status, Request, HTTPException
+from fastapi import APIRouter, status, Request, HTTPException, Response
+from fastapi.responses import JSONResponse
 from opal_client.utils import proxy_response
+from opal_common.logger import logger
+from opal_client.config import OpalClientConfig, opal_client_config
+from pydantic import parse_obj_as, BaseModel, Field
 
 from horizon.config import sidecar_config
-from opal_common.logger import logger
-
 
 HTTP_GET = "GET"
 HTTP_DELETE = "DELETE"
@@ -25,7 +31,56 @@ ALL_METHODS = [
 
 REQUIRED_HTTP_HEADERS = {"authorization", "content-type"}
 
+
+class JSONPatchAction(BaseModel):
+    """
+    Abstract base class for JSON patch actions (RFC 6902)
+    """
+    op: str = Field(..., description="patch action to perform")
+    path: str = Field(..., description="target location in modified json")
+    value: Optional[Dict[str, Any]] = Field(None, description="json document, the operand of the action")
+
+
 router = APIRouter()
+
+
+async def patch_handler(response: Response) -> Response:
+    """
+    Handle write APIs (from the SDK) where OpalClient will have to be manually updated from sidecar.
+    """
+    if not status.HTTP_200_OK <= response.status_code < status.HTTP_400_BAD_REQUEST:
+        return response
+
+    response_json = json.loads(response.body)
+
+    if "patch" not in response_json:
+        return response
+
+    patch_json = response_json["patch"]
+
+    try:
+        store = OpalClientConfig.load_policy_store()
+
+        patch = parse_obj_as(List[JSONPatchAction], patch_json)
+        await store.patch_data("", patch)
+    except Exception as ex:
+        logger.error("Failed to update OPAL store with: {err}", err=ex)
+
+    del response_json["patch"]
+    del response.headers["Content-Length"]
+    return JSONResponse(
+        response_json,
+        status_code=response.status_code,
+        headers=dict(response.headers)
+    )
+
+
+write_routes = {
+    ("PUT", re.compile("users")),
+    ("DELETE", re.compile("users\\/.+")),
+    ("POST", re.compile("role_assignments")),
+    ("DELETE", re.compile("role_assignments"))
+}
 
 
 @router.api_route("/cloud/{path:path}", methods=ALL_METHODS, summary="Proxy Endpoint")
@@ -33,16 +88,36 @@ async def cloud_proxy(request: Request, path: str):
     """
     Proxies the request to the cloud API. Actual API docs are located here: https://api.permit.io/redoc
     """
-    return await proxy_request_to_cloud_service(request, path, cloud_service_url=sidecar_config.BACKEND_SERVICE_URL)
+    write_route = any(
+        request.method == route[0] and route[1].match(request.path_params["path"])
+        for route in write_routes
+    )
+
+    headers = {}
+    if write_route:
+        headers["X-Include-Patch"] = "true"
+
+    response = await proxy_request_to_cloud_service(request,
+                                                    path,
+                                                    cloud_service_url=sidecar_config.BACKEND_SERVICE_URL,
+                                                    additional_headers=headers)
+
+    if write_route:
+        return await patch_handler(response)
+
+    return response
 
 
 # TODO: remove this once we migrate all clients
 @router.api_route("/sdk/{path:path}", methods=ALL_METHODS, summary="Old Proxy Endpoint", include_in_schema=False)
 async def old_proxy(request: Request, path: str):
-    return await proxy_request_to_cloud_service(request, path, cloud_service_url=sidecar_config.BACKEND_LEGACY_URL)
+    return await proxy_request_to_cloud_service(request,
+                                                path,
+                                                cloud_service_url=sidecar_config.BACKEND_LEGACY_URL,
+                                                additional_headers={})
 
 
-async def proxy_request_to_cloud_service(request: Request, path: str, cloud_service_url: str):
+async def proxy_request_to_cloud_service(request: Request, path: str, cloud_service_url: str, additional_headers: Dict[str, str]) -> Response:
     auth_header = request.headers.get("Authorization")
     if auth_header is None:
         raise HTTPException(
@@ -54,7 +129,7 @@ async def proxy_request_to_cloud_service(request: Request, path: str, cloud_serv
     params = dict(request.query_params) or {}
 
     original_headers = {k.lower(): v for k,v in iter(dict(request.headers).items())}
-    headers = {}
+    headers = additional_headers
 
     # copy only required header
     for header_name in REQUIRED_HTTP_HEADERS:
