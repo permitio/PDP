@@ -1,4 +1,5 @@
-from typing import Dict, Any, Optional, List
+from typing import Any, Dict, List, Optional
+
 from pydantic import BaseModel
 
 
@@ -19,15 +20,18 @@ class AuthorizationQuery(BaseSchema):
     """
     the format of is_allowed() input
     """
-    user: str # user_id or jwt
+
+    user: str  # user_id or jwt
     action: str
     resource: Resource
     context: Optional[Dict[str, Any]] = {}
+
 
 class ProcessedQuery(BaseSchema):
     user: Dict[str, Any]
     action: str
     resource: Dict[str, Any]
+
 
 class DebugInformation(BaseSchema):
     warnings: Optional[List[str]]
@@ -35,8 +39,9 @@ class DebugInformation(BaseSchema):
     granting_permission: Optional[List[Dict[str, Any]]]
     user_permissions: Optional[List[Dict[str, Any]]]
 
+
 class AuthorizationResult(BaseSchema):
     allow: bool = False
     query: Optional[ProcessedQuery]
     debug: Optional[DebugInformation]
-    result: bool = False # fallback for older sdks (TODO: remove)
+    result: bool = False  # fallback for older sdks (TODO: remove)

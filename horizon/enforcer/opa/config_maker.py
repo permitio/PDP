@@ -1,7 +1,8 @@
 import os
-import jinja2
 
+import jinja2
 from opal_common.logger import logger
+
 from horizon.config import SidecarConfig
 
 
@@ -17,7 +18,7 @@ def persist_to_file(contents: str, path: str) -> str:
     os.makedirs(os.path.dirname(path), exist_ok=True)
 
     # persist to file
-    with open(path, 'w') as f:
+    with open(path, "w") as f:
         f.write(contents)
 
     return path
@@ -25,7 +26,7 @@ def persist_to_file(contents: str, path: str) -> str:
 
 def get_opa_config_file_path(
     sidecar_config: SidecarConfig,
-    template_path = "config.yaml.template",
+    template_path="config.yaml.template",
 ) -> str:
     """
     renders a template that implements the OPA config file, according to the official spec:
@@ -57,9 +58,10 @@ def get_opa_config_file_path(
 
     return persist_to_file(contents, target_path)
 
+
 def get_opa_authz_policy_file_path(
     sidecar_config: SidecarConfig,
-    template_path = "authz.rego.template",
+    template_path="authz.rego.template",
 ) -> str:
     """
     renders a template that implements a rego policy for OPA authz, as demonstrated here:

@@ -1,16 +1,15 @@
 import json
 import re
-from typing import Dict, List, Any, Optional
-
-import aiohttp
+from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, status, Request, HTTPException, Response
+import aiohttp
+from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
+from opal_client.config import OpalClientConfig, opal_client_config
 from opal_client.utils import proxy_response
 from opal_common.logger import logger
-from opal_client.config import OpalClientConfig, opal_client_config
-from pydantic import parse_obj_as, BaseModel, Field
+from pydantic import BaseModel, Field, parse_obj_as
 
 from horizon.config import sidecar_config
 
@@ -36,9 +35,12 @@ class JSONPatchAction(BaseModel):
     """
     Abstract base class for JSON patch actions (RFC 6902)
     """
+
     op: str = Field(..., description="patch action to perform")
     path: str = Field(..., description="target location in modified json")
-    value: Optional[Dict[str, Any]] = Field(None, description="json document, the operand of the action")
+    value: Optional[Dict[str, Any]] = Field(
+        None, description="json document, the operand of the action"
+    )
 
 
 router = APIRouter()
@@ -69,9 +71,7 @@ async def patch_handler(response: Response) -> Response:
     del response_json["patch"]
     del response.headers["Content-Length"]
     return JSONResponse(
-        response_json,
-        status_code=response.status_code,
-        headers=dict(response.headers)
+        response_json, status_code=response.status_code, headers=dict(response.headers)
     )
 
 
@@ -79,7 +79,7 @@ write_routes = {
     ("PUT", re.compile("users")),
     ("DELETE", re.compile("users\\/.+")),
     ("POST", re.compile("role_assignments")),
-    ("DELETE", re.compile("role_assignments"))
+    ("DELETE", re.compile("role_assignments")),
 }
 
 
@@ -97,10 +97,12 @@ async def cloud_proxy(request: Request, path: str):
     if write_route:
         headers["X-Include-Patch"] = "true"
 
-    response = await proxy_request_to_cloud_service(request,
-                                                    path,
-                                                    cloud_service_url=sidecar_config.BACKEND_SERVICE_URL,
-                                                    additional_headers=headers)
+    response = await proxy_request_to_cloud_service(
+        request,
+        path,
+        cloud_service_url=sidecar_config.BACKEND_SERVICE_URL,
+        additional_headers=headers,
+    )
 
     if write_route:
         return await patch_handler(response)
@@ -109,26 +111,38 @@ async def cloud_proxy(request: Request, path: str):
 
 
 # TODO: remove this once we migrate all clients
-@router.api_route("/sdk/{path:path}", methods=ALL_METHODS, summary="Old Proxy Endpoint", include_in_schema=False)
+@router.api_route(
+    "/sdk/{path:path}",
+    methods=ALL_METHODS,
+    summary="Old Proxy Endpoint",
+    include_in_schema=False,
+)
 async def old_proxy(request: Request, path: str):
-    return await proxy_request_to_cloud_service(request,
-                                                path,
-                                                cloud_service_url=sidecar_config.BACKEND_LEGACY_URL,
-                                                additional_headers={})
+    return await proxy_request_to_cloud_service(
+        request,
+        path,
+        cloud_service_url=sidecar_config.BACKEND_LEGACY_URL,
+        additional_headers={},
+    )
 
 
-async def proxy_request_to_cloud_service(request: Request, path: str, cloud_service_url: str, additional_headers: Dict[str, str]) -> Response:
+async def proxy_request_to_cloud_service(
+    request: Request,
+    path: str,
+    cloud_service_url: str,
+    additional_headers: Dict[str, str],
+) -> Response:
     auth_header = request.headers.get("Authorization")
     if auth_header is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Must provide a bearer token!",
-            headers={"WWW-Authenticate": "Bearer"}
+            headers={"WWW-Authenticate": "Bearer"},
         )
     path = f"{cloud_service_url}/{path}"
     params = dict(request.query_params) or {}
 
-    original_headers = {k.lower(): v for k,v in iter(dict(request.headers).items())}
+    original_headers = {k.lower(): v for k, v in iter(dict(request.headers).items())}
     headers = additional_headers
 
     # copy only required header
@@ -141,35 +155,47 @@ async def proxy_request_to_cloud_service(request: Request, path: str, cloud_serv
         headers["host"] = urlparse(cloud_service_url).netloc
     except Exception as e:
         # fallback
-        logger.error(f"could not urlparse cloud service url: {cloud_service_url}, exception: {e}")
+        logger.error(
+            f"could not urlparse cloud service url: {cloud_service_url}, exception: {e}"
+        )
 
     logger.info(f"Proxying request: {request.method} {path}")
 
     async with aiohttp.ClientSession() as session:
         if request.method == HTTP_GET:
-            async with session.get(path, headers=headers, params=params) as backend_response:
+            async with session.get(
+                path, headers=headers, params=params
+            ) as backend_response:
                 return await proxy_response(backend_response)
 
         if request.method == HTTP_DELETE:
-            async with session.delete(path, headers=headers, params=params) as backend_response:
+            async with session.delete(
+                path, headers=headers, params=params
+            ) as backend_response:
                 return await proxy_response(backend_response)
 
         # these methods has data payload
         data = await request.body()
 
         if request.method == HTTP_POST:
-            async with session.post(path, headers=headers, data=data, params=params) as backend_response:
+            async with session.post(
+                path, headers=headers, data=data, params=params
+            ) as backend_response:
                 return await proxy_response(backend_response)
 
         if request.method == HTTP_PUT:
-            async with session.put(path, headers=headers, data=data, params=params) as backend_response:
+            async with session.put(
+                path, headers=headers, data=data, params=params
+            ) as backend_response:
                 return await proxy_response(backend_response)
 
         if request.method == HTTP_PATCH:
-            async with session.patch(path, headers=headers, data=data, params=params) as backend_response:
+            async with session.patch(
+                path, headers=headers, data=data, params=params
+            ) as backend_response:
                 return await proxy_response(backend_response)
 
     raise HTTPException(
         status_code=status.HTTP_405_METHOD_NOT_ALLOWED,
-        detail="This method is not supported"
+        detail="This method is not supported",
     )
