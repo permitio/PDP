@@ -4,7 +4,7 @@ import logging
 from uuid import uuid4
 from typing import List
 
-from fastapi import FastAPI, status
+from fastapi import FastAPI, status, Depends
 from fastapi.responses import RedirectResponse
 from logzio.handler import LogzioHandler
 from opal_client.opa.options import OpaServerOptions
@@ -14,6 +14,7 @@ from opal_common.confi import Confi
 from opal_client.client import OpalClient
 from opal_client.config import OpaLogFormat, opal_common_config, opal_client_config
 
+from horizon.authentication import enforce_pdp_token
 from horizon.config import sidecar_config
 from horizon.enforcer.opa.config_maker import get_opa_authz_policy_file_path, get_opa_config_file_path
 from horizon.proxy.api import router as proxy_router
@@ -210,17 +211,17 @@ class PermitPDP:
         local_router = init_local_cache_api_router(policy_store=self._opal.policy_store)
 
         # include the api routes
-        app.include_router(enforcer_router, tags=["Authorization API"])
-        app.include_router(local_router, prefix="/local", tags=["Local Queries"])
-        app.include_router(proxy_router, tags=["Cloud API Proxy"])
+        app.include_router(enforcer_router, tags=["Authorization API"], dependencies=[Depends(enforce_pdp_token)])
+        app.include_router(local_router, prefix="/local", tags=["Local Queries"], dependencies=[Depends(enforce_pdp_token)])
+        app.include_router(proxy_router, tags=["Cloud API Proxy"], dependencies=[Depends(enforce_pdp_token)])
 
         # TODO: remove this when clients update sdk version (legacy routes)
-        @app.post("/update_policy", status_code=status.HTTP_200_OK, include_in_schema=False)
+        @app.post("/update_policy", status_code=status.HTTP_200_OK, include_in_schema=False, dependencies=[Depends(enforce_pdp_token)])
         async def legacy_trigger_policy_update():
             response = RedirectResponse(url='/policy-updater/trigger')
             return response
 
-        @app.post("/update_policy_data", status_code=status.HTTP_200_OK, include_in_schema=False)
+        @app.post("/update_policy_data", status_code=status.HTTP_200_OK, include_in_schema=False, dependencies=[Depends(enforce_pdp_token)])
         async def legacy_trigger_data_update():
             response = RedirectResponse(url='/data-updater/trigger')
             return response
