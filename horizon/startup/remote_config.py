@@ -1,9 +1,9 @@
-import requests
 from typing import Optional
 
-from tenacity import retry, wait, stop, retry_if_not_exception_type
-from pydantic import ValidationError
+import requests
 from opal_common.logger import logger
+from pydantic import ValidationError
+from tenacity import retry, retry_if_not_exception_type, stop, wait
 
 from horizon.config import sidecar_config
 from horizon.startup.schemas import RemoteConfig
@@ -49,11 +49,12 @@ class RemoteConfigFetcher:
     know the proper topic name. Otherwise opal client will receive updates for all
     organizations (which is not secure).
     """
+
     DEFAULT_RETRY_CONFIG = {
-        'retry': retry_if_not_exception_type(InvalidPDPTokenException),
-        'wait': wait.wait_random_exponential(max=10),
-        'stop': stop.stop_after_attempt(10),
-        'reraise': True,
+        "retry": retry_if_not_exception_type(InvalidPDPTokenException),
+        "wait": wait.wait_random_exponential(max=10),
+        "stop": stop.stop_after_attempt(10),
+        "reraise": True,
     }
 
     def __init__(
@@ -61,7 +62,7 @@ class RemoteConfigFetcher:
         backend_url: str = sidecar_config.BACKEND_SERVICE_URL,
         sidecar_access_token: str = sidecar_config.API_KEY,
         remote_config_route: str = sidecar_config.REMOTE_CONFIG_ENDPOINT,
-        retry_config = None,
+        retry_config=None,
     ):
         """
         inits the RemoteConfigFetcher.
@@ -73,7 +74,9 @@ class RemoteConfigFetcher:
         """
         self._url = f"{backend_url}/{remote_config_route}"
         self._token = sidecar_access_token
-        self._retry_config = retry_config if retry_config is not None else self.DEFAULT_RETRY_CONFIG
+        self._retry_config = (
+            retry_config if retry_config is not None else self.DEFAULT_RETRY_CONFIG
+        )
 
     def fetch_config(self) -> Optional[RemoteConfig]:
         """
@@ -104,13 +107,18 @@ class RemoteConfigFetcher:
 
             try:
                 sidecar_config = RemoteConfig(**response)
-                config_context = sidecar_config.dict(include={'context'}).get('context', {})
-                logger.info(f"Received remote config with the following context: {config_context}")
+                config_context = sidecar_config.dict(include={"context"}).get(
+                    "context", {}
+                )
+                logger.info(
+                    f"Received remote config with the following context: {config_context}"
+                )
             except ValidationError as exc:
-                logger.error("Got invalid config contents: {exc}", exc=exc, response=response)
+                logger.error(
+                    "Got invalid config contents: {exc}", exc=exc, response=response
+                )
                 raise
             return sidecar_config
         except requests.RequestException as exc:
             logger.error("Got exception: {exc}", exc=exc)
             raise
-

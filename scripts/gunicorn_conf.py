@@ -22,4 +22,5 @@ def post_fork(server, worker):
         labels.update({"user": user})
 
     import rook
+
     rook.start(token=rookout_token, labels=labels)

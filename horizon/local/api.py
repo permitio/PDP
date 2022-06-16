@@ -1,12 +1,13 @@
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, status, HTTPException, Depends
-from opal_client.policy_store import BasePolicyStoreClient, DEFAULT_POLICY_STORE_GETTER
+from fastapi import APIRouter, Depends, HTTPException, status
+from opal_client.policy_store import DEFAULT_POLICY_STORE_GETTER, BasePolicyStoreClient
 
 from horizon.authentication import enforce_pdp_token
 from horizon.local.schemas import Message, SyncedRole, SyncedUser
 
-def init_local_cache_api_router(policy_store:BasePolicyStoreClient=None):
+
+def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
     policy_store = policy_store or DEFAULT_POLICY_STORE_GETTER()
     router = APIRouter(dependencies=[Depends(enforce_pdp_token)])
 
@@ -22,7 +23,7 @@ def init_local_cache_api_router(policy_store:BasePolicyStoreClient=None):
         if result is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"user with id '{user_id}' was not found in OPA cache! (not synced)"
+                detail=f"user with id '{user_id}' was not found in OPA cache! (not synced)",
             )
         return result
 
@@ -34,13 +35,14 @@ def init_local_cache_api_router(policy_store:BasePolicyStoreClient=None):
             return None
         return f"{resource}:{action}"
 
-
     @router.get(
         "/users/{user_id}",
         response_model=SyncedUser,
         responses={
-            404: error_message("User not found (i.e: not synced to Authorization service)"),
-        }
+            404: error_message(
+                "User not found (i.e: not synced to Authorization service)"
+            ),
+        },
     )
     async def get_user(user_id: str):
         """
@@ -49,8 +51,8 @@ def init_local_cache_api_router(policy_store:BasePolicyStoreClient=None):
         If user does not exist in OPA cache (i.e: not synced), returns 404.
         """
         result = await get_data_for_synced_user(user_id)
-        roles=result.get("roles", [])
-        roles=[
+        roles = result.get("roles", [])
+        roles = [
             SyncedRole(
                 id=r.get("id"),
                 name=r.get("name"),
@@ -72,7 +74,7 @@ def init_local_cache_api_router(policy_store:BasePolicyStoreClient=None):
         response_model=List[SyncedUser],
         responses={
             404: error_message("OPA has no users stored in cache"),
-        }
+        },
     )
     async def list_users():
         """
@@ -85,12 +87,12 @@ def init_local_cache_api_router(policy_store:BasePolicyStoreClient=None):
         if result is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"OPA has no users stored in cache! Did you synced users yet via the sdk or the cloud console?"
+                detail=f"OPA has no users stored in cache! Did you synced users yet via the sdk or the cloud console?",
             )
         users = []
         for user_id, user_data in iter(result.items()):
-            roles=user_data.get("roles", [])
-            roles=[
+            roles = user_data.get("roles", [])
+            roles = [
                 SyncedRole(
                     id=r.get("id"),
                     name=r.get("name"),
@@ -113,8 +115,10 @@ def init_local_cache_api_router(policy_store:BasePolicyStoreClient=None):
         "/users/{user_id}/roles",
         response_model=List[SyncedRole],
         responses={
-            404: error_message("User not found (i.e: not synced to Authorization service)"),
-        }
+            404: error_message(
+                "User not found (i.e: not synced to Authorization service)"
+            ),
+        },
     )
     async def get_user_roles(user_id: str):
         """
@@ -126,9 +130,9 @@ def init_local_cache_api_router(policy_store:BasePolicyStoreClient=None):
         result = await get_data_for_synced_user(user_id)
         # will issue *another* opa request to list all roles, not just the roles for this user
         cached_roles: List[SyncedRole] = await list_roles()
-        role_data = {role.id: role for role in cached_roles }
+        role_data = {role.id: role for role in cached_roles}
 
-        raw_roles=result.get("roles", [])
+        raw_roles = result.get("roles", [])
 
         roles = []
         for r in raw_roles:
@@ -148,8 +152,10 @@ def init_local_cache_api_router(policy_store:BasePolicyStoreClient=None):
         "/users/{user_id}/tenants",
         response_model=List[str],
         responses={
-            404: error_message("User not found (i.e: not synced to Authorization service)"),
-        }
+            404: error_message(
+                "User not found (i.e: not synced to Authorization service)"
+            ),
+        },
     )
     async def get_user_tenants(user_id: str):
         """
@@ -171,7 +177,7 @@ def init_local_cache_api_router(policy_store:BasePolicyStoreClient=None):
         response_model=List[SyncedRole],
         responses={
             404: error_message("OPA has no roles stored in cache"),
-        }
+        },
     )
     async def list_roles():
         """
@@ -182,18 +188,20 @@ def init_local_cache_api_router(policy_store:BasePolicyStoreClient=None):
         if result is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"OPA has no roles stored in cache! Did you define roles yet via the sdk or the cloud console?"
+                detail=f"OPA has no roles stored in cache! Did you define roles yet via the sdk or the cloud console?",
             )
         roles = []
         for role_id, role_data in iter(result.items()):
-            permissions = [permission_shortname(p) for p in role_data.get("permissions", [])]
+            permissions = [
+                permission_shortname(p) for p in role_data.get("permissions", [])
+            ]
             permissions = [p for p in permissions if p is not None]
             roles.append(
                 SyncedRole(
                     id=role_id,
                     name=role_data.get("name"),
                     metadata=role_data.get("metadata", {}),
-                    permissions=permissions
+                    permissions=permissions,
                 )
             )
         return roles
@@ -203,7 +211,7 @@ def init_local_cache_api_router(policy_store:BasePolicyStoreClient=None):
         response_model=SyncedRole,
         responses={
             404: error_message("Role not found"),
-        }
+        },
     )
     async def get_role_by_id(role_id: str):
         """
@@ -220,15 +228,17 @@ def init_local_cache_api_router(policy_store:BasePolicyStoreClient=None):
         if role_data is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"No such role in OPA cache!"
+                detail=f"No such role in OPA cache!",
             )
-        permissions = [permission_shortname(p) for p in role_data.get("permissions", [])]
+        permissions = [
+            permission_shortname(p) for p in role_data.get("permissions", [])
+        ]
         permissions = [p for p in permissions if p is not None]
         role = SyncedRole(
             id=role_id,
             name=role_data.get("name"),
             metadata=role_data.get("metadata", {}),
-            permissions=permissions
+            permissions=permissions,
         )
         return role
 
@@ -237,7 +247,7 @@ def init_local_cache_api_router(policy_store:BasePolicyStoreClient=None):
         response_model=SyncedRole,
         responses={
             404: error_message("Role not found"),
-        }
+        },
     )
     async def get_role_by_name(role_name: str):
         """
@@ -254,22 +264,24 @@ def init_local_cache_api_router(policy_store:BasePolicyStoreClient=None):
         if result is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"OPA has no roles stored in cache!"
+                detail=f"OPA has no roles stored in cache!",
             )
         for role_id, role_data in iter(result.items()):
             name = role_data.get("name")
             if name is None or name != role_name:
                 continue
-            permissions = [permission_shortname(p) for p in role_data.get("permissions", [])]
+            permissions = [
+                permission_shortname(p) for p in role_data.get("permissions", [])
+            ]
             permissions = [p for p in permissions if p is not None]
             return SyncedRole(
                 id=role_id,
                 name=name,
                 metadata=role_data.get("metadata", {}),
-                permissions=permissions
+                permissions=permissions,
             )
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No such role in OPA cache!"
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"No such role in OPA cache!"
         )
+
     return router
