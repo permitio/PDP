@@ -3,8 +3,11 @@ from typing import Dict, Optional
 
 from fastapi import APIRouter, Depends, Response, status
 from opal_client.logger import logger
-from opal_client.policy_store import DEFAULT_POLICY_STORE_GETTER, BasePolicyStoreClient
+from opal_client.policy_store.base_policy_store_client import BasePolicyStoreClient
 from opal_client.policy_store.opa_client import fail_silently
+from opal_client.policy_store.policy_store_client_factory import (
+    DEFAULT_POLICY_STORE_GETTER,
+)
 
 from horizon.authentication import enforce_pdp_token
 from horizon.config import sidecar_config
