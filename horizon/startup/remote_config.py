@@ -1,7 +1,9 @@
 import requests
 from typing import Optional
 
-from tenacity import retry, wait, stop, retry_if_not_exception_type
+# TODO: readd after we release the new version of opal (should be next week)
+#from tenacity import retry, wait, stop, retry_if_not_exception_type
+from tenacity import retry, wait, stop
 from pydantic import ValidationError
 from opal_common.logger import logger
 
@@ -50,7 +52,8 @@ class RemoteConfigFetcher:
     organizations (which is not secure).
     """
     DEFAULT_RETRY_CONFIG = {
-        'retry': retry_if_not_exception_type(InvalidPDPTokenException),
+        # TODO: readd after we release the new version of opal (should be next week)
+        # 'retry': retry_if_not_exception_type(InvalidPDPTokenException),
         'wait': wait.wait_random_exponential(max=10),
         'stop': stop.stop_after_attempt(10),
         'reraise': True,
