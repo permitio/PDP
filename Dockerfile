@@ -21,12 +21,17 @@ RUN pip install --upgrade pip && pip install --user -r requirements.txt
 # most of the time only this image should be built
 # ---------------------------------------------------
 FROM python:3.8-slim-bullseye
+# setup optional testing repo for newer packages
+COPY docker-files/testing.list /etc/apt/sources.list.d/
+COPY docker-files/testing.prefs /etc/apt/preferences.d/
 # update apt
 RUN apt-get update
 # bash is needed for ./start/sh script
 RUN apt-get -y install curl
 # needed for rookout
 RUN apt-get -y install --fix-missing gcc g++ python3-dev
+# install newer pcre2 to resolve CVE-2022-1586
+RUN apt-get -y install -t testing libpcre2-8-0
 # copy opa from official image (main binary and lib for web assembly)
 RUN curl -L -o /opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static && chmod 755 /opa
 # copy libraries from build stage
