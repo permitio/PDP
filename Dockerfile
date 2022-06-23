@@ -1,14 +1,15 @@
 # BUILD STAGE ---------------------------------------
 # split this stage to save time and reduce image size
 # ---------------------------------------------------
-FROM python:3.8-alpine3.11 as BuildStage
-# update apk cache
-RUN apk update
+FROM python:3.8-slim-bullseye as BuildStage
+# update apt
+RUN apt-get update
 # TODO: remove this when upgrading to a new alpine version
 # more details: https://github.com/pyca/cryptography/issues/5771
 ENV CRYPTOGRAPHY_DONT_BUILD_RUST=1
 # install linux libraries necessary to compile some python packages
-RUN apk add --update --no-cache --virtual .build-deps gcc git build-base alpine-sdk python3-dev musl-dev postgresql-dev libffi-dev libressl-dev
+# TODO ask asaf about postgres 11
+RUN apt-get install --fix-missing -y gcc git make python3-dev libpq-dev libffi-dev libssl-dev g++
 # from now on, work in the /app directory
 WORKDIR /app/
 # Layer dependency install (for caching)
@@ -19,11 +20,18 @@ RUN pip install --upgrade pip && pip install --user -r requirements.txt
 # MAIN IMAGE ----------------------------------------
 # most of the time only this image should be built
 # ---------------------------------------------------
-FROM python:3.8-alpine3.11
+FROM python:3.8-slim-bullseye
+# setup optional testing repo for newer packages
+COPY docker-files/testing.list /etc/apt/sources.list.d/
+COPY docker-files/testing.prefs /etc/apt/preferences.d/
+# update apt
+RUN apt-get update
 # bash is needed for ./start/sh script
-RUN apk add --update --no-cache bash curl
+RUN apt-get -y install curl
 # needed for rookout
-RUN apk add g++ python3-dev linux-headers
+RUN apt-get -y install --fix-missing gcc g++ python3-dev
+# install newer pcre2 to resolve CVE-2022-1586
+RUN apt-get -y install -t testing libpcre2-8-0
 # copy opa from official image (main binary and lib for web assembly)
 RUN curl -L -o /opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static && chmod 755 /opa
 # copy libraries from build stage
