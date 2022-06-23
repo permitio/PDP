@@ -1,26 +1,27 @@
-import sys
 import logging
-
-from uuid import uuid4
+import sys
 from typing import List
+from uuid import uuid4
 
-from fastapi import FastAPI, status
+from fastapi import Depends, FastAPI, status
 from fastapi.responses import RedirectResponse
 from logzio.handler import LogzioHandler
-from opal_client.opa.options import OpaServerOptions
-
-from opal_common.logger import logger, Formatter
-from opal_common.confi import Confi
 from opal_client.client import OpalClient
-from opal_client.config import OpaLogFormat, opal_common_config, opal_client_config
+from opal_client.config import OpaLogFormat, opal_client_config, opal_common_config
+from opal_client.opa.options import OpaServerOptions
+from opal_common.confi import Confi
+from opal_common.logger import Formatter, logger
 
+from horizon.authentication import enforce_pdp_token
 from horizon.config import sidecar_config
-from horizon.enforcer.opa.config_maker import get_opa_authz_policy_file_path, get_opa_config_file_path
-from horizon.proxy.api import router as proxy_router
 from horizon.enforcer.api import init_enforcer_api_router
+from horizon.enforcer.opa.config_maker import (
+    get_opa_authz_policy_file_path,
+    get_opa_config_file_path,
+)
 from horizon.local.api import init_local_cache_api_router
+from horizon.proxy.api import router as proxy_router
 from horizon.startup.remote_config import RemoteConfigFetcher
-
 
 OPA_LOGGER_MODULE = "opal_client.opa.logger"
 
@@ -36,6 +37,7 @@ def apply_config(overrides_dict: dict, config_object: Confi):
             logger.info(f"Overriden config key: {prefixed_key}")
         else:
             logger.warning(f"Ignored non-existing config key: {prefixed_key}")
+
 
 class PermitPDP:
     """
@@ -58,20 +60,26 @@ class PermitPDP:
     - local api (wrappers on top of opa cache)
     - enforcer api (implementation of is_allowed())
     """
+
     def __init__(self):
         self._setup_temp_logger()
         # fetch and apply config override from cloud control plane
         remote_config = RemoteConfigFetcher().fetch_config()
 
         if not remote_config:
-            logger.warning("Could not fetch config from cloud control plane, reverting to local config!")
+            logger.warning(
+                "Could not fetch config from cloud control plane, reverting to local config!"
+            )
         else:
             logger.info("Applying config overrides from cloud control plane...")
             apply_config(remote_config.opal_common or {}, opal_common_config)
             apply_config(remote_config.opal_client or {}, opal_client_config)
             apply_config(remote_config.pdp or {}, sidecar_config)
 
-        if sidecar_config.OPA_BEARER_TOKEN_REQUIRED or sidecar_config.OPA_DECISION_LOG_ENABLED:
+        if (
+            sidecar_config.OPA_BEARER_TOKEN_REQUIRED
+            or sidecar_config.OPA_DECISION_LOG_ENABLED
+        ):
             # we need to pass to OPAL a custom inline OPA config to enable these features
             self._configure_inline_opa_config()
 
@@ -117,7 +125,8 @@ class PermitPDP:
         """
         patch fastapi to enable tracing and monitoring
         """
-        from ddtrace import patch, config
+        from ddtrace import config, patch
+
         # Datadog APM
         patch(fastapi=True)
         # Override service name
@@ -128,8 +137,13 @@ class PermitPDP:
         if not sidecar_config.CENTRAL_LOG_ENABLED:
             return
 
-        if not sidecar_config.CENTRAL_LOG_TOKEN or len(sidecar_config.CENTRAL_LOG_TOKEN) == 0:
-            logger.warning("Centralized log is enabled, but token is not valid. Disabling sink.")
+        if (
+            not sidecar_config.CENTRAL_LOG_TOKEN
+            or len(sidecar_config.CENTRAL_LOG_TOKEN) == 0
+        ):
+            logger.warning(
+                "Centralized log is enabled, but token is not valid. Disabling sink."
+            )
             return
 
         logzio_handler = LogzioHandler(
@@ -152,13 +166,13 @@ class PermitPDP:
             serialize=True,
             level=logging.INFO,
             format=formatter.format,
-            colorize=False, # no colors
-            enqueue=True, # make sure logging to cloud is done asyncronously and thread-safe
-            catch=True, # if sink throws exceptions, swallow them as not critical
+            colorize=False,  # no colors
+            enqueue=True,  # make sure logging to cloud is done asyncronously and thread-safe
+            catch=True,  # if sink throws exceptions, swallow them as not critical
         )
 
     def _configure_inline_opa_config(self):
-        inline_opa_config={}
+        inline_opa_config = {}
 
         if sidecar_config.OPA_DECISION_LOG_ENABLED:
             # decision logs needs to be configured via the config file
@@ -173,11 +187,13 @@ class PermitPDP:
 
             # append the bearer token authz policy to inline OPA config
             auth_policy_file_path = get_opa_authz_policy_file_path(sidecar_config)
-            inline_opa_config.update({
-                "authorization":"basic",
-                "authentication":"token",
-                "files":[auth_policy_file_path]
-            })
+            inline_opa_config.update(
+                {
+                    "authorization": "basic",
+                    "authentication": "token",
+                    "files": [auth_policy_file_path],
+                }
+            )
 
         logger.debug(f"setting OPAL_INLINE_OPA_CONFIG={inline_opa_config}")
 
@@ -194,9 +210,11 @@ class PermitPDP:
 
     def _override_app_metadata(self, app: FastAPI):
         app.title = "Permit.io PDP"
-        app.description = "The PDP (Policy decision point) container wraps Open Policy Agent (OPA) with a higher-level API intended for fine grained " + \
-            "application-level authorization. The PDP automatically handles pulling policy updates in real-time " + \
-            "from a centrally managed cloud-service (api.permit.io)."
+        app.description = (
+            "The PDP (Policy decision point) container wraps Open Policy Agent (OPA) with a higher-level API intended for fine grained "
+            + "application-level authorization. The PDP automatically handles pulling policy updates in real-time "
+            + "from a centrally managed cloud-service (api.permit.io)."
+        )
         app.version = "0.2.0"
         app.openapi_tags = sidecar_config.OPENAPI_TAGS_METADATA
         return app
@@ -210,19 +228,42 @@ class PermitPDP:
         local_router = init_local_cache_api_router(policy_store=self._opal.policy_store)
 
         # include the api routes
-        app.include_router(enforcer_router, tags=["Authorization API"])
-        app.include_router(local_router, prefix="/local", tags=["Local Queries"])
-        app.include_router(proxy_router, tags=["Cloud API Proxy"])
+        app.include_router(
+            enforcer_router,
+            tags=["Authorization API"],
+            dependencies=[Depends(enforce_pdp_token)],
+        )
+        app.include_router(
+            local_router,
+            prefix="/local",
+            tags=["Local Queries"],
+            dependencies=[Depends(enforce_pdp_token)],
+        )
+        app.include_router(
+            proxy_router,
+            tags=["Cloud API Proxy"],
+            dependencies=[Depends(enforce_pdp_token)],
+        )
 
         # TODO: remove this when clients update sdk version (legacy routes)
-        @app.post("/update_policy", status_code=status.HTTP_200_OK, include_in_schema=False)
+        @app.post(
+            "/update_policy",
+            status_code=status.HTTP_200_OK,
+            include_in_schema=False,
+            dependencies=[Depends(enforce_pdp_token)],
+        )
         async def legacy_trigger_policy_update():
-            response = RedirectResponse(url='/policy-updater/trigger')
+            response = RedirectResponse(url="/policy-updater/trigger")
             return response
 
-        @app.post("/update_policy_data", status_code=status.HTTP_200_OK, include_in_schema=False)
+        @app.post(
+            "/update_policy_data",
+            status_code=status.HTTP_200_OK,
+            include_in_schema=False,
+            dependencies=[Depends(enforce_pdp_token)],
+        )
         async def legacy_trigger_data_update():
-            response = RedirectResponse(url='/data-updater/trigger')
+            response = RedirectResponse(url="/data-updater/trigger")
             return response
 
     @property
