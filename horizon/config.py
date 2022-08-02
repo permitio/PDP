@@ -1,5 +1,3 @@
-import os
-
 from opal_common.confi import Confi, confi
 
 
@@ -19,7 +17,7 @@ class SidecarConfig(Confi):
     )
 
     # backend route to fetch policy data topics
-    REMOTE_CONFIG_ENDPOINT = confi.str("REMOTE_CONFIG_ENDPOINT", "pdps/me/config")
+    REMOTE_CONFIG_ENDPOINT = confi.str("REMOTE_CONFIG_ENDPOINT", "/v1/pdps/me/config")
 
     # access token to access backend api
     API_KEY = confi.str("API_KEY", "PJUKkuwiJkKxbIoC4o4cguWxB_2gX6MyATYKc2OCM")
@@ -96,13 +94,13 @@ class SidecarConfig(Confi):
         {
             "name": "Authorization API",
             "description": "Authorization queries to OPA. These queries are answered locally by OPA "
-            + "and do not require the cloud service. Latency should be very low (< 20ms per query)",
+                           + "and do not require the cloud service. Latency should be very low (< 20ms per query)",
         },
         {
             "name": "Local Queries",
             "description": "These queries are done locally against the sidecar and do not "
-            + "involve a network round-trip to Permit.io cloud API. Therefore they are safe "
-            + "to use with reasonable performance (i.e: with negligible latency) in the context of a user request.",
+                           + "involve a network round-trip to Permit.io cloud API. Therefore they are safe "
+                           + "to use with reasonable performance (i.e: with negligible latency) in the context of a user request.",
         },
         {
             "name": "Policy Updater",
@@ -111,10 +109,10 @@ class SidecarConfig(Confi):
         {
             "name": "Cloud API Proxy",
             "description": "These endpoints proxy the Permit.io cloud api, and therefore **incur high-latency**. "
-            + "You should not use the cloud API in the standard request flow of users, i.e in places where the incurred "
-            + "added latency will affect your entire api. A good place to call the cloud API will be in one-time user events "
-            + "such as user registration (i.e: calling sync user, assigning initial user roles, etc.). "
-            + "The sidecar will proxy to the cloud every request prefixed with '/sdk'.",
+                           + "You should not use the cloud API in the standard request flow of users, i.e in places where the incurred "
+                           + "added latency will affect your entire api. A good place to call the cloud API will be in one-time user events "
+                           + "such as user registration (i.e: calling sync user, assigning initial user roles, etc.). "
+                           + "The sidecar will proxy to the cloud every request prefixed with '/sdk'.",
             "externalDocs": {
                 "description": "The cloud api complete docs are located here:",
                 "url": "https://api.permit.io/redoc",

@@ -59,7 +59,7 @@ class RemoteConfigFetcher:
 
     def __init__(
         self,
-        backend_url: str = sidecar_config.BACKEND_SERVICE_URL,
+        backend_url: str = sidecar_config.CONTROL_PLANE,
         sidecar_access_token: str = sidecar_config.API_KEY,
         remote_config_route: str = sidecar_config.REMOTE_CONFIG_ENDPOINT,
         retry_config=None,
@@ -72,7 +72,7 @@ class RemoteConfigFetcher:
             sidecar_access_token (string, optional): access token identifying this client (sidecar) to the backend
             remote_config_route (string, optional): api route to fetch sidecar config
         """
-        self._url = f"{backend_url}/{remote_config_route}"
+        self._url = f"{backend_url}{remote_config_route}"
         self._token = sidecar_access_token
         self._retry_config = (
             retry_config if retry_config is not None else self.DEFAULT_RETRY_CONFIG
