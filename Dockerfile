@@ -8,13 +8,17 @@ RUN apk update
 # more details: https://github.com/pyca/cryptography/issues/5771
 ENV CRYPTOGRAPHY_DONT_BUILD_RUST=1
 # install linux libraries necessary to compile some python packages
-RUN apk add --update --no-cache --virtual .build-deps gcc git build-base alpine-sdk python3-dev musl-dev postgresql-dev libffi-dev libressl-dev
+RUN apk add --update --no-cache --virtual .build-deps gcc git build-base alpine-sdk python3-dev musl-dev postgresql-dev libffi-dev libressl-dev grep
 # from now on, work in the /app directory
 WORKDIR /app/
 # Layer dependency install (for caching)
+RUN git clone https://github.com/permitio/opal.git
+RUN cat opal/packages/opal-common/requires.txt | grep -v tenacity > /tmp/req.txt
+RUN mv /tmp/req.txt opal/packages/opal-common/requires.txt
 COPY requirements.txt requirements.txt
 # install python deps
 RUN pip install --upgrade pip && pip install --user -r requirements.txt
+RUN cd opal/packages/opal-common && python setup.py install --user
 
 # MAIN IMAGE ----------------------------------------
 # most of the time only this image should be built
