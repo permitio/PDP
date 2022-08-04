@@ -3,7 +3,7 @@ from typing import Optional
 import requests
 from opal_common.logger import logger
 from pydantic import ValidationError
-from tenacity import retry, retry_if_not_exception_type, stop, wait
+from tenacity import retry, stop, wait # retry_if_not_exception_type
 
 from horizon.config import sidecar_config
 from horizon.startup.schemas import RemoteConfig
@@ -51,7 +51,7 @@ class RemoteConfigFetcher:
     """
 
     DEFAULT_RETRY_CONFIG = {
-        "retry": retry_if_not_exception_type(InvalidPDPTokenException),
+        # "retry": retry_if_not_exception_type(InvalidPDPTokenException),
         "wait": wait.wait_random_exponential(max=10),
         "stop": stop.stop_after_attempt(10),
         "reraise": True,
