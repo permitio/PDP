@@ -35,7 +35,7 @@ class AuthorizationQuery(BaseSchema):
 
 class ProcessedQuery(BaseSchema):
     user: Dict[str, Any]
-    action: str
+    action: Dict[str, Any]
     resource: Dict[str, Any]
 
 

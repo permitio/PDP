@@ -29,7 +29,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
     def log_query_and_result(query: AuthorizationQuery, response: Response):
         params = "({}, {}, {})".format(query.user.key, query.action, query.resource.type)
         try:
-            result: dict = json.loads(response.body).get("result", {})
+            result: dict = json_response.get("result", {})
             allowed = result.get("allow", False)
             permission = None
             granting_role = None
@@ -76,7 +76,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             )
         except:
             try:
-                body = str(response.body, "utf-8")
+                body = raw_response
             except:
                 body = None
             data = {} if body is None else {"response_body": body}
@@ -84,7 +84,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
                 "is allowed",
                 params=params,
                 query=query.dict(),
-                response_status=response.status_code,
+                response_status=status_code,
                 **data
             )
 
@@ -125,14 +125,14 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
                 logger.warning("OPA client error: {err}", err=repr(e))
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=repr(e))
 
-        fallback_response = dict(result=dict(allow=False, debug="OPA not responding"))
+        fallback_response = (dict(result=dict(allow=False, debug="OPA not responding")), "", 500)
         is_allowed_with_fallback = fail_silently(fallback=fallback_response)(
             _is_allowed
         )
-        response = await is_allowed_with_fallback()
-        log_query_and_result(query, response)
+        json_response, raw_response, status_code = await is_allowed_with_fallback()
+        log_query_and_result(query, json_response, raw_response, status_code)
         try:
-            raw_result = json.loads(response.body).get("result", {})
+            raw_result = json_response.get("result", {})
             processed_query = raw_result.get("authorization_query", {})
             result = {
                 "allow": raw_result.get("allow", False),
