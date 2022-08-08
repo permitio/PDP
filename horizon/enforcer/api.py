@@ -1,23 +1,21 @@
-from http.client import HTTPException
 import json
-import aiohttp
-
+from http.client import HTTPException
 from typing import Dict, Optional
 
-from fastapi import APIRouter, Depends, Response, status, Request
+import aiohttp
+from fastapi import APIRouter, Depends, Request, Response, status
+from opal_client.config import opal_client_config
 from opal_client.logger import logger
 from opal_client.policy_store.base_policy_store_client import BasePolicyStoreClient
 from opal_client.policy_store.opa_client import fail_silently
 from opal_client.policy_store.policy_store_client_factory import (
     DEFAULT_POLICY_STORE_GETTER,
 )
-from opal_client.config import opal_client_config
 from opal_client.utils import proxy_response
 
 from horizon.authentication import enforce_pdp_token
 from horizon.config import sidecar_config
 from horizon.enforcer.schemas import AuthorizationQuery, AuthorizationResult
-
 
 AUTHZ_HEADER = "Authorization"
 
@@ -27,7 +25,9 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
     router = APIRouter(dependencies=[Depends(enforce_pdp_token)])
 
     def log_query_and_result(query: AuthorizationQuery, response: Response):
-        params = "({}, {}, {})".format(query.user.key, query.action, query.resource.type)
+        params = "({}, {}, {})".format(
+            query.user.key, query.action, query.resource.type
+        )
         try:
             result: dict = json.loads(response.body).get("result", {})
             allowed = result.get("allow", False)
@@ -85,7 +85,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
                 params=params,
                 query=query.dict(),
                 response_status=response.status_code,
-                **data
+                **data,
             )
 
     @router.post(
@@ -96,29 +96,35 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
     )
     async def is_allowed(request: Request, query: AuthorizationQuery):
         async def _is_allowed():
-            opa_input = {
-                "input": query.dict()
-            }
+            opa_input = {"input": query.dict()}
             authorization: str = request.headers.get(AUTHZ_HEADER, "")
             parts = authorization.split(" ")
             if len(parts) != 2:
-                raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail=f"bad authz header: {authorization}")
+                raise HTTPException(
+                    status.HTTP_401_UNAUTHORIZED,
+                    detail=f"bad authz header: {authorization}",
+                )
             schema, token = parts
             if schema.strip().lower() != "bearer":
-                raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid PDP token")
+                raise HTTPException(
+                    status.HTTP_401_UNAUTHORIZED, detail="Invalid PDP token"
+                )
 
             path = "permit/rbac"
             if path.startswith("/"):
                 path = path[1:]
             url = f"{opal_client_config.POLICY_STORE_URL}/v1/data/{path}"
-            headers = {AUTHZ_HEADER: f"Bearer {token}", "Content-Type": "application/json"}
+            headers = {
+                AUTHZ_HEADER: f"Bearer {token}",
+                "Content-Type": "application/json",
+            }
             try:
-                logger.info(f"calling OPA at '{url}' with input: {opa_input} and headers: {headers}")
+                logger.info(
+                    f"calling OPA at '{url}' with input: {opa_input} and headers: {headers}"
+                )
                 async with aiohttp.ClientSession() as session:
                     async with session.post(
-                        url,
-                        data=json.dumps(opa_input),
-                        headers=headers
+                        url, data=json.dumps(opa_input), headers=headers
                     ) as opa_response:
                         return await proxy_response(opa_response)
             except aiohttp.ClientError as e:

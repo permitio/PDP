@@ -16,6 +16,7 @@ class User(BaseSchema):
     email: Optional[str] = None
     attributes: Optional[Dict[str, Any]] = {}
 
+
 class Resource(BaseSchema):
     type: str
     key: Optional[str] = None
@@ -23,10 +24,12 @@ class Resource(BaseSchema):
     attributes: Optional[Dict[str, Any]] = {}
     context: Optional[Dict[str, Any]] = {}
 
+
 class AuthorizationQuery(BaseSchema):
     """
     the format of is_allowed() input
     """
+
     user: User
     action: str
     resource: Resource

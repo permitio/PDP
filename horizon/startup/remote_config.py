@@ -3,7 +3,7 @@ from typing import Optional
 import requests
 from opal_common.logger import logger
 from pydantic import ValidationError
-from tenacity import retry, stop, wait # retry_if_not_exception_type
+from tenacity import retry, stop, wait  # retry_if_not_exception_type
 
 from horizon.config import sidecar_config
 from horizon.startup.schemas import RemoteConfig
