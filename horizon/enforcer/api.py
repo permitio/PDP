@@ -110,7 +110,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
                     status.HTTP_401_UNAUTHORIZED, detail="Invalid PDP token"
                 )
 
-            path = "permit/rbac"
+            path = "permit/root"
             if path.startswith("/"):
                 path = path[1:]
             url = f"{opal_client_config.POLICY_STORE_URL}/v1/data/{path}"
