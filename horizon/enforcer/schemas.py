@@ -36,21 +36,8 @@ class AuthorizationQuery(BaseSchema):
     context: Optional[Dict[str, Any]] = {}
 
 
-class ProcessedQuery(BaseSchema):
-    user: Dict[str, Any]
-    action: str
-    resource: Dict[str, Any]
-
-
-class DebugInformation(BaseSchema):
-    warnings: Optional[List[str]]
-    user_roles: Optional[List[Dict[str, Any]]]
-    granting_permission: Optional[List[Dict[str, Any]]]
-    user_permissions: Optional[List[Dict[str, Any]]]
-
-
 class AuthorizationResult(BaseSchema):
     allow: bool = False
-    query: Optional[ProcessedQuery]
-    debug: Optional[DebugInformation]
+    query: Optional[dict]
+    debug: Optional[dict]
     result: bool = False  # fallback for older sdks (TODO: remove)
