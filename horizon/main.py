@@ -231,8 +231,8 @@ class PermitPDP:
         app.include_router(
             enforcer_router,
             tags=["Authorization API"],
-            dependencies=[Depends(enforce_pdp_token)],
         )
+
         app.include_router(
             local_router,
             prefix="/local",

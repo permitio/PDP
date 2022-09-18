@@ -1,4 +1,5 @@
 import json
+import re
 from http.client import HTTPException
 from typing import Dict, Optional
 
@@ -15,10 +16,17 @@ from opal_client.utils import proxy_response
 
 from horizon.authentication import enforce_pdp_token
 from horizon.config import sidecar_config
-from horizon.enforcer.schemas import AuthorizationQuery, AuthorizationResult
+from horizon.enforcer.schemas import (
+    AuthorizationQuery,
+    AuthorizationResult,
+    KongAuthorizationInput,
+    KongAuthorizationQuery,
+    KongAuthorizationResult,
+)
 
 AUTHZ_HEADER = "Authorization"
 MAIN_POLICY_PACKAGE = "permit.root"
+KONG_ROUTES_TABLE_FILE = "/kong_routes.json"
 
 
 def extract_pdp_api_key(request: Request) -> str:
@@ -84,6 +92,49 @@ def log_query_result(query: AuthorizationQuery, response: Response):
         )
 
 
+def log_query_result_kong(input: KongAuthorizationInput, response: Response):
+    """
+    formats a nice log to default logger with the results of permit.check()
+    """
+    params = "({}, {}, {})".format(
+        input.consumer.username, input.request.http.method, input.request.http.path
+    )
+    try:
+        result: dict = json.loads(response.body).get("result", {})
+        allowed = result.get("allow", False)
+        debug = result.get("debug", {})
+
+        color = "<green>"
+        if not allowed:
+            color = "<red>"
+        format = color + "is allowed = {allowed} </>"
+        format += " | <cyan>{api_params}</>"
+        if sidecar_config.DECISION_LOG_DEBUG_INFO:
+            format += (
+                " | full_input=<fg #fff980>{input}</> | debug=<fg #f7e0c1>{debug}</>"
+            )
+        logger.opt(colors=True).info(
+            format,
+            allowed=allowed,
+            api_params=params,
+            input=input.dict(),
+            debug=debug,
+        )
+    except:
+        try:
+            body = str(response.body, "utf-8")
+        except:
+            body = None
+        data = {} if body is None else {"response_body": body}
+        logger.info(
+            "is allowed",
+            params=params,
+            query=input.dict(),
+            response_status=response.status_code,
+            **data,
+        )
+
+
 def get_v1_processed_query(result: dict) -> Optional[dict]:
     if "authorization_query" not in result:
         return None  # not a v1 query result
@@ -102,13 +153,19 @@ def get_v2_processed_query(result: dict) -> Optional[dict]:
 
 def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
     policy_store = policy_store or DEFAULT_POLICY_STORE_GETTER()
-    router = APIRouter(dependencies=[Depends(enforce_pdp_token)])
+    router = APIRouter()
+    with open(KONG_ROUTES_TABLE_FILE, "r") as f:
+        kong_routes_table_raw = json.load(f)
+    kong_routes_table = {
+        re.compile(regex): resource for regex, resource in kong_routes_table_raw.items()
+    }
 
     @router.post(
         "/allowed",
         response_model=AuthorizationResult,
         status_code=status.HTTP_200_OK,
         response_model_exclude_none=True,
+        dependencies=[Depends(enforce_pdp_token)],
     )
     async def is_allowed(request: Request, query: AuthorizationQuery):
         async def _is_allowed():
@@ -149,6 +206,90 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
                 ),  # fallback for older sdks (TODO: remove)
                 "query": processed_query,
                 "debug": raw_result.get("debug", {}),
+            }
+        except:
+            result = dict(allow=False, result=False)
+            logger.warning(
+                "is allowed (fallback response)", reason="cannot decode opa response"
+            )
+        return result
+
+    @router.post(
+        "/kong",
+        response_model=KongAuthorizationResult,
+        status_code=status.HTTP_200_OK,
+        response_model_exclude_none=True,
+    )
+    async def is_allowed_kong(request: Request, query: KongAuthorizationQuery):
+        async def _is_allowed():
+            opa_input = {
+                "input": {
+                    "user": {
+                        "key": query.input.consumer.username,
+                    },
+                    "resource": {
+                        "tenant": "default",
+                        "type": object_type,
+                    },
+                    "action": query.input.request.http.method.lower(),
+                }
+            }
+            headers = {"Authorization": f"Bearer {sidecar_config.API_KEY}"}
+
+            path = MAIN_POLICY_PACKAGE.replace(".", "/")
+            url = f"{opal_client_config.POLICY_STORE_URL}/v1/data/{path}"
+
+            try:
+                logger.debug(f"calling OPA at '{url}' with input: {opa_input}")
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        url, data=json.dumps(opa_input), headers=headers
+                    ) as opa_response:
+                        return await proxy_response(opa_response)
+            except aiohttp.ClientError as e:
+                logger.warning("OPA client error: {err}", err=repr(e))
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=repr(e))
+
+        payload = await request.json()
+        logger.info(f"Got request from Kong with payload {payload}")
+
+        if query.input.consumer is None:
+            logger.info(
+                "Got request from Kong with no consumer, returning allowed=False"
+            )
+            return {
+                "result": False,
+            }
+
+        object_type = None
+        for regex, resource in kong_routes_table.items():
+            r = regex.match(query.input.request.http.path)
+            if r is not None:
+                if isinstance(resource, str):
+                    object_type = resource
+                elif isinstance(resource, int):
+                    object_type = r.groups()[resource]
+                break
+
+        if object_type is None:
+            logger.info(
+                "Got request from Kong to path {} with no matching route, returning allowed=False",
+                query.input.request.http.path,
+            )
+            return {
+                "result": False,
+            }
+        fallback_response = dict(result=dict(allow=False, debug="OPA not responding"))
+        is_allowed_with_fallback = fail_silently(fallback=fallback_response)(
+            _is_allowed
+        )
+
+        response = await is_allowed_with_fallback()
+        log_query_result_kong(query.input, response)
+        try:
+            raw_result = json.loads(response.body).get("result", {})
+            result = {
+                "result": raw_result.get("allow", False),
             }
         except:
             result = dict(allow=False, result=False)
