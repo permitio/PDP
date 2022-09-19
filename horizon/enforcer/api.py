@@ -156,9 +156,9 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
     router = APIRouter()
     with open(KONG_ROUTES_TABLE_FILE, "r") as f:
         kong_routes_table_raw = json.load(f)
-    kong_routes_table = {
-        re.compile(regex): resource for regex, resource in kong_routes_table_raw.items()
-    }
+    kong_routes_table = [
+        (re.compile(regex), resource) for regex, resource in kong_routes_table_raw
+    ]
 
     @router.post(
         "/allowed",
@@ -262,7 +262,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             }
 
         object_type = None
-        for regex, resource in kong_routes_table.items():
+        for regex, resource in kong_routes_table:
             r = regex.match(query.input.request.http.path)
             if r is not None:
                 if isinstance(resource, str):
