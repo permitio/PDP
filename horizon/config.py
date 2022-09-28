@@ -87,6 +87,9 @@ class SidecarConfig(Confi):
         "<green>{time}</green> | {process} | <blue>{name: <40}</blue>|<level>{level:^6} | {message}</level>",
     )
 
+    # enables the Kong integration endpoint. This shouldn't be enabled unless needed, as it's unauthenticated
+    KONG_INTEGRATION = confi.bool("KONG_INTEGRATION", False)
+
     # non configurable values -------------------------------------------------
 
     # redoc configuration (openapi schema)
