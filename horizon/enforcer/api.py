@@ -161,6 +161,9 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         kong_routes_table = [
             (re.compile(regex), resource) for regex, resource in kong_routes_table_raw
         ]
+        logger.info(
+            f"Kong integration: Loaded {len(kong_routes_table)} translation rules."
+        )
 
     @router.post(
         "/allowed",
