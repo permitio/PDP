@@ -22,6 +22,7 @@ from horizon.enforcer.opa.config_maker import (
 from horizon.local.api import init_local_cache_api_router
 from horizon.proxy.api import router as proxy_router
 from horizon.startup.remote_config import RemoteConfigFetcher
+from horizon.state import PersistentStateHandler
 from horizon.system.api import init_system_api_router
 
 OPA_LOGGER_MODULE = "opal_client.opa.logger"
@@ -64,6 +65,7 @@ class PermitPDP:
 
     def __init__(self):
         self._setup_temp_logger()
+        PersistentStateHandler.initialize()
         # fetch and apply config override from cloud control plane
         remote_config = RemoteConfigFetcher().fetch_config()
 
