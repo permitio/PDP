@@ -38,6 +38,9 @@ RUN chmod +x /start.sh
 COPY ./scripts/gunicorn_conf.py /gunicorn_conf.py
 # copy app code
 COPY . ./
+# copy Kong route-to-resource translation table
+RUN mkdir -p /config
+COPY kong_routes.json /config/kong_routes.json
 # install sidecar package
 RUN python setup.py install
 # Make sure scripts in .local are usable:
