@@ -19,9 +19,8 @@ from opal_client.utils import proxy_response
 
 from horizon.authentication import enforce_pdp_token
 from horizon.config import sidecar_config
-from horizon.enforcer.schemas import (
-    AuthorizationQuery,
-    AuthorizationResult,
+from horizon.enforcer.schemas import AuthorizationQuery, AuthorizationResult
+from horizon.enforcer.schemas_kong import (
     KongAuthorizationInput,
     KongAuthorizationQuery,
     KongAuthorizationResult,
@@ -264,8 +263,9 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
                 logger.warning("OPA client error: {err}", err=repr(e))
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=repr(e))
 
-        payload = await request.json()
-        logger.info(f"Got request from Kong with payload {payload}")
+        if sidecar_config.KONG_INTEGRATION_DEBUG:
+            payload = await request.json()
+            logger.info(f"Got request from Kong with payload {payload}")
 
         if query.input.consumer is None:
             logger.warning(

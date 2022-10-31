@@ -89,6 +89,8 @@ class SidecarConfig(Confi):
 
     # enables the Kong integration endpoint. This shouldn't be enabled unless needed, as it's unauthenticated
     KONG_INTEGRATION = confi.bool("KONG_INTEGRATION", False)
+    # enables debug ouptut for the Kong integration endpoint
+    KONG_INTEGRATION_DEBUG = confi.bool("KONG_INTEGRATION_DEBUG", False)
 
     # non configurable values -------------------------------------------------
 
