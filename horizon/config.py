@@ -1,5 +1,7 @@
 from opal_common.confi import Confi, confi
 
+MOCK_API_KEY = "MUST BE DEFINED"
+
 
 class SidecarConfig(Confi):
     CONTROL_PLANE = confi.str(
@@ -20,7 +22,7 @@ class SidecarConfig(Confi):
     REMOTE_CONFIG_ENDPOINT = confi.str("REMOTE_CONFIG_ENDPOINT", "/v1/pdps/me/config")
 
     # access token to access backend api
-    API_KEY = confi.str("API_KEY", "PJUKkuwiJkKxbIoC4o4cguWxB_2gX6MyATYKc2OCM")
+    API_KEY = confi.str("API_KEY", MOCK_API_KEY)
 
     # if enabled, will output to log more data for each "is allowed" decision
     DECISION_LOG_DEBUG_INFO = confi.bool("DECISION_LOG_DEBUG_INFO", True)

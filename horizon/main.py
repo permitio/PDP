@@ -13,7 +13,7 @@ from opal_common.confi import Confi
 from opal_common.logger import Formatter, logger
 
 from horizon.authentication import enforce_pdp_token
-from horizon.config import sidecar_config
+from horizon.config import MOCK_API_KEY, sidecar_config
 from horizon.enforcer.api import init_enforcer_api_router
 from horizon.enforcer.opa.config_maker import (
     get_opa_authz_policy_file_path,
@@ -21,11 +21,14 @@ from horizon.enforcer.opa.config_maker import (
 )
 from horizon.local.api import init_local_cache_api_router
 from horizon.proxy.api import router as proxy_router
-from horizon.startup.remote_config import RemoteConfigFetcher
+from horizon.startup.remote_config import InvalidPDPTokenException, RemoteConfigFetcher
 from horizon.state import PersistentStateHandler
 from horizon.system.api import init_system_api_router
 
 OPA_LOGGER_MODULE = "opal_client.opa.logger"
+
+# 3 is a magic Gunicorn error code signaling that the application should exit
+GUNICORN_EXIT_APP = 3
 
 
 def apply_config(overrides_dict: dict, config_object: Confi):
@@ -52,12 +55,12 @@ class PermitPDP:
     Implementation details:
     The PDP is a thin wrapper on top of opal client.
 
-    by extending opal client, it runs:
+    By extending opal client, it runs:
     - a subprocess running the OPA agent (with opal client's opa runner)
     - policy updater
     - data updater
 
-    it also run directly Permit.io specific apis:
+    It also run directly Permit.io specific apis:
     - proxy api (proxies the REST api at api.permit.io to the sdks)
     - local api (wrappers on top of opa cache)
     - enforcer api (implementation of is_allowed())
@@ -66,8 +69,15 @@ class PermitPDP:
     def __init__(self):
         self._setup_temp_logger()
         PersistentStateHandler.initialize()
+        self._verify_config()
         # fetch and apply config override from cloud control plane
-        remote_config = RemoteConfigFetcher().fetch_config()
+        try:
+            remote_config = RemoteConfigFetcher().fetch_config()
+        except InvalidPDPTokenException:
+            logger.critical(
+                "An invalid API key was specified. Please verify the PDP_API_KEY environment variable."
+            )
+            raise SystemExit(GUNICORN_EXIT_APP)
 
         if not remote_config:
             logger.warning(
@@ -279,11 +289,20 @@ class PermitPDP:
     def app(self):
         return self._app
 
+    def _verify_config(self):
+        if sidecar_config.API_KEY == MOCK_API_KEY:
+            logger.critical(
+                "No API key specified. Please specify one with the PDP_API_KEY environment variable."
+            )
+            raise SystemExit(GUNICORN_EXIT_APP)
+
 
 try:
     # expose app for Uvicorn
     sidecar = PermitPDP()
     app = sidecar.app
+except SystemExit:
+    raise
 except Exception as ex:
     logger.critical("Sidecar failed to start because of exception: {err}", err=ex)
     raise SystemExit(1)
