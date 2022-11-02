@@ -20,6 +20,7 @@ RUN pip install --upgrade pip && pip install --user -r requirements.txt
 # most of the time only this image should be built
 # ---------------------------------------------------
 FROM python:3.8-alpine3.16
+RUN apk update && apk upgrade
 # bash is needed for ./start/sh script
 RUN apk add --update --no-cache bash curl
 # needed for rookout
