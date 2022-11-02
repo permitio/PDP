@@ -1,7 +1,7 @@
 # BUILD STAGE ---------------------------------------
 # split this stage to save time and reduce image size
 # ---------------------------------------------------
-FROM python:3.8-alpine3.11 as BuildStage
+FROM python:3.8-alpine3.16 as BuildStage
 # update apk cache
 RUN apk update
 # TODO: remove this when upgrading to a new alpine version
@@ -19,7 +19,7 @@ RUN pip install --upgrade pip && pip install --user -r requirements.txt
 # MAIN IMAGE ----------------------------------------
 # most of the time only this image should be built
 # ---------------------------------------------------
-FROM python:3.8-alpine3.11
+FROM python:3.8-alpine3.16
 # bash is needed for ./start/sh script
 RUN apk add --update --no-cache bash curl
 # needed for rookout
