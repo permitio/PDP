@@ -8,34 +8,52 @@ RUN apt-get update && \
 # from now on, work in the /app directory
 WORKDIR /app/
 # Layer dependency install (for caching)
-COPY requirements.txt requirements.txt
-# install python deps
-RUN pip install --upgrade pip && pip install --user -r requirements.txt
 
 # MAIN IMAGE ----------------------------------------
 # most of the time only this image should be built
 # ---------------------------------------------------
-FROM python:3.8-slim
+# FROM python:3.8-slim
 RUN apt-get update && \
     apt-get install -y bash curl
-# bash is needed for ./start/sh script
+
+RUN groupadd -r permit
+RUN useradd -m -s /bin/bash -g permit -d /home/permit permit
 RUN curl -L -o /opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static && chmod 755 /opa
-# copy libraries from build stage
-COPY --from=BuildStage /root/.local /root/.local
-# copy wait-for-it (use only for development! e.g: docker compose)
+# bash is needed for ./start/sh script
+
+RUN mkdir -p /config
+RUN chown -R permit:permit /app
+RUN chown -R permit:permit /opa
+RUN chown -R permit:permit /config
+
 COPY scripts/wait-for-it.sh /usr/wait-for-it.sh
 RUN chmod +x /usr/wait-for-it.sh
-# copy startup script
 COPY ./scripts/start.sh /start.sh
 RUN chmod +x /start.sh
+
+RUN chown -R permit:permit /home/permit
+RUN chown -R permit:permit /app/
+RUN chown -R permit:permit /usr/
+USER permit
+
+COPY requirements.txt requirements.txt
+# install python deps
+RUN pip install --upgrade pip && pip install --user -r requirements.txt
+
+# copy libraries from build stage
+# COPY --from=BuildStage /root/.local /root/.local
+# copy wait-for-it (use only for development! e.g: docker compose)
+# copy startup script
+# copy Kong route-to-resource translation table
+
+
+COPY kong_routes.json /config/kong_routes.json
+# install sidecar package
+
 # copy gunicorn_config
 COPY ./scripts/gunicorn_conf.py /gunicorn_conf.py
 # copy app code
 COPY . ./
-# copy Kong route-to-resource translation table
-RUN mkdir -p /config
-COPY kong_routes.json /config/kong_routes.json
-# install sidecar package
 RUN python setup.py install
 # Make sure scripts in .local are usable:
 ENV PATH=/:/root/.local/bin:$PATH
