@@ -7,46 +7,53 @@ RUN apt-get update && \
     apt-get install -y build-essential libffi-dev
 # from now on, work in the /app directory
 WORKDIR /app/
+RUN groupadd -r permit
+RUN useradd -m -s /bin/bash -g permit -d /home/permit permit
+COPY . ./
+
+COPY requirements.txt requirements.txt
+# install python deps
+RUN pip install --upgrade pip && pip install --user -r requirements.txt
+RUN python setup.py install --user
+
 # Layer dependency install (for caching)
 
 # MAIN IMAGE ----------------------------------------
 # most of the time only this image should be built
 # ---------------------------------------------------
-# FROM python:3.8-slim
+FROM python:3.8-slim
 RUN apt-get update && \
     apt-get install -y bash curl
 
 RUN groupadd -r permit
 RUN useradd -m -s /bin/bash -g permit -d /home/permit permit
+
+# copy libraries from build stage
+RUN mkdir /home/permit/.local
+COPY --from=BuildStage /root/.local /home/permit/.local
+
 RUN curl -L -o /opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static && chmod 755 /opa
 # bash is needed for ./start/sh script
+COPY . ./
 
 RUN mkdir -p /config
-RUN chown -R permit:permit /app
 RUN chown -R permit:permit /opa
 RUN chown -R permit:permit /config
 
+# copy wait-for-it (use only for development! e.g: docker compose)
 COPY scripts/wait-for-it.sh /usr/wait-for-it.sh
 RUN chmod +x /usr/wait-for-it.sh
+# copy startup script
 COPY ./scripts/start.sh /start.sh
 RUN chmod +x /start.sh
 
+
+
 RUN chown -R permit:permit /home/permit
-RUN chown -R permit:permit /app/
 RUN chown -R permit:permit /usr/
 USER permit
 
-COPY requirements.txt requirements.txt
-# install python deps
-RUN pip install --upgrade pip && pip install --user -r requirements.txt
-
-# copy libraries from build stage
-# COPY --from=BuildStage /root/.local /root/.local
-# copy wait-for-it (use only for development! e.g: docker compose)
-# copy startup script
 # copy Kong route-to-resource translation table
-
-
 COPY kong_routes.json /config/kong_routes.json
 # install sidecar package
 
@@ -54,9 +61,8 @@ COPY kong_routes.json /config/kong_routes.json
 COPY ./scripts/gunicorn_conf.py /gunicorn_conf.py
 # copy app code
 COPY . ./
-RUN python setup.py install
 # Make sure scripts in .local are usable:
-ENV PATH=/:/root/.local/bin:$PATH
+ENV PATH=/:/home/permit/.local/bin:$PATH
 # uvicorn config ------------------------------------
 
 # WARNING: do not change the number of workers on the opal client!
