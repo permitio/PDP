@@ -7,8 +7,6 @@ RUN apt-get update && \
     apt-get install -y build-essential libffi-dev
 # from now on, work in the /app directory
 WORKDIR /app/
-RUN groupadd -r permit
-RUN useradd -m -s /bin/bash -g permit -d /home/permit permit
 COPY . ./
 
 COPY requirements.txt requirements.txt
