@@ -5,6 +5,7 @@ repos:
       - id: check-yaml
         exclude: "helm/"
       - id: end-of-file-fixer
+        exclude: "helm/"
       - id: trailing-whitespace
   - repo: https://github.com/psf/black
     rev: 22.3.0
