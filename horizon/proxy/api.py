@@ -19,7 +19,6 @@ HTTP_POST = "POST"
 HTTP_PUT = "PUT"
 HTTP_PATCH = "PATCH"
 
-
 ALL_METHODS = [
     HTTP_GET,
     HTTP_DELETE,
@@ -110,7 +109,8 @@ async def cloud_proxy(request: Request, path: str):
     return response
 
 
-@router.api_route('/healthchecks/opa/ready', methods=[HTTP_GET], summary="Proxy ready healthcheck")
+@router.api_route('/healthchecks/opa/ready', methods=[HTTP_GET],
+                  summary="Proxy ready healthcheck - OPAL_OPA_HEALTH_CHECK_POLICY_ENABLED must be set to True")
 async def ready_opa_healthcheck(request: Request):
     return await proxy_request_to_cloud_service(
         request,
@@ -120,7 +120,8 @@ async def ready_opa_healthcheck(request: Request):
     )
 
 
-@router.api_route('/healthchecks/opa/healthy', methods=[HTTP_GET], summary="Proxy healthy healthcheck")
+@router.api_route('/healthchecks/opa/healthy', methods=[HTTP_GET],
+                  summary="Proxy healthy healthcheck -  OPAL_OPA_HEALTH_CHECK_POLICY_ENABLED must be set to True")
 async def health_opa_healthcheck(request: Request):
     return await proxy_request_to_cloud_service(
         request,
@@ -130,7 +131,8 @@ async def health_opa_healthcheck(request: Request):
     )
 
 
-@router.api_route('/healthchecks/opa/system', methods=[HTTP_GET], summary="Proxy system data")
+@router.api_route('/healthchecks/opa/system', methods=[HTTP_GET],
+                  summary="Proxy system data -  OPAL_OPA_HEALTH_CHECK_POLICY_ENABLED must be set to True")
 async def system_opa_healthcheck(request: Request):
     return await proxy_request_to_cloud_service(
         request,
