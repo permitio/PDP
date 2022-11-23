@@ -51,9 +51,9 @@ jobs:
           helm dependency build ./helm/ ;
 
       - name: Helm Install
-          shell: bash
-          env:
-            NAMESPACE: sidecars
-            CHART_DIR: ./helm
-          run:
-            helm upgrade --install -f ${{ env.CHART_DIR }}/values-prod.yaml ${{ inputs.name }}-sidecar ${{ env.CHART_DIR }} -n ${{ env.NAMESPACE }} --wait --set expose.dnsHostName="${{ inputs.name }}-sidecar.permit.io" --set config.env.PDP_API_KEY="${{ inputs.pdp_key }}"
+        shell: bash
+        env:
+          NAMESPACE: sidecars
+          CHART_DIR: ./helm
+        run:
+          helm upgrade --install -f ${{ env.CHART_DIR }}/values-prod.yaml ${{ inputs.name }}-sidecar ${{ env.CHART_DIR }} -n ${{ env.NAMESPACE }} --wait --set expose.dnsHostName="${{ inputs.name }}-sidecar.permit.io" --set config.env.PDP_API_KEY="${{ inputs.pdp_key }}"
