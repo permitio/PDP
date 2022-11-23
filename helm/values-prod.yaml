@@ -1,0 +1,21 @@
+image:
+  registry: permitio
+  name: pdp-v2
+  tag: latest
+
+replicas: 1
+
+config:
+  env:
+    PDP_API_KEY: "permit_key_LPYmx59tGMnBwtYzq6o12NiLtkv4lGmJjokLW0DiC0yQh6QIZoEngmdABugBySV2NddS0HOShhP6DahsWTkGbi"
+
+expose:
+  type: external
+  dnsHostName: inventa-sidecar.permit.io
+  tlsHostName: "*.permit.io"
+  port: 7000
+  http_paths:
+    - path: /
+      port: 80
+      pathType: Prefix
+
