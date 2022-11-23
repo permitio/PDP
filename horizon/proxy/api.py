@@ -109,36 +109,45 @@ async def cloud_proxy(request: Request, path: str):
     return response
 
 
-@router.api_route('/healthchecks/opa/ready', methods=[HTTP_GET],
-                  summary="Proxy ready healthcheck - OPAL_OPA_HEALTH_CHECK_POLICY_ENABLED must be set to True")
+@router.api_route(
+    "/healthchecks/opa/ready",
+    methods=[HTTP_GET],
+    summary="Proxy ready healthcheck - OPAL_OPA_HEALTH_CHECK_POLICY_ENABLED must be set to True",
+)
 async def ready_opa_healthcheck(request: Request):
     return await proxy_request_to_cloud_service(
         request,
         path="v1/data/system/opal/ready",
         cloud_service_url=opal_client_config.POLICY_STORE_URL,
-        additional_headers={}
+        additional_headers={},
     )
 
 
-@router.api_route('/healthchecks/opa/healthy', methods=[HTTP_GET],
-                  summary="Proxy healthy healthcheck -  OPAL_OPA_HEALTH_CHECK_POLICY_ENABLED must be set to True")
+@router.api_route(
+    "/healthchecks/opa/healthy",
+    methods=[HTTP_GET],
+    summary="Proxy healthy healthcheck -  OPAL_OPA_HEALTH_CHECK_POLICY_ENABLED must be set to True",
+)
 async def health_opa_healthcheck(request: Request):
     return await proxy_request_to_cloud_service(
         request,
         path="v1/data/system/opal/healthy",
         cloud_service_url=opal_client_config.POLICY_STORE_URL,
-        additional_headers={}
+        additional_headers={},
     )
 
 
-@router.api_route('/healthchecks/opa/system', methods=[HTTP_GET],
-                  summary="Proxy system data -  OPAL_OPA_HEALTH_CHECK_POLICY_ENABLED must be set to True")
+@router.api_route(
+    "/healthchecks/opa/system",
+    methods=[HTTP_GET],
+    summary="Proxy system data -  OPAL_OPA_HEALTH_CHECK_POLICY_ENABLED must be set to True",
+)
 async def system_opa_healthcheck(request: Request):
     return await proxy_request_to_cloud_service(
         request,
         path="v1/data/system/opal",
         cloud_service_url=opal_client_config.POLICY_STORE_URL,
-        additional_headers={}
+        additional_headers={},
     )
 
 
