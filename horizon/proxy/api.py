@@ -110,6 +110,36 @@ async def cloud_proxy(request: Request, path: str):
     return response
 
 
+@router.api_route('/healthchecks/opa/ready', methods=[HTTP_GET], summary="Proxy ready healthcheck")
+async def ready_opa_healthcheck(request: Request):
+    return await proxy_request_to_cloud_service(
+        request,
+        path="v1/data/system/opal/ready",
+        cloud_service_url=opal_client_config.POLICY_STORE_URL,
+        additional_headers={}
+    )
+
+
+@router.api_route('/healthchecks/opa/healthy', methods=[HTTP_GET], summary="Proxy healthy healthcheck")
+async def health_opa_healthcheck(request: Request):
+    return await proxy_request_to_cloud_service(
+        request,
+        path="v1/data/system/opal/healthy",
+        cloud_service_url=opal_client_config.POLICY_STORE_URL,
+        additional_headers={}
+    )
+
+
+@router.api_route('/healthchecks/opa/system', methods=[HTTP_GET], summary="Proxy system data")
+async def system_opa_healthcheck(request: Request):
+    return await proxy_request_to_cloud_service(
+        request,
+        path="v1/data/system/opal",
+        cloud_service_url=opal_client_config.POLICY_STORE_URL,
+        additional_headers={}
+    )
+
+
 # TODO: remove this once we migrate all clients
 @router.api_route(
     "/sdk/{path:path}",
