@@ -1,0 +1,59 @@
+name: Deploy sidecar for client
+on:
+  workflow_dispatch:
+    inputs:
+      pdp_key:
+        description: 'Provide a PDP_API_KEY env var'
+        required: true
+        type: string
+      name:
+        description: 'Provide the name of the sidecar'
+        required: true
+        type: string
+
+env:
+  AWS_REGION: "us-east-2"
+
+permissions:
+  id-token: write
+  contents: write
+
+jobs:
+  deploy-new-sidecar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+
+      - name: AWS Auth - Assume OIDC Github Role
+        uses: aws-actions/configure-aws-credentials@v1.6.1
+        with:
+          role-to-assume: ${{ secrets.ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: githubactions
+
+      - name: Amazon ECR Login - Root Account
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - uses: azure/k8s-set-context@v2
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.KUBE_CONFIG }}
+          context: prod
+
+      - name: Helm Dependency Build
+        shell: bash
+        env:
+          NAMESPACE: permitio
+        run:
+          helm dependency build ./helm/ ;
+
+      - name: Helm Install
+        shell: bash
+        env:
+          NAMESPACE: sidecars
+          CHART_DIR: ./helm
+        run:
+          helm upgrade --install -f ${{ env.CHART_DIR }}/values-prod.yaml ${{ inputs.name }}-sidecar ${{ env.CHART_DIR }} -n ${{ env.NAMESPACE }} --wait --set expose.dnsHostName="${{ inputs.name }}-sidecar.permit.io" --set config.env.PDP_API_KEY="${{ inputs.pdp_key }}"
