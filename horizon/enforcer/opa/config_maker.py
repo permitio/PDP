@@ -38,11 +38,18 @@ def get_opa_config_file_path(
     """
     env = get_jinja_environment()
     target_path = sidecar_config.OPA_CONFIG_FILE_PATH
+    decision_logs_backend_tier = (
+        sidecar_config.OPA_DECISION_LOG_INGRESS_ROUTE or sidecar_config.CONTROL_PLANE
+    )
+    logger.info(
+        "Uploading decision logs to backend tier: {tier}",
+        tier=decision_logs_backend_tier,
+    )
 
     try:
         template = env.get_template(template_path)
         contents = template.render(
-            cloud_service_url=sidecar_config.CONTROL_PLANE,
+            cloud_service_url=decision_logs_backend_tier,
             bearer_token=sidecar_config.API_KEY,
             log_ingress_endpoint=sidecar_config.OPA_DECISION_LOG_INGRESS_ROUTE,
             min_delay_seconds=sidecar_config.OPA_DECISION_LOG_MIN_DELAY,
