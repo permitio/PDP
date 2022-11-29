@@ -39,7 +39,8 @@ def get_opa_config_file_path(
     env = get_jinja_environment()
     target_path = sidecar_config.OPA_CONFIG_FILE_PATH
     decision_logs_backend_tier = (
-        sidecar_config.OPA_DECISION_LOG_INGRESS_ROUTE or sidecar_config.CONTROL_PLANE
+        sidecar_config.OPA_DECISION_LOG_INGRESS_BACKEND_TIER_URL
+        or sidecar_config.CONTROL_PLANE
     )
     logger.info(
         "Uploading decision logs to backend tier: {tier}",
