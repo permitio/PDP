@@ -72,6 +72,11 @@ class SidecarConfig(Confi):
         "/v1/decision_logs/ingress",
         description="the route on the backend the decision logs will be uploaded to",
     )
+    OPA_DECISION_LOG_INGRESS_BACKEND_TIER_URL = confi.str(
+        "OPA_DECISION_LOG_INGRESS_BACKEND_TIER_URL",
+        None,
+        description="the backend tier that decision logs will be uploaded to",
+    )
     OPA_DECISION_LOG_MIN_DELAY = confi.int(
         "OPA_DECISION_LOG_MIN_DELAY",
         1,
