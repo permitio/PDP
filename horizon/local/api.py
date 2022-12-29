@@ -20,7 +20,7 @@ def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
             "description": msg,
         }
 
-    async def get_grants_for_role(role_name: str) -> list[str]:
+    async def get_grants_for_role(role_name: str) -> List[str]:
         response = (await policy_store.get_data(f"/roles/{role_name}")).get("result")
 
         if not response:
@@ -35,7 +35,7 @@ def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
 
         return result
 
-    async def get_roles_for_user(opa_user: dict[str, Any]) -> list[SyncedRole]:
+    async def get_roles_for_user(opa_user: Dict[str, Any]) -> List[SyncedRole]:
         role_assignments = opa_user.get("roleAssignments", {})
         roles_grants = {}
         result = []
