@@ -136,7 +136,7 @@ def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
 
     @router.get(
         "/users/{user_id}/permissions",
-        response_model=List[str],
+        response_model=Dict[str, List[str]],
         responses={
             404: error_message(
                 "User not found (i.e: not synced to Authorization service)"
@@ -152,10 +152,12 @@ def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
         result = await get_data_for_synced_user(user_id)
         roles = await get_roles_for_user(result)
 
-        permissions = []
+        permissions: Dict[str, List[str]] = {}
 
         for role in roles:
-            permissions.extend(role.permissions)
+            if role.tenant_id not in permissions:
+                permissions[role.tenant_id] = []
+            permissions[role.tenant_id].extend(role.permissions)
 
         return permissions
 
