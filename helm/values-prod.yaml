@@ -7,7 +7,7 @@ replicas: 1
 
 config:
   env:
-    PDP_API_KEY: "permit_key_LPYmx59tGMnBwtYzq6o12NiLtkv4lGmJjokLW0DiC0yQh6QIZoEngmdABugBySV2NddS0HOShhP6DahsWTkGbi"
+    PDP_API_KEY: "put_key_here"
 
 expose:
   type: external
