@@ -82,7 +82,7 @@ write_routes = {
 }
 
 
-@router.api_route("/cloud/{path:path}", methods=ALL_METHODS, summary="Proxy Endpoint")
+@router.api_route("/cloud/{path:path}", methods=ALL_METHODS, summary="Proxy Endpoint", include_in_schema=False)
 async def cloud_proxy(request: Request, path: str):
     """
     Proxies the request to the cloud API. Actual API docs are located here: https://api.permit.io/redoc
