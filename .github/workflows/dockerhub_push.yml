@@ -9,7 +9,7 @@ on:
       - 'v*'
 
   # Disabled: Allows you to run this workflow manually from the Actions tab (because auto tagging won't work)
-  # workflow_dispatch:
+   workflow_dispatch:
 
 jobs:
   # ====== Todos Backend (build and deploy) ======
@@ -31,15 +31,24 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          exit-code: '1'
+          ignore-unfixed: true
+#          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
       -
         name: Docker meta
         id: meta
         uses: docker/metadata-action@v3
         with:
-          images: permitio/pdp
+          images: permitio/pdp-v2
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
+            type=raw,value=latest,enable=${{ $GITHUB_EVENT_NAME == 'workflow_dispatch' }}
       -
         name: Echo published tags
         run: |
