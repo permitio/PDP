@@ -40,6 +40,8 @@ jobs:
           ignore-unfixed: true
 #          vuln-type: 'os,library'
           severity: 'CRITICAL,HIGH'
+          trivy-config: trivy-secret.yaml
+
       -
         name: Docker meta
         id: meta
