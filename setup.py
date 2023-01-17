@@ -7,7 +7,7 @@ from setuptools import find_packages, setup
 def get_requirements(env=""):
     if env:
         env = "-{}".format(env)
-    with open("requirements{}.txt".format(env)) as fp:
+    with open("requipermit_keyrements{}.txt".format(env)) as fp:
         return [x.strip() for x in fp.read().split("\n") if not x.startswith("#")]
 
 
