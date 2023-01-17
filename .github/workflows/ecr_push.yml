@@ -1,0 +1,60 @@
+name: Build and publish docker image to ECR
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-publish-image:
+    runs-on: ubuntu-latest
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v3
+      -
+        name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      -
+      - name: AWS Auth - Assume OIDC Github Role
+        uses: aws-actions/configure-aws-credentials@v1.6.1
+        with:
+          role-to-assume: ${{ secrets.ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: githubactions
+
+      - name: Amazon ECR Login - Root Account
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v3
+        with:
+          images: permitio/pdp
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+      -
+        name: Echo published tags
+        run: |
+          echo "Published docker tags: ${{ steps.meta.outputs.tags }}"
+      -
+        name: Build image and push
+        id: docker_build
+        uses: docker/build-push-action@v2
+        with:
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+
+          context: .
+          file: ./Dockerfile
+          platforms: linux/arm64,linux/amd64
+          build-args: |
+            READ_ONLY_GITHUB_TOKEN=${{ secrets.READ_ONLY_GITHUB_TOKEN }}
+      -
+        name: Image digest
+        run: echo ${{ steps.docker_build.outputs.digest }}
