@@ -48,7 +48,7 @@ jobs:
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
-            type=raw,value=latest,enable=${{ $GITHUB_EVENT_NAME == 'workflow_dispatch' }}
+            type=raw,value=latest,enable=${{ $GITHUB_EVENT_NAME == "workflow_dispatch" }}
       -
         name: Echo published tags
         run: |
