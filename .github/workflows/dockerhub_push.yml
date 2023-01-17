@@ -2,11 +2,11 @@ name: Build and publish docker image
 on:
   push:
     # disable push new image on merge to master (because we don't want to push a "master" tag)
-     branches:
-       - 'master'
+#     branches:
+#       - 'master'
     # on every tags push, we will publish both the latest tag and the versioned tag (semver)
-    tags:
-      - 'v*'
+#    tags:
+#      - 'v*'
 
   # Disabled: Allows you to run this workflow manually from the Actions tab (because auto tagging won't work)
    workflow_dispatch:
