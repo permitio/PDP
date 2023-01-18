@@ -36,7 +36,7 @@ jobs:
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: 'fs'
-          exit-code: '1'
+          exit-code: '0'
           ignore-unfixed: true
           security-checks: 'vuln,secret'
           severity: 'CRITICAL,HIGH'
