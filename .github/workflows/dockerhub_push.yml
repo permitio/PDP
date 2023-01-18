@@ -33,7 +33,7 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@0.7.0
+        uses: aquasecurity/trivy-action@0.8.0
         with:
           scan-type: 'fs'
           exit-code: '1'
