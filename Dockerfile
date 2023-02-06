@@ -7,11 +7,24 @@ RUN apt-get update && \
     apt-get install -y build-essential libffi-dev
 # from now on, work in the /app directory
 WORKDIR /app/
-COPY . ./
 
-COPY requirements.txt requirements.txt
 # install python deps
+COPY requirements.txt requirements.txt
 RUN pip install --upgrade pip && pip install --user -r requirements.txt
+
+# Install a custom OPAL, if requested
+COPY custom_opal /custom_opal
+
+RUN if [ -f /custom_opal/custom_opal.tar.gz ]; \
+	then \
+		cd /custom_opal && \
+		tar xzf custom_opal.tar.gz && \
+		pip install --user packages/opal-common packages/opal-client && \
+		cd / && \
+		rm -rf /custom_opal ; \
+	fi
+
+COPY horizon setup.py MANIFEST.in ./
 RUN python setup.py install --user
 
 # Layer dependency install (for caching)
@@ -32,7 +45,7 @@ COPY --from=BuildStage /root/.local /home/permit/.local
 
 RUN curl -L -o /opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static && chmod 755 /opa
 # bash is needed for ./start/sh script
-COPY . ./
+COPY scripts ./
 
 RUN mkdir -p /config
 RUN chown -R permit:permit /opa
