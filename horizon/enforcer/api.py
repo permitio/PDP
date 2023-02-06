@@ -25,6 +25,7 @@ from horizon.enforcer.schemas_kong import (
     KongAuthorizationQuery,
     KongAuthorizationResult,
 )
+from horizon.state import PersistentStateHandler
 
 AUTHZ_HEADER = "Authorization"
 MAIN_POLICY_PACKAGE = "permit.root"
@@ -191,6 +192,10 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             except aiohttp.ClientError as e:
                 logger.warning("OPA client error: {err}", err=repr(e))
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=repr(e))
+
+        if query.sdk is not None:
+            print("sdk is set", flush=True)
+            await PersistentStateHandler.get_instance().seen_sdk(query.sdk)
 
         fallback_response = dict(result=dict(allow=False, debug="OPA not responding"))
         is_allowed_with_fallback = fail_silently(fallback=fallback_response)(

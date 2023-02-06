@@ -5,12 +5,13 @@ from uuid import uuid4
 
 from fastapi import Depends, FastAPI, status
 from fastapi.responses import RedirectResponse
+from loguru import logger
 from logzio.handler import LogzioHandler
 from opal_client.client import OpalClient
 from opal_client.config import OpaLogFormat, opal_client_config, opal_common_config
 from opal_client.opa.options import OpaServerOptions
 from opal_common.confi import Confi
-from opal_common.logger import Formatter, logger
+from opal_common.logging.formatter import Formatter
 
 from horizon.authentication import enforce_pdp_token
 from horizon.config import MOCK_API_KEY, sidecar_config
@@ -36,11 +37,22 @@ def apply_config(overrides_dict: dict, config_object: Confi):
     apply config values from dict into a confi object
     """
     for key, value in overrides_dict.items():
-        prefixed_key = config_object._prefix_key(key)
-        if key in config_object.entries:
-            setattr(config_object, key, value)
-            logger.info(f"Overriden config key: {prefixed_key}")
-        else:
+        if value is not None:
+            prefixed_key = config_object._prefix_key(key)
+            if key in config_object.entries:
+                try:
+                    setattr(
+                        config_object,
+                        key,
+                        config_object.entries[key].cast_from_json(value),
+                    )
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        f"Unable to set config key {prefixed_key} from overrides:"
+                    )
+                    continue
+                logger.info(f"Overriden config key: {prefixed_key}")
+                continue
             logger.warning(f"Ignored non-existing config key: {prefixed_key}")
 
 
@@ -303,6 +315,8 @@ try:
     app = sidecar.app
 except SystemExit:
     raise
-except Exception as ex:
-    logger.critical("Sidecar failed to start because of exception: {err}", err=ex)
+except Exception:
+    logger.opt(exception=True).critical(
+        "Sidecar failed to start because of exception: {err}"
+    )
     raise SystemExit(1)

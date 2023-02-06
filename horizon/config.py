@@ -19,7 +19,10 @@ class SidecarConfig(Confi):
     )
 
     # backend route to fetch policy data topics
-    REMOTE_CONFIG_ENDPOINT = confi.str("REMOTE_CONFIG_ENDPOINT", "/v1/pdps/me/config")
+    REMOTE_CONFIG_ENDPOINT = confi.str("REMOTE_CONFIG_ENDPOINT", "/v2/pdps/me/config")
+
+    # backend route to fetch policy data topics
+    REMOTE_STATE_ENDPOINT = confi.str("REMOTE_STATE_ENDPOINT", "/v2/pdps/me/state")
 
     # access token to access backend api
     API_KEY = confi.str("API_KEY", MOCK_API_KEY)
