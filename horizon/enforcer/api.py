@@ -5,7 +5,7 @@ from http.client import HTTPException
 from typing import Dict, Optional
 
 import aiohttp
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header
 from fastapi import HTTPException as fastapi_HTTPException
 from fastapi import Request, Response, status
 from opal_client.config import opal_client_config
@@ -174,7 +174,11 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         response_model_exclude_none=True,
         dependencies=[Depends(enforce_pdp_token)],
     )
-    async def is_allowed(request: Request, query: AuthorizationQuery):
+    async def is_allowed(
+        request: Request,
+        query: AuthorizationQuery,
+        x_permit_sdk_language: Optional[str] = Header(default=None),
+    ):
         async def _is_allowed():
             opa_input = {"input": query.dict()}
             headers = transform_headers(request)
@@ -193,9 +197,8 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
                 logger.warning("OPA client error: {err}", err=repr(e))
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=repr(e))
 
-        if query.sdk is not None:
-            print("sdk is set", flush=True)
-            await PersistentStateHandler.get_instance().seen_sdk(query.sdk)
+        if x_permit_sdk_language is not None:
+            await PersistentStateHandler.get_instance().seen_sdk(x_permit_sdk_language)
 
         fallback_response = dict(result=dict(allow=False, debug="OPA not responding"))
         is_allowed_with_fallback = fail_silently(fallback=fallback_response)(
@@ -267,6 +270,8 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             except aiohttp.ClientError as e:
                 logger.warning("OPA client error: {err}", err=repr(e))
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=repr(e))
+
+        await PersistentStateHandler.get_instance().seen_sdk("kong")
 
         if sidecar_config.KONG_INTEGRATION_DEBUG:
             payload = await request.json()
