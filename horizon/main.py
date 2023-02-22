@@ -185,7 +185,10 @@ class PermitPDP:
         )
 
     def _configure_inline_opa_config(self):
-        inline_opa_config = {}
+        # Start from the existing config
+        inline_opa_config = opal_client_config.INLINE_OPA_CONFIG.dict()
+
+        logger.debug(f"existing OPAL_INLINE_OPA_CONFIG={inline_opa_config}")
 
         if sidecar_config.OPA_DECISION_LOG_ENABLED:
             # decision logs needs to be configured via the config file
