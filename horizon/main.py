@@ -37,23 +37,22 @@ def apply_config(overrides_dict: dict, config_object: Confi):
     apply config values from dict into a confi object
     """
     for key, value in overrides_dict.items():
-        if value is not None:
-            prefixed_key = config_object._prefix_key(key)
-            if key in config_object.entries:
-                try:
-                    setattr(
-                        config_object,
-                        key,
-                        config_object.entries[key].cast_from_json(value),
-                    )
-                except Exception:
-                    logger.opt(exception=True).warning(
-                        f"Unable to set config key {prefixed_key} from overrides:"
-                    )
-                    continue
-                logger.info(f"Overriden config key: {prefixed_key}")
+        prefixed_key = config_object._prefix_key(key)
+        if key in config_object.entries:
+            try:
+                setattr(
+                    config_object,
+                    key,
+                    config_object.entries[key].cast_from_json(value),
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"Unable to set config key {prefixed_key} from overrides:"
+                )
                 continue
-            logger.warning(f"Ignored non-existing config key: {prefixed_key}")
+            logger.info(f"Overriden config key: {prefixed_key}")
+            continue
+        logger.warning(f"Ignored non-existing config key: {prefixed_key}")
 
 
 class PermitPDP:

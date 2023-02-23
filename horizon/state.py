@@ -3,6 +3,7 @@ import json
 import os
 import platform
 import subprocess
+import time
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, List, Optional
 from uuid import UUID, uuid4
@@ -17,6 +18,7 @@ from horizon.system.consts import API_VERSION
 
 PERSISTENT_STATE_FILENAME = "/home/permit/persistent_state.json"
 PDP_VERSION_FILENAME = "/permit_pdp_version"
+MAX_STATE_UPDATE_INTERVAL_SECONDS = 60
 
 
 class PersistentState(BaseModel):
@@ -24,11 +26,20 @@ class PersistentState(BaseModel):
     seen_sdks: Optional[List[Optional[str]]] = None
 
 
+class StateUpdateThrottled(Exception):
+    def __init__(self, next_allowed_update: float):
+        super().__init__()
+        self.next_allowed_update = next_allowed_update
+
+
 class PersistentStateHandler:
     _instance: Optional["PersistentStateHandler"] = None
 
     def __init__(self, filename: str):
         self._filename = filename
+        self._prev_state_update_attempt = 0.0
+        self._seen_sdk_update_lock = asyncio.Lock()
+        self._state_update_lock = asyncio.Lock()
         if not self._load():
             self._new()
 
@@ -83,15 +94,29 @@ class PersistentStateHandler:
 
     @asynccontextmanager
     async def update_state(self) -> AsyncGenerator[PersistentState, None]:
-        prev_state = self._state
-        try:
-            new_state = self._state.copy()
-            yield new_state
-            await self._report(new_state)
-            self._state = new_state.copy()
-            self._save()
-        except:
-            self._state = prev_state
+        async with self._state_update_lock:
+            next_allowed_update = MAX_STATE_UPDATE_INTERVAL_SECONDS - (
+                time.monotonic() - self._prev_state_update_attempt
+            )
+            # Since state updated are (for now) opportunistic and happen
+            # regularly, we simply refuse to send them if they're too fast.
+            # TODO: When we actually report information that doesn't repeat,
+            # queue updates instead and retry if failing to report immediately
+            if next_allowed_update > 0:
+                raise StateUpdateThrottled(next_allowed_update)
+            prev_state = self._state
+            try:
+                new_state = self._state.copy()
+                yield new_state
+                try:
+                    await self._report(new_state)
+                finally:
+                    # Throttle even if the report failed
+                    self._prev_state_update_attempt = time.monotonic()
+                self._state = new_state.copy()
+                self._save()
+            except:
+                self._state = prev_state
 
     @classmethod
     def _get_pdp_version(cls) -> Optional[str]:
@@ -193,7 +218,16 @@ class PersistentStateHandler:
             asyncio.ensure_future(self._report_seen_sdk(sdk))
 
     async def _report_seen_sdk(self, sdk: str):
-        async with self.update_state() as new_state:
-            if new_state.seen_sdks is None:
-                new_state.seen_sdks = []
-            new_state.seen_sdks.append(sdk)
+        async with self._seen_sdk_update_lock:
+            # We check this again because we might have waited because of the lock
+            if not sdk in self._state.seen_sdks:
+                try:
+                    async with self.update_state() as new_state:
+                        if new_state.seen_sdks is None:
+                            new_state.seen_sdks = []
+                        new_state.seen_sdks.append(sdk)
+                except StateUpdateThrottled as e:
+                    logger.debug(
+                        "State updated throttled, next update {} seconds from now.",
+                        e.next_allowed_update,
+                    )
