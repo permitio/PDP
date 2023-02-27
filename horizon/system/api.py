@@ -21,4 +21,16 @@ def init_system_api_router():
         result = VersionResult(api_version=API_VERSION)
         return result
 
+    @router.post(
+        "/_exit",
+        status_code=status.HTTP_204_NO_CONTENT,
+        dependencies=[Depends(enforce_pdp_control_key)],
+    )
+    async def exit(exit_code: int = Query(default=0, ge=0, le=255)):
+        async def do_exit():
+            await asyncio.sleep(0.1)
+            sys.exit(exit_code)
+
+        asyncio.ensure_future(do_exit())
+
     return router
