@@ -24,6 +24,9 @@ class SidecarConfig(Confi):
     # access token to access backend api
     API_KEY = confi.str("API_KEY", MOCK_API_KEY)
 
+    # access token to perform system control operations
+    CONTAINER_CONTROL_KEY = confi.str("CONTAINER_CONTROL_KEY", MOCK_API_KEY)
+
     # if enabled, will output to log more data for each "is allowed" decision
     DECISION_LOG_DEBUG_INFO = confi.bool("DECISION_LOG_DEBUG_INFO", True)
 
