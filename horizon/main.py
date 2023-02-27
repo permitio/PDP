@@ -22,6 +22,7 @@ from horizon.enforcer.opa.config_maker import (
 from horizon.local.api import init_local_cache_api_router
 from horizon.proxy.api import router as proxy_router
 from horizon.startup.remote_config import RemoteConfigFetcher
+from horizon.system.api import init_system_api_router
 
 OPA_LOGGER_MODULE = "opal_client.opa.logger"
 
@@ -226,6 +227,8 @@ class PermitPDP:
         # Init api routers with required dependencies
         enforcer_router = init_enforcer_api_router(policy_store=self._opal.policy_store)
         local_router = init_local_cache_api_router(policy_store=self._opal.policy_store)
+        # Init system router
+        system_router = init_system_api_router()
 
         # include the api routes
         app.include_router(
@@ -238,6 +241,11 @@ class PermitPDP:
             prefix="/local",
             tags=["Local Queries"],
             dependencies=[Depends(enforce_pdp_token)],
+        )
+        # include the system routes
+        app.include_router(
+            system_router,
+            include_in_schema=False,
         )
         app.include_router(
             proxy_router,
