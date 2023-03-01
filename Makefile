@@ -14,6 +14,7 @@ prepare:
 ifndef VERSION
 	$(error You must set the VERSION variable to build a release image)
 endif
+
 	echo $(VERSION) >permit_pdp_version
 	./build_opal_bundle.sh
 
