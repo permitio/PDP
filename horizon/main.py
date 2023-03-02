@@ -25,11 +25,10 @@ from horizon.proxy.api import router as proxy_router
 from horizon.startup.remote_config import InvalidPDPTokenException, RemoteConfigFetcher
 from horizon.state import PersistentStateHandler
 from horizon.system.api import init_system_api_router
+from horizon.system.consts import GUNICORN_EXIT_APP
+
 
 OPA_LOGGER_MODULE = "opal_client.opa.logger"
-
-# 3 is a magic Gunicorn error code signaling that the application should exit
-GUNICORN_EXIT_APP = 3
 
 
 def apply_config(overrides_dict: dict, config_object: Confi):
