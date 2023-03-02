@@ -8,7 +8,6 @@ from tenacity import retry, retry_if_not_exception_type, stop, wait
 from horizon.config import sidecar_config
 from horizon.startup.schemas import RemoteConfig
 from horizon.state import PersistentStateHandler
-from horizon.system.consts import API_VERSION
 
 
 class NoRetryException(Exception):
@@ -105,14 +104,6 @@ class RemoteConfigFetcher:
             retry_config if retry_config is not None else self.DEFAULT_RETRY_CONFIG
         )
 
-    def _build_state_paylod(self) -> dict:
-        return {
-            "pdp_instance_id": str(PersistentStateHandler.get().pdp_instance_id),
-            "state": {
-                "api_version": API_VERSION,
-            },
-        }
-
     def fetch_config(self) -> Optional[RemoteConfig]:
         """
         fetches the sidecar config by identifying with the sidecar access token.
@@ -139,7 +130,7 @@ class RemoteConfigFetcher:
         """
         try:
             response = BlockingRequest(token=self._token).post(
-                url=self._url, payload=self._build_state_paylod()
+                url=self._url, payload=PersistentStateHandler.build_state_payload_sync()
             )
 
             try:

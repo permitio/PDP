@@ -11,6 +11,11 @@ build-local: ## Build the container
 	@docker build -t permitio/pdp-v2:local .
 
 prepare:
+ifndef VERSION
+	$(error You must set the VERSION variable to build a release image)
+endif
+
+	echo $(VERSION) >permit_pdp_version
 	./build_opal_bundle.sh
 
 build-release-prod: prepare

@@ -100,6 +100,7 @@ ENV OPAL_INLINE_OPA_LOG_FORMAT=http
 ENV PDP_CONTROL_PLANE=https://api.permit.io
 ENV PDP_API_KEY="MUST BE DEFINED"
 ENV PDP_REMOTE_CONFIG_ENDPOINT=/v2/pdps/me/config
+ENV PDP_REMOTE_STATE_ENDPOINT=/v2/pdps/me/state
 # expose sidecar port
 EXPOSE 7000
 # expose opa directly

@@ -34,6 +34,7 @@ class AuthorizationQuery(BaseSchema):
     action: str
     resource: Resource
     context: Optional[Dict[str, Any]] = {}
+    sdk: Optional[str]
 
 
 class AuthorizationResult(BaseSchema):
