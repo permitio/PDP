@@ -1,14 +1,28 @@
-.PHONY: help build
+.PHONY: help build prepare
 
 .DEFAULT_GOAL := help
 
 # DOCKER TASKS
 # Build the container
 build: ## Build the container
-	@docker build -t permitio/pdp .
+	@docker build -t permitio/pdp-v2 .
 
 build-local: ## Build the container
-	@docker build -t permitio/pdp:local .
+	@docker build -t permitio/pdp-v2:local .
+
+prepare:
+ifndef VERSION
+	$(error You must set the VERSION variable to build a release image)
+endif
+
+	echo $(VERSION) >permit_pdp_version
+	./build_opal_bundle.sh
+
+build-release-prod: prepare
+	@docker buildx build --platform linux/arm64,linux/amd64 -t permitio/pdp-v2:$(VERSION) --push .
+
+build-release-local: prepare
+	@docker build -t permitio/pdp-v2:$(VERSION) .
 
 run: ## Run the container locally
 	@docker run -it \

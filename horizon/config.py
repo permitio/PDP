@@ -1,6 +1,6 @@
-import os
-
 from opal_common.confi import Confi, confi
+
+MOCK_API_KEY = "MUST BE DEFINED"
 
 
 class SidecarConfig(Confi):
@@ -19,10 +19,16 @@ class SidecarConfig(Confi):
     )
 
     # backend route to fetch policy data topics
-    REMOTE_CONFIG_ENDPOINT = confi.str("REMOTE_CONFIG_ENDPOINT", "pdps/me/config")
+    REMOTE_CONFIG_ENDPOINT = confi.str("REMOTE_CONFIG_ENDPOINT", "/v2/pdps/me/config")
+
+    # backend route to push state changes
+    REMOTE_STATE_ENDPOINT = confi.str("REMOTE_STATE_ENDPOINT", "/v2/pdps/me/state")
 
     # access token to access backend api
-    API_KEY = confi.str("API_KEY", "PJUKkuwiJkKxbIoC4o4cguWxB_2gX6MyATYKc2OCM")
+    API_KEY = confi.str("API_KEY", MOCK_API_KEY)
+
+    # access token to perform system control operations
+    CONTAINER_CONTROL_KEY = confi.str("CONTAINER_CONTROL_KEY", MOCK_API_KEY)
 
     # if enabled, will output to log more data for each "is allowed" decision
     DECISION_LOG_DEBUG_INFO = confi.bool("DECISION_LOG_DEBUG_INFO", True)
@@ -72,6 +78,11 @@ class SidecarConfig(Confi):
         "/v1/decision_logs/ingress",
         description="the route on the backend the decision logs will be uploaded to",
     )
+    OPA_DECISION_LOG_INGRESS_BACKEND_TIER_URL = confi.str(
+        "OPA_DECISION_LOG_INGRESS_BACKEND_TIER_URL",
+        None,
+        description="the backend tier that decision logs will be uploaded to",
+    )
     OPA_DECISION_LOG_MIN_DELAY = confi.int(
         "OPA_DECISION_LOG_MIN_DELAY",
         1,
@@ -88,6 +99,11 @@ class SidecarConfig(Confi):
         "TEMP_LOG_FORMAT",
         "<green>{time}</green> | {process} | <blue>{name: <40}</blue>|<level>{level:^6} | {message}</level>",
     )
+
+    # enables the Kong integration endpoint. This shouldn't be enabled unless needed, as it's unauthenticated
+    KONG_INTEGRATION = confi.bool("KONG_INTEGRATION", False)
+    # enables debug ouptut for the Kong integration endpoint
+    KONG_INTEGRATION_DEBUG = confi.bool("KONG_INTEGRATION_DEBUG", False)
 
     # non configurable values -------------------------------------------------
 

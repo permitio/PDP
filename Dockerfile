@@ -1,47 +1,79 @@
 # BUILD STAGE ---------------------------------------
 # split this stage to save time and reduce image size
 # ---------------------------------------------------
-FROM python:3.8-alpine3.11 as BuildStage
-# update apk cache
-RUN apk update
-# TODO: remove this when upgrading to a new alpine version
-# more details: https://github.com/pyca/cryptography/issues/5771
-ENV CRYPTOGRAPHY_DONT_BUILD_RUST=1
+FROM python:3.8 as BuildStage
 # install linux libraries necessary to compile some python packages
-RUN apk add --update --no-cache --virtual .build-deps gcc git build-base alpine-sdk python3-dev musl-dev postgresql-dev libffi-dev libressl-dev
+RUN apt-get update && \
+    apt-get install -y build-essential libffi-dev
 # from now on, work in the /app directory
 WORKDIR /app/
-# Layer dependency install (for caching)
-COPY requirements.txt requirements.txt
+
 # install python deps
+COPY requirements.txt requirements.txt
 RUN pip install --upgrade pip && pip install --user -r requirements.txt
+
+# Install a custom OPAL, if requested
+COPY custom_opal /custom_opal
+
+RUN if [ -f /custom_opal/custom_opal.tar.gz ]; \
+	then \
+		cd /custom_opal && \
+		tar xzf custom_opal.tar.gz && \
+		pip install --user packages/opal-common packages/opal-client && \
+		cd / && \
+		rm -rf /custom_opal ; \
+	fi
+
+COPY horizon setup.py MANIFEST.in ./
+RUN python setup.py install --user
+
+# Layer dependency install (for caching)
 
 # MAIN IMAGE ----------------------------------------
 # most of the time only this image should be built
 # ---------------------------------------------------
-FROM python:3.8-alpine3.11
-# bash is needed for ./start/sh script
-RUN apk add --update --no-cache bash curl
-# needed for rookout
-RUN apk add g++ python3-dev linux-headers
-# copy opa from official image (main binary and lib for web assembly)
-RUN curl -L -o /opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static && chmod 755 /opa
+FROM python:3.8-slim
+RUN apt-get update && \
+    apt-get install -y bash curl
+
+RUN groupadd -r permit
+RUN useradd -m -s /bin/bash -g permit -d /home/permit permit
+
 # copy libraries from build stage
-COPY --from=BuildStage /root/.local /root/.local
+RUN mkdir /home/permit/.local
+COPY --from=BuildStage /root/.local /home/permit/.local
+
+RUN curl -L -o /opa https://openpolicyagent.org/downloads/v0.49.0/opa_linux_amd64_static && chmod 755 /opa
+# bash is needed for ./start/sh script
+COPY scripts ./
+
+RUN mkdir -p /config
+RUN chown -R permit:permit /opa
+RUN chown -R permit:permit /config
+
 # copy wait-for-it (use only for development! e.g: docker compose)
 COPY scripts/wait-for-it.sh /usr/wait-for-it.sh
 RUN chmod +x /usr/wait-for-it.sh
 # copy startup script
 COPY ./scripts/start.sh /start.sh
 RUN chmod +x /start.sh
+
+
+
+RUN chown -R permit:permit /home/permit
+RUN chown -R permit:permit /usr/
+USER permit
+
+# copy Kong route-to-resource translation table
+COPY kong_routes.json /config/kong_routes.json
+# install sidecar package
+
 # copy gunicorn_config
 COPY ./scripts/gunicorn_conf.py /gunicorn_conf.py
 # copy app code
 COPY . ./
-# install sidecar package
-RUN python setup.py install
 # Make sure scripts in .local are usable:
-ENV PATH=/:/root/.local/bin:$PATH
+ENV PATH=/:/home/permit/.local/bin:$PATH
 # uvicorn config ------------------------------------
 
 # WARNING: do not change the number of workers on the opal client!
@@ -67,6 +99,8 @@ ENV OPAL_INLINE_OPA_LOG_FORMAT=http
 # in prod, you must pass the correct url
 ENV PDP_CONTROL_PLANE=https://api.permit.io
 ENV PDP_API_KEY="MUST BE DEFINED"
+ENV PDP_REMOTE_CONFIG_ENDPOINT=/v2/pdps/me/config
+ENV PDP_REMOTE_STATE_ENDPOINT=/v2/pdps/me/state
 # expose sidecar port
 EXPOSE 7000
 # expose opa directly

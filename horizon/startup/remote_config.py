@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Dict, Optional
 
 import requests
 from opal_common.logger import logger
@@ -7,23 +7,49 @@ from tenacity import retry, retry_if_not_exception_type, stop, wait
 
 from horizon.config import sidecar_config
 from horizon.startup.schemas import RemoteConfig
+from horizon.state import PersistentStateHandler
 
 
-class InvalidPDPTokenException(Exception):
-    pass
+class NoRetryException(Exception):
+    ...
 
 
-def blocking_get_request(url: str, token: str, params=None) -> dict:
-    """
-    utility method to send a *blocking* HTTP GET request and get the response back.
-    """
-    headers = {"Authorization": f"Bearer {token}"} if token is not None else {}
-    response = requests.get(url, headers=headers, params=params)
+class InvalidPDPTokenException(NoRetryException):
+    ...
 
-    if response.status_code == 401:
-        raise InvalidPDPTokenException()
 
-    return response.json()
+class BlockingRequest:
+    def __init__(self, token: Optional[str]):
+        self._token = token
+
+    def _headers(self) -> Dict[str, str]:
+        if self._token is None:
+            return {}
+        return {"Authorization": f"Bearer {self._token}"}
+
+    def get(self, url: str, params=None) -> dict:
+        """
+        utility method to send a *blocking* HTTP GET request and get the response back.
+        """
+        response = requests.get(url, headers=self._headers(), params=params)
+
+        if response.status_code == 401:
+            raise InvalidPDPTokenException()
+
+        return response.json()
+
+    def post(self, url: str, payload: dict = None, params=None) -> dict:
+        """
+        utility method to send a *blocking* HTTP POST request with a JSON payload and get the response back.
+        """
+        response = requests.post(
+            url, json=payload, headers=self._headers(), params=params
+        )
+
+        if response.status_code == 401:
+            raise InvalidPDPTokenException()
+
+        return response.json()
 
 
 class RemoteConfigFetcher:
@@ -51,7 +77,7 @@ class RemoteConfigFetcher:
     """
 
     DEFAULT_RETRY_CONFIG = {
-        "retry": retry_if_not_exception_type(InvalidPDPTokenException),
+        "retry": retry_if_not_exception_type(NoRetryException),
         "wait": wait.wait_random_exponential(max=10),
         "stop": stop.stop_after_attempt(10),
         "reraise": True,
@@ -59,7 +85,7 @@ class RemoteConfigFetcher:
 
     def __init__(
         self,
-        backend_url: str = sidecar_config.BACKEND_SERVICE_URL,
+        backend_url: str = sidecar_config.CONTROL_PLANE,
         sidecar_access_token: str = sidecar_config.API_KEY,
         remote_config_route: str = sidecar_config.REMOTE_CONFIG_ENDPOINT,
         retry_config=None,
@@ -72,7 +98,7 @@ class RemoteConfigFetcher:
             sidecar_access_token (string, optional): access token identifying this client (sidecar) to the backend
             remote_config_route (string, optional): api route to fetch sidecar config
         """
-        self._url = f"{backend_url}/{remote_config_route}"
+        self._url = f"{backend_url}{remote_config_route}"
         self._token = sidecar_access_token
         self._retry_config = (
             retry_config if retry_config is not None else self.DEFAULT_RETRY_CONFIG
@@ -103,7 +129,9 @@ class RemoteConfigFetcher:
         However, this is ok because the RemoteConfigFetcher runs *once* when the sidecar starts.
         """
         try:
-            response = blocking_get_request(url=self._url, token=self._token)
+            response = BlockingRequest(token=self._token).post(
+                url=self._url, payload=PersistentStateHandler.build_state_payload_sync()
+            )
 
             try:
                 sidecar_config = RemoteConfig(**response)
