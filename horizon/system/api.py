@@ -1,10 +1,11 @@
 import asyncio
-import sys
+import os
 
 from fastapi import APIRouter, Depends, Query, status
+from loguru import logger
 
 from horizon.authentication import enforce_pdp_control_key, enforce_pdp_token
-from horizon.system.consts import API_VERSION
+from horizon.system.consts import API_VERSION, GUNICORN_EXIT_APP
 from horizon.system.schemas import VersionResult
 
 
@@ -26,10 +27,11 @@ def init_system_api_router():
         status_code=status.HTTP_204_NO_CONTENT,
         dependencies=[Depends(enforce_pdp_control_key)],
     )
-    async def exit(exit_code: int = Query(default=0, ge=0, le=255)):
+    async def exit():
         async def do_exit():
             await asyncio.sleep(0.1)
-            sys.exit(exit_code)
+            logger.info("Exiting due to system request.")
+            os._exit(GUNICORN_EXIT_APP)
 
         asyncio.ensure_future(do_exit())
 

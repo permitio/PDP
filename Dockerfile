@@ -43,7 +43,7 @@ RUN useradd -m -s /bin/bash -g permit -d /home/permit permit
 RUN mkdir /home/permit/.local
 COPY --from=BuildStage /root/.local /home/permit/.local
 
-RUN curl -L -o /opa https://openpolicyagent.org/downloads/v0.49.0/opa_linux_amd64_static && chmod 755 /opa
+RUN curl -L -o /opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static && chmod 755 /opa
 # bash is needed for ./start/sh script
 COPY scripts ./
 
