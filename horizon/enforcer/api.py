@@ -1,7 +1,7 @@
 import json
-from typing import Dict, Optional
+from typing import Dict, Optional, Union, cast
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from opal_client.logger import logger
 from opal_client.policy_store.base_policy_store_client import BasePolicyStoreClient
 from opal_client.policy_store.opa_client import fail_silently
@@ -12,6 +12,7 @@ from opal_client.policy_store.policy_store_client_factory import (
 from horizon.authentication import enforce_pdp_token
 from horizon.config import sidecar_config
 from horizon.enforcer.schemas import AuthorizationQuery, AuthorizationResult
+from horizon.enforcer.schemas_v2 import AuthorizationQueryV2
 
 
 def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
@@ -85,7 +86,16 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         status_code=status.HTTP_200_OK,
         response_model_exclude_none=True,
     )
-    async def is_allowed(query: AuthorizationQuery):
+    async def is_allowed(query: Union[AuthorizationQuery, AuthorizationQueryV2]):
+        if isinstance(query, AuthorizationQueryV2):
+            raise HTTPException(
+                status_code=status.HTTP_421_MISDIRECTED_REQUEST,
+                detail="Mismatch between client version and PDP version,"
+                " required v1 request body, got v2. "
+                "hint: try to update your PDP version to v2",
+            )
+        query = cast(AuthorizationQuery, query)
+
         async def _is_allowed():
             return await policy_store.get_data_with_input(path="rbac", input=query)
 
