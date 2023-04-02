@@ -1,8 +1,7 @@
 import json
-import os
 import re
 from http.client import HTTPException
-from typing import Dict, Optional
+from typing import cast, Optional, Union
 
 import aiohttp
 from fastapi import APIRouter, Depends, Header
@@ -25,6 +24,7 @@ from horizon.enforcer.schemas_kong import (
     KongAuthorizationQuery,
     KongAuthorizationResult,
 )
+from horizon.enforcer.schemas_v1 import AuthorizationQueryV1
 from horizon.state import PersistentStateHandler
 
 AUTHZ_HEADER = "Authorization"
@@ -176,9 +176,18 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
     )
     async def is_allowed(
         request: Request,
-        query: AuthorizationQuery,
+        query: Union[AuthorizationQuery, AuthorizationQueryV1],
         x_permit_sdk_language: Optional[str] = Header(default=None),
     ):
+        if isinstance(query, AuthorizationQueryV1):
+            raise fastapi_HTTPException(
+                status_code=status.HTTP_421_MISDIRECTED_REQUEST,
+                detail="Mismatch between client version and PDP version,"
+                " required v2 request body, got v1. "
+                "hint: try to update your client version to v2",
+            )
+        query = cast(AuthorizationQuery, query)
+
         async def _is_allowed():
             opa_input = {"input": query.dict()}
             headers = transform_headers(request)
