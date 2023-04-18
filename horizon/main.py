@@ -1,4 +1,5 @@
 import logging
+import os.path
 import sys
 from typing import List
 from uuid import uuid4
@@ -219,6 +220,11 @@ class PermitPDP:
                     "authentication": "token",
                     "files": [auth_policy_file_path],
                 }
+            )
+
+            # Don't load the authz policy from backup (always use the newly generated file)
+            opal_client_config.STORE_BACKUP_POLICY_PATHS_TO_IGNORE.append(
+                os.path.basename(auth_policy_file_path)
             )
 
         logger.debug(f"setting OPAL_INLINE_OPA_CONFIG={inline_opa_config}")
