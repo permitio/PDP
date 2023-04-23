@@ -16,3 +16,4 @@ decision_logs:
   reporting:
     min_delay_seconds: {{ min_delay_seconds }}
     max_delay_seconds: {{ max_delay_seconds }}
+    upload_size_limit_bytes: {{ upload_size_limit_bytes }}

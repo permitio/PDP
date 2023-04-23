@@ -55,6 +55,7 @@ def get_opa_config_file_path(
             log_ingress_endpoint=sidecar_config.OPA_DECISION_LOG_INGRESS_ROUTE,
             min_delay_seconds=sidecar_config.OPA_DECISION_LOG_MIN_DELAY,
             max_delay_seconds=sidecar_config.OPA_DECISION_LOG_MAX_DELAY,
+            upload_size_limit_bytes=sidecar_config.OPA_DECISION_LOG_UPLOAD_SIZE_LIMIT,
             log_to_console=sidecar_config.OPA_DECISION_LOG_CONSOLE,
         )
     except jinja2.TemplateNotFound:
