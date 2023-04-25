@@ -93,6 +93,11 @@ class SidecarConfig(Confi):
         10,
         description="max amount of time (in seconds) to wait between decision log uploads",
     )
+    OPA_DECISION_LOG_UPLOAD_SIZE_LIMIT = confi.int(
+        "OPA_DECISION_LOG_UPLOAD_SIZE_LIMIT",
+        32768,
+        description="log upload size limit in bytes. OPA will chunk uploads to cap message body to this limit",
+    )
 
     # temp log format (until cloud config is received)
     TEMP_LOG_FORMAT = confi.str(
