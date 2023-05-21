@@ -21,6 +21,12 @@ endif
 build-release-prod: prepare
 	@docker buildx build --platform linux/arm64,linux/amd64 -t permitio/pdp-v2:$(VERSION) --push .
 
+build-release-local-amd64: prepare
+	@docker buildx build --platform linux/amd64 -t permitio/pdp-v2:$(VERSION) . --load
+
+build-release-local-arm64: prepare
+	@docker buildx build --platform linux/arm64 -t permitio/pdp-v2:$(VERSION) . --load
+
 build-release-local: prepare
 	@docker build -t permitio/pdp-v2:$(VERSION) .
 
