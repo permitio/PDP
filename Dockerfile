@@ -68,8 +68,7 @@ RUN useradd -m -s /bin/bash -g permit -d /home/permit permit
 RUN mkdir /home/permit/.local
 COPY --from=BuildStage /root/.local /home/permit/.local
 
-COPY --from=OPABuildStage /opa /opa
-RUN chmod 755 /opa
+COPY --from=OPABuildStage --chmod=755 /opa /opa
 
 # bash is needed for ./start/sh script
 COPY scripts ./
