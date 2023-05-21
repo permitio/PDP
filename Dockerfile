@@ -1,7 +1,7 @@
 # BUILD STAGE ---------------------------------------
 # split this stage to save time and reduce image size
 # ---------------------------------------------------
-FROM python:3.8 as BuildStage
+FROM python:3.10 as BuildStage
 # install linux libraries necessary to compile some python packages
 RUN apt-get update && \
     apt-get install -y build-essential libffi-dev
@@ -10,29 +10,54 @@ WORKDIR /app/
 
 # install python deps
 COPY requirements.txt requirements.txt
-RUN pip install --upgrade pip && pip install --user -r requirements.txt
+RUN pip install --upgrade pip && pip install setuptools -U && pip install --user -r requirements.txt
 
 # Install a custom OPAL, if requested
-COPY custom_opal /custom_opal
+COPY custom /custom
 
-RUN if [ -f /custom_opal/custom_opal.tar.gz ]; \
+RUN if [ -f /custom/custom_opal.tar.gz ]; \
 	then \
-		cd /custom_opal && \
+		cd /custom && \
 		tar xzf custom_opal.tar.gz && \
 		pip install --user packages/opal-common packages/opal-client && \
 		cd / && \
-		rm -rf /custom_opal ; \
+		rm -rf /custom ; \
 	fi
 
 COPY horizon setup.py MANIFEST.in ./
 RUN python setup.py install --user
+
+FROM golang:bullseye as OPABuildStage
+
+COPY custom /custom
+
+RUN if [ -f /custom/custom_opa.tar.gz ]; \
+    then \
+      cd /custom && \
+      tar xzf custom_opa.tar.gz && \
+      go build -o /opa && \
+      rm -rf /custom ; \
+    else \
+      case $(uname -m) in \
+      	x86_64) \
+      		curl -L -o /opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static ; \
+      		;; \
+      	aarch64) \
+      		curl -L -o /opa https://openpolicyagent.org/downloads/latest/opa_linux_arm64_static ; \
+      		;; \
+      	*) \
+      		echo "Unknown architecture." ; \
+      		exit 1 ; \
+      		;; \
+      esac ; \
+    fi
 
 # Layer dependency install (for caching)
 
 # MAIN IMAGE ----------------------------------------
 # most of the time only this image should be built
 # ---------------------------------------------------
-FROM python:3.8-slim
+FROM python:3.10-slim
 RUN apt-get update && \
     apt-get install -y bash curl
 
@@ -43,7 +68,9 @@ RUN useradd -m -s /bin/bash -g permit -d /home/permit permit
 RUN mkdir /home/permit/.local
 COPY --from=BuildStage /root/.local /home/permit/.local
 
-RUN curl -L -o /opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static && chmod 755 /opa
+COPY --from=OPABuildStage /opa /opa
+RUN chmod 755 /opa
+
 # bash is needed for ./start/sh script
 COPY scripts ./
 
