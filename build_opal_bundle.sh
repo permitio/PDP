@@ -14,5 +14,8 @@ fi;
 if [ "$CUSTOM_OPA" != "" ]
 then
   echo "Using custom OPA from $CUSTOM_OPA"
-  tar -czf custom/custom_opa.tar.gz -C "$CUSTOM_OPA" --exclude '.*' main.go types go.mod go.sum README.md
+  build_root="$PWD"
+  cd "$CUSTOM_OPA"
+  find * -name '*go*' -print0 | xargs -0 tar -czf "$build_root"/custom/custom_opa.tar.gz --exclude '.*'
+  cd "$build_root"
 fi

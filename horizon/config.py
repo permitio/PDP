@@ -4,6 +4,12 @@ MOCK_API_KEY = "MUST BE DEFINED"
 
 
 class SidecarConfig(Confi):
+    SHARD_ID = confi.str(
+        "SHARD_ID",
+        None,
+        description="The shard id of this PDP, used to identify the PDP in the control plane",
+    )
+
     CONTROL_PLANE = confi.str(
         "CONTROL_PLANE",
         "http://localhost:8000",

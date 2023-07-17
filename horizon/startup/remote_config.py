@@ -19,13 +19,17 @@ class InvalidPDPTokenException(NoRetryException):
 
 
 class BlockingRequest:
-    def __init__(self, token: Optional[str]):
+    def __init__(self, token: Optional[str], shard_id: Optional[str] = None):
         self._token = token
+        self._shard_id = shard_id
 
     def _headers(self) -> Dict[str, str]:
-        if self._token is None:
-            return {}
-        return {"Authorization": f"Bearer {self._token}"}
+        headers = {}
+        if self._token is not None:
+            headers["Authorization"] = f"Bearer {self._token}"
+        if self._shard_id is not None:
+            headers["X-Shard-ID"] = self._shard_id
+        return headers
 
     def get(self, url: str, params=None) -> dict:
         """
@@ -88,6 +92,7 @@ class RemoteConfigFetcher:
         backend_url: str = sidecar_config.CONTROL_PLANE,
         sidecar_access_token: str = sidecar_config.API_KEY,
         remote_config_route: str = sidecar_config.REMOTE_CONFIG_ENDPOINT,
+        shard_id: Optional[str] = sidecar_config.SHARD_ID,
         retry_config=None,
     ):
         """
@@ -103,6 +108,7 @@ class RemoteConfigFetcher:
         self._retry_config = (
             retry_config if retry_config is not None else self.DEFAULT_RETRY_CONFIG
         )
+        self._shard_id = shard_id
 
     def fetch_config(self) -> Optional[RemoteConfig]:
         """
@@ -129,7 +135,7 @@ class RemoteConfigFetcher:
         However, this is ok because the RemoteConfigFetcher runs *once* when the sidecar starts.
         """
         try:
-            response = BlockingRequest(token=self._token).post(
+            response = BlockingRequest(token=self._token, shard_id=self._shard_id).post(
                 url=self._url, payload=PersistentStateHandler.build_state_payload_sync()
             )
 
