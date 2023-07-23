@@ -1,6 +1,6 @@
 from typing import Any, Dict, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, AnyHttpUrl
 
 
 class BaseSchema(BaseModel):
@@ -37,8 +37,32 @@ class AuthorizationQuery(BaseSchema):
     sdk: Optional[str]
 
 
+class UrlAuthorizationQuery(BaseSchema):
+    """
+    the format of is_allowed_url() input
+    """
+    user: User
+    http_method: str
+    url: AnyHttpUrl
+    tenant: str
+    context: Optional[Dict[str, Any]] = {}
+    sdk: Optional[str]
+
+
 class AuthorizationResult(BaseSchema):
     allow: bool = False
     query: Optional[dict]
     debug: Optional[dict]
     result: bool = False  # fallback for older sdks (TODO: remove)
+
+
+class MappingRuleData(BaseSchema):
+    url: AnyHttpUrl
+    http_method: str
+    resource: str
+    action: str
+    params: Optional[list]
+
+    @property
+    def resource_action(self) -> str:
+        return self.action or self.http_method
