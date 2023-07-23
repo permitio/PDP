@@ -16,11 +16,13 @@ class MappingRulesUtils:
         if mapping_rule_url.host != request_url.host:
             logger.info("host")
             return False
-        if not MappingRulesUtils._compare_url_path(mapping_rule_url.path, request_url.path):
+        if not MappingRulesUtils._compare_url_path(
+            mapping_rule_url.path, request_url.path
+        ):
             logger.info("path")
             return False
         if not MappingRulesUtils._compare_query_params(
-                mapping_rule_url.query, request_url.query
+            mapping_rule_url.query, request_url.query
         ):
             logger.info("query")
             return False
@@ -28,7 +30,7 @@ class MappingRulesUtils:
 
     @staticmethod
     def _compare_url_path(
-            mapping_rule_url: str | None, request_url: str | None
+        mapping_rule_url: str | None, request_url: str | None
     ) -> bool:
         if mapping_rule_url is None and request_url is None:
             return True
@@ -49,7 +51,7 @@ class MappingRulesUtils:
 
     @staticmethod
     def _compare_query_params(
-            mapping_rule_query_string: str | None, request_url_query_string: str | None
+        mapping_rule_query_string: str | None, request_url_query_string: str | None
     ) -> bool:
         if mapping_rule_query_string is None and request_url_query_string is None:
             # if both are None, they are equal
@@ -71,7 +73,7 @@ class MappingRulesUtils:
                 return False
 
             if mapping_rule_query_params[key].startswith(
-                    "{"
+                "{"
             ) and mapping_rule_query_params[key].endswith("}"):
                 # if the value is an attribute
                 # we just need to make sure the attribute is in the request query params
@@ -96,28 +98,26 @@ class MappingRulesUtils:
         return attributes
 
     @staticmethod
-    def extract_attributes_from_query_params(
-            rule_url: str, request_url: str
-    ) -> dict:
+    def extract_attributes_from_query_params(rule_url: str, request_url: str) -> dict:
         rule_query_params = QueryParams(rule_url.split("?")[1])
         request_query_params = QueryParams(request_url.split("?")[1])
         logger.info(rule_query_params.keys())
         logger.info(request_query_params.keys())
         attributes = {}
         for key in rule_query_params.keys():
-            if rule_query_params[key].startswith("{") and rule_query_params[key].endswith(
-                    "}"
-            ):
+            if rule_query_params[key].startswith("{") and rule_query_params[
+                key
+            ].endswith("}"):
                 attributes[rule_query_params[key][1:-1]] = request_query_params[key]
         logger.info(attributes)
         return attributes
 
     @classmethod
     def extract_mapping_rule_by_request(
-            cls,
-            mapping_rules: list[MappingRuleData],
-            http_method: str,
-            url: AnyHttpUrl,
+        cls,
+        mapping_rules: list[MappingRuleData],
+        http_method: str,
+        url: AnyHttpUrl,
     ) -> MappingRuleData | None:
         matched_mapping_rules = []
         for mapping_rule in mapping_rules:
@@ -128,7 +128,7 @@ class MappingRulesUtils:
                 # if the urls doesn't match, we don't need to check the headers
                 continue
             matched_mapping_rules.append(mapping_rule)
-        #TODO: add priority most priority first
+        # TODO: add priority most priority first
         # matched_mapping_rules.sort(key=lambda rule: rule.priority or 0, reverse=True)
         if len(matched_mapping_rules) > 0:
             return matched_mapping_rules[0]

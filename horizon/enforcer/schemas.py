@@ -41,6 +41,7 @@ class UrlAuthorizationQuery(BaseSchema):
     """
     the format of is_allowed_url() input
     """
+
     user: User
     http_method: str
     url: AnyHttpUrl

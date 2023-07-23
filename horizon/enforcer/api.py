@@ -19,8 +19,13 @@ from pydantic import parse_obj_as
 
 from horizon.authentication import enforce_pdp_token
 from horizon.config import sidecar_config
-from horizon.enforcer.schemas import AuthorizationQuery, AuthorizationResult, UrlAuthorizationQuery, MappingRuleData, \
-    Resource
+from horizon.enforcer.schemas import (
+    AuthorizationQuery,
+    AuthorizationResult,
+    UrlAuthorizationQuery,
+    MappingRuleData,
+    Resource,
+)
 from horizon.enforcer.schemas_kong import (
     KongAuthorizationInput,
     KongAuthorizationQuery,
@@ -178,17 +183,19 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         dependencies=[Depends(enforce_pdp_token)],
     )
     async def is_allowed_url(
-            request: Request,
-            query: UrlAuthorizationQuery,
-            x_permit_sdk_language: Optional[str] = Header(default=None),
+        request: Request,
+        query: UrlAuthorizationQuery,
+        x_permit_sdk_language: Optional[str] = Header(default=None),
     ):
         headers = transform_headers(request)
-        mapping_rules_url = f"{opal_client_config.POLICY_STORE_URL}/v1/data/mapping_rules"
+        mapping_rules_url = (
+            f"{opal_client_config.POLICY_STORE_URL}/v1/data/mapping_rules"
+        )
         try:
             logger.debug(f"calling OPA at '{mapping_rules_url}'")
             async with aiohttp.ClientSession() as session:
                 async with session.post(
-                        mapping_rules_url, headers=headers
+                    mapping_rules_url, headers=headers
                 ) as opa_response:
                     data = await proxy_response(opa_response)
         except aiohttp.ClientError as e:
@@ -199,21 +206,37 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         mapping_rules_json = json.loads(data.body)["result"]["all"]
         for mapping_rule in mapping_rules_json:
             mapping_rules.append(parse_obj_as(MappingRuleData, mapping_rule))
-        matched_mapping_rule = MappingRulesUtils.extract_mapping_rule_by_request(mapping_rules, query.http_method,
-                                                                                 query.url)
+        matched_mapping_rule = MappingRulesUtils.extract_mapping_rule_by_request(
+            mapping_rules, query.http_method, query.url
+        )
         if matched_mapping_rule is None:
             return {
                 "allow": False,
                 "result": False,
                 "query": query.dict(),
-                "debug": {"reason":"Matched mapping rule not found for the requested URL and HTTP method",
-                          "mapping_rules": mapping_rules_json
-                          }
+                "debug": {
+                    "reason": "Matched mapping rule not found for the requested URL and HTTP method",
+                    "mapping_rules": mapping_rules_json,
+                },
             }
-        path_attributes = MappingRulesUtils.extract_attributes_from_url(matched_mapping_rule.url, query.url)
-        query_params_attributes = MappingRulesUtils.extract_attributes_from_query_params(matched_mapping_rule.url, query.url)
+        path_attributes = MappingRulesUtils.extract_attributes_from_url(
+            matched_mapping_rule.url, query.url
+        )
+        query_params_attributes = (
+            MappingRulesUtils.extract_attributes_from_query_params(
+                matched_mapping_rule.url, query.url
+            )
+        )
         attributes = {**path_attributes, **query_params_attributes}
-        allowed_query = AuthorizationQuery(user=query.user, action=matched_mapping_rule.action, resource=Resource(type=matched_mapping_rule.resource, tenant=query.tenant, attributes=attributes))
+        allowed_query = AuthorizationQuery(
+            user=query.user,
+            action=matched_mapping_rule.action,
+            resource=Resource(
+                type=matched_mapping_rule.resource,
+                tenant=query.tenant,
+                attributes=attributes,
+            ),
+        )
         return await is_allowed(request, allowed_query, x_permit_sdk_language)
 
     @router.post(
