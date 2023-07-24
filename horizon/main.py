@@ -117,7 +117,7 @@ class PermitPDP:
         if sidecar_config.ENABLE_MONITORING:
             self._configure_monitoring()
 
-        self._opal = OpalClient()
+        self._opal = OpalClient(shard_id=sidecar_config.SHARD_ID)
         self._configure_cloud_logging(remote_config.context)
 
         # use opal client app and add sidecar routes on top
