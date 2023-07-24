@@ -1,4 +1,3 @@
-from loguru import logger
 from pydantic import AnyHttpUrl
 from starlette.datastructures import QueryParams
 
@@ -8,23 +7,17 @@ from horizon.enforcer.schemas import MappingRuleData
 class MappingRulesUtils:
     @staticmethod
     def _compare_urls(mapping_rule_url: AnyHttpUrl, request_url: AnyHttpUrl) -> bool:
-        logger.info(mapping_rule_url)
-        logger.info(request_url)
         if mapping_rule_url.scheme != request_url.scheme:
-            logger.info("scheme")
             return False
         if mapping_rule_url.host != request_url.host:
-            logger.info("host")
             return False
         if not MappingRulesUtils._compare_url_path(
             mapping_rule_url.path, request_url.path
         ):
-            logger.info("path")
             return False
         if not MappingRulesUtils._compare_query_params(
             mapping_rule_url.query, request_url.query
         ):
-            logger.info("query")
             return False
         return True
 
@@ -85,8 +78,6 @@ class MappingRulesUtils:
 
     @staticmethod
     def extract_attributes_from_url(rule_url: str, request_url: str) -> dict:
-        logger.info(rule_url)
-        logger.info(request_url)
         rule_url_parts = rule_url.split("/")
         request_url_parts = request_url.split("/")
         attributes = {}
@@ -101,15 +92,12 @@ class MappingRulesUtils:
     def extract_attributes_from_query_params(rule_url: str, request_url: str) -> dict:
         rule_query_params = QueryParams(rule_url.split("?")[1])
         request_query_params = QueryParams(request_url.split("?")[1])
-        logger.info(rule_query_params.keys())
-        logger.info(request_query_params.keys())
         attributes = {}
         for key in rule_query_params.keys():
             if rule_query_params[key].startswith("{") and rule_query_params[
                 key
             ].endswith("}"):
                 attributes[rule_query_params[key][1:-1]] = request_query_params[key]
-        logger.info(attributes)
         return attributes
 
     @classmethod
