@@ -1,4 +1,4 @@
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 
 import requests
 from opal_common.logger import logger
@@ -19,16 +19,20 @@ class InvalidPDPTokenException(NoRetryException):
 
 
 class BlockingRequest:
-    def __init__(self, token: Optional[str], shard_id: Optional[str] = None):
+    def __init__(
+        self, token: Optional[str], extra_headers: dict[str, Any] | None = None
+    ):
         self._token = token
-        self._shard_id = shard_id
+        self._extra_headers = {
+            k: v for k, v in (extra_headers or {}).items() if v is not None
+        }
 
     def _headers(self) -> Dict[str, str]:
         headers = {}
         if self._token is not None:
             headers["Authorization"] = f"Bearer {self._token}"
-        if self._shard_id is not None:
-            headers["X-Shard-ID"] = self._shard_id
+
+        headers.update(self._extra_headers)
         return headers
 
     def get(self, url: str, params=None) -> dict:
@@ -135,7 +139,9 @@ class RemoteConfigFetcher:
         However, this is ok because the RemoteConfigFetcher runs *once* when the sidecar starts.
         """
         try:
-            response = BlockingRequest(token=self._token, shard_id=self._shard_id).post(
+            response = BlockingRequest(
+                token=self._token, extra_headers={"X-Shard-ID": self._shard_id}
+            ).post(
                 url=self._url, payload=PersistentStateHandler.build_state_payload_sync()
             )
 
