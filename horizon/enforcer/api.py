@@ -203,7 +203,12 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=repr(e))
 
         mapping_rules = []
-        mapping_rules_json = json.loads(data.body)["result"]["all"]
+        data_result = json.loads(data.body).get("result")
+        if data_result is None:
+            mapping_rules_json = None
+        else:
+            mapping_rules_json = data_result.get("all")
+
         for mapping_rule in mapping_rules_json:
             mapping_rules.append(parse_obj_as(MappingRuleData, mapping_rule))
         matched_mapping_rule = MappingRulesUtils.extract_mapping_rule_by_request(
