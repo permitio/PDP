@@ -116,8 +116,8 @@ class MappingRulesUtils:
                 # if the urls doesn't match, we don't need to check the headers
                 continue
             matched_mapping_rules.append(mapping_rule)
-        # TODO: add priority most priority first
-        # matched_mapping_rules.sort(key=lambda rule: rule.priority or 0, reverse=True)
+        # most priority first
+        matched_mapping_rules.sort(key=lambda rule: rule.priority or 0, reverse=True)
         if len(matched_mapping_rules) > 0:
             return matched_mapping_rules[0]
 
