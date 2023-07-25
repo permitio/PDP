@@ -90,6 +90,8 @@ class MappingRulesUtils:
 
     @staticmethod
     def extract_attributes_from_query_params(rule_url: str, request_url: str) -> dict:
+        if "?" not in rule_url or "?" not in request_url:
+            return {}
         rule_query_params = QueryParams(rule_url.split("?")[1])
         request_query_params = QueryParams(request_url.split("?")[1])
         attributes = {}
