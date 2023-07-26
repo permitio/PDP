@@ -241,6 +241,8 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
                 tenant=query.tenant,
                 attributes=attributes,
             ),
+            context=query.context,
+            sdk=query.sdk,
         )
         return await is_allowed(request, allowed_query, x_permit_sdk_language)
 

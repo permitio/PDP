@@ -62,7 +62,7 @@ class MappingRuleData(BaseSchema):
     http_method: str
     resource: str
     action: str
-    params: Optional[list]
+    priority: int | None = None
 
     @property
     def resource_action(self) -> str:
