@@ -123,6 +123,9 @@ class PermitPDP:
         self._configure_cloud_logging(remote_config.context)
 
         self._opal_relay = OpalRelayAPIClient(remote_config.context, self._opal)
+        self._opal.data_updater.callbacks_reporter.set_user_data_handler(
+            PersistentStateHandler.get_instance().reporter_user_data_handler
+        )
 
         # use opal client app and add sidecar routes on top
         app: FastAPI = self._opal.app

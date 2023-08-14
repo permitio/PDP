@@ -5,7 +5,8 @@ import platform
 import subprocess
 import time
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator, List, Optional
+from opal_common.schemas.data import DataUpdateReport
+from typing import AsyncGenerator, List, Optional, Any
 from uuid import UUID, uuid4
 
 import aiohttp
@@ -178,6 +179,13 @@ class PersistentStateHandler:
                 "api_version": API_VERSION,
                 "seen_sdks": state.seen_sdks,
             },
+        }
+
+    async def reporter_user_data_handler(
+        self, report: DataUpdateReport
+    ) -> dict[str, Any]:
+        return {
+            "pdp_instance_id": self.get().pdp_instance_id,
         }
 
     @classmethod

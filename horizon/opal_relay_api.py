@@ -103,11 +103,11 @@ class OpalRelayAPIClient:
     async def send_ping(self):
         session = await self.relay_session()
         # This is ugly but for now this is not exposed publically in OPAL
-        policy_topics = self._opal_client.policy_updater._topics
+        policy_topics = self._opal_client.policy_updater.topics
         data_topics = opal_client_config.DATA_TOPICS
         if opal_client_config.SCOPE_ID != "default":
             data_topics = [
-                f"{opal_client_config.SCOPE_ID}:{topic}"
+                f"{opal_client_config.SCOPE_ID}:data:{topic}"
                 for topic in opal_client_config.DATA_TOPICS
             ]
         topics = data_topics + policy_topics
