@@ -76,7 +76,7 @@ class OpalRelayAPIClient:
         ):
             async with self.api_session().post(
                 urljoin(
-                    sidecar_config.CONTROL_PLANE,
+                    sidecar_config.CONTROL_PLANE_RELAY_JWT_TIER,
                     f"v2/relay_jwt/{self._org_id.hex}/{self._project_id.hex}/{self._env_id.hex}",
                 ),
                 json={
