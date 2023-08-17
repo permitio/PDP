@@ -2,6 +2,7 @@ from opal_common.confi import Confi, confi
 
 MOCK_API_KEY = "MUST BE DEFINED"
 
+
 class SidecarConfig(Confi):
     SHARD_ID = confi.str(
         "SHARD_ID",
@@ -18,6 +19,12 @@ class SidecarConfig(Confi):
     CONTROL_PLANE_RELAY_API = confi.str(
         "CONTROL_PLANE_RELAY_API",
         "http://localhost:8001",
+    )
+
+    CONTROL_PLANE_RELAY_JWT_TIER = confi.str(
+        "CONTROL_PLANE_RELAY_JWT_TIER",
+        "http://localhost:8000",
+        description="the backend tier that will be used to generate relay API JWTs",
     )
 
     # backend api url, where proxy requests go
