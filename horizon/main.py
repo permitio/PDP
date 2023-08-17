@@ -1,7 +1,7 @@
 import logging
 import sys
 from typing import List
-from uuid import uuid4
+from uuid import uuid4, UUID
 
 from fastapi import Depends, FastAPI, status
 from fastapi.responses import RedirectResponse
@@ -21,12 +21,12 @@ from horizon.enforcer.opa.config_maker import (
     get_opa_config_file_path,
 )
 from horizon.local.api import init_local_cache_api_router
+from horizon.opal_relay_api import OpalRelayAPIClient
 from horizon.proxy.api import router as proxy_router
 from horizon.startup.remote_config import InvalidPDPTokenException, RemoteConfigFetcher
 from horizon.state import PersistentStateHandler
 from horizon.system.api import init_system_api_router
 from horizon.system.consts import GUNICORN_EXIT_APP
-
 
 OPA_LOGGER_MODULE = "opal_client.opa.logger"
 
@@ -99,6 +99,8 @@ class PermitPDP:
             apply_config(remote_config.opal_client or {}, opal_client_config)
             apply_config(remote_config.pdp or {}, sidecar_config)
 
+        self._log_environment(remote_config.context)
+
         if (
             sidecar_config.OPA_BEARER_TOKEN_REQUIRED
             or sidecar_config.OPA_DECISION_LOG_ENABLED
@@ -120,12 +122,21 @@ class PermitPDP:
         self._opal = OpalClient(shard_id=sidecar_config.SHARD_ID)
         self._configure_cloud_logging(remote_config.context)
 
+        self._opal_relay = OpalRelayAPIClient(remote_config.context, self._opal)
+        self._opal.data_updater.callbacks_reporter.set_user_data_handler(
+            PersistentStateHandler.get_instance().reporter_user_data_handler
+        )
+
         # use opal client app and add sidecar routes on top
         app: FastAPI = self._opal.app
         self._override_app_metadata(app)
         self._configure_api_routes(app)
 
         self._app: FastAPI = app
+
+        @app.on_event("startup")
+        async def _initialize_opal_relay():
+            await self._opal_relay.initialize()
 
     def _setup_temp_logger(self):
         """
@@ -143,6 +154,21 @@ class PermitPDP:
             colorize=True,
             serialize=False,
         )
+
+    def _log_environment(self, pdp_context: dict[str, str]):
+        if (
+            not "org_id" in pdp_context
+            or not "project_id" in pdp_context
+            or not "env_id" in pdp_context
+        ):
+            logger.warning(
+                "Didn't get org_id, project_id, or env_id context from backend."
+            )
+            return
+        logger.info("PDP started at: ")
+        logger.info("  org_id:     {}", UUID(pdp_context["org_id"]))
+        logger.info("  project_id: {}", UUID(pdp_context["project_id"]))
+        logger.info("  env_id:     {}", UUID(pdp_context["env_id"]))
 
     def _configure_monitoring(self):
         """

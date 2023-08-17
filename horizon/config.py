@@ -2,7 +2,6 @@ from opal_common.confi import Confi, confi
 
 MOCK_API_KEY = "MUST BE DEFINED"
 
-
 class SidecarConfig(Confi):
     SHARD_ID = confi.str(
         "SHARD_ID",
@@ -14,6 +13,11 @@ class SidecarConfig(Confi):
         "CONTROL_PLANE",
         "http://localhost:8000",
         description="URL to the control plane that manages this PDP, typically Permit.io cloud (api.permit.io)",
+    )
+
+    CONTROL_PLANE_RELAY_API = confi.str(
+        "CONTROL_PLANE_RELAY_API",
+        "http://localhost:8001",
     )
 
     # backend api url, where proxy requests go
@@ -52,6 +56,11 @@ class SidecarConfig(Confi):
     CENTRAL_LOG_DRAIN_TIMEOUT = confi.int("CENTRAL_LOG_DRAIN_TIMEOUT", 5)
     CENTRAL_LOG_TOKEN = confi.str("CENTRAL_LOG_TOKEN", None)
     CENTRAL_LOG_ENABLED = confi.bool("CENTRAL_LOG_ENABLED", False)
+
+    PING_INTERVAL = confi.int(
+        "PING_INTERVAL",
+        10,
+    )
 
     # internal OPA config
     OPA_CONFIG_FILE_PATH = confi.str(
