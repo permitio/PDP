@@ -133,7 +133,7 @@ class OpalRelayAPIClient:
             try:
                 await self.send_ping()
             except Exception:
-                logger.opt(exception=True).warning("Unable to send ping:")
+                logger.warning("Unable to send ping:")
             await asyncio.sleep(sidecar_config.PING_INTERVAL)
 
     async def start(self):
