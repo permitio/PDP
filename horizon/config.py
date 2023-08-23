@@ -68,14 +68,6 @@ class SidecarConfig(Confi):
         "PING_INTERVAL",
         10,
     )
-    PING_BACKOFF_INCREASE = confi.int(
-        "PING_BACKOFF_INCREASE",
-        10,
-    )
-    PING_MAX_BACKOFF = confi.int(
-        "PING_MAX_BACKOFF",
-        60,
-    )
 
     # internal OPA config
     OPA_CONFIG_FILE_PATH = confi.str(

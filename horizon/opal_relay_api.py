@@ -150,27 +150,21 @@ class OpalRelayAPIClient:
         logger.debug("Sent ping.")
 
     async def _run(self):
-        backoff = 0
         while True:
             try:
                 await self.send_ping()
-                backoff = 0
             except RelayAPIException as e:
                 logger.warning(
                     "Could not report uptime status to server: {}. This does not affect the PDP's operational state or data updates.",
                     e.message,
                 )
-                backoff += sidecar_config.PING_BACKOFF_INCREASE
             except Exception as e:
                 logger.warning(
                     "Could not report uptime status to server: {}. This does not affect the PDP's operational state or data updates.",
                     str(e),
                 )
-                backoff += sidecar_config.PING_BACKOFF_INCREASE
-            delay = min(
-                sidecar_config.PING_INTERVAL + backoff, sidecar_config.PING_MAX_BACKOFF
-            )
-            await asyncio.sleep(delay)
+
+            await asyncio.sleep(sidecar_config.PING_INTERVAL)
 
     async def start(self):
         self._task = asyncio.create_task(self._run())
