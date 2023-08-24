@@ -145,7 +145,7 @@ class OpalRelayAPIClient:
                 raise RelayAPIException(
                     "relay-api",
                     response.status,
-                    f"Server responded to token request with a bad status {response.status}: {text}",
+                    f"Server responded to token request with a bad status: {text}",
                 )
         logger.debug("Sent ping.")
 
@@ -155,8 +155,9 @@ class OpalRelayAPIClient:
                 await self.send_ping()
             except RelayAPIException as e:
                 logger.warning(
-                    "Could not report uptime status to server: {}. This does not affect the PDP's operational state or data updates.",
-                    e.message,
+                    "Could not report uptime status to server: got status code {} from {}. This does not affect the PDP's operational state or data updates.",
+                    e.status_code,
+                    e.service,
                 )
             except Exception as e:
                 logger.warning(
