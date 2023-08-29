@@ -17,6 +17,14 @@ from horizon.config import sidecar_config
 from horizon.state import PersistentStateHandler
 
 
+class RelayAPIException(Exception):
+    def __init__(self, service: str, status_code: int, message: str):
+        self.service = service
+        self.status_code = status_code
+        self.message = f"Relay API exception from {service} of {status_code}: {message}"
+        super().__init__(self.message)
+
+
 class RelayJWTResponse(BaseModel):
     token: str
 
@@ -85,14 +93,22 @@ class OpalRelayAPIClient:
             ) as response:
                 if response.status != status.HTTP_200_OK:
                     text = await response.text()
-                    raise RuntimeError(
-                        f"Server responded to token request with a bad status {response.status}: {text}"
+                    raise RelayAPIException(
+                        "relay-jwt-api",
+                        response.status,
+                        f"Server responded to token request with a bad status: {text}",
                     )
                 try:
                     obj = RelayJWTResponse.parse_obj(await response.json())
                 except TypeError:
-                    raise RuntimeError(
-                        "Server responded to token request with an invalid result."
+                    try:
+                        text = await response.text()
+                    except:
+                        text = None
+                    raise RelayAPIException(
+                        "relay-jwt-api",
+                        response.status,
+                        f"Server responded to token request with an invalid result: {text}",
                     )
             self._relay_token = obj.token
             self._relay_session = ClientSession(
@@ -122,9 +138,14 @@ class OpalRelayAPIClient:
             ),
         ) as response:
             if response.status != status.HTTP_202_ACCEPTED:
-                text = await response.text()
-                raise RuntimeError(
-                    f"Server responded to token request with a bad status {response.status}: {text}"
+                try:
+                    text = await response.text()
+                except:
+                    text = None
+                raise RelayAPIException(
+                    "relay-api",
+                    response.status,
+                    f"Server responded to token request with a bad status: {text}",
                 )
         logger.debug("Sent ping.")
 
@@ -132,8 +153,18 @@ class OpalRelayAPIClient:
         while True:
             try:
                 await self.send_ping()
-            except Exception:
-                logger.opt(exception=True).warning("Unable to send ping:")
+            except RelayAPIException as e:
+                logger.warning(
+                    "Could not report uptime status to server: got status code {} from {}. This does not affect the PDP's operational state or data updates.",
+                    e.status_code,
+                    e.service,
+                )
+            except Exception as e:
+                logger.warning(
+                    "Could not report uptime status to server: {}. This does not affect the PDP's operational state or data updates.",
+                    str(e),
+                )
+
             await asyncio.sleep(sidecar_config.PING_INTERVAL)
 
     async def start(self):
