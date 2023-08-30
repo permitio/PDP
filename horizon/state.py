@@ -5,13 +5,13 @@ import platform
 import subprocess
 import time
 from contextlib import asynccontextmanager
-from opal_common.schemas.data import DataUpdateReport
-from typing import AsyncGenerator, List, Optional, Any
+from typing import Any, AsyncGenerator, List, Optional
 from uuid import UUID, uuid4
 
 import aiohttp
 from fastapi import status
 from opal_common.logger import logger
+from opal_common.schemas.data import DataUpdateReport
 from pydantic import BaseModel, ValidationError
 
 from horizon.config import sidecar_config
@@ -155,7 +155,7 @@ class PersistentStateHandler:
         )
 
     @classmethod
-    def _get_runtime_state(cls) -> dict:
+    def get_runtime_state(cls) -> dict:
         # This is sync and called with run_in_executor because it has to be also
         # called from a sync context without using asyncio.run
         result = {}
@@ -192,14 +192,14 @@ class PersistentStateHandler:
     async def build_state_payload(cls, state: Optional[PersistentState] = None) -> dict:
         payload = cls._build_state_payload()
         payload["state"].update(
-            await asyncio.get_event_loop().run_in_executor(None, cls._get_runtime_state)
+            await asyncio.get_event_loop().run_in_executor(None, cls.get_runtime_state)
         )
         return payload
 
     @classmethod
     def build_state_payload_sync(cls, state: Optional[PersistentState] = None) -> dict:
         payload = cls._build_state_payload()
-        payload["state"].update(cls._get_runtime_state())
+        payload["state"].update(cls.get_runtime_state())
         return payload
 
     async def _report(self, state: Optional[PersistentState] = None):
