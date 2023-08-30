@@ -29,10 +29,34 @@ class RelayJWTResponse(BaseModel):
     token: str
 
 
+class PDPPingPlatformPDPState(BaseModel):
+    version: str
+    os_name: str
+    os_machine: str
+    os_version: str
+    os_release: str
+    os_platform: str
+    python_version: str
+    python_implementation: str
+
+
+class PDPPingPlatformOPAState(BaseModel):
+    version: str
+    go_version: str
+    platform: str
+    have_webassembly: bool
+
+
+class PDPPingPlatformState(BaseModel):
+    pdp: PDPPingPlatformPDPState
+    opa: PDPPingPlatformOPAState
+
+
 class PDPPingRequest(BaseModel):
     pdp_instance_id: UUID
     topics: list[str]
     timestamp_ns: int
+    platform: PDPPingPlatformState
 
 
 MAX_JWT_EXPIRY_BUFFER_TIME = 10
@@ -134,6 +158,11 @@ class OpalRelayAPIClient:
                     pdp_instance_id=PersistentStateHandler.get().pdp_instance_id,
                     topics=topics,
                     timestamp_ns=time.time_ns(),
+                    platform=PDPPingPlatformState.parse_obj(
+                        await asyncio.get_event_loop().run_in_executor(
+                            None, PersistentStateHandler.get_runtime_state
+                        )
+                    ),
                 )
             ),
         ) as response:
