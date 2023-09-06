@@ -76,5 +76,11 @@ class KongAuthorizationQuery(BaseSchema):
     input: KongAuthorizationInput
 
 
+class KongWrappedAuthorizationQuery(BaseSchema):
+    user: Dict
+    resource: Dict
+    action: str
+
+
 class KongAuthorizationResult(BaseSchema):
     result: bool = False
