@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
 from pydantic import BaseModel, Field, AnyHttpUrl
 
@@ -36,6 +36,16 @@ class AuthorizationQuery(BaseSchema):
     context: Optional[Dict[str, Any]] = {}
     sdk: Optional[str]
 
+    def __repr__(self) -> str:
+        return f"({self.user.key}, {self.action}, {self.resource.type})"
+
+
+class BulkAuthorizationQuery(BaseSchema):
+    checks: List[AuthorizationQuery]
+
+    def __repr__(self) -> str:
+        return " | ".join([repr(query) for query in self.checks])
+
 
 class UrlAuthorizationQuery(BaseSchema):
     """
@@ -52,9 +62,26 @@ class UrlAuthorizationQuery(BaseSchema):
 
 class AuthorizationResult(BaseSchema):
     allow: bool = False
-    query: Optional[dict]
+    query: Optional[dict] = None
     debug: Optional[dict]
     result: bool = False  # fallback for older sdks (TODO: remove)
+
+
+class BulkAuthorizationResult(BaseSchema):
+    allow: List[AuthorizationResult] = []
+
+
+class _TenantDetails(BaseSchema):
+    key: str
+    attributes: dict = {}
+
+
+class _AllTenantsAuthorizationResult(AuthorizationResult):
+    tenant: _TenantDetails
+
+
+class AllTenantsAuthorizationResult(BaseSchema):
+    allowed_tenants: List[_AllTenantsAuthorizationResult] = []
 
 
 class MappingRuleData(BaseSchema):
