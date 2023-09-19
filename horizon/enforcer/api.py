@@ -29,6 +29,8 @@ from horizon.enforcer.schemas import (
     AllTenantsAuthorizationResult,
     BaseSchema,
     BulkAuthorizationQuery,
+    UserPermissionsQuery,
+    UserPermissionsResult,
 )
 from horizon.enforcer.schemas_kong import (
     KongAuthorizationInput,
@@ -44,6 +46,7 @@ AUTHZ_HEADER = "Authorization"
 MAIN_POLICY_PACKAGE = "permit.root"
 BULK_POLICY_PACKAGE = "permit.bulk"
 ALL_TENANTS_POLICY_PACKAGE = "permit.any_tenant"
+USER_PERMISSIONS_POLICY_PACKAGE = "permit.user_permissions"
 KONG_ROUTES_TABLE_FILE = "/config/kong_routes.json"
 
 
@@ -305,6 +308,44 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             sdk=query.sdk,
         )
         return await is_allowed(request, allowed_query, x_permit_sdk_language)
+
+    @router.post(
+        "/user-permissions",
+        response_model=UserPermissionsResult,
+        name="Get User Permissions",
+        status_code=status.HTTP_200_OK,
+        response_model_exclude_none=True,
+        dependencies=[Depends(enforce_pdp_token)],
+    )
+    async def user_permissions(
+        request: Request,
+        query: UserPermissionsQuery,
+        x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
+    ):
+        fallback_response = dict(
+            result=dict(permissions={}, debug="OPA not responding")
+        )
+        response = await is_allowed_with_fallback(
+            query, request, USER_PERMISSIONS_POLICY_PACKAGE, fallback_response
+        )
+        log_query_result(query, response)
+        try:
+            raw_result = json.loads(response.body).get("result", {})
+            processed_query = (
+                get_v1_processed_query(raw_result)
+                or get_v2_processed_query(raw_result)
+                or {}
+            )
+
+            result = parse_obj_as(
+                UserPermissionsResult, raw_result.get("permissions", {})
+            )
+        except:
+            result = parse_obj_as(UserPermissionsResult, {})
+            logger.warning(
+                "is allowed (fallback response)", reason="cannot decode opa response"
+            )
+        return result
 
     @router.post(
         "/allowed/all-tenants",
