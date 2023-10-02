@@ -1,6 +1,6 @@
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional, List, cast
 
-from pydantic import BaseModel, Field, AnyHttpUrl
+from pydantic import BaseModel, Field, AnyHttpUrl, validator
 
 
 class BaseSchema(BaseModel):
@@ -62,8 +62,21 @@ class UrlAuthorizationQuery(BaseSchema):
 
 class UserPermissionsQuery(BaseSchema):
     user: User
-    tenants: Optional[list[str]] = None
+    tenants: Optional[list[str]] = Field(None, exclude=True)
+    resources: Optional[list[str]] = None
+    resource_types: Optional[list[str]] = None
     context: Optional[dict[str, Any]] = {}
+
+    @validator("resources", always=True)
+    def add_tenants_to_resources(
+        cls, v: Optional[list[str]], values: dict
+    ) -> Optional[list[str]]:
+        tenants = cast(Optional[list[str]], values.get("tenants"))
+        if v is None and tenants is None:
+            return v
+        full_qualified_tenants = [f"__tenant:{tenant}" for tenant in tenants]
+
+        return (v or []) + full_qualified_tenants
 
 
 class AuthorizationResult(BaseSchema):
