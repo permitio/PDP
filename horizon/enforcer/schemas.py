@@ -95,8 +95,13 @@ class _TenantDetails(BaseSchema):
     attributes: dict = {}
 
 
+class _ResourceDetails(_TenantDetails):
+    type: str
+
+
 class _UserPermissionsResult(BaseSchema):
-    tenant: _TenantDetails
+    tenant: Optional[_TenantDetails]
+    resource: Optional[_ResourceDetails]
     permissions: list[str] = Field(..., regex="^.+:.+$")
 
 
