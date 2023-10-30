@@ -1,11 +1,10 @@
 import json
 import re
-from http.client import HTTPException
 from typing import cast, Optional, Union, Dict, List
 
 import aiohttp
 from fastapi import APIRouter, Depends, Header
-from fastapi import HTTPException as fastapi_HTTPException
+from fastapi import HTTPException
 from fastapi import Request, Response, status
 from opal_client.config import opal_client_config
 from opal_client.logger import logger
@@ -436,7 +435,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
     ):
         if isinstance(query, AuthorizationQueryV1):
-            raise fastapi_HTTPException(
+            raise HTTPException(
                 status_code=status.HTTP_421_MISDIRECTED_REQUEST,
                 detail="Mismatch between client version and PDP version,"
                 " required v2 request body, got v1. "
@@ -480,7 +479,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
     async def is_allowed_kong(request: Request, query: KongAuthorizationQuery):
         # Short circuit if disabled
         if sidecar_config.KONG_INTEGRATION is False:
-            raise fastapi_HTTPException(
+            raise HTTPException(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Kong integration is disabled. "
                 "Please set the PDP_KONG_INTEGRATION variable to true to enable it.",
