@@ -117,7 +117,7 @@ class SidecarConfig(Confi):
     )
     OPA_DECISION_LOG_UPLOAD_SIZE_LIMIT = confi.int(
         "OPA_DECISION_LOG_UPLOAD_SIZE_LIMIT",
-        32768,
+        65536,  # This is twice as much the default OPA value (32768)
         description="log upload size limit in bytes. OPA will chunk uploads to cap message body to this limit",
     )
 
