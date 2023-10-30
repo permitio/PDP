@@ -102,7 +102,7 @@ def log_query_result(query: BaseSchema, response: Response):
 
         debug = result.get("debug", {})
 
-        format = "{color}is allowed = {allowed} </>"
+        format = color + "is allowed = {allowed} </>"
         format += " | <cyan>{api_params}</>"
         if sidecar_config.DECISION_LOG_DEBUG_INFO:
             format += (
@@ -110,7 +110,6 @@ def log_query_result(query: BaseSchema, response: Response):
             )
         logger.opt(colors=True).info(
             format,
-            color=color,
             allowed=allow_output,
             api_params=params,
             input=query.dict(),
@@ -403,7 +402,6 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         )
         log_query_result(bulk_query, response)
         try:
-
             raw_result = json.loads(response.body).get("result", {})
             processed_query = (
                 get_v1_processed_query(raw_result)
