@@ -197,19 +197,16 @@ async def notify_seen_sdk(
     return x_permit_sdk_language
 
 
-async def _is_allowed(query: BaseSchema, request: Request, policy_package: str):
-    opa_input = {"input": query.dict()}
+async def post_to_opa(request: Request, path: str, data: dict):
     headers = transform_headers(request)
-
-    path = policy_package.replace(".", "/")
     url = f"{opal_client_config.POLICY_STORE_URL}/v1/data/{path}"
     exc = None
     try:
-        logger.debug(f"calling OPA at '{url}' with input: {opa_input}")
+        logger.debug(f"calling OPA at '{url}' with input: {data}")
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 url,
-                data=json.dumps(opa_input),
+                data=json.dumps(data) if data is not None else None,
                 headers=headers,
                 timeout=sidecar_config.ALLOWED_QUERY_TIMEOUT,
             ) as opa_response:
@@ -241,6 +238,12 @@ async def _is_allowed(query: BaseSchema, request: Request, policy_package: str):
     raise exc
 
 
+async def _is_allowed(query: BaseSchema, request: Request, policy_package: str):
+    opa_input = {"input": query.dict()}
+    path = policy_package.replace(".", "/")
+    return await post_to_opa(request, path, opa_input)
+
+
 def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
     policy_store = policy_store or DEFAULT_POLICY_STORE_GETTER()
     router = APIRouter()
@@ -266,20 +269,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         query: UrlAuthorizationQuery,
         x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
     ):
-        headers = transform_headers(request)
-        mapping_rules_url = (
-            f"{opal_client_config.POLICY_STORE_URL}/v1/data/mapping_rules"
-        )
-        try:
-            logger.debug(f"calling OPA at '{mapping_rules_url}'")
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    mapping_rules_url, headers=headers
-                ) as opa_response:
-                    data = await proxy_response(opa_response)
-        except aiohttp.ClientError as e:
-            logger.warning("OPA client error: {err}", err=repr(e))
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=repr(e))
+        data = await post_to_opa(request, "mapping_rules", None)
 
         mapping_rules = []
         data_result = json.loads(data.body).get("result")
