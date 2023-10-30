@@ -208,7 +208,7 @@ async def post_to_opa(request: Request, path: str, data: dict):
                 url,
                 data=json.dumps(data) if data is not None else None,
                 headers=headers,
-                timeout=sidecar_config.ALLOWED_QUERY_TIMEOUT,
+                timeout=sidecar_config.OPA_CLIENT_QUERY_TIMEOUT,
             ) as opa_response:
                 return await proxy_response(opa_response)
     except asyncio.exceptions.TimeoutError:
@@ -216,7 +216,7 @@ async def post_to_opa(request: Request, path: str, data: dict):
             status.HTTP_504_GATEWAY_TIMEOUT,
             detail="OPA request timed out (url: {url}, timeout: {timeout}s)".format(
                 url=url,
-                timeout=sidecar_config.ALLOWED_QUERY_TIMEOUT,
+                timeout=sidecar_config.OPA_CLIENT_QUERY_TIMEOUT,
                 raise_for_status=True,
             ),
         )
