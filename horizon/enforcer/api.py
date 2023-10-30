@@ -228,14 +228,6 @@ async def _is_allowed(query: BaseSchema, request: Request, policy_package: str):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=repr(e))
 
 
-async def is_allowed_with_fallback(
-    query: BaseSchema, request: Request, policy_package: str, fallback_response: dict
-) -> Response:
-    _is_allowed_with_fallback = fail_silently(fallback=fallback_response)(_is_allowed)
-
-    return await _is_allowed_with_fallback(query, request, policy_package)
-
-
 def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
     policy_store = policy_store or DEFAULT_POLICY_STORE_GETTER()
     router = APIRouter()
@@ -333,12 +325,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         query: UserPermissionsQuery,
         x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
     ):
-        fallback_response = dict(
-            result=dict(permissions={}, debug="OPA not responding")
-        )
-        response = await is_allowed_with_fallback(
-            query, request, USER_PERMISSIONS_POLICY_PACKAGE, fallback_response
-        )
+        response = await _is_allowed(query, request, USER_PERMISSIONS_POLICY_PACKAGE)
         log_query_result(query, response)
         try:
             raw_result = json.loads(response.body).get("result", {})
@@ -370,10 +357,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         query: AuthorizationQuery,
         x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
     ):
-        fallback_response = dict(result=dict(allow=[], debug="OPA not responding"))
-        response = await is_allowed_with_fallback(
-            query, request, ALL_TENANTS_POLICY_PACKAGE, fallback_response
-        )
+        response = await _is_allowed(query, request, ALL_TENANTS_POLICY_PACKAGE)
         log_query_result(query, response)
         try:
             raw_result = json.loads(response.body).get("result", {})
@@ -405,13 +389,8 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         queries: list[AuthorizationQuery],
         x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
     ):
-        fallback_response = dict(
-            result=dict(allow=[dict(allow=False, debug="OPA not responding")])
-        )
         bulk_query = BulkAuthorizationQuery(checks=queries)
-        response = await is_allowed_with_fallback(
-            bulk_query, request, BULK_POLICY_PACKAGE, fallback_response
-        )
+        response = await _is_allowed(bulk_query, request, BULK_POLICY_PACKAGE)
         log_query_result(bulk_query, response)
         try:
             raw_result = json.loads(response.body).get("result", {})
@@ -453,10 +432,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             )
         query = cast(AuthorizationQuery, query)
 
-        fallback_response = dict(result=dict(allow=False, debug="OPA not responding"))
-        response = await is_allowed_with_fallback(
-            query, request, MAIN_POLICY_PACKAGE, fallback_response
-        )
+        response = await _is_allowed(query, request, MAIN_POLICY_PACKAGE)
         log_query_result(query, response)
         try:
             raw_result = json.loads(response.body).get("result", {})
@@ -527,9 +503,8 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             return {
                 "result": False,
             }
-        fallback_response = dict(result=dict(allow=False, debug="OPA not responding"))
 
-        response = await is_allowed_with_fallback(
+        response = await _is_allowed(
             KongWrappedAuthorizationQuery(
                 user={
                     "key": query.input.consumer.username,
@@ -542,7 +517,6 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             ),
             request,
             MAIN_POLICY_PACKAGE,
-            fallback_response,
         )
         log_query_result_kong(query.input, response)
         try:
