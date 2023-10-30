@@ -208,7 +208,10 @@ async def _is_allowed(query: BaseSchema, request: Request, policy_package: str):
         logger.debug(f"calling OPA at '{url}' with input: {opa_input}")
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                url, data=json.dumps(opa_input), headers=headers
+                url,
+                data=json.dumps(opa_input),
+                headers=headers,
+                timeout=sidecar_config.ALLOWED_QUERY_TIMEOUT,
             ) as opa_response:
                 return await proxy_response(opa_response)
     except aiohttp.ClientError as e:
