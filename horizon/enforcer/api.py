@@ -203,7 +203,7 @@ async def _is_allowed(query: BaseSchema, request: Request, policy_package: str):
 
     path = policy_package.replace(".", "/")
     url = f"{opal_client_config.POLICY_STORE_URL}/v1/data/{path}"
-
+    exc = None
     try:
         logger.debug(f"calling OPA at '{url}' with input: {opa_input}")
         async with aiohttp.ClientSession() as session:
@@ -218,14 +218,27 @@ async def _is_allowed(query: BaseSchema, request: Request, policy_package: str):
         exc = HTTPException(
             status.HTTP_504_GATEWAY_TIMEOUT,
             detail="OPA request timed out (url: {url}, timeout: {timeout}s)".format(
-                url=url, timeout=sidecar_config.ALLOWED_QUERY_TIMEOUT
+                url=url,
+                timeout=sidecar_config.ALLOWED_QUERY_TIMEOUT,
+                raise_for_status=True,
             ),
         )
-        logger.warning(exc.detail)
-        raise exc
+    except aiohttp.ClientResponseError as e:
+        exc = HTTPException(
+            status.HTTP_502_BAD_GATEWAY,  # 502 indicates server got an error from another server
+            detail="OPA request failed (url: {url}, status: {status}, message: {message})".format(
+                url=url, status=e.status, message=e.message
+            ),
+        )
     except aiohttp.ClientError as e:
-        logger.warning("OPA client error: {err}", err=repr(e))
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=repr(e))
+        exc = HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            detail="OPA request failed (url: {url}, error: {error}".format(
+                url=url, error=str(e)
+            ),
+        )
+    logger.warning(exc.detail)
+    raise exc
 
 
 def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
