@@ -28,7 +28,7 @@ build-release-local-arm64: prepare
 	@docker buildx build --platform linux/arm64 -t permitio/pdp-v2:$(VERSION)$(BUILD_SUFFIX) . --load
 
 build-release-local: prepare
-	@docker build -t permitio/pdp-v2:$(VERSION)$(BUILD_SUFFIX) .
+	@docker build -t permitio/pdp-v2:$(VERSION)$(BUILD_SUFFIX) . --load
 
 run: ## Run the container locally
 	@docker run -it \
