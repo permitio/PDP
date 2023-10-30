@@ -71,8 +71,8 @@ class SidecarConfig(Confi):
 
     OPA_CLIENT_QUERY_TIMEOUT = confi.float(
         "OPA_CLIENT_QUERY_TIMEOUT",
-        5 * 60,  # This is also aiohttp's default timeout
-        description="the timeout for querying OPA for an allow decision, 0 means no timeout",
+        1,  # aiohttp's default timeout is 5m, we want to be more aggressive
+        description="the timeout for querying OPA for an allow decision, in seconds. 0 means no timeout",
     )
 
     # internal OPA config
