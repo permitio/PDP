@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 from typing import cast, Optional, Union, Dict, List
@@ -213,6 +214,15 @@ async def _is_allowed(query: BaseSchema, request: Request, policy_package: str):
                 timeout=sidecar_config.ALLOWED_QUERY_TIMEOUT,
             ) as opa_response:
                 return await proxy_response(opa_response)
+    except asyncio.exceptions.TimeoutError:
+        exc = HTTPException(
+            status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="OPA request timed out (url: {url}, timeout: {timeout}s)".format(
+                url=url, timeout=sidecar_config.ALLOWED_QUERY_TIMEOUT
+            ),
+        )
+        logger.warning(exc.detail)
+        raise exc
     except aiohttp.ClientError as e:
         logger.warning("OPA client error: {err}", err=repr(e))
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=repr(e))
