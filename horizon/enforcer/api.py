@@ -31,6 +31,8 @@ from horizon.enforcer.schemas import (
     BulkAuthorizationQuery,
     UserPermissionsQuery,
     UserPermissionsResult,
+    UserTenantsQuery,
+    UserTenantsResult,
 )
 from horizon.enforcer.schemas_kong import (
     KongAuthorizationInput,
@@ -345,6 +347,38 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             result = parse_obj_as(UserPermissionsResult, {})
             logger.warning(
                 "is allowed (fallback response)", reason="cannot decode opa response"
+            )
+        return result
+
+    @router.post(
+        "/user-tenants",
+        response_model=UserTenantsResult,
+        name="Get User Tenants",
+        status_code=status.HTTP_200_OK,
+        response_model_exclude_none=True,
+        dependencies=[Depends(enforce_pdp_token)],
+    )
+    async def user_tenants(
+        request: Request,
+        query: UserTenantsQuery,
+        x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
+    ):
+        response = await _is_allowed(query, request, USER_PERMISSIONS_POLICY_PACKAGE)
+        log_query_result(query, response)
+        try:
+            raw_result = json.loads(response.body).get("result", {})
+            processed_query = (
+                get_v1_processed_query(raw_result)
+                or get_v2_processed_query(raw_result)
+                or {}
+            )
+
+            result = parse_obj_as(UserTenantsResult, raw_result.get("tenants", {}))
+        except:
+            result = parse_obj_as(UserTenantsResult, {})
+            logger.warning(
+                "get user tenants (fallback response)",
+                reason="cannot decode opa response",
             )
         return result
 
