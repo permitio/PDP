@@ -60,6 +60,11 @@ class UrlAuthorizationQuery(BaseSchema):
     sdk: Optional[str]
 
 
+class UserTenantsQuery(BaseSchema):
+    user: User
+    context: Optional[dict[str, Any]] = {}
+
+
 class UserPermissionsQuery(BaseSchema):
     user: User
     tenants: Optional[list[str]] = Field(None, exclude=True)
@@ -103,9 +108,11 @@ class _UserPermissionsResult(BaseSchema):
     tenant: Optional[_TenantDetails]
     resource: Optional[_ResourceDetails]
     permissions: list[str] = Field(..., regex="^.+:.+$")
+    roles: Optional[list[str]] = None
 
 
 UserPermissionsResult = dict[str, _UserPermissionsResult]
+UserTenantsResult = list[_TenantDetails]
 
 
 class _AllTenantsAuthorizationResult(AuthorizationResult):
