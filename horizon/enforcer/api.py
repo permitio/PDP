@@ -274,7 +274,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         mapping_rules = []
         data_result = json.loads(data.body).get("result")
         if data_result is None:
-            mapping_rules_json = None
+            mapping_rules_json = []
         else:
             mapping_rules_json = data_result.get("all")
 
