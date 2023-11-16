@@ -1,17 +1,17 @@
-import pytest
-import random
-import time
 import asyncio
+import random
+
+import aiohttp
+import pytest
+from aioresponses import aioresponses
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from aioresponses import aioresponses, CallbackResult
-import aiohttp
-
-from horizon.pdp import PermitPDP
-from horizon.enforcer.schemas import *
-from horizon.config import sidecar_config
-from opal_client.config import opal_client_config
 from opal_client.client import OpalClient
+from opal_client.config import opal_client_config
+
+from horizon.config import sidecar_config
+from horizon.enforcer.schemas import *
+from horizon.pdp import PermitPDP
 
 
 class MockPermitPDP(PermitPDP):
@@ -141,6 +141,15 @@ ALLOWED_ENDPOINTS = [
         {"result": {"allow": [{"allow": True, "result": True}]}},
         {"allow": [{"allow": True, "result": True}]},
     ),
+    (
+        "/user-tenants",
+        "permit/user_permissions/tenants",
+        UserTenantsQuery(
+            user=User(key="user1"),
+        ),
+        {"result": [{"attributes": {}, "key": "tenant-1"}]},
+        [{"attributes": {}, "key": "tenant-1"}],
+    )
     # TODO: Add Kong
 ]
 
@@ -182,8 +191,15 @@ def test_enforce_endpoint(
         response = post_endpoint()
         assert response.status_code == 200
         print(response.json())
-        for k, v in expected_response.items():
-            assert response.json()[k] == v
+        if isinstance(expected_response, list):
+            assert response.json() == expected_response
+        elif isinstance(expected_response, dict):
+            for k, v in expected_response.items():
+                assert response.json()[k] == v
+        else:
+            raise TypeError(
+                f"Unexpected expected response type, expected one of list, dict and got {type(expected_response)}"
+            )
 
         # Test bad status from OPA
         bad_status = random.choice([401, 404, 400, 500, 503])
