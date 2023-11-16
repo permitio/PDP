@@ -10,7 +10,6 @@ from fastapi import Request, Response, status
 from opal_client.config import opal_client_config
 from opal_client.logger import logger
 from opal_client.policy_store.base_policy_store_client import BasePolicyStoreClient
-from opal_client.policy_store.opa_client import fail_silently
 from opal_client.policy_store.policy_store_client_factory import (
     DEFAULT_POLICY_STORE_GETTER,
 )
@@ -49,6 +48,7 @@ MAIN_POLICY_PACKAGE = "permit.root"
 BULK_POLICY_PACKAGE = "permit.bulk"
 ALL_TENANTS_POLICY_PACKAGE = "permit.any_tenant"
 USER_PERMISSIONS_POLICY_PACKAGE = "permit.user_permissions"
+USER_TENANTS_POLICY_PACKAGE = USER_PERMISSIONS_POLICY_PACKAGE + ".tenants"
 KONG_ROUTES_TABLE_FILE = "/config/kong_routes.json"
 
 
@@ -363,7 +363,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         query: UserTenantsQuery,
         x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
     ):
-        response = await _is_allowed(query, request, USER_PERMISSIONS_POLICY_PACKAGE)
+        response = await _is_allowed(query, request, USER_TENANTS_POLICY_PACKAGE)
         log_query_result(query, response)
         try:
             raw_result = json.loads(response.body).get("result", {})
@@ -372,10 +372,15 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
                 or get_v2_processed_query(raw_result)
                 or {}
             )
-
-            result = parse_obj_as(UserTenantsResult, raw_result.get("tenants", {}))
+            if isinstance(raw_result, dict):
+                allowed_tenants = raw_result.get("tenants", {})
+            elif isinstance(raw_result, list):
+                allowed_tenants = raw_result
+            else:
+                raise TypeError(f"Expected raw result to be dict or list, got {type(raw_result)}")
+            result = parse_obj_as(UserTenantsResult, allowed_tenants)
         except:
-            result = parse_obj_as(UserTenantsResult, {})
+            result = parse_obj_as(UserTenantsResult, [])
             logger.warning(
                 "get user tenants (fallback response)",
                 reason="cannot decode opa response",
@@ -464,8 +469,8 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             raise HTTPException(
                 status_code=status.HTTP_421_MISDIRECTED_REQUEST,
                 detail="Mismatch between client version and PDP version,"
-                " required v2 request body, got v1. "
-                "hint: try to update your client version to v2",
+                       " required v2 request body, got v1. "
+                       "hint: try to update your client version to v2",
             )
         query = cast(AuthorizationQuery, query)
 
@@ -505,7 +510,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             raise HTTPException(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Kong integration is disabled. "
-                "Please set the PDP_KONG_INTEGRATION variable to true to enable it.",
+                       "Please set the PDP_KONG_INTEGRATION variable to true to enable it.",
             )
 
         await PersistentStateHandler.get_instance().seen_sdk("kong")
