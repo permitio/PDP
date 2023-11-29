@@ -210,6 +210,7 @@ async def post_to_opa(request: Request, path: str, data: dict):
     headers = transform_headers(request)
     url = f"{opal_client_config.POLICY_STORE_URL}/v1/data/{path}"
     exc = None
+    _set_use_debugger(data)
     try:
         logger.debug(f"calling OPA at '{url}' with input: {data}")
         async with aiohttp.ClientSession() as session:
@@ -249,6 +250,13 @@ async def post_to_opa(request: Request, path: str, data: dict):
         )
     logger.warning(exc.detail)
     raise exc
+
+
+def _set_use_debugger(data) -> None:
+    if data.get("input") is not None:
+        if "use_debugger" not in data["input"]:
+            if sidecar_config.IS_DEBUG_MODE is not None:
+                data["input"]["use_debugger"] = sidecar_config.IS_DEBUG_MODE
 
 
 async def _is_allowed(query: BaseSchema, request: Request, policy_package: str):
