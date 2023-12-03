@@ -15,6 +15,7 @@ from opal_client.policy_store.policy_store_client_factory import (
 )
 from opal_client.utils import proxy_response
 from pydantic import parse_obj_as
+from starlette.responses import JSONResponse
 
 from horizon.authentication import enforce_pdp_token
 from horizon.config import sidecar_config
@@ -41,6 +42,7 @@ from horizon.enforcer.schemas_kong import (
 )
 from horizon.enforcer.schemas_v1 import AuthorizationQueryV1
 from horizon.enforcer.utils.mapping_rules_utils import MappingRulesUtils
+from horizon.enforcer.utils.statistics_utils import StatisticsManager
 from horizon.state import PersistentStateHandler
 
 AUTHZ_HEADER = "Authorization"
@@ -51,6 +53,7 @@ USER_PERMISSIONS_POLICY_PACKAGE = "permit.user_permissions"
 USER_TENANTS_POLICY_PACKAGE = USER_PERMISSIONS_POLICY_PACKAGE + ".tenants"
 KONG_ROUTES_TABLE_FILE = "/config/kong_routes.json"
 
+stats_manager = StatisticsManager(interval_seconds=sidecar_config.OPA_CLIENT_FAILURE_THRESHOLD_INTERVAL)
 
 def extract_pdp_api_key(request: Request) -> str:
     authorization: str = request.headers.get(AUTHZ_HEADER, "")
@@ -213,8 +216,10 @@ async def post_to_opa(request: Request, path: str, data: dict):
                 timeout=sidecar_config.OPA_CLIENT_QUERY_TIMEOUT,
                 raise_for_status=True,
             ) as opa_response:
+                stats_manager.report_success()
                 return await proxy_response(opa_response)
     except asyncio.exceptions.TimeoutError:
+        stats_manager.report_failure()
         exc = HTTPException(
             status.HTTP_504_GATEWAY_TIMEOUT,
             detail="OPA request timed out (url: {url}, timeout: {timeout}s)".format(
@@ -223,6 +228,7 @@ async def post_to_opa(request: Request, path: str, data: dict):
             ),
         )
     except aiohttp.ClientResponseError as e:
+        stats_manager.report_failure()
         exc = HTTPException(
             status.HTTP_502_BAD_GATEWAY,  # 502 indicates server got an error from another server
             detail="OPA request failed (url: {url}, status: {status}, message: {message})".format(
@@ -230,6 +236,7 @@ async def post_to_opa(request: Request, path: str, data: dict):
             ),
         )
     except aiohttp.ClientError as e:
+        stats_manager.report_failure()
         exc = HTTPException(
             status.HTTP_502_BAD_GATEWAY,
             detail="OPA request failed (url: {url}, error: {error}".format(
@@ -257,6 +264,24 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         ]
         logger.info(
             f"Kong integration: Loaded {len(kong_routes_table)} translation rules."
+        )
+    stats_manager.run()
+
+    @router.get(
+        "/health",
+        status_code=status.HTTP_200_OK,
+        include_in_schema=False
+    )
+    async def health():
+        current_rate = await stats_manager.current_rate()
+        if current_rate > sidecar_config.OPA_CLIENT_FAILURE_THRESHOLD_PERCENTAGE:
+            return JSONResponse(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content={"status": "unavailable"},
+            )
+
+        return JSONResponse(
+            status_code=status.HTTP_200_OK, content={"status": "ok"}
         )
 
     @router.post(
@@ -466,8 +491,8 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             raise HTTPException(
                 status_code=status.HTTP_421_MISDIRECTED_REQUEST,
                 detail="Mismatch between client version and PDP version,"
-                " required v2 request body, got v1. "
-                "hint: try to update your client version to v2",
+                       " required v2 request body, got v1. "
+                       "hint: try to update your client version to v2",
             )
         query = cast(AuthorizationQuery, query)
 
@@ -507,7 +532,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             raise HTTPException(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Kong integration is disabled. "
-                "Please set the PDP_KONG_INTEGRATION variable to true to enable it.",
+                       "Please set the PDP_KONG_INTEGRATION variable to true to enable it.",
             )
 
         await PersistentStateHandler.get_instance().seen_sdk("kong")

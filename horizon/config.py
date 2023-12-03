@@ -74,6 +74,16 @@ class SidecarConfig(Confi):
         1,  # aiohttp's default timeout is 5m, we want to be more aggressive
         description="the timeout for querying OPA for an allow decision, in seconds. 0 means no timeout",
     )
+    OPA_CLIENT_FAILURE_THRESHOLD_PERCENTAGE = confi.float(
+        "OPA_CLIENT_FAILURE_THRESHOLD",
+        10,
+        description="the percentage of failed requests to OPA that will trigger a failure threshold",
+    )
+    OPA_CLIENT_FAILURE_THRESHOLD_INTERVAL = confi.float(
+        "OPA_CLIENT_FAILURE_THRESHOLD_INTERVAL",
+        2,
+        description="the interval (in seconds) to calculate the failure threshold",
+    )
 
     # internal OPA config
     OPA_CONFIG_FILE_PATH = confi.str(
@@ -145,13 +155,13 @@ class SidecarConfig(Confi):
         {
             "name": "Authorization API",
             "description": "Authorization queries to OPA. These queries are answered locally by OPA "
-            + "and do not require the cloud service. Latency should be very low (< 20ms per query)",
+                           + "and do not require the cloud service. Latency should be very low (< 20ms per query)",
         },
         {
             "name": "Local Queries",
             "description": "These queries are done locally against the sidecar and do not "
-            + "involve a network round-trip to Permit.io cloud API. Therefore they are safe "
-            + "to use with reasonable performance (i.e: with negligible latency) in the context of a user request.",
+                           + "involve a network round-trip to Permit.io cloud API. Therefore they are safe "
+                           + "to use with reasonable performance (i.e: with negligible latency) in the context of a user request.",
         },
         {
             "name": "Policy Updater",
@@ -160,10 +170,10 @@ class SidecarConfig(Confi):
         {
             "name": "Cloud API Proxy",
             "description": "These endpoints proxy the Permit.io cloud api, and therefore **incur high-latency**. "
-            + "You should not use the cloud API in the standard request flow of users, i.e in places where the incurred "
-            + "added latency will affect your entire api. A good place to call the cloud API will be in one-time user events "
-            + "such as user registration (i.e: calling sync user, assigning initial user roles, etc.). "
-            + "The sidecar will proxy to the cloud every request prefixed with '/sdk'.",
+                           + "You should not use the cloud API in the standard request flow of users, i.e in places where the incurred "
+                           + "added latency will affect your entire api. A good place to call the cloud API will be in one-time user events "
+                           + "such as user registration (i.e: calling sync user, assigning initial user roles, etc.). "
+                           + "The sidecar will proxy to the cloud every request prefixed with '/sdk'.",
             "externalDocs": {
                 "description": "The cloud api complete docs are located here:",
                 "url": "https://api.permit.io/redoc",
