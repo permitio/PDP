@@ -257,10 +257,10 @@ async def test_enforce_endpoint_statistics(
 )
 def test_enforce_endpoint(
     endpoint, opa_endpoint, query, opa_response, expected_response,
-    pdp_api_client: TestClient,
 ):
+    _client = TestClient(sidecar._app)
     def post_endpoint():
-        return pdp_api_client.post(
+        return _client.post(
             endpoint,
             headers={"authorization": f"Bearer {sidecar_config.API_KEY}"},
             json=query.dict()

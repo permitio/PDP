@@ -76,12 +76,12 @@ class SidecarConfig(Confi):
     )
     OPA_CLIENT_FAILURE_THRESHOLD_PERCENTAGE = confi.float(
         "OPA_CLIENT_FAILURE_THRESHOLD",
-        10,
+        0.1,
         description="the percentage of failed requests to OPA that will trigger a failure threshold",
     )
     OPA_CLIENT_FAILURE_THRESHOLD_INTERVAL = confi.float(
         "OPA_CLIENT_FAILURE_THRESHOLD_INTERVAL",
-        2 * 60,
+        60,
         description="the interval (in seconds) to calculate the failure threshold",
     )
 

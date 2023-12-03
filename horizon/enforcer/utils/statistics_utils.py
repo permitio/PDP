@@ -4,7 +4,7 @@ from loguru import logger
 
 
 class StatisticsManager:
-    def __init__(self, interval_seconds: int = 2 * 60, failures_threshold_percentage: float = 10):
+    def __init__(self, interval_seconds: int = 60, failures_threshold_percentage: float = 0.1):
         self._requests = 0
         self._failures = 0
         self._messages: asyncio.Queue[bool] = asyncio.Queue()
@@ -26,11 +26,10 @@ class StatisticsManager:
                         self._failures += 1
             finally:
                 self._messages.task_done()
-            await asyncio.sleep(0.5)
 
     async def reset_stats(self) -> None:
         async with self._lock:
-            logger.info("Interval task: requests={requests}, failures={failures}",
+            logger.debug("Resetting error rate current status is requests={requests}, failures={failures}",
                         requests=self._requests, failures=self._failures)
             self._requests = 0
             self._failures = 0
@@ -58,11 +57,11 @@ class StatisticsManager:
             self._interval_task = None
 
     def report_success(self) -> None:
-        logger.info("Reporting success")
+        logger.debug("Reporting success")
         self._messages.put_nowait(True)
 
     def report_failure(self) -> None:
-        logger.info("Reporting failure")
+        logger.debug("Reporting failure")
         self._messages.put_nowait(False)
 
     async def current_rate(self) -> float:
@@ -72,7 +71,7 @@ class StatisticsManager:
         return current_failures / current_requests
 
     async def status(self) -> bool:
-        rate = await self.current_rate() * 100
+        rate = await self.current_rate()
         if rate > self._failures_threshold_percentage:
             self._had_failure = True
         return self._had_failure
