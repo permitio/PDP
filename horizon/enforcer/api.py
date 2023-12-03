@@ -53,7 +53,11 @@ USER_PERMISSIONS_POLICY_PACKAGE = "permit.user_permissions"
 USER_TENANTS_POLICY_PACKAGE = USER_PERMISSIONS_POLICY_PACKAGE + ".tenants"
 KONG_ROUTES_TABLE_FILE = "/config/kong_routes.json"
 
-stats_manager = StatisticsManager(interval_seconds=sidecar_config.OPA_CLIENT_FAILURE_THRESHOLD_INTERVAL)
+stats_manager = StatisticsManager(
+    interval_seconds=sidecar_config.OPA_CLIENT_FAILURE_THRESHOLD_INTERVAL,
+    failures_threshold_percentage=sidecar_config.OPA_CLIENT_FAILURE_THRESHOLD_PERCENTAGE,
+)
+
 
 def extract_pdp_api_key(request: Request) -> str:
     authorization: str = request.headers.get(AUTHZ_HEADER, "")
@@ -265,7 +269,6 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         logger.info(
             f"Kong integration: Loaded {len(kong_routes_table)} translation rules."
         )
-    stats_manager.run()
 
     @router.get(
         "/health",
@@ -273,8 +276,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         include_in_schema=False
     )
     async def health():
-        current_rate = await stats_manager.current_rate()
-        if current_rate > sidecar_config.OPA_CLIENT_FAILURE_THRESHOLD_PERCENTAGE:
+        if await stats_manager.status():
             return JSONResponse(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 content={"status": "unavailable"},

@@ -15,7 +15,7 @@ from opal_common.logging.formatter import Formatter
 
 from horizon.authentication import enforce_pdp_token
 from horizon.config import MOCK_API_KEY, sidecar_config
-from horizon.enforcer.api import init_enforcer_api_router
+from horizon.enforcer.api import init_enforcer_api_router, stats_manager
 from horizon.enforcer.opa.config_maker import (
     get_opa_authz_policy_file_path,
     get_opa_config_file_path,
@@ -275,7 +275,10 @@ class PermitPDP:
         """
         mounts the api routes on the app object
         """
+
         # Init api routers with required dependencies
+        app.on_event("startup")(stats_manager.run)
+
         enforcer_router = init_enforcer_api_router(policy_store=self._opal.policy_store)
         local_router = init_local_cache_api_router(policy_store=self._opal.policy_store)
         # Init system router

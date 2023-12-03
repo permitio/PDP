@@ -81,7 +81,7 @@ class SidecarConfig(Confi):
     )
     OPA_CLIENT_FAILURE_THRESHOLD_INTERVAL = confi.float(
         "OPA_CLIENT_FAILURE_THRESHOLD_INTERVAL",
-        2,
+        2 * 60,
         description="the interval (in seconds) to calculate the failure threshold",
     )
 
