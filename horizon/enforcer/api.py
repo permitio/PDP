@@ -270,11 +270,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             f"Kong integration: Loaded {len(kong_routes_table)} translation rules."
         )
 
-    @router.get(
-        "/health",
-        status_code=status.HTTP_200_OK,
-        include_in_schema=False
-    )
+    @router.get("/health", status_code=status.HTTP_200_OK, include_in_schema=False)
     async def health():
         if await stats_manager.status():
             return JSONResponse(
@@ -282,9 +278,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
                 content={"status": "unavailable"},
             )
 
-        return JSONResponse(
-            status_code=status.HTTP_200_OK, content={"status": "ok"}
-        )
+        return JSONResponse(status_code=status.HTTP_200_OK, content={"status": "ok"})
 
     @router.post(
         "/allowed_url",
@@ -493,8 +487,8 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             raise HTTPException(
                 status_code=status.HTTP_421_MISDIRECTED_REQUEST,
                 detail="Mismatch between client version and PDP version,"
-                       " required v2 request body, got v1. "
-                       "hint: try to update your client version to v2",
+                " required v2 request body, got v1. "
+                "hint: try to update your client version to v2",
             )
         query = cast(AuthorizationQuery, query)
 
@@ -534,7 +528,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             raise HTTPException(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Kong integration is disabled. "
-                       "Please set the PDP_KONG_INTEGRATION variable to true to enable it.",
+                "Please set the PDP_KONG_INTEGRATION variable to true to enable it.",
             )
 
         await PersistentStateHandler.get_instance().seen_sdk("kong")

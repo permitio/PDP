@@ -167,7 +167,9 @@ ALLOWED_ENDPOINTS = [
 
 @pytest.mark.parametrize(
     "endpoint, opa_endpoint, query, opa_response, expected_response",
-    list(filter(lambda p: not isinstance(p[2], UrlAuthorizationQuery), ALLOWED_ENDPOINTS))
+    list(
+        filter(lambda p: not isinstance(p[2], UrlAuthorizationQuery), ALLOWED_ENDPOINTS)
+    ),
 )
 @pytest.mark.timeout(30)
 @pytest.mark.asyncio
@@ -179,6 +181,7 @@ async def test_enforce_endpoint_statistics(
     expected_response: dict,
 ) -> None:
     async with pdp_api_client() as client:
+
         def post_endpoint():
             return client.post(
                 endpoint,
@@ -245,20 +248,29 @@ async def test_enforce_endpoint_statistics(
             await asyncio.sleep(2)
             current_rate = await stats_manager.current_rate()
             assert current_rate == (3.0 / 4.0)
-            assert client.get("/health").status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+            assert (
+                client.get("/health").status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+            )
             await stats_manager.reset_stats()
             current_rate = await stats_manager.current_rate()
             assert current_rate == 0
-            assert client.get("/health").status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+            assert (
+                client.get("/health").status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+            )
 
 
 @pytest.mark.parametrize(
     "endpoint, opa_endpoint, query, opa_response, expected_response", ALLOWED_ENDPOINTS
 )
 def test_enforce_endpoint(
-    endpoint, opa_endpoint, query, opa_response, expected_response,
+    endpoint,
+    opa_endpoint,
+    query,
+    opa_response,
+    expected_response,
 ):
     _client = TestClient(sidecar._app)
+
     def post_endpoint():
         return _client.post(
             endpoint,

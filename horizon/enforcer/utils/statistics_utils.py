@@ -4,7 +4,9 @@ from loguru import logger
 
 
 class StatisticsManager:
-    def __init__(self, interval_seconds: int = 60, failures_threshold_percentage: float = 0.1):
+    def __init__(
+        self, interval_seconds: int = 60, failures_threshold_percentage: float = 0.1
+    ):
         self._requests = 0
         self._failures = 0
         self._messages: asyncio.Queue[bool] = asyncio.Queue()
@@ -29,8 +31,11 @@ class StatisticsManager:
 
     async def reset_stats(self) -> None:
         async with self._lock:
-            logger.debug("Resetting error rate current status is requests={requests}, failures={failures}",
-                        requests=self._requests, failures=self._failures)
+            logger.debug(
+                "Resetting error rate current status is requests={requests}, failures={failures}",
+                requests=self._requests,
+                failures=self._failures,
+            )
             self._requests = 0
             self._failures = 0
 
@@ -65,7 +70,9 @@ class StatisticsManager:
         self._messages.put_nowait(False)
 
     async def current_rate(self) -> float:
-        current_requests, current_failures = float(self._requests), float(self._failures)
+        current_requests, current_failures = float(self._requests), float(
+            self._failures
+        )
         if current_requests == 0:
             return 0.0
         return current_failures / current_requests
