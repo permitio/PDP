@@ -51,15 +51,18 @@ class StatisticsManager:
         if self._interval_task is None:
             self._interval_task = asyncio.create_task(self.interval_task())
 
-    async def stop(self) -> None:
-        logger.debug("Stopping statistics manager")
-        await self._messages.join()
+    async def stop_tasks(self) -> None:
         if self._restarter_task is not None:
             self._restarter_task.cancel()
             self._restarter_task = None
         if self._interval_task is not None:
             self._interval_task.cancel()
             self._interval_task = None
+
+    async def stop(self) -> None:
+        logger.debug("Stopping statistics manager")
+        await self._messages.join()
+        await self.stop_tasks()
 
     def report_success(self) -> None:
         logger.debug("Reporting success")
