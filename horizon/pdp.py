@@ -278,6 +278,7 @@ class PermitPDP:
 
         # Init api routers with required dependencies
         app.on_event("startup")(stats_manager.run)
+        app.on_event("shutdown")(stats_manager.stop_tasks)
 
         enforcer_router = init_enforcer_api_router(policy_store=self._opal.policy_store)
         local_router = init_local_cache_api_router(policy_store=self._opal.policy_store)
