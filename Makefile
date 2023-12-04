@@ -18,6 +18,9 @@ endif
 	echo $(VERSION) >permit_pdp_version
 	./build_opal_bundle.sh
 
+build-release-vanilla: prepare
+	@docker buildx build --platform linux/arm64,linux/amd64 -t permitio/pdp-v2-vanilla:$(VERSION)$(BUILD_SUFFIX) --push .
+
 build-release-prod: prepare
 	@docker buildx build --platform linux/arm64,linux/amd64 -t permitio/pdp-v2:$(VERSION)$(BUILD_SUFFIX) --push .
 
