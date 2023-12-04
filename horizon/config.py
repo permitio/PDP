@@ -74,6 +74,16 @@ class SidecarConfig(Confi):
         1,  # aiohttp's default timeout is 5m, we want to be more aggressive
         description="the timeout for querying OPA for an allow decision, in seconds. 0 means no timeout",
     )
+    OPA_CLIENT_FAILURE_THRESHOLD_PERCENTAGE = confi.float(
+        "OPA_CLIENT_FAILURE_THRESHOLD",
+        0.1,
+        description="the percentage of failed requests to OPA that will trigger a failure threshold",
+    )
+    OPA_CLIENT_FAILURE_THRESHOLD_INTERVAL = confi.float(
+        "OPA_CLIENT_FAILURE_THRESHOLD_INTERVAL",
+        60,
+        description="the interval (in seconds) to calculate the failure threshold",
+    )
 
     # internal OPA config
     OPA_CONFIG_FILE_PATH = confi.str(
