@@ -143,7 +143,7 @@ class SidecarConfig(Confi):
         "<green>{time}</green> | {process} | <blue>{name: <40}</blue>|<level>{level:^6} | {message}</level>",
     )
 
-    IS_DEBUG_MODE = confi.bool("DEBUG", None)
+    IS_DEBUG_MODE = confi.bool("DEBUG", False)
 
     # enables the Kong integration endpoint. This shouldn't be enabled unless needed, as it's unauthenticated
     KONG_INTEGRATION = confi.bool("KONG_INTEGRATION", False)
