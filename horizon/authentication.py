@@ -6,7 +6,7 @@ from horizon.config import MOCK_API_KEY, sidecar_config
 def enforce_pdp_token(authorization=Header(None)):
     if authorization is None:
         raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED, detail="Missing Authorization header"
+            status.HTTP_401_UNAUTHORIZED, detail="Missing Authorization header pdp"
         )
     schema, token = authorization.split(" ")
 
@@ -23,7 +23,7 @@ def enforce_pdp_control_key(authorization=Header(None)):
 
     if authorization is None:
         raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED, detail="Missing Authorization header"
+            status.HTTP_401_UNAUTHORIZED, detail="Missing Authorization header control"
         )
     schema, token = authorization.split(" ")
 
