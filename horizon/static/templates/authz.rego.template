@@ -7,13 +7,5 @@ allow {                                     # Allow request if...
 }
 
 allow {
-    "/v1/data/system/opal/healthy" == input.request.http.path
-}
-
-allow {
-    "/v1/data/system/opal" == input.request.http.path
-}
-
-allow {
-    "/v1/data/system/opal/ready" == input.request.http.path
+    input.path[0] == "health"
 }
