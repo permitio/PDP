@@ -3,10 +3,11 @@ fastapi>=0.78.0,<1
 gunicorn>=20.1.0,<21
 Jinja2>=3.1.2,<4
 pydantic[email]>=1.9.1,<2
-requests>=2.28.1,<3
+requests>=2.31.0,<3
 tenacity>=8.0.1,<9
 typer>=0.4.1,<1
 uvicorn[standard]>=0.17.6,<1
 logzio-python-handler
 ddtrace
 protobuf>=3.20.2 # not directly required, pinned by Snyk to avoid a vulnerability
+certifi>=2023.7.22 # not directly required, pinned by Snyk to avoid a vulnerability
