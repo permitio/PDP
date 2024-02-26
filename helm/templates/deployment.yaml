@@ -5,7 +5,7 @@ metadata:
   labels:
     app: permitio-pdp
 spec:
-  replicas: 1
+  replicas: {{ .Values.pdp.replicas }}
   selector:
     matchLabels:
       app: permitio-pdp
