@@ -6,4 +6,3 @@ pdp:
     repository: permitio/pdp-v2
     tag: latest
     pullPolicy: Always
-    
