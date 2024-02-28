@@ -22,6 +22,7 @@ jobs:
       #   run: run: helm install pdp . --set pdp.ApiKey=${{ secrets.PDP_API_KEY }} --namespace pdp
 
       - name: Deploy Helm Chart in Kind Cluster
+        working-directory: ./helm
         run: helm install pdp . --set pdp.ApiKey=permit_key_VG0tFLP8PEYcWb3I6oK2InXzmVwlD5VKObp6nDdEDICUBEg55p2Yvr625dleiTgcQdzRS6oofLcLZWUwNCvTYA --namespace pdp
 
       - name: Show PDP pod status
