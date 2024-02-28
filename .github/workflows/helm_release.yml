@@ -36,7 +36,7 @@ jobs:
         uses: stefanprodan/helm-gh-pages@master
         with:
           token: ${{ secrets.PAGES }}
-          charts_dir: ./helm/Chart.yaml
+          charts_dir: ./helm
           charts_url: https://permitio.github.io
           owner: permitio
           repository: sidecar
