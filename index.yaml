@@ -1,6 +1,0 @@
-apiVersion: v1
-entries:
-  pdp:
-  - name: pdp
-    version: 0.0.1
-    description: An official Helm chart for Permit.io PDP (Policy Decision Point)
