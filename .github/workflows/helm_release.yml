@@ -1,10 +1,10 @@
 name: Helm Release Workflow
 
-on:
-  push:
-    branches:
-      - v2
-  workflow_dispatch:
+on: push
+  # push:
+  #   branches:
+  #     - v2
+  # workflow_dispatch:
 
 jobs:
   helm-release:
