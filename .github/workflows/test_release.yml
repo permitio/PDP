@@ -1,9 +1,10 @@
 name: Test and release helm chart
 
-on:
-  pull_request:
-    paths:
-      - 'helm/**'
+# on:
+#   pull_request:
+#     paths:
+#       - 'helm/**'
+on: push
 
 jobs:
   test_release:
@@ -21,9 +22,15 @@ jobs:
       # - name: Deploy Helm Chart in Kind Cluster
       #   run: run: helm install pdp . --set pdp.ApiKey=${{ secrets.PDP_API_KEY }} --namespace pdp
 
+      - name: Generate random string
+        id: random_string
+        run: echo "::set-output name=random_string::$(cat /dev/urandom | LC_ALL=C tr -dc 'a-zA-Z0-9' | fold -w 8 | head -n 1)"
+
       - name: Deploy Helm Chart in Kind Cluster
         working-directory: ./helm
         run: helm install pdp . --set pdp.ApiKey=permit_key_VG0tFLP8PEYcWb3I6oK2InXzmVwlD5VKObp6nDdEDICUBEg55p2Yvr625dleiTgcQdzRS6oofLcLZWUwNCvTYA --namespace pdp
+        with:
+          cluster_name: ${{ steps.random_string.outputs.random_string }}
 
       - name: Show PDP pod status
         run: kubectl get pods -n pdp
