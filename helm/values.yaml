@@ -1,5 +1,5 @@
 pdp:
-  ApiKey: "<PDP API Key>"
+  ApiKey: "<your PDP API Key>"
   port: 7766
   replicas: 1
   image:
