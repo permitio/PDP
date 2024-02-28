@@ -21,7 +21,7 @@ jobs:
 
       - name: Deploy Helm Chart in Kind Cluster
         working-directory: ./helm
-        run: helm install pdp . --set pdp.ApiKey=permit_key_VG0tFLP8PEYcWb3I6oK2InXzmVwlD5VKObp6nDdEDICUBEg55p2Yvr625dleiTgcQdzRS6oofLcLZWUwNCvTYA --create-namespace --namespace pdp
+        run: helm install pdp . --set pdp.ApiKey=permit_key_VG0tFLP8PEYcWb3I6oK2InXzmVwlD5VKObp6nDdEDICUBEg55p2Yvr625dleiTgcQdzRS6oofLcLZWUwNCvTYA --create-namespace --namespace pdp --wait
 
       - name: Show PDP pod status
         run: kubectl get pods -n pdp
