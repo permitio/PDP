@@ -62,7 +62,7 @@ jobs:
           git config --local user.name "elimoshkovich"
           git add .
           git commit -m "feat: Update chart index with version ${{ steps.random-version.outputs.version }}"
-          git push https://elimoshkovich:${{ secrets.PAGES }}@github.com/elimoshkovich/permitio/sidecar.git HEAD:gh-pages -
+          git push https://elimoshkovich:${{ secrets.PAGES }}@github.com/permitio/sidecar.git HEAD:gh-pages -
 
       # - name: Run User chart-releaser
       #   uses: helm/chart-releaser-action@v1.6.0
