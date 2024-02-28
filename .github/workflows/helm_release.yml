@@ -29,6 +29,5 @@ jobs:
         env:
           CR_TOKEN: "${{ secrets.PAGES }}"
         with:  
-          # packages_with_index: true
+          packages_with_index: true
           pages_branch: 'gh-pages'
-          skip_existing: false
