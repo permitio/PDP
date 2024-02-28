@@ -42,7 +42,7 @@ jobs:
       - name: Upload chart file
         uses: actions/upload-artifact@v2
         with:
-          name: ${{ github.workspace }}/pdp-${{ steps.random-version.outputs.version }}
+          name: pdp-${{ steps.random-version.outputs.version }}
           path: ./upload
       
       - name: Checkout gh-pages branch
@@ -53,7 +53,7 @@ jobs:
       - name: Download artifact
         uses: actions/download-artifact@v2
         with:
-          name: ${{ github.workspace }}/pdp-${{ steps.random-version.outputs.version }}
+          name: pdp-${{ steps.random-version.outputs.version }}
 
       - name: Update chart repo index in gh-pages branch
         run: |
