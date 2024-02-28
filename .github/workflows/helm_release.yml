@@ -6,6 +6,8 @@ on: push
   #     - v2
   # workflow_dispatch:
 
+permissions: write-all
+
 jobs:
   helm-release:
     runs-on: ubuntu-latest
@@ -24,6 +26,44 @@ jobs:
       - name: Install Helm
         uses: azure/setup-helm@v1
 
+      - name: Generate Random Semantic Version
+        id: random-version
+        run: echo "::set-output name=version::$(echo v0.$((1 + RANDOM % 9)).$((1 + RANDOM % 9)))-${{ github.run_number }}"
+
+      - name: Package Helm Chart
+        run: |
+          helm package --version ${{ steps.random-version.outputs.version }} ./helm
+      
+      - name: Copy chart file
+        run: |
+          mkdir -p ./upload
+          cp ${{ github.workspace }}/pdp-${{ steps.random-version.outputs.version }}.tgz ./upload/
+
+      - name: Upload chart file
+        uses: actions/upload-artifact@v2
+        with:
+          name: ${{ github.workspace }}/pdp-${{ steps.random-version.outputs.version }}
+          path: ./upload
+      
+      - name: Checkout gh-pages branch
+        uses: actions/checkout@v3
+        with:
+          ref: gh-pages
+
+      - name: Download artifact
+        uses: actions/download-artifact@v2
+        with:
+          name: ${{ github.workspace }}/pdp-${{ steps.random-version.outputs.version }}
+
+      - name: Update chart repo index in gh-pages branch
+        run: |
+          helm repo index --merge index.yaml . 
+          git config --local user.email "eli@permit.io"
+          git config --local user.name "elimoshkovich"
+          git add .
+          git commit -m "feat: Update chart index with version ${{ steps.random-version.outputs.version }}"
+          git push https://elimoshkovich:${{ secrets.PAGES }}@github.com/elimoshkovich/permitio/sidecar.git HEAD:gh-pages -
+
       # - name: Run User chart-releaser
       #   uses: helm/chart-releaser-action@v1.6.0
       #   env:
@@ -32,12 +72,12 @@ jobs:
       #     charts_dir: ./helm/Chart.yaml
       #     packages_with_index: true
       #     pages_branch: 'gh-pages'
-      - name: Publish Helm charts
-        uses: stefanprodan/helm-gh-pages@master
-        with:
-          token: ${{ secrets.PAGES }}
-          charts_dir: ./helm
-          charts_url: https://permitio.github.io
-          owner: permitio
-          repository: sidecar
-          branch: gh-pages
+      # - name: Publish Helm charts
+      #   uses: stefanprodan/helm-gh-pages@master
+      #   with:
+      #     token: ${{ secrets.PAGES }}
+      #     charts_dir: ./helm
+      #     charts_url: https://permitio.github.io
+      #     owner: permitio
+      #     repository: sidecar
+      #     branch: gh-pages
