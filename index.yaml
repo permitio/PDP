@@ -1,0 +1,12 @@
+apiVersion: v1
+entries:
+  pdp:
+  - apiVersion: v2
+    created: "2024-02-28T17:01:02.036153549Z"
+    description: An official Helm chart for Permit.io PDP (Policy Decision Point)
+    digest: 1ade55c29fca58b04d47830e1dd386db41f441d0a6aadaeb1c7fb63153aa2878
+    name: pdp
+    urls:
+    - pdp-v0.8.4-27.tgz
+    version: v0.8.4-27
+generated: "2024-02-28T17:01:02.035765526Z"
