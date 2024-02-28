@@ -30,4 +30,5 @@ jobs:
           CR_TOKEN: "${{ secrets.PAGES }}"
         with:
           charts_dir: ./helm
+          skip_existing: true
 
