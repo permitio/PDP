@@ -1,0 +1,36 @@
+name: Helm Release Workflow
+
+on:
+  push:
+    branches:
+      - v2
+  workflow_dispatch:
+
+jobs:
+  helm-release:
+    runs-on: ubuntu-latest
+    name: Release Helm Chart
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "elimoshkovich"
+          git config --global user.email "eli@permit.io"
+
+      - name: Install Helm
+        uses: azure/setup-helm@v1
+
+      # - name: Add Helm Repo dependencies
+      #   run: helm repo add bitnami https://charts.bitnami.com/bitnami
+
+      - name: Run User chart-releaser
+        uses: helm/chart-releaser-action@v1.2.1
+        env:
+          CR_TOKEN: "${{ secrets.PAGES }}"
+          CR_SKIP_EXISTING: true
+        with:
+          charts_dir: helm
