@@ -28,8 +28,7 @@ jobs:
         uses: helm/chart-releaser-action@v1.6.0
         env:
           CR_TOKEN: "${{ secrets.PAGES }}"
-        # with:
-          
+        with:  
           # packages_with_index: true
-          # pages_branch: 'gh-pages'
-          # skip_existing: false
+          pages_branch: 'gh-pages'
+          skip_existing: false
