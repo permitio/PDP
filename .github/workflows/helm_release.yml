@@ -24,13 +24,10 @@ jobs:
       - name: Install Helm
         uses: azure/setup-helm@v1
 
-      # - name: Add Helm Repo dependencies
-      #   run: helm repo add bitnami https://charts.bitnami.com/bitnami
-
       - name: Run User chart-releaser
         uses: helm/chart-releaser-action@v1.2.1
         env:
           CR_TOKEN: "${{ secrets.PAGES }}"
           CR_SKIP_EXISTING: true
         with:
-          charts_dir: helm
+          charts_dir: ./helm
