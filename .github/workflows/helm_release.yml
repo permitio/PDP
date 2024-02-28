@@ -24,11 +24,20 @@ jobs:
       - name: Install Helm
         uses: azure/setup-helm@v1
 
-      - name: Run User chart-releaser
-        uses: helm/chart-releaser-action@v1.6.0
-        env:
-          CR_TOKEN: "${{ secrets.PAGES }}"
+      # - name: Run User chart-releaser
+      #   uses: helm/chart-releaser-action@v1.6.0
+      #   env:
+      #     CR_TOKEN: "${{ secrets.PAGES }}"
+      #   with:
+      #     charts_dir: ./helm/Chart.yaml
+      #     packages_with_index: true
+      #     pages_branch: 'gh-pages'
+      - name: Publish Helm charts
+        uses: stefanprodan/helm-gh-pages@master
         with:
-          charts_dir: ./helm/Chart.yaml
-          packages_with_index: true
-          pages_branch: 'gh-pages'
+          token: ${{ secrets.PAGES }}
+          charts_dir: helm
+          charts_url: https://permitio.github.io
+          owner: permitio
+          repository: sidecar
+          branch: gh-pages
