@@ -30,7 +30,4 @@ jobs:
           CR_TOKEN: "${{ secrets.PAGES }}"
         with:
           charts_dir: ./helm
-          packages_with_index: true
-          pages_branch: PER-9197-pdp-deployment-helm
-          mark_as_latest: true
-          
+
