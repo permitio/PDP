@@ -32,3 +32,4 @@ jobs:
           charts_dir: ./helm/Chart.yaml
           packages_with_index: true
           pages_branch: 'gh-pages'
+          skip_existing: false
