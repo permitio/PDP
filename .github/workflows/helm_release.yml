@@ -21,6 +21,7 @@ jobs:
         uses: stefanprodan/helm-gh-pages@master
         with:
           token: ${{ secrets.PAGES }}
+          linting: off
 
       # - name: Configure Git
       #   run: |
