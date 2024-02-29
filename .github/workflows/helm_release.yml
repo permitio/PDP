@@ -17,21 +17,25 @@ jobs:
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
-
-      - name: Configure Git
-        run: |
-          git config user.name "$elimoshkovich"
-          git config user.email "eli@permit.io"
-
-      - name: Install Helm
-        uses: azure/setup-helm@v3
-
-      - name: Run chart-releaser
-        uses: helm/chart-releaser-action@v1.6.0
-        env:
-          CR_TOKEN: "${{ secrets.PAGES }}"
+      - name: Publish Helm charts
+        uses: stefanprodan/helm-gh-pages@master
         with:
-          pages_branch: gh-pages
+          token: ${{ secrets.PAGES }}
+
+      # - name: Configure Git
+      #   run: |
+      #     git config user.name "$elimoshkovich"
+      #     git config user.email "eli@permit.io"
+
+      # - name: Install Helm
+      #   uses: azure/setup-helm@v3
+
+      # - name: Run chart-releaser
+      #   uses: helm/chart-releaser-action@v1.6.0
+      #   env:
+      #     CR_TOKEN: "${{ secrets.PAGES }}"
+      #   with:
+      #     pages_branch: gh-pages
     # steps:
     #   - name: Checkout
     #     uses: actions/checkout@v3
@@ -83,22 +87,3 @@ jobs:
     #       git add .
     #       git commit -m "feat: Update chart index with version ${{ steps.random-version.outputs.version }}"
     #       git push https://elimoshkovich:${{ secrets.PAGES }}@github.com/permitio/sidecar.git HEAD:gh-pages
-
-      # - name: Run User chart-releaser
-      #   uses: helm/chart-releaser-action@v1.6.0
-      #   env:
-      #     CR_TOKEN: "${{ secrets.PAGES }}"
-      #   with:
-      #     charts_dir: ./helm/Chart.yaml
-      #     packages_with_index: true
-      #     pages_branch: 'gh-pages'
-      # - name: Publish Helm charts
-      #   uses: stefanprodan/helm-gh-pages@master
-      #   with:
-      #     token: ${{ secrets.PAGES }}
-      #     charts_dir: ./helm
-      #     charts_url: https://permitio.github.io
-      #     owner: permitio
-      #     repository: sidecar
-      #     branch: gh-pages
-
