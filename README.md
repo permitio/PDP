@@ -4,5 +4,6 @@ helm repo add pdp https://permitio.github.io/sidecar
 # search chart
 helm search repo pdp
 
-# install chart
-helm install pdp pdp/pdp --set pdp.ApiKey=<YOUR_API_KEY> --create-namespace --namespace pdp --wait
+
+# Helm install
+helm install pdp pdp/pdp --set pdp.ApiKey='<YOUR_API_KEY>' --create-namespace --namespace pdp --wait
