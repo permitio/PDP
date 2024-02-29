@@ -23,6 +23,11 @@ jobs:
           token: ${{ secrets.PAGES }}
           charts_dir: charts/Chart.yaml
           linting: off
+          owner: permitio
+          commit_username: elimoshkovich
+          commit_email: eli@permit.io
+          app_version: 0.0.1
+          chart_version: 0.0.1
 
       # - name: Configure Git
       #   run: |
