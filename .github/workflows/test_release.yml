@@ -4,7 +4,6 @@ on:
   pull_request:
     paths:
       - 'helm/**'
-# on: push
 
 jobs:
   helm_test:
@@ -17,7 +16,7 @@ jobs:
         uses: helm/kind-action@v1
 
       - name: Deploy Helm Chart in Kind Cluster
-        working-directory: ./charts
+        working-directory: ./charts/pdp
         run: helm install pdp . --set pdp.ApiKey=${{ secrets.PDP_API_KEY }} --create-namespace --namespace pdp --wait
 
       - name: Show PDP logs in case of failure
