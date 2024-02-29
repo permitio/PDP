@@ -10,24 +10,37 @@ on: push
 
 jobs:
   helm-release:
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
-    name: Release Helm Chart
     steps:
       - name: Checkout
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
-      - name: Publish Helm charts
-        uses: stefanprodan/helm-gh-pages@master
-        with:
-          token: ${{ secrets.PAGES }}
-          charts_dir: ./charts
-          linting: off
-          owner: permitio
-          commit_username: elimoshkovich
-          commit_email: eli@permit.io
-          app_version: 0.0.1
-          chart_version: 0.0.1
+      - name: Configure Git
+        run: |
+          git config user.name "elimoshkovich"
+          git config user.email "eli@permit.io"
+
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+
+      - name: Run chart-releaser
+        uses: helm/chart-releaser-action@v1.6.0
+        env:
+          CR_TOKEN: "${{ secrets.PAGES }}"
+      # - name: Publish Helm charts
+      #   uses: stefanprodan/helm-gh-pages@master
+      #   with:
+      #     token: ${{ secrets.PAGES }}
+      #     charts_dir: ./charts
+      #     linting: off
+      #     owner: permitio
+      #     commit_username: elimoshkovich
+      #     commit_email: eli@permit.io
+      #     app_version: 0.0.1
+      #     chart_version: 0.0.1
 
       # - name: Configure Git
       #   run: |
