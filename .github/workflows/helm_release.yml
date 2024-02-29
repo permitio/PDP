@@ -1,0 +1,32 @@
+name: Helm Release Workflow
+
+on:
+  push:
+    branches:
+      - v2
+  workflow_dispatch:
+
+jobs:
+  helm-release:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - name: Configure Git
+        run: |
+          git config user.name "elimoshkovich"
+          git config user.email "eli@permit.io"
+
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+
+      - name: Run chart-releaser
+        uses: helm/chart-releaser-action@v1.6.0
+        env:
+          CR_TOKEN: "${{ secrets.PAGES }}"
+        with:
+          skip_existing: true

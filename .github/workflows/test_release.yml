@@ -1,0 +1,28 @@
+name: Helm test
+
+on:
+  pull_request:
+    paths:
+      - 'charts/pdp/**'
+
+jobs:
+  helm_test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Create k8s Kind Cluster
+        uses: helm/kind-action@v1
+
+      - name: Deploy Helm Chart in Kind Cluster
+        working-directory: ./charts/pdp
+        run: helm install pdp . --set pdp.ApiKey=${{ secrets.PDP_API_KEY }} --create-namespace --namespace pdp --wait
+
+      - name: Show PDP logs in case of failure
+        run: kubectl logs svc/permitio-pdp -n pdp
+        if: failure()
+
+      - name: Show PDP pod status
+        run: kubectl get pods -n pdp
+        if: always()
