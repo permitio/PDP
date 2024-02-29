@@ -6,7 +6,7 @@ on: push
   #     - v2
   # workflow_dispatch:
 
-permissions: write-all
+# permissions: write-all
 
 jobs:
   helm-release:
@@ -20,49 +20,69 @@ jobs:
 
       - name: Configure Git
         run: |
-          git config --global user.name "elimoshkovich"
-          git config --global user.email "eli@permit.io"
+          git config user.name "$elimoshkovich"
+          git config user.email "eli@permit.io"
 
       - name: Install Helm
-        uses: azure/setup-helm@v1
+        uses: azure/setup-helm@v3
 
-      - name: Generate Random Semantic Version
-        id: random-version
-        run: echo "::set-output name=version::$(echo v0.$((1 + RANDOM % 9)).$((1 + RANDOM % 9)))-${{ github.run_number }}"
+      - name: Run chart-releaser
+        uses: helm/chart-releaser-action@v1.6.0
+        env:
+          CR_TOKEN: "${{ secrets.PAGES }}"
+        with:
+          pages_branch: gh-pages
+    # steps:
+    #   - name: Checkout
+    #     uses: actions/checkout@v3
+    #     with:
+    #       fetch-depth: 0
 
-      - name: Package Helm Chart
-        run: |
-          helm package --version ${{ steps.random-version.outputs.version }} ./helm
+    #   - name: Configure Git
+    #     run: |
+    #       git config --global user.name "elimoshkovich"
+    #       git config --global user.email "eli@permit.io"
+
+    #   - name: Install Helm
+    #     uses: azure/setup-helm@v1
+
+    #   - name: Generate Random Semantic Version
+    #     id: random-version
+    #     run: echo "::set-output name=version::$(echo v0.$((1 + RANDOM % 9)).$((1 + RANDOM % 9)))-${{ github.run_number }}"
+
+    #   - name: Package Helm Chart
+    #     run: |
+    #       helm package --version ${{ steps.random-version.outputs.version }} ./helm
       
-      - name: Copy chart file
-        run: |
-          mkdir -p ./upload
-          cp ${{ github.workspace }}/pdp-${{ steps.random-version.outputs.version }}.tgz ./upload/
+    #   - name: Copy chart file
+    #     run: |
+    #       mkdir -p ./upload
+    #       cp ${{ github.workspace }}/pdp-${{ steps.random-version.outputs.version }}.tgz ./upload/
 
-      - name: Upload chart file
-        uses: actions/upload-artifact@v2
-        with:
-          name: pdp-${{ steps.random-version.outputs.version }}
-          path: ./upload
+    #   - name: Upload chart file
+    #     uses: actions/upload-artifact@v2
+    #     with:
+    #       name: pdp-${{ steps.random-version.outputs.version }}
+    #       path: ./upload
       
-      - name: Checkout gh-pages branch
-        uses: actions/checkout@v3
-        with:
-          ref: gh-pages
+    #   - name: Checkout gh-pages branch
+    #     uses: actions/checkout@v3
+    #     with:
+    #       ref: gh-pages
 
-      - name: Download artifact
-        uses: actions/download-artifact@v2
-        with:
-          name: pdp-${{ steps.random-version.outputs.version }}
+    #   - name: Download artifact
+    #     uses: actions/download-artifact@v2
+    #     with:
+    #       name: pdp-${{ steps.random-version.outputs.version }}
 
-      - name: Update chart repo index in gh-pages branch
-        run: |
-          helm repo index --merge index.yaml . 
-          git config --local user.email "eli@permit.io"
-          git config --local user.name "elimoshkovich"
-          git add .
-          git commit -m "feat: Update chart index with version ${{ steps.random-version.outputs.version }}"
-          git push https://elimoshkovich:${{ secrets.PAGES }}@github.com/permitio/sidecar.git HEAD:gh-pages
+    #   - name: Update chart repo index in gh-pages branch
+    #     run: |
+    #       helm repo index --merge index.yaml . 
+    #       git config --local user.email "eli@permit.io"
+    #       git config --local user.name "elimoshkovich"
+    #       git add .
+    #       git commit -m "feat: Update chart index with version ${{ steps.random-version.outputs.version }}"
+    #       git push https://elimoshkovich:${{ secrets.PAGES }}@github.com/permitio/sidecar.git HEAD:gh-pages
 
       # - name: Run User chart-releaser
       #   uses: helm/chart-releaser-action@v1.6.0
@@ -81,3 +101,4 @@ jobs:
       #     owner: permitio
       #     repository: sidecar
       #     branch: gh-pages
+
