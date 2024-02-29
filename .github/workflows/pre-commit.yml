@@ -3,6 +3,8 @@ name: pre-commit
 on:
   pull_request:
   push:
+    paths-ignore:
+      - 'charts/**'
     branches: [master, main]
 
 jobs:
