@@ -3,7 +3,7 @@ name: Helm test
 on:
   pull_request:
     paths:
-      - 'helm/**'
+      - 'charts/pdp/**'
 
 jobs:
   helm_test:
