@@ -9,4 +9,3 @@ spec:
     - protocol: TCP
       port: {{ .Values.pdp.port }}
       targetPort: 7000
-

@@ -26,5 +26,3 @@ jobs:
       - name: Show PDP pod status
         run: kubectl get pods -n pdp
         if: always()
-
-        
