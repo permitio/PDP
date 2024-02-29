@@ -30,5 +30,3 @@ jobs:
           CR_TOKEN: "${{ secrets.PAGES }}"
         with:
           skip_existing: true
-
-      
