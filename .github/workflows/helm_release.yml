@@ -21,6 +21,7 @@ jobs:
         uses: stefanprodan/helm-gh-pages@master
         with:
           token: ${{ secrets.PAGES }}
+          charts_dir: charts
           linting: off
 
       # - name: Configure Git
