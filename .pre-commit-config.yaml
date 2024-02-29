@@ -3,9 +3,9 @@ repos:
     rev: v4.2.0
     hooks:
       - id: check-yaml
-        exclude: "helm/"
+        exclude: "charts/"
       - id: end-of-file-fixer
-        exclude: "helm/"
+        exclude: "charts/"
       - id: trailing-whitespace
   - repo: https://github.com/psf/black
     rev: 22.3.0
