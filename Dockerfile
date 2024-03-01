@@ -57,7 +57,7 @@ RUN if [ -f /custom/custom_opa.tar.gz ]; \
 # MAIN IMAGE ----------------------------------------
 # most of the time only this image should be built
 # ---------------------------------------------------
-FROM python:3.10-slim
+FROM python:3.13.0a4-slim
 RUN apt-get update && \
     apt-get install -y bash curl
 
