@@ -137,6 +137,13 @@ class SidecarConfig(Confi):
         description="log upload size limit in bytes. OPA will chunk uploads to cap message body to this limit",
     )
 
+    # allow access to metrics endpoint without auth
+    ALLOW_METRICS_UNAUTHENTICATED = confi.bool(
+        "ALLOW_METRICS_UNAUTHENTICATED",
+        False,
+        description="if true, the /metrics endpoint will be accessible without authentication",
+    )
+
     # temp log format (until cloud config is received)
     TEMP_LOG_FORMAT = confi.str(
         "TEMP_LOG_FORMAT",

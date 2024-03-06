@@ -9,3 +9,9 @@ allow {                                     # Allow request if...
 allow {
     input.path[0] == "health"
 }
+
+{% if allow_metrics_unauthenticated %}
+allow {
+    input.path[0] == "metrics"
+}
+{% endif %}
