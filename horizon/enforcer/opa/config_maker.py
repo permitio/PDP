@@ -83,7 +83,10 @@ def get_opa_authz_policy_file_path(
 
     try:
         template = env.get_template(template_path)
-        contents = template.render(bearer_token=sidecar_config.API_KEY)
+        contents = template.render(
+            bearer_token=sidecar_config.API_KEY,
+            allow_metrics_unauthenticated=sidecar_config.ALLOW_METRICS_UNAUTHENTICATED,
+        )
     except jinja2.TemplateNotFound:
         logger.error(f"could not find the template: {template_path}")
         raise
