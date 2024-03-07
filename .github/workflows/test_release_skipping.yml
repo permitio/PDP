@@ -1,0 +1,16 @@
+name: Helm test
+
+on:
+  pull_request:
+    paths-ignore:
+      - 'charts/pdp/**'  # Ignore changes in 'charts/pdp' directory
+
+jobs:
+  helm_test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Skipping helm_test workflow
+        run: echo "Skipping helm_test since 'charts/pdp' has not been touched"
