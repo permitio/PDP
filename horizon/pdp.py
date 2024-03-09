@@ -8,8 +8,13 @@ from fastapi.responses import RedirectResponse
 from loguru import logger
 from logzio.handler import LogzioHandler
 from opal_client.client import OpalClient
-from opal_client.config import OpaLogFormat, opal_client_config, opal_common_config
-from opal_client.opa.options import OpaServerOptions
+from opal_client.config import (
+    EngineLogFormat,
+    opal_client_config,
+    opal_common_config,
+    PolicyStoreAuth,
+)
+from opal_client.engine.options import OpaServerOptions
 from opal_common.confi import Confi
 from opal_common.logging.formatter import Formatter
 
@@ -236,6 +241,7 @@ class PermitPDP:
         if sidecar_config.OPA_BEARER_TOKEN_REQUIRED:
             # overrides OPAL client config so that OPAL passes the bearer token in requests
             opal_client_config.POLICY_STORE_AUTH_TOKEN = sidecar_config.API_KEY
+            opal_client_config.POLICY_STORE_AUTH_TYPE = PolicyStoreAuth.TOKEN
 
             # append the bearer token authz policy to inline OPA config
             auth_policy_file_path = get_opa_authz_policy_file_path(sidecar_config)
@@ -254,7 +260,7 @@ class PermitPDP:
 
         # override OPAL client default config to show OPA logs
         if sidecar_config.OPA_DECISION_LOG_CONSOLE:
-            opal_client_config.INLINE_OPA_LOG_FORMAT = OpaLogFormat.FULL
+            opal_client_config.INLINE_OPA_LOG_FORMAT = EngineLogFormat.FULL
             exclude_list: List[str] = opal_common_config.LOG_MODULE_EXCLUDE_LIST.copy()
             if OPA_LOGGER_MODULE in exclude_list:
                 exclude_list.remove(OPA_LOGGER_MODULE)
