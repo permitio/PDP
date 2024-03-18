@@ -25,6 +25,7 @@ jobs:
       with:
         repository: permitio/permit-opa
         ref: main
+        path: './permit-opa'
         token: ${{ secrets.READ_ONLY_GITHUB_TOKEN }}
     
     - name: Run pre build
