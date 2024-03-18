@@ -29,7 +29,7 @@ RUN python setup.py install --user
 
 FROM golang:bullseye as OPABuildStage
 
-COPY custom /custom
+COPY ./permit-opa/custom /custom
 
 RUN if [ -f /custom/custom_opa.tar.gz ]; \
     then \
