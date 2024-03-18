@@ -1,7 +1,7 @@
 name: Build and Push Docker Image
 on: push
   # release:
-  #   types: [published]
+  #   types: [prereleased]
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
@@ -20,6 +20,22 @@ jobs:
       with:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_TOKEN }}
+    
+    - uses: actions/checkout@v3
+      with:
+        repository: permitio/permit-opa
+        ref: main
+        token: ${{ secrets.READ_ONLY_GITHUB_TOKEN }}
+    
+    - name: Run pre build
+      working-directory: ./permit-opa
+      run: |
+        pwd
+        #echo "${{ github.event.release.tag_name }}" | cut -d '-' -f 1 > permit_pdp_version
+        echo "0.2.38" > permit_pdp_version
+	      rm -rf custom
+        mkdir custom
+        find * -name '*go*' -print0 | xargs -0 tar -czf ./custom/custom_opa.tar.gz --exclude '.*'
 
     - name: Build and push Docker image
       uses: docker/build-push-action@v5
@@ -27,7 +43,9 @@ jobs:
         push: false
         context: .
         platforms: linux/amd64,linux/arm64
-        #tags: permitio/pdp:${{ github.event.release.tag_name }}
-        tags: permitio/pdp:check1
-        # cache-from: type=gha
-        # cache-to: type=gha,mode=max
+        #tags: permitio/pdp-v2:${{ github.event.release.tag_name }}
+        tags: permitio/pdp-v2:test
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+

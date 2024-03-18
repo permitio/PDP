@@ -13,7 +13,7 @@ COPY requirements.txt requirements.txt
 RUN pip install --upgrade pip && pip install setuptools -U && pip install --user -r requirements.txt
 
 # Install a custom OPAL, if requested
-COPY custom /custom
+COPY ./permit-opa/custom /custom
 
 RUN if [ -f /custom/custom_opal.tar.gz ]; \
 	then \
