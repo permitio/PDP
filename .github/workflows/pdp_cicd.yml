@@ -28,7 +28,6 @@ jobs:
         token: ${{ secrets.READ_ONLY_GITHUB_TOKEN }}
     
     - name: Run pre build
-      working-directory: ./permit-opa
       run: |
         pwd
         #echo "${{ github.event.release.tag_name }}" | cut -d '-' -f 1 > permit_pdp_version
@@ -36,6 +35,7 @@ jobs:
 	      rm -rf custom
         mkdir custom
         find * -name '*go*' -print0 | xargs -0 tar -czf ./custom/custom_opa.tar.gz --exclude '.*'
+      working-directory: ./permit-opa
 
     - name: Build and push Docker image
       uses: docker/build-push-action@v5
