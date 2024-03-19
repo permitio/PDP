@@ -25,7 +25,6 @@ jobs:
       run: |
         #echo "${{ github.event.release.tag_name }}" | cut -d '-' -f 1 > permit_pdp_version
         echo "0.2.38" > permit_pdp_version
-      working-directory: ./permit-opa
     
     - name: Build and push PDP-Vanilla - (official release)
       if: "!github.event.release.prerelease"
