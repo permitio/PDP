@@ -13,6 +13,7 @@ from opal_client.config import (
     opal_client_config,
     opal_common_config,
     PolicyStoreAuth,
+    ConnRetryOptions,
 )
 from opal_client.engine.options import OpaServerOptions
 from opal_common.confi import Confi
@@ -265,6 +266,12 @@ class PermitPDP:
             if OPA_LOGGER_MODULE in exclude_list:
                 exclude_list.remove(OPA_LOGGER_MODULE)
                 opal_common_config.LOG_MODULE_EXCLUDE_LIST = exclude_list
+
+        opal_client_config.DATA_UPDATER_CONN_RETRY = ConnRetryOptions(
+            wait_strategy="random_exponential",
+            attempts=200,
+            wait_time=1,
+        )
 
     def _override_app_metadata(self, app: FastAPI):
         app.title = "Permit.io PDP"
