@@ -20,10 +20,10 @@ jobs:
       with:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_TOKEN }}
-    
+
     - name: Pre build - for PDP-Vanilla
       run: echo "${{ github.event.release.tag_name }}" | cut -d '-' -f 1 > permit_pdp_version
-    
+
     - name: Build and push PDP-Vanilla - (official release)
       if: "!github.event.release.prerelease"
       uses: docker/build-push-action@v5
@@ -34,7 +34,7 @@ jobs:
         tags: permitio/pdp-v2-vanilla:${{ github.event.release.tag_name }}, permitio/pdp-v2-vanilla:latest
         cache-from: type=gha
         cache-to: type=gha,mode=max
-    
+
     - name: Build and push PDP-Vanilla image - (pre-release)
       if: "github.event.release.prerelease"
       uses: docker/build-push-action@v5
@@ -89,7 +89,7 @@ jobs:
         tags: permitio/pdp-v2:${{ github.event.release.tag_name }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
-    
+
     - name: Build and push PDP image - (official release)
       if: "!github.event.release.prerelease"
       uses: docker/build-push-action@v5
@@ -100,6 +100,3 @@ jobs:
         tags: permitio/pdp-v2:${{ github.event.release.tag_name }},permitio/pdp-v2:latest
         cache-from: type=gha
         cache-to: type=gha,mode=max
-
-
-
