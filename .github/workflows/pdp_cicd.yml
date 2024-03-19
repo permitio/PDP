@@ -1,7 +1,7 @@
 name: Build and Push PDP Docker Image
-on: push
-  # release:
-  #   types: [published]
+on:
+  release:
+    types: [published]
 jobs:
   build-and-push-pdp-vanilla:
     runs-on: ubuntu-latest
@@ -22,19 +22,16 @@ jobs:
         password: ${{ secrets.DOCKERHUB_TOKEN }}
     
     - name: Pre build - for PDP-Vanilla
-      run: |
-        #echo "${{ github.event.release.tag_name }}" | cut -d '-' -f 1 > permit_pdp_version
-        echo "0.2.38" > permit_pdp_version
+      run: echo "${{ github.event.release.tag_name }}" | cut -d '-' -f 1 > permit_pdp_version
     
     - name: Build and push PDP-Vanilla - (official release)
       if: "!github.event.release.prerelease"
       uses: docker/build-push-action@v5
       with:
-        push: false
+        push: true
         context: .
         platforms: linux/amd64,linux/arm64
-        #tags: permitio/pdp-v2-vanilla:${{ github.event.release.tag_name }}, permitio/pdp-v2-vanilla:latest
-        tags: permitio/pdp-v2-vanilla:latest
+        tags: permitio/pdp-v2-vanilla:${{ github.event.release.tag_name }}, permitio/pdp-v2-vanilla:latest
         cache-from: type=gha
         cache-to: type=gha,mode=max
     
@@ -42,7 +39,7 @@ jobs:
       if: "github.event.release.prerelease"
       uses: docker/build-push-action@v5
       with:
-        push: false
+        push: true
         context: .
         platforms: linux/amd64,linux/arm64
         tags: permitio/pdp-v2-vanilla:${{ github.event.release.tag_name }}
@@ -76,8 +73,7 @@ jobs:
 
     - name: Pre build PDP
       run: |
-        #echo "${{ github.event.release.tag_name }}" | cut -d '-' -f 1 > permit_pdp_version
-        echo "0.2.38" > permit_pdp_version
+        echo "${{ github.event.release.tag_name }}" | cut -d '-' -f 1 > permit_pdp_version
         rm -rf custom
         mkdir custom
         find * -name '*go*' -print0 | xargs -0 tar -czf ./custom/custom_opa.tar.gz --exclude '.*'
@@ -87,7 +83,7 @@ jobs:
       if: "github.event.release.prerelease"
       uses: docker/build-push-action@v5
       with:
-        push: false
+        push: true
         context: .
         platforms: linux/amd64,linux/arm64
         tags: permitio/pdp-v2:${{ github.event.release.tag_name }}
@@ -98,11 +94,10 @@ jobs:
       if: "!github.event.release.prerelease"
       uses: docker/build-push-action@v5
       with:
-        push: false
+        push: true
         context: .
         platforms: linux/amd64,linux/arm64
-        #tags: permitio/pdp-v2:${{ github.event.release.tag_name }},permitio/pdp-v2:latest
-        tags: permitio/pdp-v2:latest
+        tags: permitio/pdp-v2:${{ github.event.release.tag_name }},permitio/pdp-v2:latest
         cache-from: type=gha
         cache-to: type=gha,mode=max
 

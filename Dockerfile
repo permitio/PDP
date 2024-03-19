@@ -12,18 +12,6 @@ WORKDIR /app/
 COPY requirements.txt requirements.txt
 RUN pip install --upgrade pip && pip install setuptools -U && pip install --user -r requirements.txt
 
-# # Install a custom OPAL, if requested
-# COPY ./permit-opa/custom /custom
-
-# RUN if [ -f /custom/custom_opal.tar.gz ]; \
-# 	then \
-# 		cd /custom && \
-# 		tar xzf custom_opal.tar.gz && \
-# 		pip install --user packages/opal-common packages/opal-client && \
-# 		cd / && \
-# 		rm -rf /custom ; \
-# 	fi
-
 COPY horizon setup.py MANIFEST.in ./
 RUN python setup.py install --user
 
@@ -35,7 +23,6 @@ RUN if [ -d ./permit-opa/custom ]; then \
     else \
       echo "Source directory does not exist. Skipping."; \
     fi
-#COPY ./permit-opa/custom /custom
 
 RUN if [ -f /custom/custom_opa.tar.gz ]; \
     then \
