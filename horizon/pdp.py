@@ -267,11 +267,13 @@ class PermitPDP:
                 exclude_list.remove(OPA_LOGGER_MODULE)
                 opal_common_config.LOG_MODULE_EXCLUDE_LIST = exclude_list
 
+        # Retry 10 times with (random) exponential backoff (wait times up to 1, 2, 4, 6, 8, 16, 32, 64, 128, 256 secs), and overall timeout of 64 seconds
         opal_client_config.DATA_UPDATER_CONN_RETRY = ConnRetryOptions(
             wait_strategy="random_exponential",
-            attempts=200,
+            attempts=10,
             wait_time=1,
         )
+        opal_client_config.FETCHING_CALLBACK_TIMEOUT = 64
 
     def _override_app_metadata(self, app: FastAPI):
         app.title = "Permit.io PDP"
