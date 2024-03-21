@@ -270,7 +270,7 @@ class PermitPDP:
         # Retry 10 times with (random) exponential backoff (wait times up to 1, 2, 4, 6, 8, 16, 32, 64, 128, 256 secs), and overall timeout of 64 seconds
         opal_client_config.DATA_UPDATER_CONN_RETRY = ConnRetryOptions(
             wait_strategy="random_exponential",
-            attempts=10,
+            attempts=14,
             wait_time=1,
         )
         opal_client_config.FETCHING_CALLBACK_TIMEOUT = 64
