@@ -127,7 +127,9 @@ class PermitPDP:
         if sidecar_config.ENABLE_MONITORING:
             self._configure_monitoring()
 
-        self._opal = OpalClient(shard_id=sidecar_config.SHARD_ID)
+        self._opal = OpalClient(
+            shard_id=sidecar_config.SHARD_ID, data_topics=self._fix_data_topics()
+        )
         self._configure_cloud_logging(remote_config.context)
 
         self._opal_relay = OpalRelayAPIClient(remote_config.context, self._opal)
@@ -277,6 +279,29 @@ class PermitPDP:
             wait_time=1,
         )
         opal_client_config.FETCHING_CALLBACK_TIMEOUT = 64
+
+    def _fix_data_topics(self) -> List[str]:
+        """
+        This is a worksaround for the following issue:
+        Permit backend services use the the topic 'policy_data/{client_id}' to configure PDPs and to publish data updates.
+        However, opal-server is configured to return DataSourceConfig with the topic 'policy_data' (without the client_id suffix) from `/scope/{client_id}/data` endpoint.
+        In the new OPAL client, this is an issue since data updater validates DataSourceConfig's topics against its configured data topics.
+
+        Simply fixing the backend to use the shorter topic everywhere is problematic since it would require a breaking change / migration for all clients.
+        The shorter version logically includes the longer version so it's fine having OPAL listen to the shorter version when updates are still published to the longer one.
+
+        We don't edit `opal_client_config.DATA_TOPICS` directly because relay's ping reports it - and reported subscribed topics are expected to match the topics used in publish.
+            (relay ignores the hierarchical structure of topics - this could be fixed in the future)
+        """
+        if opal_client_config.SCOPE_ID == "default":
+            return opal_client_config.DATA_TOPICS
+
+        return [
+            topic.removesuffix(
+                f"/{opal_client_config.SCOPE_ID}"
+            )  # Only remove suffix if it's of the expected form
+            for topic in opal_client_config.DATA_TOPICS
+        ]
 
     def _override_app_metadata(self, app: FastAPI):
         app.title = "Permit.io PDP"
