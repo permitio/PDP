@@ -114,6 +114,8 @@ class PermitPDP:
             # we need to pass to OPAL a custom inline OPA config to enable these features
             self._configure_inline_opa_config()
 
+        self._configure_opal_data_updater()
+
         if sidecar_config.PRINT_CONFIG_ON_STARTUP:
             logger.info(
                 "sidecar is loading with the following config:\n\n{sidecar_config}\n\n{opal_client_config}\n\n{opal_common_config}",
@@ -267,6 +269,7 @@ class PermitPDP:
                 exclude_list.remove(OPA_LOGGER_MODULE)
                 opal_common_config.LOG_MODULE_EXCLUDE_LIST = exclude_list
 
+    def _configure_opal_data_updater(self):
         # Retry 10 times with (random) exponential backoff (wait times up to 1, 2, 4, 6, 8, 16, 32, 64, 128, 256 secs), and overall timeout of 64 seconds
         opal_client_config.DATA_UPDATER_CONN_RETRY = ConnRetryOptions(
             wait_strategy="random_exponential",
