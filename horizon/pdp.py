@@ -278,7 +278,6 @@ class PermitPDP:
             attempts=14,
             wait_time=1,
         )
-        opal_client_config.FETCHING_CALLBACK_TIMEOUT = 64
 
     def _fix_data_topics(self) -> List[str]:
         """
