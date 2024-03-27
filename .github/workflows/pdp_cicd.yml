@@ -85,7 +85,8 @@ jobs:
       with:
         push: false
         context: .
-        platforms: linux/amd64,linux/arm64
+        #platforms: linux/amd64,linux/arm64
+        platforms: linux/amd64
         #tags: permitio/pdp-v2:${{ github.event.release.tag_name }}
         tags: permitio/pdp-v2:0.3.0-rc.1
         load: true
@@ -98,7 +99,8 @@ jobs:
       with:
         push: false
         context: .
-        platforms: linux/amd64,linux/arm64
+        #platforms: linux/amd64,linux/arm64
+        platforms: linux/amd64
         #tags: permitio/pdp-v2:${{ github.event.release.tag_name }},permitio/pdp-v2:latest
         tags: permitio/pdp-v2:0.3.0-rc.1
         load: true
