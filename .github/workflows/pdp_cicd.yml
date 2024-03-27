@@ -1,7 +1,7 @@
 name: Build and Push PDP Docker Image
-on:
-  release:
-    types: [published]
+on: push
+  # release:
+  #   types: [published]
 jobs:
   build-and-push-pdp-vanilla:
     runs-on: ubuntu-latest
@@ -28,7 +28,7 @@ jobs:
       if: "!github.event.release.prerelease"
       uses: docker/build-push-action@v5
       with:
-        push: true
+        push: false
         context: .
         platforms: linux/amd64,linux/arm64
         tags: permitio/pdp-v2-vanilla:${{ github.event.release.tag_name }}, permitio/pdp-v2-vanilla:latest
@@ -39,7 +39,7 @@ jobs:
       if: "github.event.release.prerelease"
       uses: docker/build-push-action@v5
       with:
-        push: true
+        push: false
         context: .
         platforms: linux/amd64,linux/arm64
         tags: permitio/pdp-v2-vanilla:${{ github.event.release.tag_name }}
@@ -83,10 +83,11 @@ jobs:
       if: "github.event.release.prerelease"
       uses: docker/build-push-action@v5
       with:
-        push: true
+        push: false
         context: .
         platforms: linux/amd64,linux/arm64
-        tags: permitio/pdp-v2:${{ github.event.release.tag_name }}
+        #tags: permitio/pdp-v2:${{ github.event.release.tag_name }}
+        tags: permitio/pdp-v2:0.3.0-rc.1
         cache-from: type=gha
         cache-to: type=gha,mode=max
 
@@ -94,9 +95,19 @@ jobs:
       if: "!github.event.release.prerelease"
       uses: docker/build-push-action@v5
       with:
-        push: true
+        push: false
         context: .
         platforms: linux/amd64,linux/arm64
-        tags: permitio/pdp-v2:${{ github.event.release.tag_name }},permitio/pdp-v2:latest
+        #tags: permitio/pdp-v2:${{ github.event.release.tag_name }},permitio/pdp-v2:latest
+        tags: permitio/pdp-v2:0.3.0-rc.1
         cache-from: type=gha
         cache-to: type=gha,mode=max
+
+    - name: Install Docker
+        uses: docker-practice/actions-setup-docker@master
+
+    - name: local PDP runnning
+      env:
+        # PDP_API_KEY: ${{ secrets.PDP_API_KEY }}
+        # PERMIT_API_KEY: ${{ secrets.PDP_API_KEY }}
+      run: docker run -p 7766:7000 --env PDP_API_KEY=permit_key_Hqeh8UrI1WpAwQJZGqkROkf5spS9b83Yk0z4YcSidhzEf4TTeE4ldKnIYQsfO7RM6vFml8nMinuVfeLEBn6SU3 --env PDP_DEBUG=true permitio/pdp-v2:0.3.0-rc.1
