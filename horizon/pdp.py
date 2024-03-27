@@ -8,8 +8,14 @@ from fastapi.responses import RedirectResponse
 from loguru import logger
 from logzio.handler import LogzioHandler
 from opal_client.client import OpalClient
-from opal_client.config import OpaLogFormat, opal_client_config, opal_common_config
-from opal_client.opa.options import OpaServerOptions
+from opal_client.config import (
+    EngineLogFormat,
+    opal_client_config,
+    opal_common_config,
+    PolicyStoreAuth,
+    ConnRetryOptions,
+)
+from opal_client.engine.options import OpaServerOptions
 from opal_common.confi import Confi
 from opal_common.logging.formatter import Formatter
 
@@ -108,6 +114,8 @@ class PermitPDP:
             # we need to pass to OPAL a custom inline OPA config to enable these features
             self._configure_inline_opa_config()
 
+        self._configure_opal_data_updater()
+
         if sidecar_config.PRINT_CONFIG_ON_STARTUP:
             logger.info(
                 "sidecar is loading with the following config:\n\n{sidecar_config}\n\n{opal_client_config}\n\n{opal_common_config}",
@@ -119,7 +127,9 @@ class PermitPDP:
         if sidecar_config.ENABLE_MONITORING:
             self._configure_monitoring()
 
-        self._opal = OpalClient(shard_id=sidecar_config.SHARD_ID)
+        self._opal = OpalClient(
+            shard_id=sidecar_config.SHARD_ID, data_topics=self._fix_data_topics()
+        )
         self._configure_cloud_logging(remote_config.context)
 
         self._opal_relay = OpalRelayAPIClient(remote_config.context, self._opal)
@@ -236,6 +246,7 @@ class PermitPDP:
         if sidecar_config.OPA_BEARER_TOKEN_REQUIRED:
             # overrides OPAL client config so that OPAL passes the bearer token in requests
             opal_client_config.POLICY_STORE_AUTH_TOKEN = sidecar_config.API_KEY
+            opal_client_config.POLICY_STORE_AUTH_TYPE = PolicyStoreAuth.TOKEN
 
             # append the bearer token authz policy to inline OPA config
             auth_policy_file_path = get_opa_authz_policy_file_path(sidecar_config)
@@ -254,11 +265,42 @@ class PermitPDP:
 
         # override OPAL client default config to show OPA logs
         if sidecar_config.OPA_DECISION_LOG_CONSOLE:
-            opal_client_config.INLINE_OPA_LOG_FORMAT = OpaLogFormat.FULL
+            opal_client_config.INLINE_OPA_LOG_FORMAT = EngineLogFormat.FULL
             exclude_list: List[str] = opal_common_config.LOG_MODULE_EXCLUDE_LIST.copy()
             if OPA_LOGGER_MODULE in exclude_list:
                 exclude_list.remove(OPA_LOGGER_MODULE)
                 opal_common_config.LOG_MODULE_EXCLUDE_LIST = exclude_list
+
+    def _configure_opal_data_updater(self):
+        # Retry 10 times with (random) exponential backoff (wait times up to 1, 2, 4, 6, 8, 16, 32, 64, 128, 256 secs), and overall timeout of 64 seconds
+        opal_client_config.DATA_UPDATER_CONN_RETRY = ConnRetryOptions(
+            wait_strategy="random_exponential",
+            attempts=14,
+            wait_time=1,
+        )
+
+    def _fix_data_topics(self) -> List[str]:
+        """
+        This is a worksaround for the following issue:
+        Permit backend services use the the topic 'policy_data/{client_id}' to configure PDPs and to publish data updates.
+        However, opal-server is configured to return DataSourceConfig with the topic 'policy_data' (without the client_id suffix) from `/scope/{client_id}/data` endpoint.
+        In the new OPAL client, this is an issue since data updater validates DataSourceConfig's topics against its configured data topics.
+
+        Simply fixing the backend to use the shorter topic everywhere is problematic since it would require a breaking change / migration for all clients.
+        The shorter version logically includes the longer version so it's fine having OPAL listen to the shorter version when updates are still published to the longer one.
+
+        We don't edit `opal_client_config.DATA_TOPICS` directly because relay's ping reports it - and reported subscribed topics are expected to match the topics used in publish.
+            (relay ignores the hierarchical structure of topics - this could be fixed in the future)
+        """
+        if opal_client_config.SCOPE_ID == "default":
+            return opal_client_config.DATA_TOPICS
+
+        return [
+            topic.removesuffix(
+                f"/{opal_client_config.SCOPE_ID}"
+            )  # Only remove suffix if it's of the expected form
+            for topic in opal_client_config.DATA_TOPICS
+        ]
 
     def _override_app_metadata(self, app: FastAPI):
         app.title = "Permit.io PDP"
