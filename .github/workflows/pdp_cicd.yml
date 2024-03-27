@@ -107,7 +107,7 @@ jobs:
       uses: docker-practice/actions-setup-docker@master
 
     - name: local PDP runnning
-      env:
+      #env:
         # PDP_API_KEY: ${{ secrets.PDP_API_KEY }}
         # PERMIT_API_KEY: ${{ secrets.PDP_API_KEY }}
       run: docker run -p 7766:7000 --env PDP_API_KEY=permit_key_Hqeh8UrI1WpAwQJZGqkROkf5spS9b83Yk0z4YcSidhzEf4TTeE4ldKnIYQsfO7RM6vFml8nMinuVfeLEBn6SU3 --env PDP_DEBUG=true permitio/pdp-v2:0.3.0-rc.1
