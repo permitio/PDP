@@ -104,7 +104,7 @@ jobs:
         cache-to: type=gha,mode=max
 
     - name: Install Docker
-        uses: docker-practice/actions-setup-docker@master
+      uses: docker-practice/actions-setup-docker@master
 
     - name: local PDP runnning
       env:
