@@ -1,6 +1,6 @@
-aiohttp>=3.8.1,<4
+aiohttp>=3.9.2,<4
 cryptography>=42.0.4,<43
-fastapi>=0.78.0,<1
+fastapi>=0.109.1,<1
 gunicorn>=20.1.0,<21
 Jinja2>=3.1.2,<4
 pydantic[email]>=1.9.1,<2
@@ -13,3 +13,4 @@ ddtrace
 protobuf>=3.20.2 # not directly required, pinned by Snyk to avoid a vulnerability
 opal-common @ git+https://github.com/permitio/opal.git@master#subdirectory=packages/opal-common
 opal-client @ git+https://github.com/permitio/opal.git@master#subdirectory=packages/opal-client
+setuptools>=65.5.1 # not directly required, pinned by Snyk to avoid a vulnerability
