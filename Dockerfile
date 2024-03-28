@@ -18,8 +18,8 @@ RUN python setup.py install --user
 FROM golang:bullseye as OPABuildStage
 
 # Check if the source directory exists before copying
-RUN if [ -d ./permit-opa/custom ]; then \
-      cp -r ./permit-opa/custom /custom; \
+RUN if [ -d ../permit-opa/custom ]; then \
+      cp -r ../permit-opa/custom /custom; \
     else \
       echo "Source directory does not exist. Skipping."; \
     fi
