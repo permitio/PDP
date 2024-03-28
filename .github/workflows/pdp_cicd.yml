@@ -83,7 +83,7 @@ jobs:
         rm -rf custom
         mkdir custom
         find * -name '*go*' -print0 | xargs -0 tar -czf ./custom/custom_opa.tar.gz --exclude '.*'
-        cp ./custom/custom_opa.tar.gz ../sidecar/custom/custom_opa.tar.gz
+        cp ./custom/custom_opa.tar.gz $GITHUB_WORKSPACE/sidecar/custom/custom_opa.tar.gz
       working-directory: ./permit-opa
 
     - name: Build and push PDP image - (pre-release)
