@@ -8,7 +8,6 @@ RUN apt-get update && \
 # from now on, work in the /app directory
 WORKDIR /app/
 
-
 # install python deps
 COPY requirements.txt requirements.txt
 RUN pip install --upgrade pip && pip install setuptools -U && pip install --user -r requirements.txt
