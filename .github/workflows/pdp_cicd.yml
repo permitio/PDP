@@ -120,4 +120,4 @@ jobs:
       uses: docker-practice/actions-setup-docker@master
 
     - name: local PDP runnning
-      run: docker run -p 7766:7000 --env PDP_API_KEY=PDP_API_KEY=permit_key_kzioMJ5tstHRvlX4jmTHoqdv19oVucZRBnKcMueBX3uLagoOGnw0JIVdFeblId1ZOwgeKdxWzCsIzwOo6xxucL --env PDP_DEBUG=true permitio/pdp-v2:0.3.0-rc.1
+      run: docker run -p 7766:7000 --env PDP_API_KEY=permit_key_kzioMJ5tstHRvlX4jmTHoqdv19oVucZRBnKcMueBX3uLagoOGnw0JIVdFeblId1ZOwgeKdxWzCsIzwOo6xxucL --env PDP_DEBUG=true permitio/pdp-v2:0.3.0-rc.1
