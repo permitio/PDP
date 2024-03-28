@@ -82,9 +82,11 @@ jobs:
         #echo "${{ github.event.release.tag_name }}" | cut -d '-' -f 1 > permit_pdp_version
         rm -rf custom
         mkdir custom
+        build_root="$PWD"
+        cd ./permit-opa
+        find * -name '*go*' -print0 | xargs -0 tar -czf "$build_root"/custom/custom_opa.tar.gz --exclude '.*'
         #find * -name '*go*' -print0 | xargs -0 tar -czf ./custom/custom_opa.tar.gz --exclude '.*'
-        find * -name '*go*' -print0 | xargs -0 tar -czf $GITHUB_WORKSPACE/sidecar/custom/custom_opa.tar.gz --exclude '.*'
-      working-directory: ./permit-opa
+        #find * -name '*go*' -print0 | xargs -0 tar -czf $GITHUB_WORKSPACE/sidecar/custom/custom_opa.tar.gz --exclude '.*'
 
     - name: Build and push PDP image - (pre-release)
       if: "github.event.release.prerelease"
