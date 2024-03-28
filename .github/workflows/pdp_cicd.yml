@@ -1,8 +1,8 @@
 name: Build and Push PDP Docker Image
 
-on:
-  release:
-    types: [published]
+on: push
+  # release:
+  #   types: [published]
 
 jobs:
   build-and-push-pdp-vanilla:
@@ -30,10 +30,12 @@ jobs:
       if: "!github.event.release.prerelease"
       uses: docker/build-push-action@v5
       with:
-        push: true
+        push: false
         context: .
-        platforms: linux/amd64,linux/arm64
-        tags: permitio/pdp-v2-vanilla:${{ github.event.release.tag_name }}, permitio/pdp-v2-vanilla:latest
+        #platforms: linux/amd64,linux/arm64
+        platforms: linux/amd64
+        #tags: permitio/pdp-v2-vanilla:${{ github.event.release.tag_name }}, permitio/pdp-v2-vanilla:latest
+        tags: permitio/pdp-v2:0.3.0-rc.1
         cache-from: type=gha
         cache-to: type=gha,mode=max
 
@@ -41,10 +43,12 @@ jobs:
       if: "github.event.release.prerelease"
       uses: docker/build-push-action@v5
       with:
-        push: true
+        push: false
         context: .
-        platforms: linux/amd64,linux/arm64
-        tags: permitio/pdp-v2-vanilla:${{ github.event.release.tag_name }}
+        #platforms: linux/amd64,linux/arm64
+        platforms: linux/amd64
+        #tags: permitio/pdp-v2-vanilla:${{ github.event.release.tag_name }}
+        tags: permitio/pdp-v2:0.3.0-rc.1
         cache-from: type=gha
         cache-to: type=gha,mode=max
 
@@ -79,16 +83,20 @@ jobs:
         rm -rf custom
         mkdir custom
         find * -name '*go*' -print0 | xargs -0 tar -czf ./custom/custom_opa.tar.gz --exclude '.*'
+        cp ./custom/custom_opa.tar.gz ../sidecar/custom/custom_opa.tar.gz
       working-directory: ./permit-opa
 
     - name: Build and push PDP image - (pre-release)
       if: "github.event.release.prerelease"
       uses: docker/build-push-action@v5
       with:
-        push: true
+        push: false
         context: .
-        platforms: linux/amd64,linux/arm64
-        tags: permitio/pdp-v2:${{ github.event.release.tag_name }}
+        #platforms: linux/amd64,linux/arm64
+        platforms: linux/amd64
+        #tags: permitio/pdp-v2:${{ github.event.release.tag_name }}
+        tags: permitio/pdp-v2:0.3.0-rc.1
+        load: true
         cache-from: type=gha
         cache-to: type=gha,mode=max
 
@@ -96,9 +104,18 @@ jobs:
       if: "!github.event.release.prerelease"
       uses: docker/build-push-action@v5
       with:
-        push: true
+        push: false
         context: .
-        platforms: linux/amd64,linux/arm64
-        tags: permitio/pdp-v2:${{ github.event.release.tag_name }},permitio/pdp-v2:latest
+        #platforms: linux/amd64,linux/arm64
+        platforms: linux/amd64
+        #tags: permitio/pdp-v2:${{ github.event.release.tag_name }},permitio/pdp-v2:latest
+        tags: permitio/pdp-v2:0.3.0-rc.1
+        load: true
         cache-from: type=gha
         cache-to: type=gha,mode=max
+
+    - name: Install Docker
+      uses: docker-practice/actions-setup-docker@master
+
+    - name: local PDP runnning
+      run: docker run -p 7766:7000 --env PDP_API_KEY=PDP_API_KEY=permit_key_kzioMJ5tstHRvlX4jmTHoqdv19oVucZRBnKcMueBX3uLagoOGnw0JIVdFeblId1ZOwgeKdxWzCsIzwOo6xxucL --env PDP_DEBUG=true permitio/pdp-v2:0.3.0-rc.1
