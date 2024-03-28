@@ -17,7 +17,7 @@ RUN python setup.py install --user
 
 FROM golang:bullseye as OPABuildStage
 
-# In case it is vanilla - will skip
+# for vanilla - skip
 RUN if [ -d /custom ]; then \
       cp -r custom /custom; \
     else \
