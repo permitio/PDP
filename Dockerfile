@@ -17,7 +17,12 @@ RUN python setup.py install --user
 
 FROM golang:bullseye as OPABuildStage
 
-COPY custom /custom
+# In case it is vanilla - will skip
+RUN if [ -d /custom ]; then \
+      cp -r custom /custom; \
+    else \
+      echo "Source directory does not exist. Skipping."; \
+    fi
 
 RUN if [ -f /custom/custom_opa.tar.gz ]; \
     then \
