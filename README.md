@@ -1,6 +1,6 @@
 # add helm repository
 ```sh
-helm repo add pdp https://permitio.github.io/sidecar
+helm repo add pdp https://permitio.github.io/PDP
 ```
 # search chart
 ```sh
