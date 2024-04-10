@@ -55,8 +55,8 @@ jobs:
       with:
         python-version: '3.11.8'
 
-    # - name: Install Docker
-    #   uses: docker-practice/actions-setup-docker@master
+    - name: Install Docker
+      uses: docker-practice/actions-setup-docker@master
 
     - name: Run PDP tests
       working-directory: ./permit-backend/proactive_tests/sidecar
