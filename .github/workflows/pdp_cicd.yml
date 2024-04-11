@@ -66,6 +66,7 @@ jobs:
         python -m pip install --upgrade pip
         pip install flake8 pytest pytest-cov
         python setup.py install
+        pip install cryptography=42.0.5
         if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
         if [ -f requirements.txt ]; then pip install -r --force-reinstall requirements.txt; fi
         pytest -s --cache-clear --cov=app horizon/tests/ > pytest-coverage.txt
