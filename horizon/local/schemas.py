@@ -28,6 +28,24 @@ class SyncedUser(BaseSchema):
     roles: List[SyncedRole]
 
 
+class ListRoleAssignmentsFilters(BaseSchema):
+    user: str | None = None
+    role: str | None = None
+    tenant: str | None = None
+    resource: str | None = None
+    resource_instance: str | None = None
+
+
+class ListRoleAssignmentsPagination(BaseSchema):
+    page: int = Field(1, ge=1, description="The page number to return")
+    per_page: int = Field(10, ge=1, le=100, description="The number of items to return per page")
+
+
+class ListRoleAssignmentsPDPBody(BaseSchema):
+    filters: ListRoleAssignmentsFilters = Field(..., description="The filters to apply to the list")
+    pagination: ListRoleAssignmentsPagination = Field(..., description="The pagination settings")
+
+
 class RoleAssignment(BaseSchema):
     """
     The format of a role assignment
@@ -40,18 +58,22 @@ class RoleAssignment(BaseSchema):
 
     class Config:
         schema_extra = {
-            "example":[
+            "example": [
                 {
                     "user": "jane@coolcompany.com",
-                    "role":"admin",
-                    "tenant":"stripe-inc"
+                    "role": "admin",
+                    "tenant": "stripe-inc"
                 },
                 {
                     "user": "jane@coolcompany.com",
-                    "role":"admin",
-                    "tenant":"stripe-inc",
-                    "resource_instance":"document:doc-1234"
+                    "role": "admin",
+                    "tenant": "stripe-inc",
+                    "resource_instance": "document:doc-1234"
                 },
 
             ]
         }
+
+
+class WrappedResponse(BaseSchema):
+    result: list[RoleAssignment]

@@ -1,13 +1,16 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from opal_client.policy_store.base_policy_store_client import BasePolicyStoreClient
 from opal_client.policy_store.policy_store_client_factory import (
     DEFAULT_POLICY_STORE_GETTER,
 )
+from pydantic import parse_raw_as
+from starlette.responses import Response
 
 from horizon.authentication import enforce_pdp_token
-from horizon.local.schemas import Message, SyncedRole, SyncedUser, RoleAssignment
+from horizon.local.schemas import Message, SyncedRole, SyncedUser, RoleAssignment, ListRoleAssignmentsFilters, \
+    ListRoleAssignmentsPDPBody, WrappedResponse
 
 
 def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
@@ -119,7 +122,26 @@ def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
 
         You can filter the results by providing optional filters.
         """
-        raise NotImplementedError("Not implemented yet")
+        filters = ListRoleAssignmentsFilters.construct(
+            user=user,
+            role=role,
+            tenant=tenant,
+            resource=resource,
+            resource_instance=resource_instance,
+        ).dict(exclude_none=True)
+        pagination = ListRoleAssignmentsFilters.construct(
+            page=page,
+            per_page=per_page,
+        )
+
+        # the type hint of the get_data_with_input is incorrect, it claims it returns a dict but it
+        # actually returns a Response
+        result = cast(Response, await policy_store.get_data_with_input(
+            "/permit/api/role_assignments/list_role_assignments",
+            ListRoleAssignmentsPDPBody.construct(filters=filters, pagination=pagination),
+        ))
+
+        return parse_raw_as(WrappedResponse, result.body).result
 
     @router.get(
         "/users/{user_id}",
