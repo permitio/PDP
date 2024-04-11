@@ -1,8 +1,8 @@
 name: Build and Push PDP Docker Image
 
-on: push
-  # release:
-  #   types: [published]
+on:
+  release:
+    types: [published]
 
 jobs:
   pdp-tests:
@@ -70,103 +70,103 @@ jobs:
         pip install requests pydantic==1.8.2 docker
         python sidecar_tester.py -k ${{ secrets.PERMIT_TESTS_TOKEN }} -u https://api.permit.io --no-v1 -2 permitio/pdp-v2:test --no-pull
 
-  # build-and-push-pdp-vanilla:
-  #   needs: pdp-tests
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #   - name: Checkout code
-  #     uses: actions/checkout@v4
+  build-and-push-pdp-vanilla:
+    needs: pdp-tests
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
 
-  #   - name: Set up QEMU
-  #     uses: docker/setup-qemu-action@v3
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
 
-  #   - name: Set up Docker Buildx
-  #     uses: docker/setup-buildx-action@v3
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
 
-  #   - name: Login to Docker Hub
-  #     uses: docker/login-action@v3
-  #     with:
-  #       username: ${{ secrets.DOCKERHUB_USERNAME }}
-  #       password: ${{ secrets.DOCKERHUB_TOKEN }}
+    - name: Login to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-  #   - name: Pre build - for PDP-Vanilla
-  #     run: echo "${{ github.event.release.tag_name }}" | cut -d '-' -f 1 > permit_pdp_version
+    - name: Pre build - for PDP-Vanilla
+      run: echo "${{ github.event.release.tag_name }}" | cut -d '-' -f 1 > permit_pdp_version
 
-  #   - name: Build and push PDP-Vanilla - (official release)
-  #     if: "!github.event.release.prerelease"
-  #     uses: docker/build-push-action@v5
-  #     with:
-  #       push: true
-  #       context: .
-  #       platforms: linux/amd64,linux/arm64
-  #       tags: permitio/pdp-v2-vanilla:${{ github.event.release.tag_name }}, permitio/pdp-v2-vanilla:latest
-  #       cache-from: type=gha
-  #       cache-to: type=gha,mode=max
+    - name: Build and push PDP-Vanilla - (official release)
+      if: "!github.event.release.prerelease"
+      uses: docker/build-push-action@v5
+      with:
+        push: true
+        context: .
+        platforms: linux/amd64,linux/arm64
+        tags: permitio/pdp-v2-vanilla:${{ github.event.release.tag_name }}, permitio/pdp-v2-vanilla:latest
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
 
-  #   - name: Build and push PDP-Vanilla image - (pre-release)
-  #     if: "github.event.release.prerelease"
-  #     uses: docker/build-push-action@v5
-  #     with:
-  #       push: true
-  #       context: .
-  #       platforms: linux/amd64,linux/arm64
-  #       tags: permitio/pdp-v2-vanilla:${{ github.event.release.tag_name }}
-  #       cache-from: type=gha
-  #       cache-to: type=gha,mode=max
+    - name: Build and push PDP-Vanilla image - (pre-release)
+      if: "github.event.release.prerelease"
+      uses: docker/build-push-action@v5
+      with:
+        push: true
+        context: .
+        platforms: linux/amd64,linux/arm64
+        tags: permitio/pdp-v2-vanilla:${{ github.event.release.tag_name }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
 
-  # build-and-push-pdp:
-  #   needs: pdp-tests
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #   - name: Checkout code
-  #     uses: actions/checkout@v4
+  build-and-push-pdp:
+    needs: pdp-tests
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
 
-  #   - name: Set up QEMU
-  #     uses: docker/setup-qemu-action@v3
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
 
-  #   - name: Set up Docker Buildx
-  #     uses: docker/setup-buildx-action@v3
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
 
-  #   - name: Login to Docker Hub
-  #     uses: docker/login-action@v3
-  #     with:
-  #       username: ${{ secrets.DOCKERHUB_USERNAME }}
-  #       password: ${{ secrets.DOCKERHUB_TOKEN }}
+    - name: Login to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-  #   - uses: actions/checkout@v3
-  #     with:
-  #       repository: permitio/permit-opa
-  #       ref: main
-  #       path: './permit-opa'
-  #       token: ${{ secrets.CLONE_REPO_TOKEN }}
+    - uses: actions/checkout@v3
+      with:
+        repository: permitio/permit-opa
+        ref: main
+        path: './permit-opa'
+        token: ${{ secrets.CLONE_REPO_TOKEN }}
 
-  #   - name: Pre build PDP
-  #     run: |
-  #       echo "${{ github.event.release.tag_name }}" | cut -d '-' -f 1 > permit_pdp_version
-  #       rm -rf custom
-  #       mkdir custom
-  #       build_root="$PWD"
-  #       cd ./permit-opa
-  #       find * -name '*go*' -print0 | xargs -0 tar -czf "$build_root"/custom/custom_opa.tar.gz --exclude '.*'
+    - name: Pre build PDP
+      run: |
+        echo "${{ github.event.release.tag_name }}" | cut -d '-' -f 1 > permit_pdp_version
+        rm -rf custom
+        mkdir custom
+        build_root="$PWD"
+        cd ./permit-opa
+        find * -name '*go*' -print0 | xargs -0 tar -czf "$build_root"/custom/custom_opa.tar.gz --exclude '.*'
 
-  #   - name: Build and push PDP image - (pre-release)
-  #     if: "github.event.release.prerelease"
-  #     uses: docker/build-push-action@v5
-  #     with:
-  #       push: true
-  #       context: .
-  #       platforms: linux/amd64,linux/arm64
-  #       tags: permitio/pdp-v2:${{ github.event.release.tag_name }}
-  #       cache-from: type=gha
-  #       cache-to: type=gha,mode=max
+    - name: Build and push PDP image - (pre-release)
+      if: "github.event.release.prerelease"
+      uses: docker/build-push-action@v5
+      with:
+        push: true
+        context: .
+        platforms: linux/amd64,linux/arm64
+        tags: permitio/pdp-v2:${{ github.event.release.tag_name }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
 
-  #   - name: Build and push PDP image - (official release)
-  #     if: "!github.event.release.prerelease"
-  #     uses: docker/build-push-action@v5
-  #     with:
-  #       push: true
-  #       context: .
-  #       platforms: linux/amd64,linux/arm64
-  #       tags: permitio/pdp-v2:${{ github.event.release.tag_name }},permitio/pdp-v2:latest
-  #       cache-from: type=gha
-  #       cache-to: type=gha,mode=max
+    - name: Build and push PDP image - (official release)
+      if: "!github.event.release.prerelease"
+      uses: docker/build-push-action@v5
+      with:
+        push: true
+        context: .
+        platforms: linux/amd64,linux/arm64
+        tags: permitio/pdp-v2:${{ github.event.release.tag_name }},permitio/pdp-v2:latest
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
