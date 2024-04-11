@@ -63,7 +63,7 @@ jobs:
 
     - name: Run Pytests
       run: |
-        #export PYTHONPATH=$(pwd)
+        export PYTHONPATH=$(pwd)
         python -m pip install --upgrade pip
         #pip install flake8 pytest pytest-cov
         python setup.py install
