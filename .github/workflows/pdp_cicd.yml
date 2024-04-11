@@ -65,17 +65,17 @@ jobs:
       run: |
         export PYTHONPATH=$(pwd)
         python -m pip install --upgrade pip
-        pip install flake8 pytest pytest-cov
+        #pip install flake8 pytest pytest-cov
         python setup.py install
         if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-        pytest -s --cache-clear --cov=app horizon/tests/ > pytest-coverage.txt
-        
-    
-    - name: Comment coverage
-      uses: coroo/pytest-coverage-commentator@v1.0.2
-      with:
-        pytest-coverage: pytest-coverage.txt
+        #pytest -s --cache-clear --cov=app horizon/tests/ > pytest-coverage.txt
+        pytest -s --cache-clear horizon/tests/
+
+    # - name: Comment coverage
+    #   uses: coroo/pytest-coverage-commentator@v1.0.2
+    #   with:
+    #     pytest-coverage: pytest-coverage.txt
 
   # build-and-push-pdp-vanilla:
   #   needs: pdp-tests
