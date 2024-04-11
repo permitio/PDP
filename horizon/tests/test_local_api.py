@@ -35,7 +35,6 @@ class MockPermitPDP(PermitPDP):
 sidecar = MockPermitPDP()
 
 
-
 @pytest.mark.asyncio
 async def test_list_role_assignments() -> None:
     _client = TestClient(sidecar._app)
@@ -54,7 +53,7 @@ async def test_list_role_assignments() -> None:
                         "user": "user1",
                         "role": "role1",
                         "tenant": "tenant1",
-                        "resource_instance": "resource_instance1"
+                        "resource_instance": "resource_instance1",
                     }
                 ]
             },
@@ -62,7 +61,7 @@ async def test_list_role_assignments() -> None:
 
         response = _client.get(
             "/local/role_assignments",
-            headers={"authorization": f"Bearer {sidecar_config.API_KEY}"}
+            headers={"authorization": f"Bearer {sidecar_config.API_KEY}"},
         )
 
         assert response.status_code == 200
@@ -72,5 +71,5 @@ async def test_list_role_assignments() -> None:
             "user": "user1",
             "role": "role1",
             "tenant": "tenant1",
-            "resource_instance": "resource_instance1"
+            "resource_instance": "resource_instance1",
         }

@@ -9,8 +9,15 @@ from pydantic import parse_raw_as
 from starlette.responses import Response
 
 from horizon.authentication import enforce_pdp_token
-from horizon.local.schemas import Message, SyncedRole, SyncedUser, RoleAssignment, ListRoleAssignmentsFilters, \
-    ListRoleAssignmentsPDPBody, WrappedResponse
+from horizon.local.schemas import (
+    Message,
+    SyncedRole,
+    SyncedUser,
+    RoleAssignment,
+    ListRoleAssignmentsFilters,
+    ListRoleAssignmentsPDPBody,
+    WrappedResponse,
+)
 
 
 def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
@@ -83,27 +90,27 @@ def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
         user: Optional[str] = Query(
             None,
             description="optional user filter, "
-                        "will only return role assignments granted to this user.",
+            "will only return role assignments granted to this user.",
         ),
         role: Optional[str] = Query(
             None,
             description="optional role filter, "
-                        "will only return role assignments granting this role.",
+            "will only return role assignments granting this role.",
         ),
         tenant: Optional[str] = Query(
             None,
             description="optional tenant filter, "
-                        "will only return role assignments granted in that tenant.",
+            "will only return role assignments granted in that tenant.",
         ),
         resource: Optional[str] = Query(
             None,
             description="optional resource **type** filter, "
-                        "will only return role assignments granted on that resource type.",
+            "will only return role assignments granted on that resource type.",
         ),
         resource_instance: Optional[str] = Query(
             None,
             description="optional resource instance filter, "
-                        "will only return role assignments granted on that resource instance.",
+            "will only return role assignments granted on that resource instance.",
         ),
         page: int = Query(
             default=1,
@@ -136,10 +143,15 @@ def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
 
         # the type hint of the get_data_with_input is incorrect, it claims it returns a dict but it
         # actually returns a Response
-        result = cast(Response, await policy_store.get_data_with_input(
-            "/permit/api/role_assignments/list_role_assignments",
-            ListRoleAssignmentsPDPBody.construct(filters=filters, pagination=pagination),
-        ))
+        result = cast(
+            Response,
+            await policy_store.get_data_with_input(
+                "/permit/api/role_assignments/list_role_assignments",
+                ListRoleAssignmentsPDPBody.construct(
+                    filters=filters, pagination=pagination
+                ),
+            ),
+        )
 
         return parse_raw_as(WrappedResponse, result.body).result
 
