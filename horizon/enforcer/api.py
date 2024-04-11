@@ -206,7 +206,7 @@ async def notify_seen_sdk(
     return x_permit_sdk_language
 
 
-async def post_to_opa(request: Request, path: str, data: dict):
+async def post_to_opa(request: Request, path: str, data: dict | None):
     headers = transform_headers(request)
     url = f"{opal_client_config.POLICY_STORE_URL}/v1/data/{path}"
     exc = None
@@ -252,8 +252,8 @@ async def post_to_opa(request: Request, path: str, data: dict):
     raise exc
 
 
-def _set_use_debugger(data) -> None:
-    if data.get("input") is not None:
+def _set_use_debugger(data: dict | None) -> None:
+    if data is not None and data.get("input") is not None:
         if "use_debugger" not in data["input"]:
             if sidecar_config.IS_DEBUG_MODE is not None:
                 data["input"]["use_debugger"] = sidecar_config.IS_DEBUG_MODE
@@ -495,8 +495,8 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             raise HTTPException(
                 status_code=status.HTTP_421_MISDIRECTED_REQUEST,
                 detail="Mismatch between client version and PDP version,"
-                " required v2 request body, got v1. "
-                "hint: try to update your client version to v2",
+                       " required v2 request body, got v1. "
+                       "hint: try to update your client version to v2",
             )
         query = cast(AuthorizationQuery, query)
 
@@ -536,7 +536,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             raise HTTPException(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Kong integration is disabled. "
-                "Please set the PDP_KONG_INTEGRATION variable to true to enable it.",
+                       "Please set the PDP_KONG_INTEGRATION variable to true to enable it.",
             )
 
         await PersistentStateHandler.get_instance().seen_sdk("kong")
