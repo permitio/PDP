@@ -206,7 +206,7 @@ async def notify_seen_sdk(
     return x_permit_sdk_language
 
 
-async def post_to_opa(request: Request, path: str, data: dict):
+async def post_to_opa(request: Request, path: str, data: dict | None):
     headers = transform_headers(request)
     url = f"{opal_client_config.POLICY_STORE_URL}/v1/data/{path}"
     exc = None
@@ -252,8 +252,8 @@ async def post_to_opa(request: Request, path: str, data: dict):
     raise exc
 
 
-def _set_use_debugger(data) -> None:
-    if data.get("input") is not None:
+def _set_use_debugger(data: dict | None) -> None:
+    if data is not None and data.get("input") is not None:
         if "use_debugger" not in data["input"]:
             if sidecar_config.IS_DEBUG_MODE is not None:
                 data["input"]["use_debugger"] = sidecar_config.IS_DEBUG_MODE
