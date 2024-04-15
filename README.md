@@ -1,3 +1,4 @@
+![PDP.png](imgs/PDP.png)
 # Permit.io PDP
 The PDP (Policy decision point) syncs with the authorization service and maintains up-to-date policy cache for open policy agent.
 
