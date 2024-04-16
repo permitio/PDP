@@ -13,11 +13,14 @@ run-prepare:
 ifndef API_KEY
 	$(error You must set API_KEY variable to run pdp locally)
 endif
+ifndef VERSION
+	$(error You must set VERSION variable to run pdp locally)
+endif
 
-build-release-local-amd64: prepare
+build-amd64: prepare
 	@docker buildx build --platform linux/amd64 -t permitio/pdp-v2:$(VERSION) . --load
 
-build-release-local-arm64: prepare
+build-arm64: prepare
 	@docker buildx build --platform linux/arm64 -t permitio/pdp-v2:$(VERSION) . --load
 
 run: run-prepare
