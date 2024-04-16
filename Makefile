@@ -2,51 +2,26 @@
 
 .DEFAULT_GOAL := help
 
-# DOCKER TASKS
-# Build the container
-build: ## Build the container
-	@docker build -t permitio/pdp-v2 .
-
-build-local: ## Build the container
-	@docker build -t permitio/pdp-v2:local .
-
 prepare:
 ifndef VERSION
-	$(error You must set the VERSION variable to build a release image)
+	$(error You must set VERSION variable to build local image)
 endif
 
-	echo $(VERSION) >permit_pdp_version
 	./build_opal_bundle.sh
 
-build-release-vanilla: prepare
-	@docker buildx build --platform linux/arm64,linux/amd64 -t permitio/pdp-v2-vanilla:$(VERSION)$(BUILD_SUFFIX) --push .
-
-build-release-prod: prepare
-	@docker buildx build --platform linux/arm64,linux/amd64 -t permitio/pdp-v2:$(VERSION)$(BUILD_SUFFIX) --push .
+run-prepare:
+ifndef API_KEY
+	$(error You must set API_KEY variable to run pdp locally)
+endif
 
 build-release-local-amd64: prepare
-	@docker buildx build --platform linux/amd64 -t permitio/pdp-v2:$(VERSION)$(BUILD_SUFFIX) . --load
+	@docker buildx build --platform linux/amd64 -t permitio/pdp-v2:$(VERSION) . --load
 
 build-release-local-arm64: prepare
-	@docker buildx build --platform linux/arm64 -t permitio/pdp-v2:$(VERSION)$(BUILD_SUFFIX) . --load
+	@docker buildx build --platform linux/arm64 -t permitio/pdp-v2:$(VERSION) . --load
 
-build-release-local: prepare
-	@docker build -t permitio/pdp-v2:$(VERSION)$(BUILD_SUFFIX) . --load
+run: run-prepare
+	@docker run -p 7766:7000 --env PDP_API_KEY=$(API_KEY) --env PDP_DEBUG=true permitio/pdp-v2:$(VERSION)
 
-run: ## Run the container locally
-	@docker run -it \
-		-e "OPAL_SERVER_URL=http://host.docker.internal:7002" \
-		-e "PDP_CONTROL_PLANE=http://host.docker.internal:8000" \
-		-e "PDP_API_KEY=$(DEV_MODE_CLIENT_TOKEN)" \
-		-p 7000:7000 \
-		-p 8181:8181 \
-		permitio/pdp
-
-run-against-prod: ## Run the container against prod
-	@docker run -it \
-    -e "PDP_PRINT_CONFIG_ON_STARTUP=true" \
-		-e "PDP_API_KEY=$(AUTPDP_PROD_CLIENT_TOKEN)" \
-		-e "OPAL_CLIENT_TOKEN=$(OPAL_PROD_CLIENT_TOKEN)" \
-		-p 7000:7000 \
-		-p 8181:8181 \
-		permitio/pdp
+run-on-background: run-prepare
+	@docker run -d -p 7766:7000 --env PDP_API_KEY=$(API_KEY) --env PDP_DEBUG=true permitio/pdp-v2:$(VERSION)
