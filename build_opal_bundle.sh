@@ -2,8 +2,10 @@
 
 set -e
 
-# Set default value for PDP_VANILLA
-PDP_VANILLA=${PDP_VANILLA:-"no"}
+# Check if PDP_VANILLA is set to true from command line argument
+if [ "$PDP_VANILLA" == "true" ]; then
+  echo "Building for pdp-vanilla environment."
+fi
 
 # Check if permit-opa directory already exists
 if [ ! -d "../permit-opa" ]; then
@@ -14,7 +16,7 @@ else
 fi
 
 # Conditionally execute the custom OPA tarball creation section based on the value of PDP_VANILLA
-if [ "$PDP_VANILLA" == "no" ]; then
+if [ "$PDP_VANILLA" != "true" ]; then
   # Custom OPA tarball creation section
   rm -rf custom
   mkdir custom
