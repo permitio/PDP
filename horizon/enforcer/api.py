@@ -32,7 +32,7 @@ from horizon.enforcer.schemas import (
     UserPermissionsQuery,
     UserPermissionsResult,
     UserTenantsQuery,
-    UserTenantsResult,
+    UserTenantsResult, AuthorizedUsersResult, AuthorizedUsersAuthorizationQuery,
 )
 from horizon.enforcer.schemas_kong import (
     KongAuthorizationInput,
@@ -50,6 +50,7 @@ MAIN_POLICY_PACKAGE = "permit.root"
 BULK_POLICY_PACKAGE = "permit.bulk"
 ALL_TENANTS_POLICY_PACKAGE = "permit.any_tenant"
 USER_PERMISSIONS_POLICY_PACKAGE = "permit.user_permissions"
+AUTHORIZED_USERS_POLICY_PACKAGE = "permit.authorized_users.authorized_users"
 USER_TENANTS_POLICY_PACKAGE = USER_PERMISSIONS_POLICY_PACKAGE + ".tenants"
 KONG_ROUTES_TABLE_FILE = "/config/kong_routes.json"
 
@@ -289,6 +290,33 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         return JSONResponse(status_code=status.HTTP_200_OK, content={"status": "ok"})
 
     @router.post(
+        "/authorized_users",
+        response_model=AuthorizedUsersResult,
+        status_code=status.HTTP_200_OK,
+        response_model_exclude_none=True,
+        dependencies=[Depends(enforce_pdp_token)],
+    )
+    async def authorized_users(
+        request: Request,
+        query: AuthorizedUsersAuthorizationQuery
+    ):
+        response = await _is_allowed(query, request, AUTHORIZED_USERS_POLICY_PACKAGE)
+        log_query_result(query, response)
+        response_json = None
+        try:
+            response_json = json.loads(response.body)
+            raw_result = response_json.get("result", {}).get("result", {})
+            result = parse_obj_as(AuthorizedUsersResult, raw_result)
+        except:
+            result = AuthorizedUsersResult.empty(query.resource)
+            logger.warning(
+                "authorized users (fallback response), response: {res}",
+                reason="cannot decode opa response",
+                res=response_json
+            )
+        return result
+
+    @router.post(
         "/allowed_url",
         response_model=AuthorizationResult,
         status_code=status.HTTP_200_OK,
@@ -495,8 +523,8 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             raise HTTPException(
                 status_code=status.HTTP_421_MISDIRECTED_REQUEST,
                 detail="Mismatch between client version and PDP version,"
-                " required v2 request body, got v1. "
-                "hint: try to update your client version to v2",
+                       " required v2 request body, got v1. "
+                       "hint: try to update your client version to v2",
             )
         query = cast(AuthorizationQuery, query)
 
@@ -536,7 +564,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             raise HTTPException(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Kong integration is disabled. "
-                "Please set the PDP_KONG_INTEGRATION variable to true to enable it.",
+                       "Please set the PDP_KONG_INTEGRATION variable to true to enable it.",
             )
 
         await PersistentStateHandler.get_instance().seen_sdk("kong")

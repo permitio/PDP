@@ -1,6 +1,8 @@
-from typing import Any, Dict, Optional, List, cast
+from __future__ import annotations
 
-from pydantic import BaseModel, Field, AnyHttpUrl, validator
+from typing import Any, Dict, Optional, List
+
+from pydantic import BaseModel, Field, AnyHttpUrl
 
 
 class BaseSchema(BaseModel):
@@ -122,3 +124,51 @@ class MappingRuleData(BaseSchema):
     @property
     def resource_action(self) -> str:
         return self.action or self.http_method
+
+
+class AuthorizedUserAssignment(BaseSchema):
+    user: str = Field(..., description="The user that is authorized")
+    tenant: str = Field(..., description="The tenant that the user is authorized for")
+    resource: str = Field(..., description="The resource that the user is authorized for")
+    role: str = Field(..., description="The role that the user is assigned to")
+
+
+AuthorizedUsersDict = dict[str, list[AuthorizedUserAssignment]]
+
+
+class AuthorizedUsersResult(BaseSchema):
+    resource: str = Field(..., description="The resource that the result is about."
+                                           "Can be either 'resource:*' or 'resource:resource_instance'")
+    tenant: str = Field(..., description="The tenant that the result is about")
+    users: AuthorizedUsersDict = Field(
+        ..., description="A key value mapping of the users that are "
+                         "authorized for the resource."
+                         "The key is the user key and the value is a list of assignments allowing the user to perform"
+                         "the requested action"
+    )
+
+    @classmethod
+    def empty(cls, resource: Resource) -> AuthorizedUsersResult:
+        if resource.key is None:
+            resource_key = "*"
+        else:
+            resource_key = resource.key
+        return cls(
+            resource=f"{resource.type}:{resource_key}",
+            tenant=resource.tenant or "default",
+            user={}
+        )
+
+
+class AuthorizedUsersAuthorizationQuery(BaseSchema):
+    """
+    the format of authorized_users input
+    """
+
+    action: str
+    resource: Resource
+    context: Optional[Dict[str, Any]] = {}
+    sdk: Optional[str]
+
+    def __repr__(self) -> str:
+        return f"({self.action}, {self.resource.type})"
