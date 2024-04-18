@@ -129,7 +129,9 @@ class MappingRuleData(BaseSchema):
 class AuthorizedUserAssignment(BaseSchema):
     user: str = Field(..., description="The user that is authorized")
     tenant: str = Field(..., description="The tenant that the user is authorized for")
-    resource: str = Field(..., description="The resource that the user is authorized for")
+    resource: str = Field(
+        ..., description="The resource that the user is authorized for"
+    )
     role: str = Field(..., description="The role that the user is assigned to")
 
 
@@ -137,14 +139,18 @@ AuthorizedUsersDict = dict[str, list[AuthorizedUserAssignment]]
 
 
 class AuthorizedUsersResult(BaseSchema):
-    resource: str = Field(..., description="The resource that the result is about."
-                                           "Can be either 'resource:*' or 'resource:resource_instance'")
+    resource: str = Field(
+        ...,
+        description="The resource that the result is about."
+        "Can be either 'resource:*' or 'resource:resource_instance'",
+    )
     tenant: str = Field(..., description="The tenant that the result is about")
     users: AuthorizedUsersDict = Field(
-        ..., description="A key value mapping of the users that are "
-                         "authorized for the resource."
-                         "The key is the user key and the value is a list of assignments allowing the user to perform"
-                         "the requested action"
+        ...,
+        description="A key value mapping of the users that are "
+        "authorized for the resource."
+        "The key is the user key and the value is a list of assignments allowing the user to perform"
+        "the requested action",
     )
 
     @classmethod
@@ -156,8 +162,48 @@ class AuthorizedUsersResult(BaseSchema):
         return cls(
             resource=f"{resource.type}:{resource_key}",
             tenant=resource.tenant or "default",
-            user={}
+            users={},
         )
+
+    class Config:
+        schema_extra = {
+            "examples": [
+                {
+                    "resource": "repo:*",
+                    "tenant": "default",
+                    "users": {
+                        "user1": [
+                            {
+                                "user": "user1",
+                                "tenant": "default",
+                                "resource": "__tenant:default",
+                                "role": "admin",
+                            }
+                        ]
+                    },
+                },
+                {
+                    "resource": "repo:OPAL",
+                    "tenant": "default",
+                    "users": {
+                        "user1": [
+                            {
+                                "user": "user1",
+                                "tenant": "default",
+                                "resource": "repo:OPAL",
+                                "role": "admin",
+                            },
+                            {
+                                "user": "user1",
+                                "tenant": "default",
+                                "resource": "__tenant:default",
+                                "role": "admin",
+                            },
+                        ]
+                    },
+                },
+            ]
+        }
 
 
 class AuthorizedUsersAuthorizationQuery(BaseSchema):

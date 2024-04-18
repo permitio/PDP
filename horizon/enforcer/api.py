@@ -32,7 +32,9 @@ from horizon.enforcer.schemas import (
     UserPermissionsQuery,
     UserPermissionsResult,
     UserTenantsQuery,
-    UserTenantsResult, AuthorizedUsersResult, AuthorizedUsersAuthorizationQuery,
+    UserTenantsResult,
+    AuthorizedUsersResult,
+    AuthorizedUsersAuthorizationQuery,
 )
 from horizon.enforcer.schemas_kong import (
     KongAuthorizationInput,
@@ -297,8 +299,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         dependencies=[Depends(enforce_pdp_token)],
     )
     async def authorized_users(
-        request: Request,
-        query: AuthorizedUsersAuthorizationQuery
+        request: Request, query: AuthorizedUsersAuthorizationQuery
     ):
         response = await _is_allowed(query, request, AUTHORIZED_USERS_POLICY_PACKAGE)
         log_query_result(query, response)
@@ -312,7 +313,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             logger.warning(
                 "authorized users (fallback response), response: {res}",
                 reason="cannot decode opa response",
-                res=response_json
+                res=response_json,
             )
         return result
 
@@ -523,8 +524,8 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             raise HTTPException(
                 status_code=status.HTTP_421_MISDIRECTED_REQUEST,
                 detail="Mismatch between client version and PDP version,"
-                       " required v2 request body, got v1. "
-                       "hint: try to update your client version to v2",
+                " required v2 request body, got v1. "
+                "hint: try to update your client version to v2",
             )
         query = cast(AuthorizationQuery, query)
 
@@ -564,7 +565,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             raise HTTPException(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Kong integration is disabled. "
-                       "Please set the PDP_KONG_INTEGRATION variable to true to enable it.",
+                "Please set the PDP_KONG_INTEGRATION variable to true to enable it.",
             )
 
         await PersistentStateHandler.get_instance().seen_sdk("kong")
