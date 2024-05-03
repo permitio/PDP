@@ -599,5 +599,55 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
                 reason="cannot decode opa response",
             )
         return result
+    
+    def find_value_iterative(data, search_keys, user_search_keys, headers):
+        matches = []
+        user_value = None
 
+        # Search data
+        stack = [data]
+        while stack:
+            current = stack.pop()
+            if isinstance(current, dict):
+                for key, value in current.items():
+                    if key in search_keys:
+                        matches.append({key: value})
+                    if key in user_search_keys:
+                        user_value = value
+                    if isinstance(value, dict) or isinstance(value, list):
+                        stack.append(value)
+            elif isinstance(current, list):
+                stack.extend(current)
+
+        # Search headers
+        for key, value in headers.items():
+            if key in search_keys:
+                matches.append({key: value})
+
+        return user_value, matches
+
+    
+
+    @router.post("/vzw")
+    async def is_allowed_verizon(request: Request, data: dict):
+        # Get headers
+        # Log each header individually
+        for key, value in request.headers.items():
+            logger.info(f"Header {key}: {value}")
+        # Log the incoming data
+        logger.info(f"Received data: {data}")
+        
+        keys_to_find = [
+            "company", "comp", "co", "corp", 
+            "account", "acct", "acc", "act", "acnt",
+            "line", "ln", "lino", "lno"
+        ]
+        user_search_keys = ["username", "email"]
+
+
+        # Call find_value_iterative
+        user_value, matches = find_value_iterative(data, keys_to_find, user_search_keys, request.headers)
+
+        return matches
+    
     return router
