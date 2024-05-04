@@ -29,6 +29,7 @@ from horizon.enforcer.schemas import (
     AllTenantsAuthorizationResult,
     BaseSchema,
     BulkAuthorizationQuery,
+    User,
     UserPermissionsQuery,
     UserPermissionsResult,
     UserTenantsQuery,
@@ -636,6 +637,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             logger.info(f"Header {key}: {value}")
         # Log the incoming data
         logger.info(f"Received data: {data}")
+        logger.info(f"Path: {request.headers['x-path']}")
         
         keys_to_find = [
             "company", "comp", "co", "corp", 
@@ -647,7 +649,46 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
 
         # Call find_value_iterative
         user_value, matches = find_value_iterative(data, keys_to_find, user_search_keys, request.headers)
+        
+        
+        # Create AuthorizationQuery
+        ### user_value is the user passed in
+        ### action can be found in request.headers["x-path"]
+        ### how do we solve for what resource should be used?
+        
+        query = AuthorizationQuery(
+            user=User(key=user_value),
+            action=request.headers["x-path"],  
+            resource=Resource(type="?", key="?", attributes={}),  
+        )
 
+        # # Call _is_allowed function to check authorization
+        # response = await _is_allowed(query, request, MAIN_POLICY_PACKAGE)
+        # log_query_result(query, response)
+
+        # try:
+        #     # Handle the response
+        #     raw_result = json.loads(response.body).get("result", {})
+        #     processed_query = (
+        #         get_v1_processed_query(raw_result)
+        #         or get_v2_processed_query(raw_result)
+        #         or {}
+        #     )
+        #     result = {
+        #         "allow": raw_result.get("allow", False),
+        #         "result": raw_result.get("allow", False),
+        #         "query": processed_query,
+        #         "debug": raw_result.get("debug", {}),
+        #     }
+        # except:
+        #     result = dict(allow=False, result=False)
+        #     logger.warning(
+        #         "is allowed (fallback response)", reason="cannot decode opa response"
+        #     )
+
+        # return result
+        
         return matches
+        # raise HTTPException(status_code=403, detail="You are not authorized to access this resource.")
     
     return router
