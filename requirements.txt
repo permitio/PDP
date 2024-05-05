@@ -9,6 +9,7 @@ typer>=0.4.1,<1
 uvicorn[standard]>=0.17.6,<1
 logzio-python-handler
 ddtrace
+httpx>0.22.0,<1
 protobuf>=3.20.2 # not directly required, pinned by Snyk to avoid a vulnerability
 opal-common @ git+https://github.com/permitio/opal.git@master#subdirectory=packages/opal-common
 opal-client @ git+https://github.com/permitio/opal.git@master#subdirectory=packages/opal-client
