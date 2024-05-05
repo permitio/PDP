@@ -33,6 +33,8 @@ from horizon.enforcer.schemas import (
     UserPermissionsResult,
     UserTenantsQuery,
     UserTenantsResult,
+    AuthorizedUsersResult,
+    AuthorizedUsersAuthorizationQuery,
 )
 from horizon.enforcer.schemas_kong import (
     KongAuthorizationInput,
@@ -50,6 +52,7 @@ MAIN_POLICY_PACKAGE = "permit.root"
 BULK_POLICY_PACKAGE = "permit.bulk"
 ALL_TENANTS_POLICY_PACKAGE = "permit.any_tenant"
 USER_PERMISSIONS_POLICY_PACKAGE = "permit.user_permissions"
+AUTHORIZED_USERS_POLICY_PACKAGE = "permit.authorized_users.authorized_users"
 USER_TENANTS_POLICY_PACKAGE = USER_PERMISSIONS_POLICY_PACKAGE + ".tenants"
 KONG_ROUTES_TABLE_FILE = "/config/kong_routes.json"
 
@@ -287,6 +290,32 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             )
 
         return JSONResponse(status_code=status.HTTP_200_OK, content={"status": "ok"})
+
+    @router.post(
+        "/authorized_users",
+        response_model=AuthorizedUsersResult,
+        status_code=status.HTTP_200_OK,
+        response_model_exclude_none=True,
+        dependencies=[Depends(enforce_pdp_token)],
+    )
+    async def authorized_users(
+        request: Request, query: AuthorizedUsersAuthorizationQuery
+    ):
+        response = await _is_allowed(query, request, AUTHORIZED_USERS_POLICY_PACKAGE)
+        log_query_result(query, response)
+        response_json = None
+        try:
+            response_json = json.loads(response.body)
+            raw_result = response_json.get("result", {}).get("result", {})
+            result = parse_obj_as(AuthorizedUsersResult, raw_result)
+        except:
+            result = AuthorizedUsersResult.empty(query.resource)
+            logger.warning(
+                "authorized users (fallback response), response: {res}",
+                reason="cannot decode opa response",
+                res=response_json,
+            )
+        return result
 
     @router.post(
         "/allowed_url",
