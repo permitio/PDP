@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import re
 from typing import cast, Optional, Union, Dict, List
 
@@ -500,6 +501,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
                 "hint: try to update your client version to v2",
             )
         query = cast(AuthorizationQuery, query)
+        logger.info(f"Query: {query}")
 
         response = await _is_allowed(query, request, MAIN_POLICY_PACKAGE)
         log_query_result(query, response)
@@ -611,9 +613,9 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             current = stack.pop()
             if isinstance(current, dict):
                 for key, value in current.items():
-                    if key in search_keys:
+                    if key.lower() in search_keys:
                         matches.append({key: value})
-                    if key in user_search_keys:
+                    if key.lower() in user_search_keys:
                         user_value = value
                     if isinstance(value, dict) or isinstance(value, list):
                         stack.append(value)
@@ -622,12 +624,69 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
 
         # Search headers
         for key, value in headers.items():
-            if key in search_keys:
+            if key.lower() in search_keys:
                 matches.append({key: value})
+            if key.lower() in user_search_keys:
+                user_value = value
 
         return user_value, matches
 
     
+    async def fetch_resource_types():
+        url = "http://localhost:8181/v1/data/resource_types"
+        headers = {"Authorization": f"Bearer {os.getenv('PDP_API_KEY')}"}
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url,headers=headers) as response:
+                return await response.json()
+
+    async def transform_resource_types():
+        result = await fetch_resource_types()
+        # logger.info(f"{result}")
+        transformed_result = {}
+        if "result" in result:
+            for key, value in result["result"].items():
+                actions = value.get("actions", [])
+                for action in actions:
+                    key_action = f"{key}{action}"
+                    transformed_result[key_action] = {
+                        "resource": key,
+                        "action": action
+                    }
+                    # Add each iteration to the result
+                    result[key_action] = transformed_result[key_action]
+
+                    # Include the reversed order as well
+                    action_key = f"{action}{key}"
+                    transformed_result[action_key] = {
+                        "resource": key,
+                        "action": action
+                    }
+                    # Add the reversed order to the result
+                    result[action_key] = transformed_result[action_key]
+        # logger.info(f"{transformed_result}")
+        return transformed_result
+    
+    def get_result_if_base_path_found(transformed_result: dict, base_path: str) -> dict:
+        # Convert base_path to lowercase for case-insensitive comparison
+        base_path_lower = base_path.lower()
+        
+        for key, value in transformed_result.items():
+            # Convert the current key to lowercase for case-insensitive comparison
+            key_lower = key.lower()
+            
+            if base_path_lower == key_lower:
+                return value 
+        
+        return None  
+    
+    
+    def find_key_ignore_case(base_path, result):
+        lower_base_path = base_path.lower()
+
+        for key in result.keys():
+            if key.lower() == lower_base_path:
+                return key
+        return None
 
     @router.post("/vzw")
     async def is_allowed_verizon(request: Request, data: dict):
@@ -639,56 +698,137 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         logger.info(f"Received data: {data}")
         logger.info(f"Path: {request.headers['x-path']}")
         
+        # config values of resource names to search on
         keys_to_find = [
             "company", "comp", "co", "corp", 
             "account", "acct", "acc", "act", "acnt",
-            "line", "ln", "lino", "lno"
+            "line", "ln", "lino", "lno",
+            "bill", "blno","bn"
         ]
-        user_search_keys = ["username", "email"]
-
-
-        # Call find_value_iterative
+        
+        #config values of user ids to search for
+        user_search_keys = ["username", "email", "uid", "uuid", "sub","userid"]
+       
+        # Call find_value_iterative to get user and resources
         user_value, matches = find_value_iterative(data, keys_to_find, user_search_keys, request.headers)
-        
-        
-        # Create AuthorizationQuery
-        ### user_value is the user passed in
-        ### action can be found in request.headers["x-path"]
-        ### how do we solve for what resource should be used?
-        
-        query = AuthorizationQuery(
-            user=User(key=user_value),
-            action=request.headers["x-path"],  
-            resource=Resource(type="?", key="?", attributes={}),  
-        )
+        logger.info(f"Matches: {matches}")
 
-        # # Call _is_allowed function to check authorization
-        # response = await _is_allowed(query, request, MAIN_POLICY_PACKAGE)
-        # log_query_result(query, response)
-
-        # try:
-        #     # Handle the response
-        #     raw_result = json.loads(response.body).get("result", {})
-        #     processed_query = (
-        #         get_v1_processed_query(raw_result)
-        #         or get_v2_processed_query(raw_result)
-        #         or {}
-        #     )
-        #     result = {
-        #         "allow": raw_result.get("allow", False),
-        #         "result": raw_result.get("allow", False),
-        #         "query": processed_query,
-        #         "debug": raw_result.get("debug", {}),
-        #     }
-        # except:
-        #     result = dict(allow=False, result=False)
-        #     logger.warning(
-        #         "is allowed (fallback response)", reason="cannot decode opa response"
-        #     )
-
-        # return result
         
-        return matches
-        # raise HTTPException(status_code=403, detail="You are not authorized to access this resource.")
+        # Automatically create known iterations of action:resource, resource:action and store in memory 
+        transformed_result = await transform_resource_types()
+        logger.info(f"{transformed_result}")
+        
+        
+        base_path = os.path.basename(request.headers["x-path"])
+        logger.info(f"Base path: {base_path}")
+        
+        
+        
+        # custom logic to determine how to make dictionary
+        # first check in the path for a verb/action combo
+        # if not in that, assume that the action is the http verb
+        
+        result = get_result_if_base_path_found(transformed_result, base_path)
+        if result is not None:
+            logger.info(f"Combined base path found!")
+            logger.info(f"Result: {result}")
+            
+            res_val = next((value for match in matches for key, value in match.items() if key.lower() == result["resource"].lower()), None)
+                            
+            logger.info(f"Resource Key: {res_val}")
+            query = AuthorizationQuery(
+                user=User(key=user_value),
+                action=result["action"],  
+                resource=Resource(type=result["resource"],key=res_val,tenant="default"),  
+            )
+            logger.info(f"Query: {query}")
+            logger.info(f"Request: {request}")
+           
+            # don't forget to add the Authorization Header like me and waste 2 hours of your life!
+            new_headers = {key: value for key, value in request.headers.items()}
+            new_headers["Authorization"] = f"Bearer {os.getenv('PDP_API_KEY')}"
+            request._headers = new_headers
+            
+             # Call _is_allowed function to check authorization
+            response = await _is_allowed(query, request, MAIN_POLICY_PACKAGE)
+            logger.info(f"Response: {response}")
+            log_query_result(query, response)
+
+            try:
+                # Handle the response
+                raw_result = json.loads(response.body).get("result", {})
+                processed_query = (
+                    get_v1_processed_query(raw_result)
+                    or get_v2_processed_query(raw_result)
+                    or {}
+                )
+                check_result = {
+                    "allow": raw_result.get("allow", False),
+                    "result": raw_result.get("allow", False),
+                    "query": processed_query,
+                    "debug": raw_result.get("debug", {}),
+                }
+            except:
+                check_result = dict(allow=False, result=False)
+                logger.warning(
+                    "is allowed (fallback response)", reason="cannot decode opa response"
+                )
+
+            return check_result
+        else:
+            logger.info("Base path not found in local, using default Permit Resources")
+            
+            # matches is from above from above
+            res_val = next((value for match in matches for key, value in match.items() if key.lower() == base_path.lower()), None)
+            logger.info(f"Resource Key: {res_val}")
+            
+            #find the Resource Key
+            res_type = await fetch_resource_types()
+            matched_key = find_key_ignore_case(base_path, res_type["result"])
+            
+            
+            
+            query = AuthorizationQuery(
+                user=User(key=user_value),
+                action=request.headers["x-method"],  
+                resource=Resource(type=matched_key,key=res_val,tenant="default"),  
+            )
+            logger.info(f"Query {query}")
+            
+            # don't forget to add the Authorization Header like me and waste 2 hours of your life!
+            new_headers = {key: value for key, value in request.headers.items()}
+            new_headers["Authorization"] = f"Bearer {os.getenv('PDP_API_KEY')}"
+            request._headers = new_headers
+            
+            # Call _is_allowed function to check authorization
+            response = await _is_allowed(query, request, MAIN_POLICY_PACKAGE)
+            log_query_result(query, response)
+
+            try:
+                # Handle the response
+                raw_result = json.loads(response.body).get("result", {})
+                processed_query = (
+                    get_v1_processed_query(raw_result)
+                    or get_v2_processed_query(raw_result)
+                    or {}
+                )
+                check_result = {
+                    "allow": raw_result.get("allow", False),
+                    "result": raw_result.get("allow", False),
+                    "query": processed_query,
+                    "debug": raw_result.get("debug", {}),
+                }
+                
+            except:
+                check_result = dict(allow=False, result=False)
+                logger.warning(
+                    "is allowed (fallback response)", reason="cannot decode opa response"
+                )
+            logger.info(f"Result: {check_result['allow']}")
+            
+            if check_result["allow"]:
+                return check_result["debug"], 200
+            else:
+                raise HTTPException(status_code=403, detail=check_result["debug"])
     
     return router

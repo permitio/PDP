@@ -130,3 +130,4 @@ dmypy.json
 
 # editors
 .vscode/
+custom/custom_opa.tar.gz
