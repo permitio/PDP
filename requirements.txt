@@ -11,5 +11,5 @@ logzio-python-handler
 ddtrace
 httpx>0.22.0,<1
 protobuf>=3.20.2 # not directly required, pinned by Snyk to avoid a vulnerability
-opal-common @ git+https://github.com/permitio/opal.git@master#subdirectory=packages/opal-common
-opal-client @ git+https://github.com/permitio/opal.git@master#subdirectory=packages/opal-client
+opal-common==0.7.6
+opal-client==0.7.6
