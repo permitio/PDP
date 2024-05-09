@@ -2,4 +2,4 @@ pytest
 aioresponses
 httpx
 pytest-asyncio
-aiohttp==3.9.4
+aiohttp>=3.8.1,<4

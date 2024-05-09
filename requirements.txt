@@ -1,3 +1,5 @@
+aiohttp>=3.8.1,<4
+fastapi>=0.78.0,<1
 gunicorn>=22.0.0,<23
 Jinja2>=3.1.2,<4
 pydantic[email]>=1.9.1,<2
@@ -9,9 +11,5 @@ logzio-python-handler
 ddtrace
 httpx>0.22.0,<1
 protobuf>=3.20.2 # not directly required, pinned by Snyk to avoid a vulnerability
-opal-common @ git+https://github.com/permitio/opal.git@master#subdirectory=packages/opal-common
+opal-common==0.7.6
 opal-client @ git+https://github.com/permitio/opal.git@master#subdirectory=packages/opal-client
-aiohttp==3.9.4
-sqlparse==0.5.0
-fastapi==0.109.1
-cryptography==42.0.4
