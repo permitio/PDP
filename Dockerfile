@@ -4,7 +4,9 @@
 FROM python:3.10 as BuildStage
 # install linux libraries necessary to compile some python packages
 RUN apt-get update && \
-    apt-get install -y build-essential libffi-dev
+    apt-get install -y build-essential libffi-dev && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 # from now on, work in the /app directory
 WORKDIR /app/
 
@@ -40,14 +42,14 @@ RUN if [ -f /custom/custom_opa.tar.gz ]; \
       esac ; \
     fi
 
-# Layer dependency install (for caching)
-
 # MAIN IMAGE ----------------------------------------
 # most of the time only this image should be built
 # ---------------------------------------------------
 FROM python:3.10-slim
 RUN apt-get update && \
-    apt-get install -y bash curl
+    apt-get install -y bash curl procps htop net-tools tcpdump && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 RUN groupadd -r permit
 RUN useradd -m -s /bin/bash -g permit -d /home/permit permit
@@ -71,8 +73,6 @@ RUN chmod +x /usr/wait-for-it.sh
 # copy startup script
 COPY ./scripts/start.sh /start.sh
 RUN chmod +x /start.sh
-
-
 
 RUN chown -R permit:permit /home/permit
 RUN chown -R permit:permit /usr/
