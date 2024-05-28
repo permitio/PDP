@@ -17,6 +17,12 @@ ifndef VERSION
 	$(error You must set VERSION variable to run pdp locally)
 endif
 
+build-release-vanilla: prepare
+	@docker buildx build --platform linux/arm64,linux/amd64 -t permitio/pdp-v2-vanilla:$(VERSION)$(BUILD_SUFFIX) --push .
+
+build-release-prod: prepare
+	@docker buildx build --platform linux/arm64,linux/amd64 -t permitio/pdp-v2:$(VERSION)$(BUILD_SUFFIX) --push .
+
 build-amd64: prepare
 	@docker buildx build --platform linux/amd64 -t permitio/pdp-v2:$(VERSION) . --load
 
