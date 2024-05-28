@@ -2,28 +2,20 @@
 
 set -e
 
-# Check if PDP_VANILLA is set to true from command line argument
-if [ "$PDP_VANILLA" == "true" ]; then
-  echo "Building for pdp-vanilla environment."
-fi
+rm -rf custom
+mkdir custom
 
-# Check if permit-opa directory already exists
-if [ ! -d "../permit-opa" ]; then
-  # Clone the permit-opa repository into the parent directory if it doesn't exist
-  git clone git@github.com:permitio/permit-opa.git ../permit-opa
-else
-  echo "permit-opa directory already exists. Skipping clone operation."
-fi
+if [ "$CUSTOM_OPAL" != "" ]
+then
+  echo "Using custom OPAL from $CUSTOM_OPAL"
+	tar -czf custom/custom_opal.tar.gz -C "$CUSTOM_OPAL" --exclude opal-server --exclude '.*' packages README.md
+fi;
 
-# Conditionally execute the custom OPA tarball creation section based on the value of PDP_VANILLA
-if [ "$PDP_VANILLA" != "true" ]; then
-  # Custom OPA tarball creation section
-  rm -rf custom
-  mkdir custom
+if [ "$CUSTOM_OPA" != "" ]
+then
+  echo "Using custom OPA from $CUSTOM_OPA"
   build_root="$PWD"
-  cd "../permit-opa"
+  cd "$CUSTOM_OPA"
   find * -name '*go*' -print0 | xargs -0 tar -czf "$build_root"/custom/custom_opa.tar.gz --exclude '.*'
   cd "$build_root"
-else
-  echo "Skipping custom OPA tarball creation for pdp-vanilla environment."
 fi
