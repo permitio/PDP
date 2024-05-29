@@ -125,7 +125,7 @@ class PersistentStateHandler:
         if os.path.exists(PDP_VERSION_FILENAME):
             with open(PDP_VERSION_FILENAME) as f:
                 return f.read().strip()
-        return None
+        return "0.0.0"
 
     @classmethod
     def _get_pdp_runtime(cls) -> dict:
