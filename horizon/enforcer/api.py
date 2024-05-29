@@ -19,6 +19,7 @@ from starlette.responses import JSONResponse
 
 from horizon.authentication import enforce_pdp_token
 from horizon.config import sidecar_config
+from horizon.enforcer.data_filtering.compile_client import OpaCompileClient
 from horizon.enforcer.schemas import (
     AuthorizationQuery,
     AuthorizationResult,
@@ -675,5 +676,33 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
                 reason="cannot decode opa response",
             )
         return result
+
+    @router.post(
+        "/filter_resources",
+        response_model=AuthorizationResult,
+        status_code=status.HTTP_200_OK,
+        response_model_exclude_none=True,
+        # TODO: restore authz
+        # dependencies=[Depends(enforce_pdp_token)],
+    )
+    async def filter_resources(
+        request: Request,
+        input: AuthorizationQuery,
+        x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
+    ):
+        headers = transform_headers(request)
+        client = OpaCompileClient(headers=headers)
+        COMPILE_ROOT_RULE_REFERENCE = "data.example.rbac4.allow"
+        query = f"{COMPILE_ROOT_RULE_REFERENCE} == true"
+        response = await client.compile_query(
+            query=query,
+            input=input,
+            unknowns=[
+                "input.resource.key",
+                "input.resource.tenant",
+                "input.resource.attributes",
+            ],
+        )
+        return response
 
     return router
