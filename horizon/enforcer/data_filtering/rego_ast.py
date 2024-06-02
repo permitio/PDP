@@ -37,14 +37,20 @@
 
 import json
 from types import NoneType
-from typing import Any, Generic, Optional, TypeVar
+from typing import Generic, List, TypeVar
 
-from horizon.enforcer.data_filtering.schemas import CRTerm
+from horizon.enforcer.data_filtering.schemas import (
+    CRExpression,
+    CRQuery,
+    CompileResponse,
+    CRTerm,
+    CRSupportModule,
+)
 
 
 def indent_string(s: str, indent_char: str = "\t", indent_level: int = 1):
     indent = indent_char * indent_level
-    return ["{}{}".format(indent, row) for row in s.splitlines()]
+    return "\n".join(["{}{}".format(indent, row) for row in s.splitlines()])
 
 
 class QuerySet:
@@ -60,11 +66,12 @@ class QuerySet:
     Between each query of the queryset - there is a logical OR.
     """
 
-    def __init__(self, queries: list["Query"]):
-        self.queries = queries
+    def __init__(self, queries: list["Query"], support_modules: list):
+        self._queries = queries
+        self._support_modules = support_modules
 
     @classmethod
-    def parse(cls, queries: list):
+    def parse(cls, response: CompileResponse):
         """
         example data:
         # queryset
@@ -82,11 +89,34 @@ class QuerySet:
             ...
         ]
         """
-        return cls([Query.parse(q) for q in queries])
+        queries: List[CRQuery] = (
+            [] if response.result.queries is None else response.result.queries.__root__
+        )
+        # TODO: parse support modules
+        # modules: List[CRSupportModule] = (
+        #     [] if response.result.support is None else response.result.support.__root__
+        # )
+        return cls([Query.parse(q) for q in queries], [])
+
+    @property
+    def queries(self):
+        return self._queries
 
     def __repr__(self):
-        queries_str = "\n".join([indent_string(repr(r)) for r in self.queries])
+        queries_str = "\n".join([indent_string(repr(r)) for r in self._queries])
         return "QuerySet([\n{}\n])\n".format(queries_str)
+
+    @property
+    def always_false(self) -> bool:
+        return len(self._queries) == 0
+
+    @property
+    def always_true(self) -> bool:
+        return len(self._queries) > 0 and any(q.always_true for q in self._queries)
+
+    @property
+    def conditional(self) -> bool:
+        return not self.always_false and not self.always_true
 
 
 class Query:
@@ -97,10 +127,10 @@ class Query:
     """
 
     def __init__(self, expressions: list["Expression"]):
-        self.expressions = expressions
+        self._expressions = expressions
 
     @classmethod
-    def parse(cls, expressions: list):
+    def parse(cls, query: CRQuery):
         """
         example data:
         # query (an array of expressions)
@@ -114,10 +144,21 @@ class Query:
             }
         ]
         """
-        return cls([Expression.parse(e) for e in expressions])
+        return cls([Expression.parse(e) for e in query.__root__])
+
+    @property
+    def expressions(self):
+        return self._expressions
+
+    @property
+    def always_true(self) -> bool:
+        """
+        returns true if the query always evaluates to TRUE
+        """
+        return len(self._expressions) == 0
 
     def __repr__(self):
-        exprs_str = "\n".join([indent_string(repr(e)) for e in self.expressions])
+        exprs_str = "\n".join([indent_string(repr(e)) for e in self._expressions])
         return "Query([\n{}\n])\n".format(exprs_str)
 
 
@@ -130,10 +171,10 @@ class Expression:
     """
 
     def __init__(self, terms: list["Term"]):
-        self.terms = terms
+        self._terms = terms
 
     @classmethod
-    def parse(cls, data: dict):
+    def parse(cls, data: CRExpression):
         """
         example data:
         # expression
@@ -178,27 +219,35 @@ class Expression:
             ]
         }
         """
-        terms = data["terms"]
-        if isinstance(terms, dict):
+        terms = data.terms
+        if isinstance(terms, CRTerm):
             return cls([TermParser.parse(terms)])
-        return cls([TermParser.parse(t) for t in terms])
+        else:
+            return cls([TermParser.parse(t) for t in terms])
 
     @property
     def operator(self):
         """
         returns the term that is the operator of the expression (typically the first term)
         """
-        return self.terms[0]
+        return self._terms[0]
 
     @property
     def operands(self):
         """
         returns the terms that are the operands of the expression
         """
-        return self.terms[1:]
+        return self._terms[1:]
+
+    @property
+    def terms(self):
+        """
+        returns all the terms of the expression
+        """
+        return self._terms
 
     def __repr__(self):
-        operands_str = ",".join([repr(o) for o in self.operands])
+        operands_str = ", ".join([repr(o) for o in self.operands])
         return "Expression({}, [{}])".format(repr(self.operator), operands_str)
 
 

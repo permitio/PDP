@@ -2,7 +2,10 @@ from horizon.enforcer.data_filtering.rego_ast import (
     BooleanTerm,
     Call,
     CallTerm,
+    Expression,
     NullTerm,
+    Query,
+    QuerySet,
     Ref,
     RefTerm,
     Term,
@@ -11,7 +14,13 @@ from horizon.enforcer.data_filtering.rego_ast import (
     StringTerm,
     VarTerm,
 )
-from horizon.enforcer.data_filtering.schemas import CRTerm
+from horizon.enforcer.data_filtering.schemas import (
+    CRTerm,
+    CRExpression,
+    CRQuery,
+    CRQuerySet,
+    CompileResponse,
+)
 
 
 def test_parse_null_term():
@@ -114,3 +123,204 @@ def test_parse_call_term():
     assert len(term.value.args) == 1
     assert isinstance(term.value.args[0].value, Ref)
     assert term.value.args[0].value.as_string == "data.partial.example.rbac4.allowed"
+
+
+def test_parse_expression_eq():
+    expr = {
+        "index": 0,
+        "terms": [
+            {"type": "ref", "value": [{"type": "var", "value": "eq"}]},
+            {
+                "type": "ref",
+                "value": [
+                    {"type": "var", "value": "input"},
+                    {"type": "string", "value": "resource"},
+                    {"type": "string", "value": "tenant"},
+                ],
+            },
+            {"type": "string", "value": "second"},
+        ],
+    }
+    parsed_expr = CRExpression(**expr)
+    assert parsed_expr.index == 0
+    assert len(parsed_expr.terms) == 3
+    expression = Expression.parse(parsed_expr)
+    assert isinstance(expression.operator.value, Ref)
+    assert expression.operator.value.as_string == "eq"
+    assert len(expression.operands) == 2
+    assert isinstance(expression.operands[0], RefTerm)
+    assert expression.operands[0].value.as_string == "input.resource.tenant"
+    assert isinstance(expression.operands[1], StringTerm)
+    assert expression.operands[1].value == "second"
+
+
+def test_parse_trivial_query():
+    query = Query.parse(CRQuery(__root__=[]))
+    assert len(query.expressions) == 0
+    assert query.always_true
+
+
+def test_parse_query():
+    q = CRQuery(
+        __root__=[
+            {
+                "index": 0,
+                "terms": [
+                    {"type": "ref", "value": [{"type": "var", "value": "gt"}]},
+                    {
+                        "type": "ref",
+                        "value": [
+                            {"type": "var", "value": "input"},
+                            {"type": "string", "value": "resource"},
+                            {"type": "string", "value": "attributes"},
+                            {"type": "string", "value": "age"},
+                        ],
+                    },
+                    {"type": "number", "value": 7},
+                ],
+            }
+        ]
+    )
+    query = Query.parse(q)
+    assert len(query.expressions) == 1
+    assert not query.always_true
+
+    expression = query.expressions[0]
+
+    assert isinstance(expression.operator.value, Ref)
+    assert expression.operator.value.as_string == "gt"
+    assert len(expression.operands) == 2
+    assert isinstance(expression.operands[0], RefTerm)
+    assert expression.operands[0].value.as_string == "input.resource.attributes.age"
+    assert isinstance(expression.operands[1], NumberTerm)
+    assert expression.operands[1].value == 7
+
+
+def test_parse_queryset_always_false():
+    response = CompileResponse(**{"result": {}})
+    queryset = QuerySet.parse(response)
+    assert len(queryset.queries) == 0
+    assert queryset.always_false
+    assert not queryset.always_true
+    assert not queryset.conditional
+
+
+def test_parse_queryset_always_true():
+    response = CompileResponse(
+        **{
+            "result": {
+                "queries": [
+                    [
+                        {
+                            "index": 0,
+                            "terms": [
+                                {
+                                    "type": "ref",
+                                    "value": [{"type": "var", "value": "eq"}],
+                                },
+                                {
+                                    "type": "ref",
+                                    "value": [
+                                        {"type": "var", "value": "input"},
+                                        {"type": "string", "value": "resource"},
+                                        {"type": "string", "value": "tenant"},
+                                    ],
+                                },
+                                {"type": "string", "value": "default"},
+                            ],
+                        }
+                    ],
+                    [],
+                ]
+            }
+        }
+    )
+    queryset = QuerySet.parse(response)
+    assert queryset.always_true
+    assert not queryset.always_false
+    assert not queryset.conditional
+
+
+def test_parse_queryset_conditional():
+    response = CompileResponse(
+        **{
+            "result": {
+                "queries": [
+                    [
+                        {
+                            "index": 0,
+                            "terms": [
+                                {
+                                    "type": "ref",
+                                    "value": [{"type": "var", "value": "eq"}],
+                                },
+                                {
+                                    "type": "ref",
+                                    "value": [
+                                        {"type": "var", "value": "input"},
+                                        {"type": "string", "value": "resource"},
+                                        {"type": "string", "value": "tenant"},
+                                    ],
+                                },
+                                {"type": "string", "value": "default"},
+                            ],
+                        }
+                    ],
+                    [
+                        {
+                            "index": 0,
+                            "terms": [
+                                {
+                                    "type": "ref",
+                                    "value": [{"type": "var", "value": "eq"}],
+                                },
+                                {
+                                    "type": "ref",
+                                    "value": [
+                                        {"type": "var", "value": "input"},
+                                        {"type": "string", "value": "resource"},
+                                        {"type": "string", "value": "tenant"},
+                                    ],
+                                },
+                                {"type": "string", "value": "second"},
+                            ],
+                        }
+                    ],
+                ]
+            }
+        }
+    )
+    queryset = QuerySet.parse(response)
+    assert queryset.conditional
+    assert not queryset.always_true
+    assert not queryset.always_false
+
+    assert len(queryset.queries) == 2
+
+    q0 = queryset.queries[0]
+    assert len(q0.expressions) == 1
+    assert not q0.always_true
+
+    expression = q0.expressions[0]
+
+    assert isinstance(expression.operator.value, Ref)
+    assert expression.operator.value.as_string == "eq"
+    assert len(expression.operands) == 2
+    assert isinstance(expression.operands[0], RefTerm)
+    assert expression.operands[0].value.as_string == "input.resource.tenant"
+    assert isinstance(expression.operands[1], StringTerm)
+    assert expression.operands[1].value == "default"
+
+    q1 = queryset.queries[1]
+    assert len(q1.expressions) == 1
+    assert not q1.always_true
+
+    expression = q1.expressions[0]
+
+    assert isinstance(expression.operator.value, Ref)
+    assert expression.operator.value.as_string == "eq"
+    assert len(expression.operands) == 2
+    assert isinstance(expression.operands[0], RefTerm)
+    assert expression.operands[0].value.as_string == "input.resource.tenant"
+    assert isinstance(expression.operands[1], StringTerm)
+    assert expression.operands[1].value == "second"

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -30,7 +30,7 @@ class CRQuery(BaseSchema):
 
 class CRExpression(BaseSchema):
     index: int
-    terms: List["CRTerm"]
+    terms: Union["CRTerm", List["CRTerm"]]
 
 
 class CRTerm(BaseSchema):
