@@ -36,7 +36,10 @@
 
 
 import json
-from typing import Any, Optional
+from types import NoneType
+from typing import Any, Generic, Optional, TypeVar
+
+from horizon.enforcer.data_filtering.schemas import CRTerm
 
 
 def indent_string(s: str, indent_char: str = "\t", indent_level: int = 1):
@@ -177,8 +180,8 @@ class Expression:
         """
         terms = data["terms"]
         if isinstance(terms, dict):
-            return cls([Term.parse(terms)])
-        return cls([Term.parse(t) for t in terms])
+            return cls([TermParser.parse(terms)])
+        return cls([TermParser.parse(t) for t in terms])
 
     @property
     def operator(self):
@@ -199,111 +202,136 @@ class Expression:
         return "Expression({}, [{}])".format(repr(self.operator), operands_str)
 
 
-class Term:
-    def __init__(self, value: Any):
+T = TypeVar("T")
+
+
+class Term(Generic[T]):
+    def __init__(self, value: T):
         self.value = value
 
     @classmethod
-    def parse(cls, data):
-        if data["type"] == "null":
-            data["value"] = None
-        return cls(TERMS_BY_TYPE[data["type"]].parse(data["value"]))
-
-    def __repr__(self):
-        return repr(self.value)
-
-
-class NullTerm:
-    def __init__(self):
-        self.value = None
-
-    @classmethod
-    def parse(cls):
-        return cls()
-
-    def __repr__(self):
-        return json.dumps(self.value)  # null
-
-
-class BooleanTerm:
-    def __init__(self, value: bool):
-        self.value = value
-
-    @classmethod
-    def parse(cls, data: bool):
+    def parse(cls, data: T):
         return cls(data)
 
     def __repr__(self):
         return json.dumps(self.value)
 
 
-class NumberTerm:
-    def __init__(self, value: int | float):
-        self.value = value
-
-    @classmethod
-    def parse(cls, data: int | float):
-        return cls(data)
-
-    def __repr__(self):
-        return json.dumps(self.value)
+class NullTerm(Term[NoneType]):
+    pass
 
 
-class StringTerm:
-    def __init__(self, value: str):
-        self.value = value
-
-    @classmethod
-    def parse(cls, data: str):
-        return cls(data)
-
-    def __repr__(self):
-        return json.dumps(self.value)
+class BooleanTerm(Term[bool]):
+    pass
 
 
-class VarTerm:
-    def __init__(self, value: str):
-        self.value = value
+class NumberTerm(Term[int | float]):
+    pass
 
-    @classmethod
-    def parse(cls, variable_name: str):
-        return cls(variable_name)
 
+class StringTerm(Term[str]):
+    pass
+
+
+class VarTerm(Term[str]):
     def __repr__(self):
         return self.value
 
 
-class RefTerm:
-    def __init__(self, ref: str):
-        self.ref = ref
+class Ref:
+    def __init__(self, ref_parts: list[str]):
+        self._parts = ref_parts
 
+    @property
+    def parts(self):
+        return self._parts
+
+    @property
+    def as_string(self):
+        return str(self)
+
+    def __str__(self):
+        return ".".join(self._parts)
+
+
+class RefTerm(Term[Ref]):
     @classmethod
     def parse(cls, terms: list[dict]):
         assert len(terms) > 0
-        var_term = VarTerm.parse(terms[0]["value"])
-        string_terms = [
-            StringTerm.parse(t["value"]) for t in terms[1:]
-        ]  # might be empty
-        terms = [var_term] + string_terms
-        ref_parts = [t.value for t in terms]
-        return cls(".".join(ref_parts))
+        parsed_terms: list[Term] = [TermParser.parse(CRTerm(**t)) for t in terms]
+        var_term = parsed_terms[0]
+        # TODO: support more types of refs
+        assert isinstance(
+            var_term, VarTerm
+        ), "first sub-term inside ref is not a variable"
+        string_terms = parsed_terms[1:]  # might be empty
+        # TODO: support more types of refs
+        assert all(
+            isinstance(t, StringTerm) for t in string_terms
+        ), "ref parts are not string terms"
+        ref_parts = [t.value for t in parsed_terms]
+        return cls(Ref(ref_parts))
 
     def __repr__(self):
-        return "Ref({})".format(self.ref)
+        return "Ref({})".format(self.value.as_string)
 
 
-TERMS_BY_TYPE = {
-    "null": NullTerm,
-    "boolean": BooleanTerm,
-    "number": NumberTerm,
-    "string": StringTerm,
-    "var": VarTerm,
-    "ref": RefTerm,
-    # "array": ArrayTerm,
-    # "set": SetTerm,
-    # "object": ObjectTerm,
-    # "arraycomprehension": ArrayComprehensionTerm,
-    # "setcomprehension": SetComprehensionTerm,
-    # "objectcomprehension": ObjectComprehensionTerm,
-    # "call": CallTerm,
-}
+class Call:
+    """
+    represents a function call
+    """
+
+    def __init__(self, func: Term, args: list[Term]):
+        self._func = func
+        self._args = args
+
+    @property
+    def func(self):
+        return self._func
+
+    @property
+    def args(self):
+        return self._args
+
+    def __str__(self):
+        return "{}({})".format(self.func, ", ".join([str(arg) for arg in self.args]))
+
+
+class CallTerm(Term[Call]):
+    @classmethod
+    def parse(cls, terms: list[dict]):
+        assert len(terms) > 0
+        parsed_terms: list[Term] = [TermParser.parse(CRTerm(**t)) for t in terms]
+        func_term = parsed_terms[0]
+        # TODO: support more types of refs
+        assert isinstance(func_term, RefTerm), "first sub-term inside call is not a ref"
+        arg_terms = parsed_terms[1:]  # might be empty
+        return cls(Call(func_term, arg_terms))
+
+    def __repr__(self):
+        return "call:{}".format(str(self.value))
+
+
+class TermParser:
+    TERMS_BY_TYPE: dict[str, Term] = {
+        "null": NullTerm,
+        "boolean": BooleanTerm,
+        "number": NumberTerm,
+        "string": StringTerm,
+        "var": VarTerm,
+        "ref": RefTerm,
+        "call": CallTerm,
+        # "array": ArrayTerm,
+        # "set": SetTerm,
+        # "object": ObjectTerm,
+        # "arraycomprehension": ArrayComprehensionTerm,
+        # "setcomprehension": SetComprehensionTerm,
+        # "objectcomprehension": ObjectComprehensionTerm,
+    }
+
+    @classmethod
+    def parse(cls, data: CRTerm) -> Term:
+        if data.type == "null":
+            data.value = None
+        klass = cls.TERMS_BY_TYPE[data.type]
+        return klass.parse(data.value)
