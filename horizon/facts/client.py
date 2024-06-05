@@ -9,19 +9,12 @@ from starlette.requests import Request as FastApiRequest
 from starlette.responses import Response as FastApiResponse, StreamingResponse
 
 from config import sidecar_config
-
-
-@dataclass
-class APIKeyScope:
-    organization_id: str
-    project_id: Optional[str]
-    environment_id: Optional[str]
+from startup.remote_config import get_remote_config
 
 
 class FactsClient:
     def __init__(self):
         self._client: Optional[AsyncClient] = None
-        self._api_key_scope: Optional[APIKeyScope] = None
 
     @property
     def client(self) -> AsyncClient:
@@ -32,18 +25,6 @@ class FactsClient:
             )
         return self._client
 
-    async def get_api_scope(self) -> APIKeyScope:
-        if self._api_key_scope is not None:
-            return self._api_key_scope
-
-        logger.info(
-            f"Fetching API Key scope for control plane {self.client.base_url!r}."
-        )
-        response = await self.client.get("/v2/api-key/scope")
-        response.raise_for_status()
-        self._api_key_scope = APIKeyScope(**response.json())
-        return self._api_key_scope
-
     async def build_forward_request(
         self, request: FastApiRequest, path: str
     ) -> HttpxRequest:
@@ -52,14 +33,16 @@ class FactsClient:
             for key, value in request.headers.items()
             if key.lower() in {"authorization", "content-type"}
         }
-        scope = await self.get_api_scope()
-        if scope.environment_id is None:
+        remote_config = get_remote_config()
+        project_id = remote_config.context.get("project_id")
+        environment_id = remote_config.context.get("env_id")
+        if project_id is None or environment_id is None:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="PDP API Key for environment is required.",
             )
 
-        full_path = f"/v2/facts/{scope.project_id}/{scope.environment_id}/{path}"
+        full_path = f"/v2/facts/{project_id}/{environment_id}/{path}"
         return self.client.build_request(
             method=request.method,
             url=full_path,
