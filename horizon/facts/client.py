@@ -25,13 +25,12 @@ class FactsClient:
 
     @property
     def client(self) -> AsyncClient:
-        global _client
-        if _client is None:
-            _client = AsyncClient(
+        if self._client is None:
+            self._client = AsyncClient(
                 base_url=sidecar_config.CONTROL_PLANE,
                 headers={"Authorization": f"Bearer {sidecar_config.API_KEY}"},
             )
-        return _client
+        return self._client
 
     async def get_api_scope(self) -> APIKeyScope:
         if self._api_key_scope is not None:
