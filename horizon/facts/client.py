@@ -10,8 +10,6 @@ from starlette.responses import Response as FastApiResponse, StreamingResponse
 
 from config import sidecar_config
 
-_client: Optional[AsyncClient] = None
-
 
 @dataclass
 class APIKeyScope:
@@ -92,8 +90,15 @@ class FactsClient:
             )
 
 
+_facts_client: Optional[FactsClient] = None
+
+
 def get_facts_client() -> FactsClient:
-    return FactsClient()
+    global _facts_client
+    if _facts_client is None:
+        _facts_client = FactsClient()
+
+    return _facts_client
 
 
 FactsClientDependency = Annotated[FactsClient, Depends(get_facts_client)]
