@@ -36,13 +36,17 @@ class FactsClient:
         if self._api_key_scope is not None:
             return self._api_key_scope
 
-        logger.info(f"Fetching API Key scope for control plane {self.client.base_url!r}.")
+        logger.info(
+            f"Fetching API Key scope for control plane {self.client.base_url!r}."
+        )
         response = await self.client.get("/v2/api-key/scope")
         response.raise_for_status()
         self._api_key_scope = APIKeyScope(**response.json())
         return self._api_key_scope
 
-    async def build_forward_request(self, request: FastApiRequest, path: str) -> HttpxRequest:
+    async def build_forward_request(
+        self, request: FastApiRequest, path: str
+    ) -> HttpxRequest:
         forward_headers = {
             key: value
             for key, value in request.headers.items()
@@ -64,16 +68,22 @@ class FactsClient:
             content=request.stream(),
         )
 
-    async def send(self, request: HttpxRequest, *, stream: bool = False) -> HttpxResponse:
+    async def send(
+        self, request: HttpxRequest, *, stream: bool = False
+    ) -> HttpxResponse:
         logger.info(f"Forwarding facts request: {request.method} {request.url}")
         return await self.client.send(request, stream=stream)
 
-    async def send_forward_request(self, request: FastApiRequest, path: str) -> HttpxResponse:
+    async def send_forward_request(
+        self, request: FastApiRequest, path: str
+    ) -> HttpxResponse:
         forward_request = await self.build_forward_request(request, path)
         return await self.send(forward_request)
 
     @staticmethod
-    def convert_response(response: HttpxResponse, *, stream: bool = True) -> FastApiResponse:
+    def convert_response(
+        response: HttpxResponse, *, stream: bool = True
+    ) -> FastApiResponse:
         if stream or not hasattr(response, "_content"):
             # if the response content has not loaded yet, optimize it to stream the response.
             return StreamingResponse(

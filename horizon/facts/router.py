@@ -17,7 +17,9 @@ async def create_user(request: FastApiRequest, client: FactsClientDependency):
 
 
 @facts_router.api_route("/{full_path:path}")
-async def forward_remaining_requests(request: FastApiRequest, client: FactsClientDependency, full_path: str):
+async def forward_remaining_requests(
+    request: FastApiRequest, client: FactsClientDependency, full_path: str
+):
     logger.info(f"Forwarding facts request to {full_path!r}")
     forward_request = await client.build_forward_request(request, full_path)
     response = await client.send(forward_request, stream=True)
