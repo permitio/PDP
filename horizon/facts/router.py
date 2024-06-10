@@ -1,7 +1,10 @@
+from functools import cache
+from typing import Annotated
 from urllib.parse import urljoin
 
 from fastapi import APIRouter, Depends, Request as FastApiRequest
 from loguru import logger
+from opal_client import OpalClient
 from opal_common.fetcher.providers.http_fetch_provider import HttpFetcherConfig
 from opal_common.schemas.data import DataSourceEntry
 
@@ -13,31 +16,48 @@ from startup.remote_config import get_remote_config
 facts_router = APIRouter(dependencies=[Depends(enforce_pdp_token)])
 
 
+@cache
+def get_opal_data_base_url() -> str:
+    remote_config = get_remote_config()
+    org_id = remote_config.context.get("org_id")
+    proj_id = remote_config.context.get("project_id")
+    env_id = remote_config.context.get("env_id")
+    return urljoin(
+        sidecar_config.CONTROL_PLANE,
+        f"/v2/internal/opal_data/{org_id}/{proj_id}/{env_id}",
+    )
+
+
+@cache
+def get_opal_data_topic() -> str:
+    remote_config = get_remote_config()
+    pdp_client_id = remote_config.context.get("client_id")
+    topic = f"{pdp_client_id}:data:policy_data/{pdp_client_id}"
+    if sidecar_config.SHARD_ID:
+        topic += f"?shard_id={sidecar_config.SHARD_ID}"
+
+    return topic
+
+
 def generate_opal_data_source_entry(
     obj_type: str,
     obj_id: str,
     obj_key: str,
     authorization_header: str,
 ) -> DataSourceEntry:
-    remote_config = get_remote_config()
-    org_id = remote_config.context.get("org_id")
-    proj_id = remote_config.context.get("project_id")
-    env_id = remote_config.context.get("env_id")
+    obj_id = obj_id.replace("-", "")  # convert UUID to Hex
     url = urljoin(
-        sidecar_config.CONTROL_PLANE,
-        f"/v2/internal/opal_data/{org_id}/{proj_id}/{env_id}/{obj_type}/{obj_id}",
+        get_opal_data_base_url(),
+        f"/{obj_type}/{obj_id}",
     )
+
+    topic = get_opal_data_topic()
 
     headers = {
         "Authorization": authorization_header,
     }
     if sidecar_config.SHARD_ID:
         headers["X-Shard-Id"] = sidecar_config.SHARD_ID
-
-    pdp_client_id = remote_config.context.get("client_id")
-    topic = f"{pdp_client_id}:data:policy_data/{pdp_client_id}"
-    if sidecar_config.SHARD_ID:
-        topic += f"?shard_id={sidecar_config.SHARD_ID}"
 
     return DataSourceEntry(
         url=url,

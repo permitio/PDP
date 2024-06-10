@@ -131,7 +131,6 @@ class PermitPDP:
         self._opal = OpalClient(
             shard_id=sidecar_config.SHARD_ID, data_topics=self._fix_data_topics()
         )
-        # self._opal.data_updater._client.publish()
         self._configure_cloud_logging(remote_config.context)
 
         self._opal_relay = OpalRelayAPIClient(remote_config.context, self._opal)
