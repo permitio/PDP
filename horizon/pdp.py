@@ -140,6 +140,7 @@ class PermitPDP:
 
         # use opal client app and add sidecar routes on top
         app: FastAPI = self._opal.app
+        app.state.opal_client = self._opal
         self._override_app_metadata(app)
         self._configure_api_routes(app)
 
