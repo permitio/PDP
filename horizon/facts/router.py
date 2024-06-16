@@ -22,12 +22,17 @@ async def create_user(
         return client.convert_response(response)
 
     body = response.json()
-    data_entry = generate_opal_data_source_entry(
-        obj_type="users",
-        obj_id=body.get("id"),
-        obj_key=body.get("key"),
-        authorization_header=request.headers.get("Authorization"),
-    )
+    try:
+        data_entry = generate_opal_data_source_entry(
+            obj_type="users",
+            obj_id=body.get("id"),
+            obj_key=body.get("key"),
+            authorization_header=request.headers.get("Authorization"),
+        )
+    except ValueError as e:
+        logger.error(f"Failed to create data entry: {e}")
+        return client.convert_response(response)
+
     await update_subscriber.publish_and_wait(
         data_entry, timeout=sidecar_config.LOCAL_FACTS_WAIT_TIMEOUT
     )

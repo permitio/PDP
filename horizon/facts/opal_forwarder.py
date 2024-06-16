@@ -33,10 +33,12 @@ def get_opal_data_topic() -> str:
 
 def generate_opal_data_source_entry(
     obj_type: str,
-    obj_id: str,
-    obj_key: str,
+    obj_id: str | None,
+    obj_key: str | None,
     authorization_header: str,
 ) -> DataSourceEntry:
+    if obj_id is None or obj_key is None:
+        raise ValueError("Could not find object id and/or key.")
     obj_id = obj_id.replace("-", "")  # convert UUID to Hex
     url = urljoin(
         get_opal_data_base_url(),
