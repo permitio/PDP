@@ -1,8 +1,9 @@
 from functools import cache
 from urllib.parse import urljoin
+from uuid import uuid4
 
 from opal_common.fetcher.providers.http_fetch_provider import HttpFetcherConfig
-from opal_common.schemas.data import DataSourceEntry
+from opal_common.schemas.data import DataSourceEntry, DataUpdate
 
 from config import sidecar_config
 from startup.remote_config import get_remote_config
@@ -31,14 +32,12 @@ def get_opal_data_topic() -> str:
     return topic
 
 
-def generate_opal_data_source_entry(
+def generate_opal_data_update(
     obj_type: str,
-    obj_id: str | None,
-    obj_key: str | None,
+    obj_id: str,
+    obj_key: str,
     authorization_header: str,
-) -> DataSourceEntry:
-    if obj_id is None or obj_key is None:
-        raise ValueError("Could not find object id and/or key.")
+) -> DataUpdate:
     obj_id = obj_id.replace("-", "")  # convert UUID to Hex
     url = urljoin(
         get_opal_data_base_url(),
@@ -53,11 +52,16 @@ def generate_opal_data_source_entry(
     if sidecar_config.SHARD_ID:
         headers["X-Shard-Id"] = sidecar_config.SHARD_ID
 
-    return DataSourceEntry(
+    entry = DataSourceEntry(
         url=url,
         data=None,
         dst_path=f"{obj_type}/{obj_key}",
         save_method="PUT",
         topics=[topic],
         config=HttpFetcherConfig(headers=headers).dict(),
+    )
+    return DataUpdate(
+        id=uuid4().hex,
+        entries=[entry],
+        reason=f"Local facts upload for {obj_type} {obj_key}",
     )

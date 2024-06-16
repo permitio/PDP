@@ -5,7 +5,7 @@ from authentication import enforce_pdp_token
 from config import sidecar_config
 from facts.client import FactsClientDependency, FactsClient
 from facts.dependencies import DataUpdateSubscriberDependency
-from facts.opal_forwarder import generate_opal_data_source_entry
+from facts.opal_forwarder import generate_opal_data_update
 from facts.update_subscriber import DataUpdateSubscriber
 
 facts_router = APIRouter(dependencies=[Depends(enforce_pdp_token)])
@@ -47,7 +47,7 @@ async def forward_request_then_wait_for_update(
         )
         return client.convert_response(response)
 
-    data_entry = generate_opal_data_source_entry(
+    data_entry = generate_opal_data_update(
         obj_type=obj_type,
         obj_id=body[obj_id_field],
         obj_key=body[obj_key_field],
