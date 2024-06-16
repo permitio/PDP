@@ -1,5 +1,5 @@
-from dataclasses import dataclass
 from typing import Optional, Annotated
+from urllib.parse import urljoin
 
 from fastapi import HTTPException, Depends
 from httpx import AsyncClient, Request as HttpxRequest, Response as HttpxResponse
@@ -28,6 +28,12 @@ class FactsClient:
     async def build_forward_request(
         self, request: FastApiRequest, path: str
     ) -> HttpxRequest:
+        """
+        Build an HTTPX request from a FastAPI request to forward to the facts service.
+        :param request: FastAPI request
+        :param path: Backend facts service path to forward to
+        :return: HTTPX request
+        """
         forward_headers = {
             key: value
             for key, value in request.headers.items()
@@ -42,7 +48,7 @@ class FactsClient:
                 detail="PDP API Key for environment is required.",
             )
 
-        full_path = f"/v2/facts/{project_id}/{environment_id}/{path}"
+        full_path = urljoin(f"/v2/facts/{project_id}/{environment_id}", path)
         return self.client.build_request(
             method=request.method,
             url=full_path,
@@ -60,13 +66,25 @@ class FactsClient:
     async def send_forward_request(
         self, request: FastApiRequest, path: str
     ) -> HttpxResponse:
+        """
+        Send a forward request to the facts service.
+        :param request: FastAPI request
+        :param path: Backend facts service path to forward to
+        :return: HTTPX response
+        """
         forward_request = await self.build_forward_request(request, path)
         return await self.send(forward_request)
 
     @staticmethod
     def convert_response(
-        response: HttpxResponse, *, stream: bool = True
+        response: HttpxResponse, *, stream: bool = False
     ) -> FastApiResponse:
+        """
+        Convert an HTTPX response to a FastAPI response.
+        :param response: HTTPX response
+        :param stream: Stream the response content (automatic by default if content has not loaded)
+        :return:
+        """
         if stream or not hasattr(response, "_content"):
             # if the response content has not loaded yet, optimize it to stream the response.
             return StreamingResponse(

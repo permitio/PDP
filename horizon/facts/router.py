@@ -3,9 +3,10 @@ from loguru import logger
 
 from authentication import enforce_pdp_token
 from config import sidecar_config
-from facts.client import FactsClientDependency
+from facts.client import FactsClientDependency, FactsClient
 from facts.dependencies import DataUpdateSubscriberDependency
 from facts.opal_forwarder import generate_opal_data_source_entry
+from facts.update_subscriber import DataUpdateSubscriber
 
 facts_router = APIRouter(dependencies=[Depends(enforce_pdp_token)])
 
@@ -16,23 +17,43 @@ async def create_user(
     client: FactsClientDependency,
     update_subscriber: DataUpdateSubscriberDependency,
 ):
+    return await forward_request_then_wait_for_update(
+        client,
+        request,
+        update_subscriber,
+        path="/users",
+        obj_type="user",
+    )
+
+
+async def forward_request_then_wait_for_update(
+    client: FactsClient,
+    request: FastApiRequest,
+    update_subscriber: DataUpdateSubscriber,
+    *,
+    path: str,
+    obj_type: str,
+    obj_id_field: str = "id",
+    obj_key_field: str = "key",
+):
     logger.info("-" * 100)
-    response = await client.send_forward_request(request, "users")
+    response = await client.send_forward_request(request, path)
     if response.status_code != 200:
         return client.convert_response(response)
 
     body = response.json()
-    try:
-        data_entry = generate_opal_data_source_entry(
-            obj_type="users",
-            obj_id=body.get("id"),
-            obj_key=body.get("key"),
-            authorization_header=request.headers.get("Authorization"),
+    if obj_id_field not in body or obj_key_field not in body:
+        logger.error(
+            f"Missing required fields in response body: {obj_id_field!r}, {obj_key_field!r}, skipping wait for update."
         )
-    except ValueError as e:
-        logger.error(f"Failed to create data entry: {e}")
         return client.convert_response(response)
 
+    data_entry = generate_opal_data_source_entry(
+        obj_type=obj_type,
+        obj_id=body[obj_id_field],
+        obj_key=body[obj_key_field],
+        authorization_header=request.headers.get("Authorization"),
+    )
     await update_subscriber.publish_and_wait(
         data_entry, timeout=sidecar_config.LOCAL_FACTS_WAIT_TIMEOUT
     )
