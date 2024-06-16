@@ -89,7 +89,4 @@ class DataUpdateSubscriber:
             wait_task.cancel()
             return False
 
-        if not await wait_task:
-            return False
-
-        return True
+        return await wait_task
