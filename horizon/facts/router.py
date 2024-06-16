@@ -2,8 +2,9 @@ from fastapi import APIRouter, Depends, Request as FastApiRequest
 from loguru import logger
 
 from authentication import enforce_pdp_token
+from config import sidecar_config
 from facts.client import FactsClientDependency
-from facts.dependencies import OpalWsClientDependency
+from facts.dependencies import DataUpdateSubscriberDependency
 from facts.opal_forwarder import generate_opal_data_source_entry
 
 facts_router = APIRouter(dependencies=[Depends(enforce_pdp_token)])
@@ -13,7 +14,7 @@ facts_router = APIRouter(dependencies=[Depends(enforce_pdp_token)])
 async def create_user(
     request: FastApiRequest,
     client: FactsClientDependency,
-    ws_client: OpalWsClientDependency,
+    update_subscriber: DataUpdateSubscriberDependency,
 ):
     logger.info("-" * 100)
     response = await client.send_forward_request(request, "users")
@@ -27,11 +28,9 @@ async def create_user(
         obj_key=body.get("key"),
         authorization_header=request.headers.get("Authorization"),
     )
-    logger.info(f"Created user id: {data_entry}")
-    if await ws_client.publish(data_entry.topics, data=data_entry):
-        logger.info(f"Published user id: {data_entry}")
-    else:
-        logger.warning(f"Failed to publish user id: {data_entry}")
+    await update_subscriber.publish_and_wait(
+        data_entry, timeout=sidecar_config.LOCAL_FACTS_WAIT_TIMEOUT
+    )
     return client.convert_response(response)
 
 

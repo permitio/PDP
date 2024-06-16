@@ -1,8 +1,9 @@
 from typing import Annotated
 
 from fastapi import Depends, Request
-from fastapi_websocket_pubsub import PubSubClient
 from opal_client import OpalClient
+
+from facts.update_subscriber import DataUpdateSubscriber
 
 
 def get_opal_client(request: Request) -> OpalClient:
@@ -11,9 +12,19 @@ def get_opal_client(request: Request) -> OpalClient:
 
 OpalClientDependency = Annotated[OpalClient, Depends(get_opal_client)]
 
-
-def get_opal_ws_client(opal_client: OpalClientDependency) -> PubSubClient:
-    return opal_client.data_updater._client
+_data_update_subscriber: DataUpdateSubscriber | None = None
 
 
-OpalWsClientDependency = Annotated[PubSubClient, Depends(get_opal_ws_client)]
+def get_data_update_subscriber(
+    opal_client: OpalClientDependency,
+) -> DataUpdateSubscriber:
+    global _data_update_subscriber
+    if _data_update_subscriber is None:
+        _data_update_subscriber = DataUpdateSubscriber(opal_client.data_updater)
+
+    return _data_update_subscriber
+
+
+DataUpdateSubscriberDependency = Annotated[
+    DataUpdateSubscriber, Depends(get_data_update_subscriber)
+]

@@ -157,6 +157,8 @@ class SidecarConfig(Confi):
     # enables debug ouptut for the Kong integration endpoint
     KONG_INTEGRATION_DEBUG = confi.bool("KONG_INTEGRATION_DEBUG", False)
 
+    LOCAL_FACTS_WAIT_TIMEOUT = confi.float("LOCAL_FACTS_WAIT_TIMEOUT", 60)
+
     # non configurable values -------------------------------------------------
 
     # redoc configuration (openapi schema)
