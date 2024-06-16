@@ -16,7 +16,7 @@ def get_opal_data_base_url() -> str:
     env_id = remote_config.context.get("env_id")
     return urljoin(
         sidecar_config.CONTROL_PLANE,
-        f"/v2/internal/opal_data/{org_id}/{proj_id}/{env_id}",
+        f"v2/internal/opal_data/{org_id}/{proj_id}/{env_id}",
     )
 
 

@@ -36,7 +36,6 @@ async def forward_request_then_wait_for_update(
     obj_id_field: str = "id",
     obj_key_field: str = "key",
 ):
-    logger.info("-" * 100)
     response = await client.send_forward_request(request, path)
     if response.status_code != 200:
         return client.convert_response(response)

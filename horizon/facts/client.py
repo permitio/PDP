@@ -48,7 +48,9 @@ class FactsClient:
                 detail="PDP API Key for environment is required.",
             )
 
-        full_path = urljoin(f"/v2/facts/{project_id}/{environment_id}", path)
+        full_path = urljoin(
+            f"/v2/facts/{project_id}/{environment_id}/", path.removeprefix("/")
+        )
         return self.client.build_request(
             method=request.method,
             url=full_path,
