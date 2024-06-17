@@ -16,7 +16,7 @@ def get_opal_data_base_url() -> str:
     proj_id = remote_config.context.get("project_id")
     env_id = remote_config.context.get("env_id")
     return urljoin(
-        sidecar_config.CONTROL_PLANE,
+        sidecar_config.CONTROL_PLANE_PDP_DELTAS_API,
         f"v2/internal/opal_data/{org_id}/{proj_id}/{env_id}",
     )
 
@@ -25,10 +25,7 @@ def get_opal_data_base_url() -> str:
 def get_opal_data_topic() -> str:
     remote_config = get_remote_config()
     pdp_client_id = remote_config.context.get("client_id")
-    topic = f"{pdp_client_id}:data:policy_data/{pdp_client_id}"
-    if sidecar_config.SHARD_ID:
-        topic += f"?shard_id={sidecar_config.SHARD_ID}"
-
+    topic = f"{pdp_client_id}:data:policy_data"
     return topic
 
 
@@ -41,7 +38,7 @@ def generate_opal_data_update(
     obj_id = obj_id.replace("-", "")  # convert UUID to Hex
     url = urljoin(
         get_opal_data_base_url(),
-        f"/{obj_type}/{obj_id}",
+        f"{obj_type}/{obj_id}",
     )
 
     topic = get_opal_data_topic()

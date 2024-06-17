@@ -1,5 +1,8 @@
 import asyncio
+from collections import defaultdict
+from uuid import uuid4
 
+from fastapi_websocket_pubsub import ALL_TOPICS
 from loguru import logger
 from opal_client.data.updater import DataUpdater
 from opal_common.schemas.data import DataUpdate
@@ -8,42 +11,56 @@ from opal_common.schemas.data import DataUpdate
 class DataUpdateSubscriber:
     def __init__(self, updater: DataUpdater):
         self._updater = updater
-        self._topic_events: dict[str, asyncio.Event] = {}
+        self._notifier_id = uuid4().hex
+        self._update_listeners: dict[str, asyncio.Event] = defaultdict(asyncio.Event)
+        self._register_callbacks()
 
-    @property
-    def callbacks(self) -> dict[str, list[callable]]:
-        # Callbacks registered for PubSub client by topics
-        return self._updater._client._callbacks  # noqa
+    def _register_callbacks(self) -> None:
+        """
+        Register the on_message callback for incoming messages from all topics subscribed by the PubSub client.
+        """
+        callbacks = self._updater._client._callbacks  # noqa
+        if ALL_TOPICS not in callbacks:
+            callbacks[ALL_TOPICS] = []
+        callbacks[ALL_TOPICS].append(self._on_message)
 
-    async def _on_message(self, topic: str = "", data=None) -> None:
-        if topic in self._topic_events:
-            logger.debug(f"Resolving subscriber event for topic: {topic}")
-            self._topic_events[topic].set()
+    async def _on_message(self, topic: str = "", data: dict | None = None) -> None:
+        """
+        Callback for incoming messages from the PubSub client.
+        """
+        if data is None:
+            logger.debug(f"Received message on topic {topic!r} without data")
+            return
+
+        update_id = data.get("id")
+        if update_id is None:
+            logger.debug(
+                f"Received message on topic {topic!r} without an update ID: {data}"
+            )
+            return
+
+        event = self._update_listeners.get(update_id)
+        if event is not None:
+            logger.info(
+                f"Received message on topic {topic!r} with update ID {update_id!r}, resolving listener(s)"
+            )
+            event.set()
         else:
-            logger.info(f"No subscriber found for topic: {topic}")
+            logger.debug(
+                f"Received message on topic {topic!r} with update ID {update_id!r}, but no listener found"
+            )
 
-    def _get_event(self, topic: str) -> asyncio.Event:
-        if topic in self.callbacks:
-            if topic not in self._topic_events:
-                self._topic_events[topic] = asyncio.Event()
-
-            # Injecting the callback directly into the PubSub client, because subscribing to the topic is not possible
-            # after client is initialized. If the pubsub client does not already have callbacks for this topic, it is
-            # no longer possible to subscribe to it.
-            self.callbacks[topic].append(self._on_message)
-            return self._topic_events[topic]
-        else:
-            raise Exception(f"PubSubClient is not subscribed to topic: {topic}")
-
-    def _clear_event(self, topic: str) -> None:
-        if topic in self.callbacks:
-            self.callbacks[topic].remove(self._on_message)
-        if topic in self._topic_events:
-            self._topic_events.pop(topic)
-
-    async def wait_for_message(self, topic: str, timeout: float | None = None) -> bool:
-        logger.info(f"Waiting for message on topic: {topic}")
-        event = self._get_event(topic)
+    async def wait_for_message(
+        self, update_id: str, timeout: float | None = None
+    ) -> bool:
+        """
+        Wait for a message with the given update ID to be received by the PubSub client.
+        :param update_id: id of the update to wait for
+        :param timeout: timeout in seconds
+        :return: True if the message was received, False if the timeout was reached
+        """
+        logger.info(f"Waiting for update id={update_id!r}")
+        event = self._update_listeners[update_id]
         try:
             await asyncio.wait_for(
                 event.wait(),
@@ -51,22 +68,23 @@ class DataUpdateSubscriber:
             )
             return True
         except asyncio.TimeoutError:
-            logger.warning(f"Timeout waiting for message on topic: {topic}")
+            logger.warning(f"Timeout waiting for update id={update_id!r}")
             return False
         finally:
-            self._clear_event(topic)  # clear the event after it's set
+            self._update_listeners.pop(update_id, None)
 
-    async def bulk_wait_for_messages(
-        self, topics: list[str], timeout: float | None = None
-    ) -> bool:
-        return all(
-            await asyncio.gather(
-                *[self.wait_for_message(topic, timeout=timeout) for topic in topics]
-            )
+    async def publish(self, data_update: DataUpdate) -> bool:
+        await asyncio.sleep(0)  # allow other wait task to run before publishing
+        topics = [topic for entry in data_update.entries for topic in entry.topics]
+        logger.debug(
+            f"Publishing data update with id={data_update.id!r} to topics {topics} as {self._notifier_id=}: {data_update}"
         )
-
-    async def publish(self, topics: list[str], data_update: DataUpdate) -> bool:
-        return await self._updater._client.publish(topics, data=data_update.dict())
+        return await self._updater._client.publish(
+            topics=topics,
+            data=data_update.dict(),
+            notifier_id=self._notifier_id,  # we fake a different notifier id to make the other side broadcast the message back to our main channel
+            sync=False,  # sync=False means we don't wait for the other side to acknowledge the message, as it causes a deadlock because we fake a different notifier id
+        )
 
     async def publish_and_wait(
         self, data_update: DataUpdate, timeout: float | None = None
@@ -75,21 +93,14 @@ class DataUpdateSubscriber:
         Publish a data update and wait for it to be received by the PubSub client.
         :param data_update: DataUpdate object to publish
         :param timeout: Wait timeout in seconds
-        :return:
+        :return: True if the message was received, False if the timeout was reached or the message failed to publish
         """
-        topics = [topic for entry in data_update.entries for topic in entry.topics]
         # Start waiting before publishing, to avoid the message being received before we start waiting
         wait_task = asyncio.create_task(
-            self.bulk_wait_for_messages(
-                [
-                    topic[: topic.find("/")]  # Trim extra path from topic
-                    for topic in topics
-                ],
-                timeout=timeout,
-            )
+            self.wait_for_message(data_update.id, timeout=timeout),
         )
 
-        if not await self.publish(topics, data_update):
+        if not await self.publish(data_update):
             logger.warning("Failed to publish data entry. Aborting wait.")
             wait_task.cancel()
             return False
