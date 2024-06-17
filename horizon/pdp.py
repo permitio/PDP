@@ -19,6 +19,7 @@ from opal_client.engine.options import OpaServerOptions
 from opal_common.confi import Confi
 from opal_common.logging.formatter import Formatter
 
+from horizon.facts.router import facts_router
 from horizon.authentication import enforce_pdp_token
 from horizon.config import MOCK_API_KEY, sidecar_config
 from horizon.enforcer.api import init_enforcer_api_router, stats_manager
@@ -29,7 +30,7 @@ from horizon.enforcer.opa.config_maker import (
 from horizon.local.api import init_local_cache_api_router
 from horizon.opal_relay_api import OpalRelayAPIClient
 from horizon.proxy.api import router as proxy_router
-from horizon.startup.remote_config import InvalidPDPTokenException, RemoteConfigFetcher
+from horizon.startup.remote_config import InvalidPDPTokenException, get_remote_config
 from horizon.state import PersistentStateHandler
 from horizon.system.api import init_system_api_router
 from horizon.system.consts import GUNICORN_EXIT_APP
@@ -88,7 +89,7 @@ class PermitPDP:
         self._verify_config()
         # fetch and apply config override from cloud control plane
         try:
-            remote_config = RemoteConfigFetcher().fetch_config()
+            remote_config = get_remote_config()
         except InvalidPDPTokenException:
             logger.critical(
                 "An invalid API key was specified. Please verify the PDP_API_KEY environment variable."
@@ -130,6 +131,7 @@ class PermitPDP:
         self._opal = OpalClient(
             shard_id=sidecar_config.SHARD_ID, data_topics=self._fix_data_topics()
         )
+        # self._opal.data_updater._client.publish()
         self._configure_cloud_logging(remote_config.context)
 
         self._opal_relay = OpalRelayAPIClient(remote_config.context, self._opal)
@@ -346,6 +348,12 @@ class PermitPDP:
         app.include_router(
             proxy_router,
             tags=["Cloud API Proxy"],
+            dependencies=[Depends(enforce_pdp_token)],
+        )
+        app.include_router(
+            facts_router,
+            prefix="/facts",
+            tags=["Local Facts API"],
             dependencies=[Depends(enforce_pdp_token)],
         )
 

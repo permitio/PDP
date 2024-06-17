@@ -162,3 +162,14 @@ class RemoteConfigFetcher:
         except requests.RequestException as exc:
             logger.error("Got exception: {exc}", exc=exc)
             raise
+
+
+_remote_config: Optional[RemoteConfig] = None
+
+
+def get_remote_config():
+    global _remote_config
+    if _remote_config is None:
+        _remote_config = RemoteConfigFetcher().fetch_config()
+
+    return _remote_config
