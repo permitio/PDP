@@ -35,9 +35,13 @@ async def forward_request_then_wait_for_update(
     obj_type: str,
     obj_id_field: str = "id",
     obj_key_field: str = "key",
+    expected_status_code: int = status.HTTP_200_OK,
 ):
     response = await client.send_forward_request(request, path)
-    if response.status_code != 200:
+    if response.status_code != expected_status_code:
+        logger.info(
+            f"Response status code is not {expected_status_code}, skipping wait for update."
+        )
         return client.convert_response(response)
 
     body = response.json()
@@ -81,7 +85,6 @@ def get_wait_timeout(request: FastApiRequest) -> float | None:
 async def forward_remaining_requests(
     request: FastApiRequest, client: FactsClientDependency, full_path: str
 ):
-    logger.info(f"Forwarding facts request to {full_path!r}")
     forward_request = await client.build_forward_request(request, full_path)
     response = await client.send(forward_request, stream=True)
     return client.convert_response(response, stream=True)
