@@ -95,6 +95,9 @@ class DataUpdateSubscriber:
         :param timeout: Wait timeout in seconds
         :return: True if the message was received, False if the timeout was reached or the message failed to publish
         """
+        if timeout == 0:
+            return await self.publish(data_update)
+
         # Start waiting before publishing, to avoid the message being received before we start waiting
         wait_task = asyncio.create_task(
             self.wait_for_message(data_update.id, timeout=timeout),

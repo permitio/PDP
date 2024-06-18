@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Request as FastApiRequest
+from fastapi import APIRouter, Depends, Request as FastApiRequest, HTTPException
 from loguru import logger
 
 from authentication import enforce_pdp_token
@@ -47,6 +47,7 @@ async def forward_request_then_wait_for_update(
         )
         return client.convert_response(response)
 
+    wait_timeout = get_wait_timeout(request)
     data_entry = generate_opal_data_update(
         obj_type=obj_type,
         obj_id=body[obj_id_field],
@@ -54,9 +55,26 @@ async def forward_request_then_wait_for_update(
         authorization_header=request.headers.get("Authorization"),
     )
     await update_subscriber.publish_and_wait(
-        data_entry, timeout=sidecar_config.LOCAL_FACTS_WAIT_TIMEOUT
+        data_entry,
+        timeout=wait_timeout,
     )
     return client.convert_response(response)
+
+
+def get_wait_timeout(request: FastApiRequest) -> float | None:
+    wait_timeout = request.headers.get(
+        "X-Wait-timeout", sidecar_config.LOCAL_FACTS_WAIT_TIMEOUT
+    )
+    try:
+        wait_timeout = float(wait_timeout)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400, detail="Invalid X-Wait-timeout header"
+        ) from e
+    if wait_timeout < 0:
+        return None
+    else:
+        return wait_timeout
 
 
 @facts_router.api_route("/{full_path:path}")
