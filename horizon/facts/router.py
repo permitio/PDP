@@ -1,11 +1,18 @@
-from fastapi import APIRouter, Depends, Request as FastApiRequest, HTTPException, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    Request as FastApiRequest,
+    HTTPException,
+    status,
+    Response,
+)
 from loguru import logger
 
 from authentication import enforce_pdp_token
 from config import sidecar_config
 from facts.client import FactsClientDependency, FactsClient
 from facts.dependencies import DataUpdateSubscriberDependency
-from facts.opal_forwarder import generate_opal_data_update
+from facts.opal_forwarder import create_data_source_entry, create_data_update_entry
 from facts.update_subscriber import DataUpdateSubscriber
 
 facts_router = APIRouter(dependencies=[Depends(enforce_pdp_token)])
@@ -68,10 +75,10 @@ async def forward_request_then_wait_for_update(
     obj_id_field: str = "id",
     obj_key_field: str = "key",
     expected_status_code: int = status.HTTP_200_OK,
-):
+) -> Response:
     response = await client.send_forward_request(request, path)
     if response.status_code != expected_status_code:
-        logger.info(
+        logger.warning(
             f"Response status code is not {expected_status_code}, skipping wait for update."
         )
         return client.convert_response(response)
@@ -84,14 +91,18 @@ async def forward_request_then_wait_for_update(
         return client.convert_response(response)
 
     wait_timeout = get_wait_timeout(request)
-    data_entry = generate_opal_data_update(
-        obj_type=obj_type,
-        obj_id=body[obj_id_field],
-        obj_key=body[obj_key_field],
-        authorization_header=request.headers.get("Authorization"),
+    data_update_entry = create_data_update_entry(
+        [
+            create_data_source_entry(
+                obj_type=obj_type,
+                obj_id=body[obj_id_field],
+                obj_key=body[obj_key_field],
+                authorization_header=request.headers.get("Authorization"),
+            )
+        ]
     )
     await update_subscriber.publish_and_wait(
-        data_entry,
+        data_update_entry,
         timeout=wait_timeout,
     )
     return client.convert_response(response)
@@ -113,7 +124,10 @@ def get_wait_timeout(request: FastApiRequest) -> float | None:
         return wait_timeout
 
 
-@facts_router.api_route("/{full_path:path}", methods=["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"])
+@facts_router.api_route(
+    "/{full_path:path}",
+    methods=["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"],
+)
 async def forward_remaining_requests(
     request: FastApiRequest, client: FactsClientDependency, full_path: str
 ):

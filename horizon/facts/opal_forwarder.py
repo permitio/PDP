@@ -29,12 +29,12 @@ def get_opal_data_topic() -> str:
     return topic
 
 
-def generate_opal_data_update(
+def create_data_source_entry(
     obj_type: str,
     obj_id: str,
     obj_key: str,
     authorization_header: str,
-) -> DataUpdate:
+) -> DataSourceEntry:
     obj_id = obj_id.replace("-", "")  # convert UUID to Hex
     url = urljoin(
         get_opal_data_base_url(),
@@ -49,7 +49,7 @@ def generate_opal_data_update(
     if sidecar_config.SHARD_ID:
         headers["X-Shard-Id"] = sidecar_config.SHARD_ID
 
-    entry = DataSourceEntry(
+    return DataSourceEntry(
         url=url,
         data=None,
         dst_path=f"{obj_type}/{obj_key}",
@@ -57,8 +57,12 @@ def generate_opal_data_update(
         topics=[topic],
         config=HttpFetcherConfig(headers=headers).dict(),
     )
+
+
+def create_data_update_entry(entries: list[DataSourceEntry]) -> DataUpdate:
+    entries_text = ", ".join(entry.dst_path for entry in entries)
     return DataUpdate(
         id=uuid4().hex,
-        entries=[entry],
-        reason=f"Local facts upload for {obj_type} {obj_key}",
+        entries=entries,
+        reason=f"Local facts upload for {entries_text}",
     )
