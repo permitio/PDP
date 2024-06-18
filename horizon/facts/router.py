@@ -148,6 +148,31 @@ async def create_resource_instance(
     )
 
 
+@facts_router.put("/resource_instances/{instance_id}")
+async def update_resource_instance(
+    request: FastApiRequest,
+    client: FactsClientDependency,
+    update_subscriber: DataUpdateSubscriberDependency,
+    wait_timeout: WaitTimeoutDependency,
+    instance_id: str,
+):
+    return await forward_request_then_wait_for_update(
+        client,
+        request,
+        update_subscriber,
+        wait_timeout,
+        path=f"/resource_instances/{instance_id}",
+        entries_callback=lambda r, body: [
+            create_data_source_entry(
+                obj_type="resource_instances",
+                obj_id=body["id"],
+                obj_key=f"{body['resource']}:{body['key']}",
+                authorization_header=r.headers.get("Authorization"),
+            ),
+        ],
+    )
+
+
 async def forward_request_then_wait_for_update(
     client: FactsClient,
     request: FastApiRequest,
