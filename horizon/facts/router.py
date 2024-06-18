@@ -173,6 +173,30 @@ async def update_resource_instance(
     )
 
 
+@facts_router.post("/relationship_tuples")
+async def create_relationship_tuple(
+    request: FastApiRequest,
+    client: FactsClientDependency,
+    update_subscriber: DataUpdateSubscriberDependency,
+    wait_timeout: WaitTimeoutDependency,
+):
+    return await forward_request_then_wait_for_update(
+        client,
+        request,
+        update_subscriber,
+        wait_timeout,
+        path="/relationship_tuples",
+        entries_callback=lambda r, body: [
+            create_data_source_entry(
+                obj_type="relationships",
+                obj_id=body["object_id"],
+                obj_key=body["object"],
+                authorization_header=r.headers.get("Authorization"),
+            ),
+        ],
+    )
+
+
 async def forward_request_then_wait_for_update(
     client: FactsClient,
     request: FastApiRequest,
