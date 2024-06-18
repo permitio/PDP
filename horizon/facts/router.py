@@ -81,7 +81,7 @@ def get_wait_timeout(request: FastApiRequest) -> float | None:
         return wait_timeout
 
 
-@facts_router.api_route("/{full_path:path}")
+@facts_router.api_route("/{full_path:path}", methods=["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"])
 async def forward_remaining_requests(
     request: FastApiRequest, client: FactsClientDependency, full_path: str
 ):
