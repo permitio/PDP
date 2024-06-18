@@ -5,7 +5,7 @@ from opal_client.policy_store.base_policy_store_client import BasePolicyStoreCli
 from opal_client.policy_store.policy_store_client_factory import (
     DEFAULT_POLICY_STORE_GETTER,
 )
-from pydantic import parse_raw_as
+from pydantic import parse_raw_as, parse_obj_as
 from starlette.responses import Response
 
 from horizon.authentication import enforce_pdp_token
@@ -90,7 +90,7 @@ def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
         user: Optional[str] = Query(
             None,
             description="optional user filter, "
-            "will only return role assignments granted to this user.",
+                        "will only return role assignments granted to this user.",
         ),
         role: Optional[str] = Query(
             None,
@@ -144,7 +144,7 @@ def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
         # the type hint of the get_data_with_input is incorrect, it claims it returns a dict but it
         # actually returns a Response
         result = cast(
-            Response,
+            Response | Dict,
             await policy_store.get_data_with_input(
                 "/permit/api/role_assignments/list_role_assignments",
                 ListRoleAssignmentsPDPBody.construct(
@@ -152,8 +152,10 @@ def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
                 ),
             ),
         )
-
-        return parse_raw_as(WrappedResponse, result.body).result
+        if isinstance(result, Response):
+            return parse_raw_as(WrappedResponse, result.body).result
+        else:
+            return parse_obj_as(WrappedResponse, result).result
 
     @router.get(
         "/users/{user_id}",
