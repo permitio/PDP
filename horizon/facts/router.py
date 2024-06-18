@@ -1,3 +1,5 @@
+from typing import Callable, Any, Iterable
+
 from fastapi import (
     APIRouter,
     Depends,
@@ -6,6 +8,7 @@ from fastapi import (
     Response,
 )
 from loguru import logger
+from opal_common.schemas.data import DataSourceEntry
 
 from authentication import enforce_pdp_token
 from facts.client import FactsClientDependency, FactsClient
@@ -29,7 +32,14 @@ async def create_user(
         update_subscriber,
         wait_timeout,
         path="/users",
-        obj_type="user",
+        entries_callback=lambda r, body: [
+            create_data_source_entry(
+                obj_type="users",
+                obj_id=body["id"],
+                obj_key=body["key"],
+                authorization_header=r.headers.get("Authorization"),
+            )
+        ],
     )
 
 
@@ -47,7 +57,14 @@ async def sync_user(
         update_subscriber,
         wait_timeout,
         path=f"/users/{user_id}",
-        obj_type="user",
+        entries_callback=lambda r, body: [
+            create_data_source_entry(
+                obj_type="users",
+                obj_id=body["id"],
+                obj_key=body["key"],
+                authorization_header=r.headers.get("Authorization"),
+            )
+        ],
     )
 
 
@@ -65,7 +82,14 @@ async def replace_user(
         update_subscriber,
         wait_timeout,
         path=f"/users/{user_id}",
-        obj_type="user",
+        entries_callback=lambda r, body: [
+            create_data_source_entry(
+                obj_type="users",
+                obj_id=body["id"],
+                obj_key=body["key"],
+                authorization_header=r.headers.get("Authorization"),
+            )
+        ],
     )
 
 
@@ -77,39 +101,27 @@ async def assign_user_role(
     wait_timeout: WaitTimeoutDependency,
     user_id: str,
 ):
-    response = await client.send_forward_request(request, f"/users/{user_id}/roles")
-    body = client.extract_body(response)
-    if body is None:
-        return client.convert_response(response)
-
-    try:
-        data_update_entry = create_data_update_entry(
-            [
-                create_data_source_entry(
-                    obj_type="role_assignments",
-                    obj_id=body["id"],
-                    obj_key=f"user:{body['user']}",
-                    authorization_header=request.headers.get("Authorization"),
-                ),
-                create_data_source_entry(
-                    obj_type="users",
-                    obj_id=body["user_id"],
-                    obj_key=body["user"],
-                    authorization_header=request.headers.get("Authorization"),
-                ),
-            ]
-        )
-    except KeyError as e:
-        logger.error(
-            f"Missing required field {e.args[0]} in the response body, skipping wait for update."
-        )
-        return client.convert_response(response)
-
-    await update_subscriber.publish_and_wait(
-        data_update_entry,
-        timeout=wait_timeout,
+    return await forward_request_then_wait_for_update(
+        client,
+        request,
+        update_subscriber,
+        wait_timeout,
+        path=f"/users/{user_id}/roles",
+        entries_callback=lambda r, body: [
+            create_data_source_entry(
+                obj_type="role_assignments",
+                obj_id=body["id"],
+                obj_key=f"user:{body['user']}",
+                authorization_header=r.headers.get("Authorization"),
+            ),
+            create_data_source_entry(
+                obj_type="users",
+                obj_id=body["user_id"],
+                obj_key=body["user"],
+                authorization_header=r.headers.get("Authorization"),
+            ),
+        ],
     )
-    return client.convert_response(response)
 
 
 @facts_router.post("/resource_instances")
@@ -119,33 +131,21 @@ async def create_resource_instance(
     update_subscriber: DataUpdateSubscriberDependency,
     wait_timeout: WaitTimeoutDependency,
 ):
-    response = await client.send_forward_request(request, "/resource_instances")
-    body = client.extract_body(response)
-    if body is None:
-        return client.convert_response(response)
-
-    try:
-        data_update_entry = create_data_update_entry(
-            [
-                create_data_source_entry(
-                    obj_type="resource_instances",
-                    obj_id=body["id"],
-                    obj_key=f"{body['resource']}:{body['key']}",
-                    authorization_header=request.headers.get("Authorization"),
-                ),
-            ]
-        )
-    except KeyError as e:
-        logger.error(
-            f"Missing required field {e.args[0]} in the response body, skipping wait for update."
-        )
-        return client.convert_response(response)
-
-    await update_subscriber.publish_and_wait(
-        data_update_entry,
-        timeout=wait_timeout,
+    return await forward_request_then_wait_for_update(
+        client,
+        request,
+        update_subscriber,
+        wait_timeout,
+        path="/resource_instances",
+        entries_callback=lambda r, body: [
+            create_data_source_entry(
+                obj_type="resource_instances",
+                obj_id=body["id"],
+                obj_key=f"{body['resource']}:{body['key']}",
+                authorization_header=r.headers.get("Authorization"),
+            ),
+        ],
     )
-    return client.convert_response(response)
 
 
 async def forward_request_then_wait_for_update(
@@ -155,9 +155,9 @@ async def forward_request_then_wait_for_update(
     wait_timeout: float | None,
     *,
     path: str,
-    obj_type: str,
-    obj_id_field: str = "id",
-    obj_key_field: str = "key",
+    entries_callback: Callable[
+        [FastApiRequest, dict[str, Any]], Iterable[DataSourceEntry]
+    ],
     expected_status_code: int = status.HTTP_200_OK,
 ) -> Response:
     response = await client.send_forward_request(request, path)
@@ -167,17 +167,10 @@ async def forward_request_then_wait_for_update(
 
     try:
         data_update_entry = create_data_update_entry(
-            [
-                create_data_source_entry(
-                    obj_type=obj_type,
-                    obj_id=body[obj_id_field],
-                    obj_key=body[obj_key_field],
-                    authorization_header=request.headers.get("Authorization"),
-                )
-            ]
+            list(entries_callback(request, body))
         )
     except KeyError as e:
-        logger.error(
+        logger.warning(
             f"Missing required field {e.args[0]} in the response body, skipping wait for update."
         )
         return client.convert_response(response)
