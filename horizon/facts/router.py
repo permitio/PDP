@@ -112,6 +112,42 @@ async def assign_user_role(
     return client.convert_response(response)
 
 
+@facts_router.post("/resource_instances")
+async def create_resource_instance(
+    request: FastApiRequest,
+    client: FactsClientDependency,
+    update_subscriber: DataUpdateSubscriberDependency,
+    wait_timeout: WaitTimeoutDependency,
+):
+    response = await client.send_forward_request(request, "/resource_instances")
+    body = client.extract_body(response)
+    if body is None:
+        return client.convert_response(response)
+
+    try:
+        data_update_entry = create_data_update_entry(
+            [
+                create_data_source_entry(
+                    obj_type="resource_instances",
+                    obj_id=body["id"],
+                    obj_key=f"{body['resource']}:{body['key']}",
+                    authorization_header=request.headers.get("Authorization"),
+                ),
+            ]
+        )
+    except KeyError as e:
+        logger.error(
+            f"Missing required field {e.args[0]} in the response body, skipping wait for update."
+        )
+        return client.convert_response(response)
+
+    await update_subscriber.publish_and_wait(
+        data_update_entry,
+        timeout=wait_timeout,
+    )
+    return client.convert_response(response)
+
+
 async def forward_request_then_wait_for_update(
     client: FactsClient,
     request: FastApiRequest,
