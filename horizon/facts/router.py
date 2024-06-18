@@ -65,6 +65,50 @@ async def replace_user(
     )
 
 
+@facts_router.post("/users/{user_id}/roles")
+async def assign_user_role(
+    request: FastApiRequest,
+    client: FactsClientDependency,
+    update_subscriber: DataUpdateSubscriberDependency,
+    user_id: str,
+):
+    response = await client.send_forward_request(request, f"/users/{user_id}/roles")
+    if response.status_code != 200:
+        logger.warning("Response status code is not 200, skipping wait for update.")
+        return client.convert_response(response)
+
+    body = response.json()
+    wait_timeout = get_wait_timeout(request)
+    try:
+        data_update_entry = create_data_update_entry(
+            [
+                create_data_source_entry(
+                    obj_type="role_assignments",
+                    obj_id=body["id"],
+                    obj_key=f"user:{body['user']}",
+                    authorization_header=request.headers.get("Authorization"),
+                ),
+                create_data_source_entry(
+                    obj_type="users",
+                    obj_id=body["user_id"],
+                    obj_key=body["user"],
+                    authorization_header=request.headers.get("Authorization"),
+                ),
+            ]
+        )
+    except KeyError as e:
+        logger.error(
+            f"Missing required field {e.args[0]} in the response body, skipping wait for update."
+        )
+        return client.convert_response(response)
+
+    await update_subscriber.publish_and_wait(
+        data_update_entry,
+        timeout=wait_timeout,
+    )
+    return client.convert_response(response)
+
+
 async def forward_request_then_wait_for_update(
     client: FactsClient,
     request: FastApiRequest,
