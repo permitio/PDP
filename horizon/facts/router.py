@@ -2,16 +2,14 @@ from fastapi import (
     APIRouter,
     Depends,
     Request as FastApiRequest,
-    HTTPException,
     status,
     Response,
 )
 from loguru import logger
 
 from authentication import enforce_pdp_token
-from config import sidecar_config
 from facts.client import FactsClientDependency, FactsClient
-from facts.dependencies import DataUpdateSubscriberDependency
+from facts.dependencies import DataUpdateSubscriberDependency, WaitTimeoutDependency
 from facts.opal_forwarder import create_data_source_entry, create_data_update_entry
 from facts.update_subscriber import DataUpdateSubscriber
 
@@ -23,11 +21,13 @@ async def create_user(
     request: FastApiRequest,
     client: FactsClientDependency,
     update_subscriber: DataUpdateSubscriberDependency,
+    wait_timeout: WaitTimeoutDependency,
 ):
     return await forward_request_then_wait_for_update(
         client,
         request,
         update_subscriber,
+        wait_timeout,
         path="/users",
         obj_type="user",
     )
@@ -38,12 +38,14 @@ async def sync_user(
     request: FastApiRequest,
     client: FactsClientDependency,
     update_subscriber: DataUpdateSubscriberDependency,
+    wait_timeout: WaitTimeoutDependency,
     user_id: str,
 ):
     return await forward_request_then_wait_for_update(
         client,
         request,
         update_subscriber,
+        wait_timeout,
         path=f"/users/{user_id}",
         obj_type="user",
     )
@@ -54,12 +56,14 @@ async def replace_user(
     request: FastApiRequest,
     client: FactsClientDependency,
     update_subscriber: DataUpdateSubscriberDependency,
+    wait_timeout: WaitTimeoutDependency,
     user_id: str,
 ):
     return await forward_request_then_wait_for_update(
         client,
         request,
         update_subscriber,
+        wait_timeout,
         path=f"/users/{user_id}",
         obj_type="user",
     )
@@ -70,6 +74,7 @@ async def assign_user_role(
     request: FastApiRequest,
     client: FactsClientDependency,
     update_subscriber: DataUpdateSubscriberDependency,
+    wait_timeout: WaitTimeoutDependency,
     user_id: str,
 ):
     response = await client.send_forward_request(request, f"/users/{user_id}/roles")
@@ -78,7 +83,6 @@ async def assign_user_role(
         return client.convert_response(response)
 
     body = response.json()
-    wait_timeout = get_wait_timeout(request)
     try:
         data_update_entry = create_data_update_entry(
             [
@@ -113,6 +117,7 @@ async def forward_request_then_wait_for_update(
     client: FactsClient,
     request: FastApiRequest,
     update_subscriber: DataUpdateSubscriber,
+    wait_timeout: float | None,
     *,
     path: str,
     obj_type: str,
@@ -134,7 +139,6 @@ async def forward_request_then_wait_for_update(
         )
         return client.convert_response(response)
 
-    wait_timeout = get_wait_timeout(request)
     data_update_entry = create_data_update_entry(
         [
             create_data_source_entry(
@@ -150,22 +154,6 @@ async def forward_request_then_wait_for_update(
         timeout=wait_timeout,
     )
     return client.convert_response(response)
-
-
-def get_wait_timeout(request: FastApiRequest) -> float | None:
-    wait_timeout = request.headers.get(
-        "X-Wait-timeout", sidecar_config.LOCAL_FACTS_WAIT_TIMEOUT
-    )
-    try:
-        wait_timeout = float(wait_timeout)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=400, detail="Invalid X-Wait-timeout header"
-        ) from e
-    if wait_timeout < 0:
-        return None
-    else:
-        return wait_timeout
 
 
 @facts_router.api_route(
