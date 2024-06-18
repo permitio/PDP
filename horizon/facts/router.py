@@ -78,11 +78,10 @@ async def assign_user_role(
     user_id: str,
 ):
     response = await client.send_forward_request(request, f"/users/{user_id}/roles")
-    if response.status_code != 200:
-        logger.warning("Response status code is not 200, skipping wait for update.")
+    body = client.extract_body(response)
+    if body is None:
         return client.convert_response(response)
 
-    body = response.json()
     try:
         data_update_entry = create_data_update_entry(
             [
@@ -126,29 +125,27 @@ async def forward_request_then_wait_for_update(
     expected_status_code: int = status.HTTP_200_OK,
 ) -> Response:
     response = await client.send_forward_request(request, path)
-    if response.status_code != expected_status_code:
-        logger.warning(
-            f"Response status code is not {expected_status_code}, skipping wait for update."
-        )
+    body = client.extract_body(response, expected_status_code)
+    if body is None:
         return client.convert_response(response)
 
-    body = response.json()
-    if obj_id_field not in body or obj_key_field not in body:
+    try:
+        data_update_entry = create_data_update_entry(
+            [
+                create_data_source_entry(
+                    obj_type=obj_type,
+                    obj_id=body[obj_id_field],
+                    obj_key=body[obj_key_field],
+                    authorization_header=request.headers.get("Authorization"),
+                )
+            ]
+        )
+    except KeyError as e:
         logger.error(
-            f"Missing required fields in response body: {obj_id_field!r}, {obj_key_field!r}, skipping wait for update."
+            f"Missing required field {e.args[0]} in the response body, skipping wait for update."
         )
         return client.convert_response(response)
 
-    data_update_entry = create_data_update_entry(
-        [
-            create_data_source_entry(
-                obj_type=obj_type,
-                obj_id=body[obj_id_field],
-                obj_key=body[obj_key_field],
-                authorization_header=request.headers.get("Authorization"),
-            )
-        ]
-    )
     await update_subscriber.publish_and_wait(
         data_update_entry,
         timeout=wait_timeout,

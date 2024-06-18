@@ -101,6 +101,26 @@ class FactsClient:
                 headers=response.headers,
             )
 
+    @staticmethod
+    def extract_body(
+        response: HttpxResponse, expected_status_code: int = status.HTTP_200_OK
+    ):
+        if response.status_code != expected_status_code:
+            logger.warning(
+                f"Response status code is not {expected_status_code}, skipping wait for update."
+            )
+            return None
+
+        try:
+            body = response.json()
+        except Exception:
+            logger.exception(
+                f"Failed to parse response body as JSON, skipping wait for update."
+            )
+            return None
+        else:
+            return body
+
 
 _facts_client: Optional[FactsClient] = None
 
