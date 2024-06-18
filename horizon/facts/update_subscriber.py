@@ -6,6 +6,7 @@ from fastapi_websocket_pubsub import ALL_TOPICS
 from loguru import logger
 from opal_client.data.updater import DataUpdater
 from opal_common.schemas.data import DataUpdate
+from tenacity import retry, wait_fixed, stop_after_delay
 
 
 class DataUpdateSubscriber:
@@ -15,6 +16,8 @@ class DataUpdateSubscriber:
         self._update_listeners: dict[str, asyncio.Event] = defaultdict(asyncio.Event)
         self._register_callbacks()
 
+    # Sometimes a request is sent before the client is created, so we retry the registration
+    @retry(wait=wait_fixed(1), stop=stop_after_delay(10), reraise=True)
     def _register_callbacks(self) -> None:
         """
         Register the on_message callback for incoming messages from all topics subscribed by the PubSub client.
@@ -41,7 +44,7 @@ class DataUpdateSubscriber:
 
         event = self._update_listeners.get(update_id)
         if event is not None:
-            logger.info(
+            logger.debug(
                 f"Received message on topic {topic!r} with update ID {update_id!r}, resolving listener(s)"
             )
             event.set()
