@@ -93,6 +93,33 @@ async def replace_user(
     )
 
 
+def create_role_assignment_data_entries(
+    request: FastApiRequest, body: dict[str, Any]
+) -> Iterable[DataSourceEntry]:
+    if not body.get("resource_instance"):
+        yield create_data_source_entry(
+            obj_type="role_assignments",
+            obj_id=body["id"],
+            obj_key=f"user:{body['user']}",
+            authorization_header=request.headers.get("Authorization"),
+        )
+        yield create_data_source_entry(
+            obj_type="users",
+            obj_id=body["user_id"],
+            obj_key=body["user"],
+            authorization_header=request.headers.get("Authorization"),
+        )
+    else:
+        # note that user_id == subject_id,
+        # and user == user_key == subject_key == subject_str
+        yield create_data_source_entry(
+            obj_type="role_assignments",
+            obj_id=body["user_id"],
+            obj_key=body["user"],
+            authorization_header=request.headers.get("Authorization"),
+        )
+
+
 @facts_router.post("/users/{user_id}/roles")
 async def assign_user_role(
     request: FastApiRequest,
@@ -107,20 +134,24 @@ async def assign_user_role(
         update_subscriber,
         wait_timeout,
         path=f"/users/{user_id}/roles",
-        entries_callback=lambda r, body: [
-            create_data_source_entry(
-                obj_type="role_assignments",
-                obj_id=body["id"],
-                obj_key=f"user:{body['user']}",
-                authorization_header=r.headers.get("Authorization"),
-            ),
-            create_data_source_entry(
-                obj_type="users",
-                obj_id=body["user_id"],
-                obj_key=body["user"],
-                authorization_header=r.headers.get("Authorization"),
-            ),
-        ],
+        entries_callback=create_role_assignment_data_entries,
+    )
+
+
+@facts_router.post("/role_assignments")
+async def create_role_assignment(
+    request: FastApiRequest,
+    client: FactsClientDependency,
+    update_subscriber: DataUpdateSubscriberDependency,
+    wait_timeout: WaitTimeoutDependency,
+):
+    return await forward_request_then_wait_for_update(
+        client,
+        request,
+        update_subscriber,
+        wait_timeout,
+        path=f"/role_assignments",
+        entries_callback=create_role_assignment_data_entries,
     )
 
 
