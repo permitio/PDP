@@ -26,6 +26,38 @@ async def create_user(
     )
 
 
+@facts_router.put("/users/{user_id}")
+async def sync_user(
+    request: FastApiRequest,
+    client: FactsClientDependency,
+    update_subscriber: DataUpdateSubscriberDependency,
+    user_id: str,
+):
+    return await forward_request_then_wait_for_update(
+        client,
+        request,
+        update_subscriber,
+        path=f"/users/{user_id}",
+        obj_type="user",
+    )
+
+
+@facts_router.patch("/users/{user_id}")
+async def replace_user(
+    request: FastApiRequest,
+    client: FactsClientDependency,
+    update_subscriber: DataUpdateSubscriberDependency,
+    user_id: str,
+):
+    return await forward_request_then_wait_for_update(
+        client,
+        request,
+        update_subscriber,
+        path=f"/users/{user_id}",
+        obj_type="user",
+    )
+
+
 async def forward_request_then_wait_for_update(
     client: FactsClient,
     request: FastApiRequest,
