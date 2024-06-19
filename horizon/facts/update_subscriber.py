@@ -71,7 +71,7 @@ class DataUpdateSubscriber:
                 event.wait(),
                 timeout=timeout,
             )
-            await asyncio.sleep(sidecar_config.LOCAL_FACT_UPLOAD_SYNC_SLEEP_S)
+            await asyncio.sleep(sidecar_config.LOCAL_FACT_POST_ACK_SLEEP_S)
             return True
         except asyncio.TimeoutError:
             logger.warning(f"Timeout waiting for update id={update_id!r}")

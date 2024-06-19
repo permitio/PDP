@@ -32,13 +32,6 @@ class SidecarConfig(Confi):
         "http://localhost:8000",
         description="the backend tier that will be used to generate relay API JWTs",
     )
-    LOCAL_FACT_UPLOAD_SYNC_SLEEP_S = confi.float(
-        "LOCAL_FACT_UPLOAD_SYNC_SLEEP_S",
-        1,
-        description="The amount of time to sleep after the ack of receiving the local facts."
-                    "Used in order to close the gap between receiving the local fact message from the server"
-                    "and putting the actual fact in the engine.",
-    )
 
     # backend api url, where proxy requests go
     BACKEND_SERVICE_URL = confi.str(
@@ -173,6 +166,13 @@ class SidecarConfig(Confi):
     LOCAL_FACTS_WAIT_TIMEOUT = confi.float(
         "LOCAL_FACTS_WAIT_TIMEOUT", 10,
         description="The amount of time in seconds to wait for the local facts to be synced before timing out"
+    )
+    LOCAL_FACT_POST_ACK_SLEEP_S = confi.float(
+        "LOCAL_FACT_POST_ACK_SLEEP_S",
+        1,
+        description="The amount of time to sleep after the ack of receiving the local facts."
+                    "Used in order to close the gap between receiving the local fact message from the server"
+                    "and putting the actual fact in the engine.",
     )
 
     # non configurable values -------------------------------------------------
