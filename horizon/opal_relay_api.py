@@ -59,7 +59,7 @@ class PDPPingRequest(BaseModel):
     platform: PDPPingPlatformState
 
 
-MAX_JWT_EXPIRY_BUFFER_TIME = 10
+MAX_JWT_EXPIRY_BUFFER_TIME = 60 * 60  # 1 hour, has to be more than the ping interval
 
 
 def get_jwt_expiry_time(jwt: str) -> int:

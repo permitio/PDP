@@ -102,9 +102,7 @@ class FactsClient:
             )
 
     @staticmethod
-    def extract_body(
-        response: HttpxResponse
-    ):
+    def extract_body(response: HttpxResponse):
         if not response.is_success:
             logger.warning(
                 f"Response status code is not successful ( {response.status_code} ), "
