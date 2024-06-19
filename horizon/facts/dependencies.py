@@ -3,8 +3,8 @@ from typing import Annotated
 from fastapi import Depends, Request, HTTPException
 from opal_client import OpalClient
 
-from config import sidecar_config
-from facts.update_subscriber import DataUpdateSubscriber
+from horizon.config import sidecar_config
+from horizon.facts.update_subscriber import DataUpdateSubscriber
 
 
 def get_opal_client(request: Request) -> OpalClient:
