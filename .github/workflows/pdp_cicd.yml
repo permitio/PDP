@@ -68,7 +68,7 @@ jobs:
       working-directory: ./permit-backend/proactive_tests/sidecar
       run: |
         pip install requests pydantic==1.8.2 docker
-        python sidecar_tester.py -k ${{ secrets.PERMIT_TESTS_TOKEN }} -u https://api.permit.io --no-v1 -2 permitio/pdp-v2:test --no-pull
+        python sidecar_tester.py -k ${{ secrets.PERMIT_TESTS_TOKEN }} -u https://api.permit.io -2 permitio/pdp-v2:test --no-pull
 
   build-and-push-pdp-vanilla:
     needs: pdp-tests
