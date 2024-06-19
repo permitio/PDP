@@ -8,6 +8,8 @@ from opal_client.data.updater import DataUpdater
 from opal_common.schemas.data import DataUpdate
 from tenacity import retry, wait_fixed, stop_after_delay
 
+from horizon.config import sidecar_config
+
 
 class DataUpdateSubscriber:
     def __init__(self, updater: DataUpdater):
@@ -69,6 +71,7 @@ class DataUpdateSubscriber:
                 event.wait(),
                 timeout=timeout,
             )
+            await asyncio.sleep(sidecar_config.LOCAL_FACT_UPLOAD_SYNC_SLEEP_S)
             return True
         except asyncio.TimeoutError:
             logger.warning(f"Timeout waiting for update id={update_id!r}")
