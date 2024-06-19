@@ -93,7 +93,7 @@ async def sync_user(
 
 
 @facts_router.patch("/users/{user_id}")
-async def replace_user(
+async def update_user(
     request: FastApiRequest,
     client: FactsClientDependency,
     update_subscriber: DataUpdateSubscriberDependency,
@@ -203,7 +203,7 @@ async def create_resource_instance(
     )
 
 
-@facts_router.put("/resource_instances/{instance_id}")
+@facts_router.patch("/resource_instances/{instance_id}")
 async def update_resource_instance(
     request: FastApiRequest,
     client: FactsClientDependency,
