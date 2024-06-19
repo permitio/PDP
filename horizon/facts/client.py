@@ -8,8 +8,8 @@ from starlette import status
 from starlette.requests import Request as FastApiRequest
 from starlette.responses import Response as FastApiResponse, StreamingResponse
 
-from config import sidecar_config
-from startup.remote_config import get_remote_config
+from horizon.config import sidecar_config
+from horizon.startup.remote_config import get_remote_config
 
 
 class FactsClient:

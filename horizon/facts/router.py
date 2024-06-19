@@ -10,11 +10,17 @@ from fastapi import (
 from loguru import logger
 from opal_common.schemas.data import DataSourceEntry
 
-from authentication import enforce_pdp_token
-from facts.client import FactsClientDependency, FactsClient
-from facts.dependencies import DataUpdateSubscriberDependency, WaitTimeoutDependency
-from facts.opal_forwarder import create_data_source_entry, create_data_update_entry
-from facts.update_subscriber import DataUpdateSubscriber
+from horizon.authentication import enforce_pdp_token
+from horizon.facts.client import FactsClientDependency, FactsClient
+from horizon.facts.dependencies import (
+    DataUpdateSubscriberDependency,
+    WaitTimeoutDependency,
+)
+from horizon.facts.opal_forwarder import (
+    create_data_source_entry,
+    create_data_update_entry,
+)
+from horizon.facts.update_subscriber import DataUpdateSubscriber
 
 facts_router = APIRouter(dependencies=[Depends(enforce_pdp_token)])
 

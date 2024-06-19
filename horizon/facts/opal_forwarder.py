@@ -5,8 +5,8 @@ from uuid import uuid4
 from opal_common.fetcher.providers.http_fetch_provider import HttpFetcherConfig
 from opal_common.schemas.data import DataSourceEntry, DataUpdate
 
-from config import sidecar_config
-from startup.remote_config import get_remote_config
+from horizon.config import sidecar_config
+from horizon.startup.remote_config import get_remote_config
 
 
 @cache
