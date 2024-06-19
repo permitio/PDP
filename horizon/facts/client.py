@@ -103,11 +103,12 @@ class FactsClient:
 
     @staticmethod
     def extract_body(
-        response: HttpxResponse, expected_status_code: int = status.HTTP_200_OK
+        response: HttpxResponse
     ):
-        if response.status_code != expected_status_code:
+        if not response.is_success:
             logger.warning(
-                f"Response status code is not {expected_status_code}, skipping wait for update."
+                f"Response status code is not successful ( {response.status_code} ), "
+                f"skipping wait for update."
             )
             return None
 

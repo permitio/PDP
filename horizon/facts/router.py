@@ -43,6 +43,30 @@ async def create_user(
     )
 
 
+@facts_router.post("/tenants")
+async def create_tenant(
+    request: FastApiRequest,
+    client: FactsClientDependency,
+    update_subscriber: DataUpdateSubscriberDependency,
+    wait_timeout: WaitTimeoutDependency,
+):
+    return await forward_request_then_wait_for_update(
+        client,
+        request,
+        update_subscriber,
+        wait_timeout,
+        path="/tenants",
+        entries_callback=lambda r, body: [
+            create_data_source_entry(
+                obj_type="tenants",
+                obj_id=body["id"],
+                obj_key=body["key"],
+                authorization_header=r.headers.get("Authorization"),
+            )
+        ],
+    )
+
+
 @facts_router.put("/users/{user_id}")
 async def sync_user(
     request: FastApiRequest,
@@ -238,10 +262,9 @@ async def forward_request_then_wait_for_update(
     entries_callback: Callable[
         [FastApiRequest, dict[str, Any]], Iterable[DataSourceEntry]
     ],
-    expected_status_code: int = status.HTTP_200_OK,
 ) -> Response:
     response = await client.send_forward_request(request, path)
-    body = client.extract_body(response, expected_status_code)
+    body = client.extract_body(response)
     if body is None:
         return client.convert_response(response)
 
