@@ -16,6 +16,12 @@ class SidecarConfig(Confi):
         description="URL to the control plane that manages this PDP, typically Permit.io cloud (api.permit.io)",
     )
 
+    CONTROL_PLANE_PDP_DELTAS_API = confi.str(
+        "CONTROL_PLANE_PDP_DELTAS_API",
+        "http://localhost:8000",
+        description="URL to the control plane's PDP deltas API",
+    )
+
     CONTROL_PLANE_RELAY_API = confi.str(
         "CONTROL_PLANE_RELAY_API",
         "http://localhost:8001",
@@ -156,6 +162,19 @@ class SidecarConfig(Confi):
     KONG_INTEGRATION = confi.bool("KONG_INTEGRATION", False)
     # enables debug ouptut for the Kong integration endpoint
     KONG_INTEGRATION_DEBUG = confi.bool("KONG_INTEGRATION_DEBUG", False)
+
+    LOCAL_FACTS_WAIT_TIMEOUT = confi.float(
+        "LOCAL_FACTS_WAIT_TIMEOUT",
+        10,
+        description="The amount of time in seconds to wait for the local facts to be synced before timing out",
+    )
+    LOCAL_FACT_POST_ACK_SLEEP_S = confi.float(
+        "LOCAL_FACT_POST_ACK_SLEEP_S",
+        1,
+        description="The amount of time to sleep after the ack of receiving the local facts."
+        "Used in order to close the gap between receiving the local fact message from the server"
+        "and putting the actual fact in the engine.",
+    )
 
     # non configurable values -------------------------------------------------
 
