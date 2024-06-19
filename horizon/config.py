@@ -164,15 +164,16 @@ class SidecarConfig(Confi):
     KONG_INTEGRATION_DEBUG = confi.bool("KONG_INTEGRATION_DEBUG", False)
 
     LOCAL_FACTS_WAIT_TIMEOUT = confi.float(
-        "LOCAL_FACTS_WAIT_TIMEOUT", 10,
-        description="The amount of time in seconds to wait for the local facts to be synced before timing out"
+        "LOCAL_FACTS_WAIT_TIMEOUT",
+        10,
+        description="The amount of time in seconds to wait for the local facts to be synced before timing out",
     )
     LOCAL_FACT_POST_ACK_SLEEP_S = confi.float(
         "LOCAL_FACT_POST_ACK_SLEEP_S",
         1,
         description="The amount of time to sleep after the ack of receiving the local facts."
-                    "Used in order to close the gap between receiving the local fact message from the server"
-                    "and putting the actual fact in the engine.",
+        "Used in order to close the gap between receiving the local fact message from the server"
+        "and putting the actual fact in the engine.",
     )
 
     # non configurable values -------------------------------------------------
@@ -182,13 +183,13 @@ class SidecarConfig(Confi):
         {
             "name": "Authorization API",
             "description": "Authorization queries to OPA. These queries are answered locally by OPA "
-                           + "and do not require the cloud service. Latency should be very low (< 20ms per query)",
+            + "and do not require the cloud service. Latency should be very low (< 20ms per query)",
         },
         {
             "name": "Local Queries",
             "description": "These queries are done locally against the sidecar and do not "
-                           + "involve a network round-trip to Permit.io cloud API. Therefore they are safe "
-                           + "to use with reasonable performance (i.e: with negligible latency) in the context of a user request.",
+            + "involve a network round-trip to Permit.io cloud API. Therefore they are safe "
+            + "to use with reasonable performance (i.e: with negligible latency) in the context of a user request.",
         },
         {
             "name": "Policy Updater",
@@ -197,10 +198,10 @@ class SidecarConfig(Confi):
         {
             "name": "Cloud API Proxy",
             "description": "These endpoints proxy the Permit.io cloud api, and therefore **incur high-latency**. "
-                           + "You should not use the cloud API in the standard request flow of users, i.e in places where the incurred "
-                           + "added latency will affect your entire api. A good place to call the cloud API will be in one-time user events "
-                           + "such as user registration (i.e: calling sync user, assigning initial user roles, etc.). "
-                           + "The sidecar will proxy to the cloud every request prefixed with '/sdk'.",
+            + "You should not use the cloud API in the standard request flow of users, i.e in places where the incurred "
+            + "added latency will affect your entire api. A good place to call the cloud API will be in one-time user events "
+            + "such as user registration (i.e: calling sync user, assigning initial user roles, etc.). "
+            + "The sidecar will proxy to the cloud every request prefixed with '/sdk'.",
             "externalDocs": {
                 "description": "The cloud api complete docs are located here:",
                 "url": "https://api.permit.io/redoc",

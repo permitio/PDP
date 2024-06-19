@@ -90,7 +90,7 @@ def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
         user: Optional[str] = Query(
             None,
             description="optional user filter, "
-                        "will only return role assignments granted to this user.",
+            "will only return role assignments granted to this user.",
         ),
         role: Optional[str] = Query(
             None,
