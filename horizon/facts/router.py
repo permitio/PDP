@@ -294,6 +294,7 @@ async def forward_request_then_wait_for_update(
 @facts_router.api_route(
     "/{full_path:path}",
     methods=["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"],
+    include_in_schema=False,
 )
 async def forward_remaining_requests(
     request: FastApiRequest, client: FactsClientDependency, full_path: str
