@@ -2,6 +2,7 @@ from typing import Annotated
 
 from fastapi import Depends, Request, HTTPException
 from opal_client import OpalClient
+from loguru import logger
 
 from horizon.config import sidecar_config
 from horizon.facts.update_subscriber import DataUpdateSubscriber
@@ -35,9 +36,14 @@ def get_wait_timeout(request: Request) -> float | None:
     wait_timeout = request.headers.get(
         "X-Wait-timeout", sidecar_config.LOCAL_FACTS_WAIT_TIMEOUT
     )
+    if not wait_timeout:
+        return None
     try:
         wait_timeout = float(wait_timeout)
     except ValueError as e:
+        logger.error(
+            f"Invalid X-Wait-timeout header, expected float, got {wait_timeout!r}"
+        )
         raise HTTPException(
             status_code=400,
             detail=f"Invalid X-Wait-timeout header, expected float, got {wait_timeout!r}",

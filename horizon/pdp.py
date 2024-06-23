@@ -356,6 +356,13 @@ class PermitPDP:
             tags=["Local Facts API"],
             dependencies=[Depends(enforce_pdp_token)],
         )
+        app.include_router(
+            facts_router,
+            prefix="/v2/facts/{proj_id}/{env_id}",
+            tags=["Local Facts API (compat)"],
+            include_in_schema=False,
+            dependencies=[Depends(enforce_pdp_token)],
+        )
 
         # TODO: remove this when clients update sdk version (legacy routes)
         @app.post(
