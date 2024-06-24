@@ -25,12 +25,15 @@ class DataUpdateSubscriber:
     def decorator(self, func):
         @wraps(func)
         async def wrapper(report: DataUpdateReport, *args, **kwargs):
-            await self._resolve_listeners(report.update_id)
+            if report.update_id is not None:
+                self._resolve_listeners(report.update_id)
+            else:
+                logger.debug("Received update report without update ID")
             return await func(report, *args, **kwargs)
 
         return wrapper
 
-    async def _resolve_listeners(self, update_id: str) -> None:
+    def _resolve_listeners(self, update_id: str) -> None:
         event = self._update_listeners.get(update_id)
         if event is not None:
             logger.debug(
