@@ -1,12 +1,11 @@
 import asyncio
 from collections import defaultdict
+from functools import wraps
 from uuid import uuid4
 
-from fastapi_websocket_pubsub import ALL_TOPICS
 from loguru import logger
 from opal_client.data.updater import DataUpdater
-from opal_common.schemas.data import DataUpdate
-from tenacity import retry, wait_fixed, stop_after_delay
+from opal_common.schemas.data import DataUpdate, DataUpdateReport
 
 from horizon.config import sidecar_config
 
@@ -14,45 +13,33 @@ from horizon.config import sidecar_config
 class DataUpdateSubscriber:
     def __init__(self, updater: DataUpdater):
         self._updater = updater
+        self._updater._should_send_reports = True
         self._notifier_id = uuid4().hex
         self._update_listeners: dict[str, asyncio.Event] = defaultdict(asyncio.Event)
-        self._register_callbacks()
+        self._inject_subscriber()
 
-    # Sometimes a request is sent before the client is created, so we retry the registration
-    @retry(wait=wait_fixed(1), stop=stop_after_delay(10), reraise=True)
-    def _register_callbacks(self) -> None:
-        """
-        Register the on_message callback for incoming messages from all topics subscribed by the PubSub client.
-        """
-        callbacks = self._updater._client._callbacks  # noqa
-        if ALL_TOPICS not in callbacks:
-            callbacks[ALL_TOPICS] = []
-        callbacks[ALL_TOPICS].append(self._on_message)
+    def _inject_subscriber(self):
+        reporter = self._updater.callbacks_reporter
+        reporter.report_update_results = self.decorator(reporter.report_update_results)
 
-    async def _on_message(self, topic: str = "", data: dict | None = None) -> None:
-        """
-        Callback for incoming messages from the PubSub client.
-        """
-        if data is None:
-            logger.debug(f"Received message on topic {topic!r} without data")
-            return
+    def decorator(self, func):
+        @wraps(func)
+        async def wrapper(report: DataUpdateReport, *args, **kwargs):
+            await self._resolve_listeners(report.update_id)
+            return await func(report, *args, **kwargs)
 
-        update_id = data.get("id")
-        if update_id is None:
-            logger.debug(
-                f"Received message on topic {topic!r} without an update ID: {data}"
-            )
-            return
+        return wrapper
 
+    async def _resolve_listeners(self, update_id: str) -> None:
         event = self._update_listeners.get(update_id)
         if event is not None:
             logger.debug(
-                f"Received message on topic {topic!r} with update ID {update_id!r}, resolving listener(s)"
+                f"Received acknowledgment for update ID {update_id!r}, resolving listener(s)"
             )
             event.set()
         else:
             logger.debug(
-                f"Received message on topic {topic!r} with update ID {update_id!r}, but no listener found"
+                f"Received acknowledgment for update ID {update_id!r}, but no listener found"
             )
 
     async def wait_for_message(
