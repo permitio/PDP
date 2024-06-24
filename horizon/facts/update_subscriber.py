@@ -28,7 +28,7 @@ class DataUpdateSubscriber:
             if report.update_id is not None:
                 self._resolve_listeners(report.update_id)
             else:
-                logger.debug("Received update report without update ID")
+                logger.debug("Received report without update ID")
             return await func(report, *args, **kwargs)
 
         return wrapper
@@ -61,7 +61,6 @@ class DataUpdateSubscriber:
                 event.wait(),
                 timeout=timeout,
             )
-            await asyncio.sleep(sidecar_config.LOCAL_FACT_POST_ACK_SLEEP_S)
             return True
         except asyncio.TimeoutError:
             logger.warning(f"Timeout waiting for update id={update_id!r}")
