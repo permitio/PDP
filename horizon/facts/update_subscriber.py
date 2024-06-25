@@ -20,9 +20,11 @@ class DataUpdateSubscriber:
 
     def _inject_subscriber(self):
         reporter = self._updater.callbacks_reporter
-        reporter.report_update_results = self.decorator(reporter.report_update_results)
+        reporter.report_update_results = self._reports_callback_decorator(
+            reporter.report_update_results
+        )
 
-    def decorator(self, func):
+    def _reports_callback_decorator(self, func):
         @wraps(func)
         async def wrapper(report: DataUpdateReport, *args, **kwargs):
             if report.update_id is not None:
