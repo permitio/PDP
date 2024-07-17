@@ -1,4 +1,4 @@
-from typing import Dict, Optional, Any
+from typing import Optional
 
 import requests
 from opal_common.logger import logger
@@ -6,58 +6,11 @@ from pydantic import ValidationError
 from tenacity import retry, retry_if_not_exception_type, stop, wait
 
 from horizon.config import sidecar_config
+from horizon.startup.api_keys import get_env_api_key
+from horizon.startup.blocking_request import BlockingRequest
+from horizon.startup.exceptions import NoRetryException
 from horizon.startup.schemas import RemoteConfig
 from horizon.state import PersistentStateHandler
-
-
-class NoRetryException(Exception):
-    ...
-
-
-class InvalidPDPTokenException(NoRetryException):
-    ...
-
-
-class BlockingRequest:
-    def __init__(
-        self, token: Optional[str], extra_headers: dict[str, Any] | None = None
-    ):
-        self._token = token
-        self._extra_headers = {
-            k: v for k, v in (extra_headers or {}).items() if v is not None
-        }
-
-    def _headers(self) -> Dict[str, str]:
-        headers = {}
-        if self._token is not None:
-            headers["Authorization"] = f"Bearer {self._token}"
-
-        headers.update(self._extra_headers)
-        return headers
-
-    def get(self, url: str, params=None) -> dict:
-        """
-        utility method to send a *blocking* HTTP GET request and get the response back.
-        """
-        response = requests.get(url, headers=self._headers(), params=params)
-
-        if response.status_code == 401:
-            raise InvalidPDPTokenException()
-
-        return response.json()
-
-    def post(self, url: str, payload: dict = None, params=None) -> dict:
-        """
-        utility method to send a *blocking* HTTP POST request with a JSON payload and get the response back.
-        """
-        response = requests.post(
-            url, json=payload, headers=self._headers(), params=params
-        )
-
-        if response.status_code == 401:
-            raise InvalidPDPTokenException()
-
-        return response.json()
 
 
 class RemoteConfigFetcher:
@@ -94,7 +47,6 @@ class RemoteConfigFetcher:
     def __init__(
         self,
         backend_url: str = sidecar_config.CONTROL_PLANE,
-        sidecar_access_token: str = sidecar_config.API_KEY,
         remote_config_route: str = sidecar_config.REMOTE_CONFIG_ENDPOINT,
         shard_id: Optional[str] = sidecar_config.SHARD_ID,
         retry_config=None,
@@ -108,7 +60,8 @@ class RemoteConfigFetcher:
             remote_config_route (string, optional): api route to fetch sidecar config
         """
         self._url = f"{backend_url}{remote_config_route}"
-        self._token = sidecar_access_token
+        self._backend_url = backend_url
+        self._token = get_env_api_key()
         self._retry_config = (
             retry_config if retry_config is not None else self.DEFAULT_RETRY_CONFIG
         )

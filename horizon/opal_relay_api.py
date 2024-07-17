@@ -14,6 +14,7 @@ from opal_client.config import opal_client_config
 from pydantic import BaseModel
 
 from horizon.config import sidecar_config
+from horizon.startup.api_keys import get_env_api_key
 from horizon.state import PersistentStateHandler
 
 
@@ -96,7 +97,7 @@ class OpalRelayAPIClient:
     def api_session(self) -> ClientSession:
         if self._api_session is None:
             self._api_session = ClientSession(
-                headers={"Authorization": f"Bearer {sidecar_config.API_KEY}"}
+                headers={"Authorization": f"Bearer {get_env_api_key()}"}
             )
         return self._api_session
 
