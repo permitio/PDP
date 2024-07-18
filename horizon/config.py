@@ -17,6 +17,18 @@ class SidecarConfig(Confi):
             cls.instance = super(SidecarConfig, cls).__new__(cls)
         return cls.instance
 
+    ENABLE_GOPAL = confi.bool(
+        "ENABLE_GOPAL",
+        False,
+        description="if true, the sidecar will enable the GOPAL service to manage the PDP",
+    )
+
+    GOPAL_SERVICE_URL = confi.str(
+        "GOPAL_SERVICE_URL",
+        "http://localhost:8080",
+        description="URL to the Go opal service that manages this PDP, typically Permit.io cloud (api.permit.io)",
+    )
+
     SHARD_ID = confi.str(
         "SHARD_ID",
         None,
