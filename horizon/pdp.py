@@ -28,6 +28,7 @@ from horizon.enforcer.opa.config_maker import (
     get_opa_authz_policy_file_path,
     get_opa_config_file_path,
 )
+from horizon.gopal.client import GOPALClient
 from horizon.local.api import init_local_cache_api_router
 from horizon.opal_relay_api import OpalRelayAPIClient
 from horizon.proxy.api import router as proxy_router
@@ -131,7 +132,7 @@ class PermitPDP:
         if sidecar_config.ENABLE_MONITORING:
             self._configure_monitoring()
 
-        self._opal = OpalClient(
+        self._opal = GOPALClient(
             shard_id=sidecar_config.SHARD_ID, data_topics=self._fix_data_topics()
         )
         self._configure_cloud_logging(remote_config.context)
