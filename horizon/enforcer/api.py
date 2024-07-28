@@ -19,7 +19,7 @@ from starlette.responses import JSONResponse
 
 from horizon.authentication import enforce_pdp_token
 from horizon.config import sidecar_config
-from horizon.enforcer.data_filtering.compile_client import OpaCompileClient
+from horizon.enforcer.data_filtering.compile_api.compile_client import OpaCompileClient
 from horizon.enforcer.schemas import (
     AuthorizationQuery,
     AuthorizationResult,

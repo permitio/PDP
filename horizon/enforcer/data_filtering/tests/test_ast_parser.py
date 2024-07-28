@@ -1,4 +1,4 @@
-from horizon.enforcer.data_filtering.rego_ast import (
+from horizon.enforcer.data_filtering.rego_ast.parser import (
     BooleanTerm,
     Call,
     CallTerm,
@@ -14,7 +14,7 @@ from horizon.enforcer.data_filtering.rego_ast import (
     StringTerm,
     VarTerm,
 )
-from horizon.enforcer.data_filtering.schemas import (
+from horizon.enforcer.data_filtering.compile_api.schemas import (
     CRTerm,
     CRExpression,
     CRQuery,
