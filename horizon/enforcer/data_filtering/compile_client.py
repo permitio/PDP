@@ -19,10 +19,10 @@ class OpaCompileClient:
     async def compile_query(
         self, query: str, input: AuthorizationQuery, unknowns: list[str]
     ):
+        # we don't want debug rules when we try to reduce the policy into a partial policy
         input = {**input.dict(), "use_debugger": False}
         data = {
             "query": query,
-            # we don't want debug rules when we try to reduce the policy into a partial policy
             "input": input,
             "unknowns": unknowns,
         }

@@ -48,7 +48,14 @@ from horizon.enforcer.data_filtering.schemas import (
 )
 
 
-def indent_string(s: str, indent_char: str = "\t", indent_level: int = 1):
+def indent_lines(s: str, indent_char: str = "\t", indent_level: int = 1) -> str:
+    """
+    indents all lines within a multiline string by an indent character repeated by a given indent level.
+    e.g: indents all lines within a string by 3 tab (\t) characters (indent level 3).
+
+    returns a new indented string.
+    )
+    """
     indent = indent_char * indent_level
     return "\n".join(["{}{}".format(indent, row) for row in s.splitlines()])
 
@@ -63,7 +70,8 @@ class QuerySet:
 
     You can roughly translate the query set into an SQL WHERE statement.
 
-    Between each query of the queryset - there is a logical OR.
+    Between each query of the queryset - there is a logical OR:
+    Policy is true if query_1 OR query_2 OR ... OR query_n and query_i == (expr_i_1 AND ... AND expr_i_m).
     """
 
     def __init__(self, queries: list["Query"], support_modules: list):
@@ -71,7 +79,7 @@ class QuerySet:
         self._support_modules = support_modules
 
     @classmethod
-    def parse(cls, response: CompileResponse):
+    def parse(cls, response: CompileResponse) -> "QuerySet":
         """
         example data:
         # queryset
@@ -99,11 +107,11 @@ class QuerySet:
         return cls([Query.parse(q) for q in queries], [])
 
     @property
-    def queries(self):
+    def queries(self) -> list["Query"]:
         return self._queries
 
     def __repr__(self):
-        queries_str = "\n".join([indent_string(repr(r)) for r in self._queries])
+        queries_str = "\n".join([indent_lines(repr(r)) for r in self._queries])
         return "QuerySet([\n{}\n])\n".format(queries_str)
 
     @property
@@ -130,7 +138,7 @@ class Query:
         self._expressions = expressions
 
     @classmethod
-    def parse(cls, query: CRQuery):
+    def parse(cls, query: CRQuery) -> "Query":
         """
         example data:
         # query (an array of expressions)
@@ -147,7 +155,7 @@ class Query:
         return cls([Expression.parse(e) for e in query.__root__])
 
     @property
-    def expressions(self):
+    def expressions(self) -> list["Expression"]:
         return self._expressions
 
     @property
@@ -158,7 +166,7 @@ class Query:
         return len(self._expressions) == 0
 
     def __repr__(self):
-        exprs_str = "\n".join([indent_string(repr(e)) for e in self._expressions])
+        exprs_str = "\n".join([indent_lines(repr(e)) for e in self._expressions])
         return "Query([\n{}\n])\n".format(exprs_str)
 
 
@@ -174,7 +182,7 @@ class Expression:
         self._terms = terms
 
     @classmethod
-    def parse(cls, data: CRExpression):
+    def parse(cls, data: CRExpression) -> "Expression":
         """
         example data:
         # expression
@@ -226,21 +234,21 @@ class Expression:
             return cls([TermParser.parse(t) for t in terms])
 
     @property
-    def operator(self):
+    def operator(self) -> "Term":
         """
         returns the term that is the operator of the expression (typically the first term)
         """
         return self._terms[0]
 
     @property
-    def operands(self):
+    def operands(self) -> list["Term"]:
         """
         returns the terms that are the operands of the expression
         """
         return self._terms[1:]
 
     @property
-    def terms(self):
+    def terms(self) -> list["Term"]:
         """
         returns all the terms of the expression
         """
@@ -255,11 +263,16 @@ T = TypeVar("T")
 
 
 class Term(Generic[T]):
+    """
+    a term is an atomic part of an expression (line of code).
+    it is typically a literal (number, string, etc), a reference (variable) or an operator (e.g: "==" or ">").
+    """
+
     def __init__(self, value: T):
         self.value = value
 
     @classmethod
-    def parse(cls, data: T):
+    def parse(cls, data: T) -> "Term":
         return cls(data)
 
     def __repr__(self):
@@ -288,24 +301,36 @@ class VarTerm(Term[str]):
 
 
 class Ref:
+    """
+    represents a reference in OPA, which is a path to a document in the OPA document tree.
+    when translating this into a boolean expression tree, a reference would typically translate into a variable.
+    """
+
     def __init__(self, ref_parts: list[str]):
         self._parts = ref_parts
 
     @property
-    def parts(self):
+    def parts(self) -> list[str]:
+        """
+        the parts of the full path to the document, each part is a node in OPA document tree.
+        """
         return self._parts
 
     @property
-    def as_string(self):
-        return str(self)
+    def as_string(self) -> str:
+        return str(self)  # calls __str__(self)
 
     def __str__(self):
         return ".".join(self._parts)
 
 
 class RefTerm(Term[Ref]):
+    """
+    A term that represents an OPA reference, holds a Ref object as a value.
+    """
+
     @classmethod
-    def parse(cls, terms: list[dict]):
+    def parse(cls, terms: list[dict]) -> "Term[Ref]":
         assert len(terms) > 0
         parsed_terms: list[Term] = [TermParser.parse(CRTerm(**t)) for t in terms]
         var_term = parsed_terms[0]
@@ -327,7 +352,7 @@ class RefTerm(Term[Ref]):
 
 class Call:
     """
-    represents a function call
+    represents a function call expression inside OPA.
     """
 
     def __init__(self, func: Term, args: list[Term]):
@@ -335,11 +360,17 @@ class Call:
         self._args = args
 
     @property
-    def func(self):
+    def func(self) -> Term:
+        """
+        a (ref)term that holds the reference to the name of the function that is acting on the arguments of the function call
+        """
         return self._func
 
     @property
-    def args(self):
+    def args(self) -> list[Term]:
+        """
+        the terms representing the arguments of the function call
+        """
         return self._args
 
     def __str__(self):
@@ -347,8 +378,12 @@ class Call:
 
 
 class CallTerm(Term[Call]):
+    """
+    A term that represents a function call Term, holds a Call object as a value.
+    """
+
     @classmethod
-    def parse(cls, terms: list[dict]):
+    def parse(cls, terms: list[dict]) -> Term[Call]:
         assert len(terms) > 0
         parsed_terms: list[Term] = [TermParser.parse(CRTerm(**t)) for t in terms]
         func_term = parsed_terms[0]
