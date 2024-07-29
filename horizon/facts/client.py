@@ -10,6 +10,7 @@ from starlette.responses import Response as FastApiResponse, StreamingResponse
 
 from horizon.config import sidecar_config
 from horizon.startup.remote_config import get_remote_config
+from horizon.startup.api_keys import get_env_api_key
 
 
 class FactsClient:
@@ -19,9 +20,10 @@ class FactsClient:
     @property
     def client(self) -> AsyncClient:
         if self._client is None:
+            env_api_key = get_env_api_key()
             self._client = AsyncClient(
                 base_url=sidecar_config.CONTROL_PLANE,
-                headers={"Authorization": f"Bearer {sidecar_config.API_KEY}"},
+                headers={"Authorization": f"Bearer {env_api_key}"},
             )
         return self._client
 
