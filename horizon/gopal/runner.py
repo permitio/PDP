@@ -23,9 +23,10 @@ class GopalRunner(PolicyEngineRunner):
 
     def _client(self) -> aiohttp.ClientSession:
         if self.__client is None:
-            self.__client = aiohttp.ClientSession(base_url=self._engine_url,headers={
-                "Authorization": f"Bearer {self._engine_token}"
-            })
+            self.__client = aiohttp.ClientSession(
+                base_url=self._engine_url,
+                headers={"Authorization": f"Bearer {self._engine_token}"},
+            )
         return self.__client
 
     async def __aenter__(self):
@@ -60,10 +61,10 @@ class GopalRunner(PolicyEngineRunner):
         current_dir = Path(__file__).parent
         os.environ["PDP_ENGINE_TOKEN"] = self._engine_token
         arch = platform.machine()
-        if arch == 'x86_64':
-            binary_path = 'gopal-amd'
-        elif arch == 'arm64' or arch == 'aarch64':
-            binary_path = 'gopal-arm'
+        if arch == "x86_64":
+            binary_path = "gopal-amd"
+        elif arch == "arm64" or arch == "aarch64":
+            binary_path = "gopal-arm"
         else:
             raise ValueError(f"Unsupported architecture: {arch}")
         return os.path.join(current_dir, binary_path)
