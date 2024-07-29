@@ -35,6 +35,7 @@
 #                            +--- Term
 
 
+from enum import Enum
 import json
 from types import NoneType
 from typing import Generic, List, TypeVar
@@ -262,6 +263,16 @@ class Expression:
 T = TypeVar("T")
 
 
+class TermType(str, Enum):
+    NULL = "null"
+    BOOLEAN = "boolean"
+    NUMBER = "number"
+    STRING = "string"
+    VAR = "var"
+    REF = "ref"
+    CALL = "call"
+
+
 class Term(Generic[T]):
     """
     a term is an atomic part of an expression (line of code).
@@ -270,6 +281,10 @@ class Term(Generic[T]):
 
     def __init__(self, value: T):
         self.value = value
+
+    @property
+    def type(self) -> str:
+        return NotImplementedError()
 
     @classmethod
     def parse(cls, data: T) -> "Term":
@@ -280,24 +295,36 @@ class Term(Generic[T]):
 
 
 class NullTerm(Term[NoneType]):
-    pass
+    @property
+    def type(self) -> str:
+        return TermType.NULL
 
 
 class BooleanTerm(Term[bool]):
-    pass
+    @property
+    def type(self) -> str:
+        return TermType.BOOLEAN
 
 
 class NumberTerm(Term[int | float]):
-    pass
+    @property
+    def type(self) -> str:
+        return TermType.NUMBER
 
 
 class StringTerm(Term[str]):
-    pass
+    @property
+    def type(self) -> str:
+        return TermType.STRING
 
 
 class VarTerm(Term[str]):
     def __repr__(self):
         return self.value
+
+    @property
+    def type(self) -> str:
+        return TermType.VAR
 
 
 class Ref:
@@ -328,6 +355,10 @@ class RefTerm(Term[Ref]):
     """
     A term that represents an OPA reference, holds a Ref object as a value.
     """
+
+    @property
+    def type(self) -> str:
+        return TermType.REF
 
     @classmethod
     def parse(cls, terms: list[dict]) -> "Term[Ref]":
@@ -381,6 +412,10 @@ class CallTerm(Term[Call]):
     """
     A term that represents a function call Term, holds a Call object as a value.
     """
+
+    @property
+    def type(self) -> str:
+        return TermType.CALL
 
     @classmethod
     def parse(cls, terms: list[dict]) -> Term[Call]:
