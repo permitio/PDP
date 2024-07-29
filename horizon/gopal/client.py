@@ -83,14 +83,15 @@ class ExtendedOpalClient(OpalClient):
 
 
 class GOPALClient(ExtendedOpalClient):
-
     @staticmethod
     async def _run_engine_runner(
         callback: Optional[Callable[[], Awaitable]],
         engine_runner: PolicyEngineRunner,
     ):
         # runs the callback after policy store is up
-        engine_runner.register_process_initial_start_callbacks([callback] if callback else [])
+        engine_runner.register_process_initial_start_callbacks(
+            [callback] if callback else []
+        )
         async with engine_runner:
             await engine_runner.wait_until_done()
 
@@ -118,7 +119,9 @@ class GOPALClient(ExtendedOpalClient):
             return False
         return await self._gopal_runner.is_ready()
 
-    async def start_client_background_tasks(self, *, gopal_runner_enabled: bool = sidecar_config.ENABLE_GOPAL):
+    async def start_client_background_tasks(
+        self, *, gopal_runner_enabled: bool = sidecar_config.ENABLE_GOPAL
+    ):
         tasks = [super().start_client_background_tasks()]
         if gopal_runner_enabled:
             logger.info("Starting GOPAL runner")
