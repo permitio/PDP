@@ -96,8 +96,9 @@ class OpalRelayAPIClient:
 
     def api_session(self) -> ClientSession:
         if self._api_session is None:
+            env_api_key = get_env_api_key()
             self._api_session = ClientSession(
-                headers={"Authorization": f"Bearer {get_env_api_key()}"}
+                headers={"Authorization": f"Bearer {env_api_key}"}
             )
         return self._api_session
 

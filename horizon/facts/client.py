@@ -20,9 +20,10 @@ class FactsClient:
     @property
     def client(self) -> AsyncClient:
         if self._client is None:
+            env_api_key = get_env_api_key()
             self._client = AsyncClient(
                 base_url=sidecar_config.CONTROL_PLANE,
-                headers={"Authorization": f"Bearer {get_env_api_key()}"},
+                headers={"Authorization": f"Bearer {env_api_key}"},
             )
         return self._client
 
