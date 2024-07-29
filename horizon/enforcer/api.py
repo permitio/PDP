@@ -741,4 +741,34 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             media_type="application/json",
         )
 
+    @router.post(
+        "/filter_resources_get_sql",
+        response_model=AuthorizationResult,
+        status_code=status.HTTP_200_OK,
+        response_model_exclude_none=True,
+        dependencies=[Depends(enforce_pdp_token)],
+    )
+    async def filter_resources_get_sql(
+        request: Request,
+        input: AuthorizationQuery,
+        x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
+    ):
+        """
+        TODO: temp endpoint, instead we should wrap the capability in the SDK
+        """
+        headers = transform_headers(request)
+        client = OpaCompileClient(headers=headers)
+        COMPILE_ROOT_RULE_REFERENCE = f"data.{MAIN_PARTIAL_EVAL_PACKAGE}.allow"
+        query = f"{COMPILE_ROOT_RULE_REFERENCE} == true"
+        residual_policy = await client.compile_query(
+            query=query,
+            input=input,
+            unknowns=[
+                "input.resource.key",
+                "input.resource.tenant",
+                "input.resource.attributes",
+            ],
+            raw=True,
+        )
+
     return router

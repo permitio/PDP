@@ -1,5 +1,6 @@
 from horizon.enforcer.data_filtering.rego_ast import parser as ast
 from horizon.enforcer.data_filtering.boolean_expression.schemas import (
+    CALL_OPERATOR,
     Operand,
     ResidualPolicyResponse,
     ResidualPolicyType,
@@ -7,6 +8,8 @@ from horizon.enforcer.data_filtering.boolean_expression.schemas import (
     Expr,
     Value,
     Variable,
+    LOGICAL_AND,
+    LOGICAL_OR,
 )
 
 
@@ -39,7 +42,7 @@ def translate_opa_queryset(queryset: ast.QuerySet) -> ResidualPolicyResponse:
         type=ResidualPolicyType.CONDITIONAL,
         condition=Expression(
             expression=Expr(
-                operator="or",
+                operator=LOGICAL_OR,
                 operands=[translate_query(query) for query in queries],
             )
         ),
@@ -52,7 +55,7 @@ def translate_query(query: ast.Query) -> Expression:
 
     return Expression(
         expression=Expr(
-            operator="and",
+            operator=LOGICAL_AND,
             operands=[
                 translate_expression(expression) for expression in query.expressions
             ],
@@ -81,7 +84,7 @@ def translate_expression(expression: ast.Expression) -> Expression:
 def translate_call_term(call: ast.Call) -> Expression:
     return Expression(
         expression=Expr(
-            operator="call",
+            operator=CALL_OPERATOR,
             operands=[
                 Expression(
                     expression=Expr(

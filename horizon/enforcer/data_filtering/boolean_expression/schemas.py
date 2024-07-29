@@ -5,6 +5,11 @@ from typing import Any, Optional, Union
 
 from pydantic import BaseModel, Field, root_validator
 
+LOGICAL_AND = "and"
+LOGICAL_OR = "or"
+LOGICAL_NOT = "not"
+CALL_OPERATOR = "call"
+
 
 class BaseSchema(BaseModel):
     class Config:
