@@ -4,7 +4,7 @@ import re
 from typing import cast, Optional, Union, Dict, List
 
 import aiohttp
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, Query
 from fastapi import HTTPException
 from fastapi import Request, Response, status
 from opal_client.config import opal_client_config
@@ -58,6 +58,7 @@ USER_PERMISSIONS_POLICY_PACKAGE = "permit.user_permissions"
 AUTHORIZED_USERS_POLICY_PACKAGE = "permit.authorized_users.authorized_users"
 USER_TENANTS_POLICY_PACKAGE = USER_PERMISSIONS_POLICY_PACKAGE + ".tenants"
 KONG_ROUTES_TABLE_FILE = "/config/kong_routes.json"
+MAIN_PARTIAL_EVAL_PACKAGE = "permit.partial_eval"
 
 stats_manager = StatisticsManager(
     interval_seconds=sidecar_config.OPA_CLIENT_FAILURE_THRESHOLD_INTERVAL,
@@ -688,11 +689,15 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
     async def filter_resources(
         request: Request,
         input: AuthorizationQuery,
+        raw: bool = Query(
+            False,
+            description="whether we should include the OPA raw compilation result in the response. this can help us debug the translation of the AST",
+        ),
         x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
     ):
         headers = transform_headers(request)
         client = OpaCompileClient(headers=headers)
-        COMPILE_ROOT_RULE_REFERENCE = "data.example.rbac4.allow"
+        COMPILE_ROOT_RULE_REFERENCE = f"data.{MAIN_PARTIAL_EVAL_PACKAGE}.allow"
         query = f"{COMPILE_ROOT_RULE_REFERENCE} == true"
         response = await client.compile_query(
             query=query,
@@ -702,6 +707,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
                 "input.resource.tenant",
                 "input.resource.attributes",
             ],
+            raw=raw,
         )
         return response
 

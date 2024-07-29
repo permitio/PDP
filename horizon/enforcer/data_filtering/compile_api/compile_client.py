@@ -6,6 +6,14 @@ from opal_client.config import opal_client_config
 from opal_client.logger import logger
 
 from horizon.enforcer.schemas import AuthorizationQuery
+from horizon.enforcer.data_filtering.compile_api.schemas import CompileResponse
+from horizon.enforcer.data_filtering.rego_ast import parser as ast
+from horizon.enforcer.data_filtering.boolean_expression.schemas import (
+    ResidualPolicyResponse,
+)
+from horizon.enforcer.data_filtering.boolean_expression.translator import (
+    translate_opa_queryset,
+)
 
 
 class OpaCompileClient:
@@ -17,7 +25,11 @@ class OpaCompileClient:
         )
 
     async def compile_query(
-        self, query: str, input: AuthorizationQuery, unknowns: list[str]
+        self,
+        query: str,
+        input: AuthorizationQuery,
+        unknowns: list[str],
+        raw: bool = False,
     ):
         # we don't want debug rules when we try to reduce the policy into a partial policy
         input = {**input.dict(), "use_debugger": False}
@@ -27,20 +39,35 @@ class OpaCompileClient:
             "unknowns": unknowns,
         }
         try:
-            logger.debug("Compiling OPA query: {}", data)
+            logger.info("Compiling OPA query: {}", data)
             async with self._client as session:
                 async with session.post(
                     "/v1/compile",
                     data=json.dumps(data),
                     raise_for_status=True,
                 ) as response:
-                    content = await response.text()
-                    return Response(
-                        content=content,
-                        status_code=response.status,
-                        headers=dict(response.headers),
-                        media_type="application/json",
+                    opa_compile_result = await response.json()
+                    logger.info(
+                        "OPA compile query result: status={status}, response={response}",
+                        status=response.status,
+                        response=json.dumps(opa_compile_result),
                     )
+                    try:
+                        residual_policy = self.translate_rego_ast(opa_compile_result)
+                        if raw:
+                            residual_policy.raw = opa_compile_result
+                        return Response(
+                            content=json.dumps(residual_policy.dict()),
+                            status_code=status.HTTP_200_OK,
+                            media_type="application/json",
+                        )
+                    except Exception as exc:
+                        return HTTPException(
+                            status.HTTP_406_NOT_ACCEPTABLE,
+                            detail="failed to translate compiled OPA query (query: {query}, response: {response}, exc={exc})".format(
+                                query=data, response=opa_compile_result, exc=exc
+                            ),
+                        )
         except aiohttp.ClientResponseError as e:
             exc = HTTPException(
                 status.HTTP_502_BAD_GATEWAY,  # 502 indicates server got an error from another server
@@ -57,3 +84,8 @@ class OpaCompileClient:
             )
         logger.warning(exc.detail)
         raise exc
+
+    def translate_rego_ast(self, response: dict) -> ResidualPolicyResponse:
+        response = CompileResponse(**response)
+        queryset = ast.QuerySet.parse(response)
+        return translate_opa_queryset(queryset)

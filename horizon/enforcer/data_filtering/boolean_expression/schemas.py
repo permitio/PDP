@@ -66,6 +66,10 @@ class ResidualPolicyResponse(BaseSchema):
         None,
         description="an optional condition, exists if the type of the residual policy is CONDITIONAL",
     )
+    raw: Optional[dict] = Field(
+        None,
+        description="raw OPA compilation result, provided for debugging purposes",
+    )
 
     @root_validator
     def check_condition_exists_when_needed(cls, values: dict):
