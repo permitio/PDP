@@ -65,9 +65,14 @@ def translate_expression(expression: ast.Expression) -> Expression:
         # this is a call expression
         return translate_call_term(expression.terms[0].value)
 
+    if not isinstance(expression.operator, ast.RefTerm):
+        raise ValueError(
+            f"The operator in an expression must be a term of type ref, instead got type {expression.operator.type} and value {expression.operator.value}"
+        )
+
     return Expression(
         expression=Expr(
-            operator=expression.operator,
+            operator=expression.operator.value.as_string,
             operands=[translate_term(term) for term in expression.operands],
         )
     )
