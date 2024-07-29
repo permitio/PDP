@@ -30,7 +30,7 @@ class OpaCompileClient:
         input: AuthorizationQuery,
         unknowns: list[str],
         raw: bool = False,
-    ):
+    ) -> ResidualPolicyResponse:
         # we don't want debug rules when we try to reduce the policy into a partial policy
         input = {**input.dict(), "use_debugger": False}
         data = {
@@ -56,11 +56,7 @@ class OpaCompileClient:
                         residual_policy = self.translate_rego_ast(opa_compile_result)
                         if raw:
                             residual_policy.raw = opa_compile_result
-                        return Response(
-                            content=json.dumps(residual_policy.dict()),
-                            status_code=status.HTTP_200_OK,
-                            media_type="application/json",
-                        )
+                        return residual_policy
                     except Exception as exc:
                         return HTTPException(
                             status.HTTP_406_NOT_ACCEPTABLE,
