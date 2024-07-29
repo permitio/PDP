@@ -293,7 +293,7 @@ async def _is_allowed_gopal(query: BaseSchema, request: Request):
         stats_manager.report_failure()
         exc = HTTPException(
             status.HTTP_504_GATEWAY_TIMEOUT,
-            detail="OPA request timed out (url: {url}, timeout: {timeout}s)".format(
+            detail="GOPAL request timed out (url: {url}, timeout: {timeout}s)".format(
                 url=url,
                 timeout=sidecar_config.OPA_CLIENT_QUERY_TIMEOUT,
             ),
@@ -302,7 +302,7 @@ async def _is_allowed_gopal(query: BaseSchema, request: Request):
         stats_manager.report_failure()
         exc = HTTPException(
             status.HTTP_502_BAD_GATEWAY,  # 502 indicates server got an error from another server
-            detail="OPA request failed (url: {url}, status: {status}, message: {message})".format(
+            detail="GOPAL request failed (url: {url}, status: {status}, message: {message})".format(
                 url=url, status=e.status, message=e.message
             ),
         )
@@ -310,7 +310,7 @@ async def _is_allowed_gopal(query: BaseSchema, request: Request):
         stats_manager.report_failure()
         exc = HTTPException(
             status.HTTP_502_BAD_GATEWAY,
-            detail="OPA request failed (url: {url}, error: {error}".format(
+            detail="GOPAL request failed (url: {url}, error: {error}".format(
                 url=url, error=str(e)
             ),
         )
@@ -574,8 +574,8 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             raise HTTPException(
                 status_code=status.HTTP_421_MISDIRECTED_REQUEST,
                 detail="Mismatch between client version and PDP version,"
-                       " required v2 request body, got v1. "
-                       "hint: try to update your client version to v2",
+                " required v2 request body, got v1. "
+                "hint: try to update your client version to v2",
             )
         query = cast(AuthorizationQuery, query)
         if sidecar_config.ENABLE_GOPAL:
@@ -664,7 +664,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             raise HTTPException(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Kong integration is disabled. "
-                       "Please set the PDP_KONG_INTEGRATION variable to true to enable it.",
+                "Please set the PDP_KONG_INTEGRATION variable to true to enable it.",
             )
 
         await PersistentStateHandler.get_instance().seen_sdk("kong")
