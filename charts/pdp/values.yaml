@@ -1,8 +1,16 @@
 pdp:
-  ApiKey: "<your PDP API Key>"
+  ApiKey: ""
   port: 7766
   replicas: 1
   image:
     repository: permitio/pdp-v2
     tag: latest
     pullPolicy: Always
+  logs_forwarder:
+    enabled: true
+    type: "stdout"  # 'stdout' or 'elasticsearch'
+    elasticsearch:
+      host: ""
+      cloud_auth: ""
+      cloud_id: ""
+      port: 9200
