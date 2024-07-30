@@ -7,7 +7,7 @@ pdp:
     tag: latest
     pullPolicy: Always
   logs_forwarder:
-    enabled: true
+    enabled: false
     type: "stdout"  # 'stdout' or 'elasticsearch'
     elasticsearch:
       host: ""
