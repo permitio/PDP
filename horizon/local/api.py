@@ -157,5 +157,4 @@ def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
         else:
             return parse_obj_as(WrappedResponse, result).result
 
-
     return router

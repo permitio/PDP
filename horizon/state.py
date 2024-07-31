@@ -36,11 +36,12 @@ class StateUpdateThrottled(Exception):
 class PersistentStateHandler:
     _instance: Optional["PersistentStateHandler"] = None
 
-    def __init__(self, filename: str):
+    def __init__(self, filename: str, env_api_key: str):
         self._filename = filename
         self._prev_state_update_attempt = 0.0
         self._seen_sdk_update_lock = asyncio.Lock()
         self._state_update_lock = asyncio.Lock()
+        self._env_api_key = env_api_key
         if not self._load():
             self._new()
 
@@ -79,8 +80,8 @@ class PersistentStateHandler:
         os.rename(new_filename, self._filename)
 
     @classmethod
-    def initialize(cls):
-        cls._instance = cls(PERSISTENT_STATE_FILENAME)
+    def initialize(cls, env_api_key: str):
+        cls._instance = cls(PERSISTENT_STATE_FILENAME, env_api_key)
         logger.info("PDP ID is {}", cls.get().pdp_instance_id)
 
     @classmethod
@@ -210,7 +211,7 @@ class PersistentStateHandler:
             logger.info("Reporting status update to server...")
             response = await session.post(
                 url=config_url,
-                headers={"Authorization": f"Bearer {sidecar_config.API_KEY}"},
+                headers={"Authorization": f"Bearer {self._env_api_key}"},
                 json=await PersistentStateHandler.build_state_payload(state),
             )
             if response.status != status.HTTP_204_NO_CONTENT:

@@ -4,6 +4,7 @@ import jinja2
 from opal_common.logger import logger
 
 from horizon.config import SidecarConfig
+from horizon.startup.api_keys import get_env_api_key
 
 
 def get_jinja_environment() -> jinja2.Environment:
@@ -51,7 +52,7 @@ def get_opa_config_file_path(
         template = env.get_template(template_path)
         contents = template.render(
             cloud_service_url=decision_logs_backend_tier,
-            bearer_token=sidecar_config.API_KEY,
+            bearer_token=get_env_api_key(),
             log_ingress_endpoint=sidecar_config.OPA_DECISION_LOG_INGRESS_ROUTE,
             min_delay_seconds=sidecar_config.OPA_DECISION_LOG_MIN_DELAY,
             max_delay_seconds=sidecar_config.OPA_DECISION_LOG_MAX_DELAY,
@@ -84,7 +85,7 @@ def get_opa_authz_policy_file_path(
     try:
         template = env.get_template(template_path)
         contents = template.render(
-            bearer_token=sidecar_config.API_KEY,
+            bearer_token=get_env_api_key(),
             allow_metrics_unauthenticated=sidecar_config.ALLOW_METRICS_UNAUTHENTICATED,
         )
     except jinja2.TemplateNotFound:

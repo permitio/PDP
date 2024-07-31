@@ -1,4 +1,5 @@
 import logging
+import os
 import sys
 from typing import List
 from uuid import uuid4, UUID
@@ -21,7 +22,7 @@ from opal_common.logging.formatter import Formatter
 
 from horizon.facts.router import facts_router
 from horizon.authentication import enforce_pdp_token
-from horizon.config import MOCK_API_KEY, sidecar_config
+from horizon.config import MOCK_API_KEY, sidecar_config, ApiKeyLevel
 from horizon.enforcer.api import init_enforcer_api_router, stats_manager
 from horizon.enforcer.opa.config_maker import (
     get_opa_authz_policy_file_path,
@@ -30,7 +31,9 @@ from horizon.enforcer.opa.config_maker import (
 from horizon.local.api import init_local_cache_api_router
 from horizon.opal_relay_api import OpalRelayAPIClient
 from horizon.proxy.api import router as proxy_router
-from horizon.startup.remote_config import InvalidPDPTokenException, get_remote_config
+from horizon.startup.remote_config import get_remote_config
+from horizon.startup.exceptions import InvalidPDPTokenException
+from horizon.startup.api_keys import get_env_api_key
 from horizon.state import PersistentStateHandler
 from horizon.system.api import init_system_api_router
 from horizon.system.consts import GUNICORN_EXIT_APP
@@ -85,8 +88,7 @@ class PermitPDP:
 
     def __init__(self):
         self._setup_temp_logger()
-        PersistentStateHandler.initialize()
-        self._verify_config()
+        PersistentStateHandler.initialize(get_env_api_key())
         # fetch and apply config override from cloud control plane
         try:
             remote_config = get_remote_config()
@@ -247,7 +249,7 @@ class PermitPDP:
 
         if sidecar_config.OPA_BEARER_TOKEN_REQUIRED:
             # overrides OPAL client config so that OPAL passes the bearer token in requests
-            opal_client_config.POLICY_STORE_AUTH_TOKEN = sidecar_config.API_KEY
+            opal_client_config.POLICY_STORE_AUTH_TOKEN = get_env_api_key()
             opal_client_config.POLICY_STORE_AUTH_TYPE = PolicyStoreAuth.TOKEN
 
             # append the bearer token authz policy to inline OPA config
@@ -390,7 +392,7 @@ class PermitPDP:
         return self._app
 
     def _verify_config(self):
-        if sidecar_config.API_KEY == MOCK_API_KEY:
+        if get_env_api_key() == MOCK_API_KEY:
             logger.critical(
                 "No API key specified. Please specify one with the PDP_API_KEY environment variable."
             )

@@ -2,8 +2,21 @@ from opal_common.confi import Confi, confi
 
 MOCK_API_KEY = "MUST BE DEFINED"
 
+# scopes enum
+class ApiKeyLevel(str):
+    ORGANIZATION = "organization"
+    PROJECT = "project"
+    ENVIRONMENT = "environment"
+
 
 class SidecarConfig(Confi):
+    def __new__(cls, prefix=None, is_model=True):
+        """creates a singleton object, if it is not created,
+        or else returns the previous singleton object"""
+        if not hasattr(cls, "instance"):
+            cls.instance = super(SidecarConfig, cls).__new__(cls)
+        return cls.instance
+
     SHARD_ID = confi.str(
         "SHARD_ID",
         None,
@@ -48,7 +61,35 @@ class SidecarConfig(Confi):
     REMOTE_STATE_ENDPOINT = confi.str("REMOTE_STATE_ENDPOINT", "/v2/pdps/me/state")
 
     # access token to access backend api
-    API_KEY = confi.str("API_KEY", MOCK_API_KEY)
+    API_KEY = confi.str(
+        "API_KEY",
+        MOCK_API_KEY,
+        description="set this to your environment's API key if you prefer to use the environment level API key.",
+    )
+
+    # access token to your organization
+    ORG_API_KEY = confi.str(
+        "ORG_API_KEY",
+        None,
+        description="set this to your organization's API key if you prefer to use the organization level API key. If not set, the PDP will use the project level API key",
+    )
+
+    # access token to your project
+    PROJECT_API_KEY = confi.str(
+        "PROJECT_API_KEY",
+        None,
+        description="set this to your project's API key if you prefer to use the project level API key. If not set, the PDP will use the default project API key",
+    )
+
+    # chosen project id/key to use for the PDP
+    ACTIVE_PROJECT = confi.str(
+        "ACTIVE_PROJECT", None, description="the project id/key to use for the PDP"
+    )
+
+    # chosen environment id/key to use for the PDP
+    ACTIVE_ENV = confi.str(
+        "ACTIVE_ENV", None, description="the environment id/key to use for the PDP"
+    )
 
     # access token to perform system control operations
     CONTAINER_CONTROL_KEY = confi.str("CONTAINER_CONTROL_KEY", MOCK_API_KEY)
