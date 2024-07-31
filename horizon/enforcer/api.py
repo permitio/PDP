@@ -774,7 +774,13 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
                     "is allowed (fallback response)", reason="cannot decode opa response"
                 )
 
-            return check_result
+            logger.info(f"Result: {check_result['allow']}")
+            
+            if check_result["allow"]:
+                return check_result["debug"], 200
+            else:
+                raise HTTPException(status_code=403, detail=check_result["debug"])
+            
         else:
             logger.info("Base path not found in local, using default Permit Resources")
             

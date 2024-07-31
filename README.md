@@ -112,3 +112,11 @@ Finally, run the app:
 ```
 uvicorn horizon.main:app --reload --port=7000
 ```
+
+OR
+
+Build a local docker image
+```
+export VERSION=vzw2
+make build-arm64   
+```
