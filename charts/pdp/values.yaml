@@ -8,9 +8,11 @@ pdp:
     pullPolicy: Always
   logs_forwarder:
     enabled: false
+    debug_mode: false
     type: "stdout"  # 'stdout' or 'elasticsearch'
     elasticsearch:
-      host: ""
-      cloud_auth: ""
-      cloud_id: ""
-      port: 9200
+      host: "<elasticsearch host>"
+      cloud_auth: "<{user}:{password}>"
+      port: 443
+      index: "<elasticsearch index>"
+  debug_mode: false

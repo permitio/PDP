@@ -34,6 +34,10 @@ spec:
             - name: OPAL_LOG_FILE_PATH
               value: "/tmp/pdp.log"
             {{- end }}
+            {{- if .Values.pdp.debug_mode }}
+            - name: PDP_DEBUG
+              value: "true"
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /health

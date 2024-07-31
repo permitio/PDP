@@ -7,7 +7,7 @@ data:
   fluent-bit.conf: |
     [SERVICE]
         Flush         1
-        Log_Level     info
+        Log_Level     {{ if .Values.pdp.logs_forwarder.debug_mode }}debug{{ else }}info{{ end }}
         HTTP_Server   On
         HTTP_Listen   0.0.0.0
         HTTP_Port     2020
@@ -40,9 +40,13 @@ data:
         Name          es
         Match         *
         Host          {{ .Values.pdp.logs_forwarder.elasticsearch.host }}
-        Cloud_auth    {{ .Values.pdp.logs_forwarder.elasticsearch.cloud_auth }}
-        Cloud_id      {{ .Values.pdp.logs_forwarder.elasticsearch.cloud_id }}
+        Index         {{ .Values.pdp.logs_forwarder.elasticsearch.index }}
         Port          {{ .Values.pdp.logs_forwarder.elasticsearch.port }}
+        tls           On
+        tls.verify    Off
+        Cloud_Auth    {{ .Values.pdp.logs_forwarder.elasticsearch.cloud_auth }}
+        Suppress_Type_Name On
+        Retry_Limit     False
     {{- end }}
 
   filter.lua: |
