@@ -67,7 +67,7 @@ spec:
               mountPath: /tmp/
           env:
             - name: APP_NAME
-              valueFrom: 
+              valueFrom:
                 fieldRef:
                   fieldPath: metadata.labels['app']
         {{- end }}
