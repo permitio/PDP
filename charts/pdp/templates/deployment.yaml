@@ -26,6 +26,18 @@ spec:
                 secretKeyRef:
                   name: permitio-pdp-secret
                   key: ApiKey
+            {{- if .Values.pdp.logs_forwarder.enabled }}
+            - name: PDP_OPA_DECISION_LOG_CONSOLE
+              value: "true"
+            - name: OPAL_LOG_TO_FILE
+              value: "true"
+            - name: OPAL_LOG_FILE_PATH
+              value: "/tmp/pdp.log"
+            {{- end }}
+            {{- if .Values.pdp.debug_mode }}
+            - name: PDP_DEBUG
+              value: "true"
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /health
@@ -38,4 +50,32 @@ spec:
               port: 7000
             initialDelaySeconds: 10
             periodSeconds: 10
+          {{- if .Values.pdp.logs_forwarder.enabled }}
+          volumeMounts:
+            - name: logs
+              mountPath: /tmp/
+          {{- end }}
           resources: {}
+        {{- if .Values.pdp.logs_forwarder.enabled }}
+        - name: fluentbit
+          image: fluent/fluent-bit:3.1.4
+          volumeMounts:
+            - name: fluent-bit-config
+              mountPath: /fluent-bit/etc
+              readOnly: true
+            - name: logs
+              mountPath: /tmp/
+          env:
+            - name: APP_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['app']
+        {{- end }}
+      {{- if .Values.pdp.logs_forwarder.enabled }}
+      volumes:
+        - name: fluent-bit-config
+          configMap:
+            name: fluentbit-config
+        - name: logs
+          emptyDir: {}
+      {{- end }}

@@ -6,3 +6,13 @@ pdp:
     repository: permitio/pdp-v2
     tag: latest
     pullPolicy: Always
+  logs_forwarder:
+    enabled: false
+    debug_mode: false
+    type: "stdout"  # 'stdout' or 'elasticsearch'
+    elasticsearch:
+      host: "<elasticsearch host>"
+      cloud_auth: "<{user}:{password}>"
+      port: 443
+      index: "<elasticsearch index>"
+  debug_mode: false

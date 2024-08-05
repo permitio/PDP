@@ -1,0 +1,70 @@
+{{ if .Values.pdp.logs_forwarder.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluentbit-config
+data:
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush         1
+        Log_Level     {{ if .Values.pdp.logs_forwarder.debug_mode }}debug{{ else }}info{{ end }}
+        HTTP_Server   On
+        HTTP_Listen   0.0.0.0
+        HTTP_Port     2020
+
+    [INPUT]
+        Name          tail
+        Path          /tmp/pdp.log
+        Tag           kube.*
+        DB            /var/log/flb_kube.db
+        Mem_Buf_Limit 5MB
+        Skip_Long_Lines On
+
+    [FILTER]
+        Name          grep
+        Match         kube.*
+        Regex         log "Decision Log.*{.*}"
+
+    [FILTER]
+        Name          lua
+        Match         kube.*
+        script        /fluent-bit/etc/filter.lua
+        call          process_log
+
+    {{- if eq .Values.pdp.logs_forwarder.type "stdout" }}
+    [OUTPUT]
+        Name          stdout
+        Match         *
+    {{- else if eq .Values.pdp.logs_forwarder.type "elasticsearch" }}
+    [OUTPUT]
+        Name          es
+        Match         *
+        Host          {{ .Values.pdp.logs_forwarder.elasticsearch.host }}
+        Index         {{ .Values.pdp.logs_forwarder.elasticsearch.index }}
+        Port          {{ .Values.pdp.logs_forwarder.elasticsearch.port }}
+        tls           On
+        tls.verify    Off
+        Cloud_Auth    {{ .Values.pdp.logs_forwarder.elasticsearch.cloud_auth }}
+        Suppress_Type_Name On
+        Retry_Limit     False
+    {{- end }}
+
+  filter.lua: |
+    function process_log(tag, timestamp, record)
+        local log_message = record["log"]
+
+        if log_message then
+            log_message = log_message:gsub('\\\\"', '\\"')
+            log_message = log_message:gsub('\\"', '"')
+            log_message = log_message:gsub('\\\\', '\\')
+        end
+
+        local json_data = string.match(log_message, '{"decision_id":.*}')
+
+        if json_data then
+            return 1, timestamp, { log = json_data }
+        else
+            return -1, timestamp, record
+        end
+    end
+{{- end }}
