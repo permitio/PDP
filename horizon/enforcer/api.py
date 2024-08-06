@@ -35,6 +35,7 @@ from horizon.enforcer.schemas import (
     UserTenantsResult,
     AuthorizedUsersResult,
     AuthorizedUsersAuthorizationQuery,
+    User,
 )
 from horizon.enforcer.schemas_kong import (
     KongAuthorizationInput,
@@ -43,6 +44,7 @@ from horizon.enforcer.schemas_kong import (
     KongWrappedAuthorizationQuery,
 )
 from horizon.enforcer.schemas_v1 import AuthorizationQueryV1
+from horizon.enforcer.utils.headers_utils import get_case_insensitive
 from horizon.enforcer.utils.mapping_rules_utils import MappingRulesUtils
 from horizon.enforcer.utils.statistics_utils import StatisticsManager
 from horizon.state import PersistentStateHandler
@@ -528,6 +530,106 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
                 "hint: try to update your client version to v2",
             )
         query = cast(AuthorizationQuery, query)
+
+        response = await _is_allowed(query, request, MAIN_POLICY_PACKAGE)
+        log_query_result(query, response)
+        try:
+            raw_result = json.loads(response.body).get("result", {})
+            processed_query = (
+                get_v1_processed_query(raw_result)
+                or get_v2_processed_query(raw_result)
+                or {}
+            )
+            result = {
+                "allow": raw_result.get("allow", False),
+                "result": raw_result.get(
+                    "allow", False
+                ),  # fallback for older sdks (TODO: remove)
+                "query": processed_query,
+                "debug": raw_result.get("debug", {}),
+            }
+        except:
+            result = dict(allow=False, result=False)
+            logger.warning(
+                "is allowed (fallback response)", reason="cannot decode opa response"
+            )
+        return result
+
+    @router.post(
+        "/allowed",
+        response_model=AuthorizationResult,
+        status_code=status.HTTP_200_OK,
+        response_model_exclude_none=True,
+        dependencies=[Depends(enforce_pdp_token)],
+    )
+    async def is_allowed(
+        request: Request,
+        query: Union[AuthorizationQuery, AuthorizationQueryV1],
+        x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
+    ):
+        if isinstance(query, AuthorizationQueryV1):
+            raise HTTPException(
+                status_code=status.HTTP_421_MISDIRECTED_REQUEST,
+                detail="Mismatch between client version and PDP version,"
+                " required v2 request body, got v1. "
+                "hint: try to update your client version to v2",
+            )
+        query = cast(AuthorizationQuery, query)
+
+        response = await _is_allowed(query, request, MAIN_POLICY_PACKAGE)
+        log_query_result(query, response)
+        try:
+            raw_result = json.loads(response.body).get("result", {})
+            processed_query = (
+                get_v1_processed_query(raw_result)
+                or get_v2_processed_query(raw_result)
+                or {}
+            )
+            result = {
+                "allow": raw_result.get("allow", False),
+                "result": raw_result.get(
+                    "allow", False
+                ),  # fallback for older sdks (TODO: remove)
+                "query": processed_query,
+                "debug": raw_result.get("debug", {}),
+            }
+        except:
+            result = dict(allow=False, result=False)
+            logger.warning(
+                "is allowed (fallback response)", reason="cannot decode opa response"
+            )
+        return result
+
+    @router.post(
+        "/nginx_allowed",
+        response_model=AuthorizationResult,
+        status_code=status.HTTP_200_OK,
+        response_model_exclude_none=True,
+        dependencies=[Depends(enforce_pdp_token)],
+    )
+    async def is_allowed_nginx(
+        request: Request,
+    ):
+        user_key = get_case_insensitive(request.headers, "permit-user-key")
+        tenant_id = get_case_insensitive(request.headers, "permit-tenant-id")
+        action = get_case_insensitive(request.headers, "permit-action")
+        resource_type = get_case_insensitive(request.headers, "permit-resource-type")
+
+        if (
+            user_key is None
+            or tenant_id is None
+            or action is None
+            or resource_type is None
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Missing required headers: 'Permit-User-Key', 'Permit-Tenant-Id', 'Permit-Action', 'Permit-Resource-Type'",
+            )
+        query = AuthorizationQuery(
+            user=User(key=user_key),
+            action=action,
+            resource=Resource(type=resource_type, tenant=tenant_id),
+        )
 
         response = await _is_allowed(query, request, MAIN_POLICY_PACKAGE)
         log_query_result(query, response)
