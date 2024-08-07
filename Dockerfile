@@ -53,7 +53,7 @@ RUN apt-get update && \
 
 RUN groupadd -r permit
 RUN useradd -m -s /bin/bash -g permit -d /home/permit permit
-
+RUN export asdfaspermit_key_asdfasdfasdf
 # copy libraries from build stage
 RUN mkdir /home/permit/.local
 COPY --from=BuildStage /root/.local /home/permit/.local

@@ -2,14 +2,14 @@ name: Build and publish docker image
 on:
   push:
     # disable push new image on merge to master (because we don't want to push a "master" tag)
-    # branches:
-    #   - 'master'
+#     branches:
+#       - 'master'
     # on every tags push, we will publish both the latest tag and the versioned tag (semver)
-    tags:
-      - 'v*'
+#    tags:
+#      - 'v*'
 
   # Disabled: Allows you to run this workflow manually from the Actions tab (because auto tagging won't work)
-  # workflow_dispatch:
+   workflow_dispatch:
 
 jobs:
   # ====== Todos Backend (build and deploy) ======
@@ -31,32 +31,42 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@0.8.0
+        with:
+          scan-type: 'fs'
+          exit-code: '1'
+          security-checks: 'vuln,secret'
+          trivy-config: trivy-secret.yaml
+
       -
         name: Docker meta
         id: meta
         uses: docker/metadata-action@v3
         with:
-          images: permitio/pdp
+          images: permitio/pdp-v2
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
+            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' }}
       -
         name: Echo published tags
         run: |
           echo "Published docker tags: ${{ steps.meta.outputs.tags }}"
-      -
-        name: Build image and push
-        id: docker_build
-        uses: docker/build-push-action@v2
-        with:
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          context: .
-          file: ./Dockerfile
-          #All available platforms: linux/arm64,linux/amd64,linux/riscv64,linux/ppc64le,linux/s390x,linux/386,linux/arm/v7,linux/arm/v6
-          platforms: linux/arm64,linux/amd64
-          build-args: |
-            READ_ONLY_GITHUB_TOKEN=${{ secrets.READ_ONLY_GITHUB_TOKEN }}
-      -
-        name: Image digest
-        run: echo ${{ steps.docker_build.outputs.digest }}
+#      -
+#        name: Build image and push
+#        id: docker_build
+#        uses: docker/build-push-action@v2
+#        with:
+#          push: true
+#          tags: ${{ steps.meta.outputs.tags }}
+#          context: .
+#          file: ./Dockerfile
+#          #All available platforms: linux/arm64,linux/amd64,linux/riscv64,linux/ppc64le,linux/s390x,linux/386,linux/arm/v7,linux/arm/v6
+#          platforms: linux/arm64,linux/amd64
+#          build-args: |
+#            READ_ONLY_GITHUB_TOKEN=${{ secrets.READ_ONLY_GITHUB_TOKEN }}
+#      -
+#        name: Image digest
+#        run: echo ${{ steps.docker_build.outputs.digest }}
