@@ -35,6 +35,7 @@ from horizon.enforcer.schemas import (
     UserTenantsResult,
     AuthorizedUsersResult,
     AuthorizedUsersAuthorizationQuery,
+    User,
 )
 from horizon.enforcer.schemas_kong import (
     KongAuthorizationInput,
@@ -43,6 +44,7 @@ from horizon.enforcer.schemas_kong import (
     KongWrappedAuthorizationQuery,
 )
 from horizon.enforcer.schemas_v1 import AuthorizationQueryV1
+from horizon.enforcer.utils.headers_utils import get_case_insensitive
 from horizon.enforcer.utils.mapping_rules_utils import MappingRulesUtils
 from horizon.enforcer.utils.statistics_utils import StatisticsManager
 from horizon.state import PersistentStateHandler
@@ -528,6 +530,51 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
                 "hint: try to update your client version to v2",
             )
         query = cast(AuthorizationQuery, query)
+
+        response = await _is_allowed(query, request, MAIN_POLICY_PACKAGE)
+        log_query_result(query, response)
+        try:
+            raw_result = json.loads(response.body).get("result", {})
+            processed_query = (
+                get_v1_processed_query(raw_result)
+                or get_v2_processed_query(raw_result)
+                or {}
+            )
+            result = {
+                "allow": raw_result.get("allow", False),
+                "result": raw_result.get(
+                    "allow", False
+                ),  # fallback for older sdks (TODO: remove)
+                "query": processed_query,
+                "debug": raw_result.get("debug", {}),
+            }
+        except:
+            result = dict(allow=False, result=False)
+            logger.warning(
+                "is allowed (fallback response)", reason="cannot decode opa response"
+            )
+        return result
+
+    @router.post(
+        "/nginx_allowed",
+        response_model=AuthorizationResult,
+        status_code=status.HTTP_200_OK,
+        response_model_exclude_none=True,
+        dependencies=[Depends(enforce_pdp_token)],
+    )
+    async def is_allowed_nginx(
+        request: Request,
+        permit_user_key: str = Header(None),
+        permit_tenant_id: str = Header(None),
+        permit_action: str = Header(None),
+        permit_resource_type: str = Header(None),
+    ):
+
+        query = AuthorizationQuery(
+            user=User(key=permit_user_key),
+            action=permit_action,
+            resource=Resource(type=permit_resource_type, tenant=permit_tenant_id),
+        )
 
         response = await _is_allowed(query, request, MAIN_POLICY_PACKAGE)
         log_query_result(query, response)
