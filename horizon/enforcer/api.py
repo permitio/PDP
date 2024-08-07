@@ -564,26 +564,16 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
     )
     async def is_allowed_nginx(
         request: Request,
+        permit_user_key: str = Header(None),
+        permit_tenant_id: str = Header(None),
+        permit_action: str = Header(None),
+        permit_resource_type: str = Header(None),
     ):
-        user_key = get_case_insensitive(request.headers, "permit-user-key")
-        tenant_id = get_case_insensitive(request.headers, "permit-tenant-id")
-        action = get_case_insensitive(request.headers, "permit-action")
-        resource_type = get_case_insensitive(request.headers, "permit-resource-type")
 
-        if (
-            user_key is None
-            or tenant_id is None
-            or action is None
-            or resource_type is None
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Missing required headers: 'Permit-User-Key', 'Permit-Tenant-Id', 'Permit-Action', 'Permit-Resource-Type'",
-            )
         query = AuthorizationQuery(
-            user=User(key=user_key),
-            action=action,
-            resource=Resource(type=resource_type, tenant=tenant_id),
+            user=User(key=permit_user_key),
+            action=permit_action,
+            resource=Resource(type=permit_resource_type, tenant=permit_tenant_id),
         )
 
         response = await _is_allowed(query, request, MAIN_POLICY_PACKAGE)
