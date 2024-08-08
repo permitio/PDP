@@ -73,9 +73,10 @@ def verify_join_conditions(
         if join_conditions is None:
             raise TypeError(f"to_query() is missing argument 'join_conditions'")
         else:
-            missing_tables = required_joins.difference(
-                set((t for t, _ in join_conditions))
+            provided_joined_tables = set(
+                (_get_table_name(t) for t, _ in join_conditions)
             )
+            missing_tables = required_joins.difference(provided_joined_tables)
             if len(missing_tables):
                 raise TypeError(
                     f"to_query() argument 'join_conditions' is missing mapping for tables: {repr(missing_tables)}"
@@ -85,7 +86,7 @@ def verify_join_conditions(
 def to_query(
     filter: ResidualPolicyResponse,
     table: Table,
-    reference_mapping: Dict[str, Column],
+    refs: Dict[str, Column],
     join_conditions: Union[List[Tuple[Table, Condition]], None] = None,
 ) -> Select:
     select_all = cast(Select, sa.select(table))
@@ -96,7 +97,7 @@ def to_query(
     if filter.type == ResidualPolicyType.ALWAYS_DENY:
         return select_all.where(False)
 
-    verify_join_conditions(table, reference_mapping, join_conditions)
+    verify_join_conditions(table, refs, join_conditions)
 
     def to_sql(expr: Expression):
         operator = expr.expression.operator
@@ -124,7 +125,7 @@ def to_query(
         value: Any = values[0].value
 
         try:
-            column = reference_mapping[variable_ref]
+            column = refs[variable_ref]
         except KeyError:
             raise KeyError(
                 f"Residual variable does not exist in the reference mapping: {variable_ref}"
