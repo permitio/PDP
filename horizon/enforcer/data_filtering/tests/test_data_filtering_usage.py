@@ -82,6 +82,14 @@ def test_sql_translation_no_join():
         WHERE task.tenant_id = '082f6978-6424-4e05-a706-1ab6f26c3768'"""
     )
 
+    str_query_only_columns = query_to_string(sa_query.with_only_columns(Task.id))
+
+    assert striplines(str_query_only_columns) == striplines(
+        """SELECT task.id 
+        FROM task 
+        WHERE task.tenant_id = '082f6978-6424-4e05-a706-1ab6f26c3768'"""
+    )
+
 
 def test_sql_translation_with_join():
     """
