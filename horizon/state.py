@@ -9,6 +9,7 @@ from typing import Any, AsyncGenerator, List, Optional
 from uuid import UUID, uuid4
 
 import aiohttp
+import os
 from fastapi import status
 from opal_common.logger import logger
 from opal_common.schemas.data import DataUpdateReport
@@ -18,7 +19,7 @@ from horizon.config import sidecar_config
 from horizon.system.consts import API_VERSION
 
 PERSISTENT_STATE_FILENAME = "/home/permit/persistent_state.json"
-PDP_VERSION_FILENAME = "/permit_pdp_version"
+PDP_VERSION_FILENAME = os.getenv("PDP_VERSION_FILENAME", "/permit_pdp_version")
 MAX_STATE_UPDATE_INTERVAL_SECONDS = 60
 
 

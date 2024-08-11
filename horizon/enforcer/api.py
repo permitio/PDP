@@ -86,13 +86,14 @@ def transform_headers(request: Request) -> dict:
     }
 
 
-def log_query_result(query: BaseSchema, response: Response):
+def log_query_result(query: BaseSchema, response: Response, *, is_inner: bool = False):
     """
     formats a nice log to default logger with the results of permit.check()
     """
     params = repr(query)
     try:
-        result: Dict = json.loads(response.body).get("result", {})
+        response_json = json.loads(response.body)
+        result: Dict = response_json if is_inner else response_json.get("result", {})
         allowed: bool | List[Dict] = result.get("allow", None)
         color = "<red>"
         allow_output = False
@@ -268,6 +269,53 @@ async def _is_allowed(query: BaseSchema, request: Request, policy_package: str):
     opa_input = {"input": query.dict()}
     path = policy_package.replace(".", "/")
     return await post_to_opa(request, path, opa_input)
+
+
+async def _is_allowed_gopal(query: BaseSchema, request: Request):
+    headers = transform_headers(request)
+    url = f"{sidecar_config.GOPAL_SERVICE_URL}/v1/authz/check"
+    payload = {"input": query.dict()}
+    exc = None
+    _set_use_debugger(payload)
+    try:
+        logger.info(f"calling GOPAL at '{url}' with input: {payload}")
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                url,
+                data=json.dumps(payload["input"]) if payload is not None else None,
+                headers=headers,
+                timeout=sidecar_config.OPA_CLIENT_QUERY_TIMEOUT,
+                raise_for_status=True,
+            ) as opa_response:
+                stats_manager.report_success()
+                return await proxy_response(opa_response)
+    except asyncio.exceptions.TimeoutError:
+        stats_manager.report_failure()
+        exc = HTTPException(
+            status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="GOPAL request timed out (url: {url}, timeout: {timeout}s)".format(
+                url=url,
+                timeout=sidecar_config.OPA_CLIENT_QUERY_TIMEOUT,
+            ),
+        )
+    except aiohttp.ClientResponseError as e:
+        stats_manager.report_failure()
+        exc = HTTPException(
+            status.HTTP_502_BAD_GATEWAY,  # 502 indicates server got an error from another server
+            detail="GOPAL request failed (url: {url}, status: {status}, message: {message})".format(
+                url=url, status=e.status, message=e.message
+            ),
+        )
+    except aiohttp.ClientError as e:
+        stats_manager.report_failure()
+        exc = HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            detail="GOPAL request failed (url: {url}, error: {error}".format(
+                url=url, error=str(e)
+            ),
+        )
+    logger.warning(exc.detail)
+    raise exc
 
 
 def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
@@ -530,11 +578,15 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
                 "hint: try to update your client version to v2",
             )
         query = cast(AuthorizationQuery, query)
-
-        response = await _is_allowed(query, request, MAIN_POLICY_PACKAGE)
-        log_query_result(query, response)
-        try:
+        if sidecar_config.ENABLE_GOPAL:
+            response = await _is_allowed_gopal(query, request)
+            raw_result = json.loads(response.body)
+            log_query_result(query, response, is_inner=True)
+        else:
+            response = await _is_allowed(query, request, MAIN_POLICY_PACKAGE)
             raw_result = json.loads(response.body).get("result", {})
+            log_query_result(query, response)
+        try:
             processed_query = (
                 get_v1_processed_query(raw_result)
                 or get_v2_processed_query(raw_result)
