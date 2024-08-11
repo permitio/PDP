@@ -97,8 +97,8 @@ class GOPALClient(ExtendedOpalClient):
 
     async def start_gopal_runner(self):
         self._gopal_runner = GopalRunner(
-            engine_url=sidecar_config.GOPAL_ENGINE_URL,
-            engine_token=sidecar_config.GOPAL_ENGINE_TOKEN,
+            gopal_url=sidecar_config.GOPAL_SERVICE_URL,
+            engine_token=sidecar_config.API_KEY,
         )
         await self._run_engine_runner(None, self._gopal_runner)
 
