@@ -245,7 +245,10 @@ def test_missing_joins():
             },
         )
 
-    assert str(e.value) == "to_query() is missing argument 'join_conditions'"
+    assert (
+        str(e.value)
+        == "You must call QueryBuilder.join(table, condition) to map residual references to other SQL tables"
+    )
 
     with pytest.raises(TypeError) as e:
         # Tenant2.key is a column outside the main table (requires a join)
@@ -263,5 +266,5 @@ def test_missing_joins():
 
     assert (
         str(e.value)
-        == "to_query() argument 'join_conditions' is missing mapping for tables: {'tenant2'}"
+        == "QueryBuilder.join() was not called for these SQL tables: {'tenant2'}"
     )
