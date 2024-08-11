@@ -13,33 +13,34 @@ class GopalRunner(PolicyEngineRunner):
     def __init__(
         self,
         engine_token: str,
-        engine_url: str,
+        gopal_url: str,
         piped_logs_format: EngineLogFormat = EngineLogFormat.NONE,
     ):
         super().__init__(piped_logs_format=piped_logs_format)
         self._engine_token = engine_token
-        self._engine_url = engine_url
+        self._gopal_url = gopal_url
         self.__client = None
 
+    @property
     def _client(self) -> aiohttp.ClientSession:
         if self.__client is None:
             self.__client = aiohttp.ClientSession(
-                base_url=self._engine_url,
+                base_url=self._gopal_url,
                 headers={"Authorization": f"Bearer {self._engine_token}"},
             )
         return self.__client
 
     async def __aenter__(self):
         await super().__aenter__()
-        await self._client().__aenter__()
+        await self._client.__aenter__()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await super().__aexit__(exc_type, exc_val, exc_tb)
-        await self._client().__aexit__(exc_type, exc_val, exc_tb)
+        await self._client.__aexit__(exc_type, exc_val, exc_tb)
 
     async def is_healthy(self) -> bool:
-        async with self._client().get("/healthy") as resp:
+        async with self._client.get("/healthy") as resp:
             try:
                 resp.raise_for_status()
             except aiohttp.ClientResponseError:
@@ -48,7 +49,7 @@ class GopalRunner(PolicyEngineRunner):
                 return True
 
     async def is_ready(self) -> bool:
-        async with self._client().get("/ready") as resp:
+        async with self._client.get("/ready") as resp:
             try:
                 resp.raise_for_status()
             except aiohttp.ClientResponseError:
