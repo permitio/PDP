@@ -11,7 +11,7 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.sql import Select
 from sqlalchemy.orm import declarative_base, relationship
 
-from permit_datafilter.sdk.permit_sqlalchemy import to_query
+from permit_datafilter.plugins.sqlalchemy import to_query
 
 Base = declarative_base()
 

@@ -18,7 +18,7 @@ def get_readme() -> str:
 
 setup(
     name="permit-datafilter",
-    version="0.0.2",
+    version="0.0.3",
     packages=find_packages(),
     author="Asaf Cohen",
     author_email="asaf@permit.io",
