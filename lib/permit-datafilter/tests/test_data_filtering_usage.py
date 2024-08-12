@@ -79,16 +79,16 @@ def test_sql_translation_no_join():
     str_query = query_to_string(sa_query)
 
     assert striplines(str_query) == striplines(
-        """SELECT task.id, task.created_at, task.updated_at, task.description, task.tenant_id 
-        FROM task 
+        """SELECT task.id, task.created_at, task.updated_at, task.description, task.tenant_id
+        FROM task
         WHERE task.tenant_id = '082f6978-6424-4e05-a706-1ab6f26c3768'"""
     )
 
     str_query_only_columns = query_to_string(sa_query.with_only_columns(Task.id))
 
     assert striplines(str_query_only_columns) == striplines(
-        """SELECT task.id 
-        FROM task 
+        """SELECT task.id
+        FROM task
         WHERE task.tenant_id = '082f6978-6424-4e05-a706-1ab6f26c3768'"""
     )
 
@@ -141,8 +141,8 @@ def test_sql_translation_with_join():
     str_query = query_to_string(sa_query)
 
     assert striplines(str_query) == striplines(
-        """SELECT task_joined.id, task_joined.created_at, task_joined.updated_at, task_joined.description, task_joined.tenant_id_joined 
-        FROM task_joined JOIN tenant ON task_joined.tenant_id_joined = tenant.id 
+        """SELECT task_joined.id, task_joined.created_at, task_joined.updated_at, task_joined.description, task_joined.tenant_id_joined
+        FROM task_joined JOIN tenant ON task_joined.tenant_id_joined = tenant.id
         WHERE tenant.key = '082f6978-6424-4e05-a706-1ab6f26c3768'"""
     )
 
@@ -170,7 +170,7 @@ def test_sql_translation_of_trivial_policies():
 
     str_query = query_to_string(sa_query)
     assert striplines(str_query) == striplines(
-        """SELECT tasks.id, tasks.created_at, tasks.updated_at, tasks.description, tasks.tenant_id 
+        """SELECT tasks.id, tasks.created_at, tasks.updated_at, tasks.description, tasks.tenant_id
         FROM tasks"""
     )  # this query would always return all rows from the tasks table
 
@@ -187,7 +187,7 @@ def test_sql_translation_of_trivial_policies():
 
     str_query = query_to_string(sa_query)
     assert striplines(str_query) == striplines(
-        """SELECT tasks.id, tasks.created_at, tasks.updated_at, tasks.description, tasks.tenant_id 
+        """SELECT tasks.id, tasks.created_at, tasks.updated_at, tasks.description, tasks.tenant_id
         FROM tasks
         WHERE false"""
     )  # this query would never have any results
