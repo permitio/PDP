@@ -2,3 +2,4 @@
 helm/
 .venv/
 .github/
+lib/

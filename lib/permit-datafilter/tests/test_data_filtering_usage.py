@@ -1,6 +1,6 @@
 import pytest
 
-from horizon.enforcer.data_filtering.boolean_expression.schemas import (
+from permit_datafilter.boolean_expression.schemas import (
     ResidualPolicyResponse,
 )
 
@@ -11,7 +11,7 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.sql import Select
 from sqlalchemy.orm import declarative_base, relationship
 
-from horizon.enforcer.data_filtering.sdk.permit_sqlalchemy import to_query
+from permit_datafilter.sdk.permit_sqlalchemy import to_query
 
 Base = declarative_base()
 

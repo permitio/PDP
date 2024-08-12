@@ -14,12 +14,12 @@ from opal_client.policy_store.policy_store_client_factory import (
     DEFAULT_POLICY_STORE_GETTER,
 )
 from opal_client.utils import proxy_response
+from permit_datafilter.compile_api.compile_client import OpaCompileClient
 from pydantic import parse_obj_as
 from starlette.responses import JSONResponse
 
 from horizon.authentication import enforce_pdp_token
 from horizon.config import sidecar_config
-from horizon.enforcer.data_filtering.compile_api.compile_client import OpaCompileClient
 from horizon.enforcer.schemas import (
     AuthorizationQuery,
     AuthorizationResult,
@@ -722,12 +722,14 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
     ):
         headers = transform_headers(request)
-        client = OpaCompileClient(headers=headers)
+        client = OpaCompileClient(
+            base_url=f"{opal_client_config.POLICY_STORE_URL}", headers=headers
+        )
         COMPILE_ROOT_RULE_REFERENCE = f"data.{MAIN_PARTIAL_EVAL_PACKAGE}.allow"
         query = f"{COMPILE_ROOT_RULE_REFERENCE} == true"
         residual_policy = await client.compile_query(
             query=query,
-            input=input,
+            input=input.dict(),
             unknowns=[
                 "input.resource.key",
                 "input.resource.tenant",
@@ -739,36 +741,6 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             content=json.dumps(residual_policy.dict()),
             status_code=status.HTTP_200_OK,
             media_type="application/json",
-        )
-
-    @router.post(
-        "/filter_resources_get_sql",
-        response_model=AuthorizationResult,
-        status_code=status.HTTP_200_OK,
-        response_model_exclude_none=True,
-        dependencies=[Depends(enforce_pdp_token)],
-    )
-    async def filter_resources_get_sql(
-        request: Request,
-        input: AuthorizationQuery,
-        x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
-    ):
-        """
-        TODO: temp endpoint, instead we should wrap the capability in the SDK
-        """
-        headers = transform_headers(request)
-        client = OpaCompileClient(headers=headers)
-        COMPILE_ROOT_RULE_REFERENCE = f"data.{MAIN_PARTIAL_EVAL_PACKAGE}.allow"
-        query = f"{COMPILE_ROOT_RULE_REFERENCE} == true"
-        residual_policy = await client.compile_query(
-            query=query,
-            input=input,
-            unknowns=[
-                "input.resource.key",
-                "input.resource.tenant",
-                "input.resource.attributes",
-            ],
-            raw=True,
         )
 
     return router

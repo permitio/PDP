@@ -40,12 +40,11 @@ import json
 from types import NoneType
 from typing import Generic, List, TypeVar
 
-from horizon.enforcer.data_filtering.compile_api.schemas import (
+from permit_datafilter.compile_api.schemas import (
     CRExpression,
     CRQuery,
     CompileResponse,
     CRTerm,
-    CRSupportModule,
 )
 
 

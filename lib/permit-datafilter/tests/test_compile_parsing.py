@@ -1,6 +1,6 @@
 import json
 
-from horizon.enforcer.data_filtering.compile_api.schemas import CRTerm, CompileResponse
+from permit_datafilter.compile_api.schemas import CRTerm, CompileResponse
 
 
 COMPILE_RESPONE_RBAC_NO_SUPPORT_BLOCK = """{

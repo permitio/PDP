@@ -1,10 +1,10 @@
-from horizon.enforcer.data_filtering.compile_api.schemas import CompileResponse
-from horizon.enforcer.data_filtering.rego_ast import parser as ast
-from horizon.enforcer.data_filtering.boolean_expression.schemas import (
+from permit_datafilter.compile_api.schemas import CompileResponse
+from permit_datafilter.rego_ast import parser as ast
+from permit_datafilter.boolean_expression.schemas import (
     ResidualPolicyResponse,
     ResidualPolicyType,
 )
-from horizon.enforcer.data_filtering.boolean_expression.translator import (
+from permit_datafilter.boolean_expression.translator import (
     translate_opa_queryset,
 )
 

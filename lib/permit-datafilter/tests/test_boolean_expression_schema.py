@@ -1,10 +1,9 @@
 import pytest
 import pydantic
 
-from horizon.enforcer.data_filtering.boolean_expression.schemas import (
+from permit_datafilter.boolean_expression.schemas import (
     ResidualPolicyResponse,
     ResidualPolicyType,
-    Expression,
 )
 
 

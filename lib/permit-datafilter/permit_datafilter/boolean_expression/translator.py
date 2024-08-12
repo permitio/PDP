@@ -1,5 +1,5 @@
-from horizon.enforcer.data_filtering.rego_ast import parser as ast
-from horizon.enforcer.data_filtering.boolean_expression.schemas import (
+from permit_datafilter.rego_ast import parser as ast
+from permit_datafilter.boolean_expression.schemas import (
     CALL_OPERATOR,
     Operand,
     ResidualPolicyResponse,

@@ -2,12 +2,11 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union, cast
 
 import sqlalchemy as sa
 
-# import Column, Table, and_, not_, or_, select
 from sqlalchemy.orm import DeclarativeMeta, InstrumentedAttribute
 from sqlalchemy.sql import Select
 from sqlalchemy.sql.expression import BinaryExpression, ColumnOperators
 
-from horizon.enforcer.data_filtering.boolean_expression.schemas import (
+from permit_datafilter.boolean_expression.schemas import (
     CALL_OPERATOR,
     LOGICAL_AND,
     LOGICAL_NOT,

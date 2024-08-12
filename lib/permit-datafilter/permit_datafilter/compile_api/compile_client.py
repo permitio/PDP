@@ -1,24 +1,22 @@
 import json
 
 import aiohttp
-from fastapi import HTTPException, Response, status
-from opal_client.config import opal_client_config
-from opal_client.logger import logger
+from fastapi import HTTPException, status
+from loguru import logger
 
-from horizon.enforcer.schemas import AuthorizationQuery
-from horizon.enforcer.data_filtering.compile_api.schemas import CompileResponse
-from horizon.enforcer.data_filtering.rego_ast import parser as ast
-from horizon.enforcer.data_filtering.boolean_expression.schemas import (
+from permit_datafilter.compile_api.schemas import CompileResponse
+from permit_datafilter.rego_ast import parser as ast
+from permit_datafilter.boolean_expression.schemas import (
     ResidualPolicyResponse,
 )
-from horizon.enforcer.data_filtering.boolean_expression.translator import (
+from permit_datafilter.boolean_expression.translator import (
     translate_opa_queryset,
 )
 
 
 class OpaCompileClient:
-    def __init__(self, headers: dict):
-        self._base_url = f"{opal_client_config.POLICY_STORE_URL}"
+    def __init__(self, base_url: str, headers: dict):
+        self._base_url = base_url  # f"{opal_client_config.POLICY_STORE_URL}"
         self._headers = headers
         self._client = aiohttp.ClientSession(
             base_url=self._base_url, headers=self._headers
@@ -27,19 +25,19 @@ class OpaCompileClient:
     async def compile_query(
         self,
         query: str,
-        input: AuthorizationQuery,
+        input: dict,
         unknowns: list[str],
         raw: bool = False,
     ) -> ResidualPolicyResponse:
         # we don't want debug rules when we try to reduce the policy into a partial policy
-        input = {**input.dict(), "use_debugger": False}
+        input = {**input, "use_debugger": False}
         data = {
             "query": query,
             "input": input,
             "unknowns": unknowns,
         }
         try:
-            logger.info("Compiling OPA query: {}", data)
+            logger.debug("Compiling OPA query: {}", data)
             async with self._client as session:
                 async with session.post(
                     "/v1/compile",
@@ -47,7 +45,7 @@ class OpaCompileClient:
                     raise_for_status=True,
                 ) as response:
                     opa_compile_result = await response.json()
-                    logger.info(
+                    logger.debug(
                         "OPA compile query result: status={status}, response={response}",
                         status=response.status,
                         response=json.dumps(opa_compile_result),

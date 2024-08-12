@@ -1,0 +1,7 @@
+aiohttp>=3.9.4,<4
+ddtrace
+fastapi>=0.109.1,<1
+loguru
+pydantic[email]>=1.9.1,<2
+pytest
+SQLAlchemy==1.4.46

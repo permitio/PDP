@@ -28,7 +28,7 @@ def get_data_files(root_directory: str):
 setup(
     name="horizon",
     version="0.2.0",
-    packages=find_packages(),
+    packages=find_packages(exclude=("lib/*")),
     python_requires=">=3.8",
     include_package_data=True,
     data_files=get_data_files("horizon/static"),
