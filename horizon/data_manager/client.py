@@ -14,14 +14,14 @@ from starlette import status
 from starlette.responses import JSONResponse
 
 from horizon.config import sidecar_config
-from horizon.gopal.runner import GopalRunner
+from horizon.data_manager.runner import DataManagerRunner
 
 
 class ExtendedOpalClient(OpalClient):
     """
     Extended OpalClient that allows for additional healthchecks besides of the
     policy store one
-    it is only used in gopal and will later be removed when we add GOPAL Policy Store implementation
+    it is only used in data manager and will later be removed when we add Data Manager Policy Store implementation
     """
 
     async def check_healthy(self) -> bool:
@@ -82,7 +82,7 @@ class ExtendedOpalClient(OpalClient):
         return app
 
 
-class GOPALClient(ExtendedOpalClient):
+class DataManagerClient(ExtendedOpalClient):
     @staticmethod
     async def _run_engine_runner(
         callback: Optional[Callable[[], Awaitable]],
@@ -95,40 +95,45 @@ class GOPALClient(ExtendedOpalClient):
         async with engine_runner:
             await engine_runner.wait_until_done()
 
-    async def start_gopal_runner(self):
-        self._gopal_runner = GopalRunner(
-            gopal_url=sidecar_config.GOPAL_SERVICE_URL,
+    async def start_data_manager_runner(self):
+        self._data_manager_runner = DataManagerRunner(
+            data_manager_url=sidecar_config.DATA_MANAGER_SERVICE_URL,
+            data_manager_token=sidecar_config.DATA_MANAGER_TOKEN,
+            data_manager_remote_backup_enabled=sidecar_config.DATA_MANAGER_ENABLE_REMOTE_BACKUP,
+            data_manager_remote_backup_url=sidecar_config.DATA_MANAGER_REMOTE_BACKUP_URL,
             engine_token=sidecar_config.API_KEY,
         )
-        await self._run_engine_runner(None, self._gopal_runner)
+        await self._run_engine_runner(None, self._data_manager_runner)
 
-    async def stop_gopal_runner(self):
-        if hasattr(self, "_gopal_runner") and self._gopal_runner:
-            logger.info("Stopping GOPAL runner")
-            await self._gopal_runner.stop()
+    async def stop_data_manager_runner(self):
+        if hasattr(self, "_data_manager_runner") and self._data_manager_runner:
+            logger.info("Stopping Data Manager runner")
+            await self._data_manager_runner.stop()
 
     async def check_healthy(self) -> bool:
         opal_health = await super().check_healthy()
         if not opal_health:
             return False
-        return await self._gopal_runner.is_healthy()
+        return await self._data_manager_runner.is_healthy()
 
     async def check_ready(self) -> bool:
         opal_ready = await super().check_ready()
         if not opal_ready:
             return False
-        return await self._gopal_runner.is_ready()
+        return await self._data_manager_runner.is_ready()
 
     async def start_client_background_tasks(
-        self, *, gopal_runner_enabled: bool = sidecar_config.ENABLE_GOPAL
+        self,
+        *,
+        data_manager_runner_enabled: bool = sidecar_config.ENABLE_EXTERNAL_DATA_MANAGER
     ):
         tasks = [super().start_client_background_tasks()]
-        if gopal_runner_enabled:
-            logger.info("Starting GOPAL runner")
-            tasks.append(self.start_gopal_runner())
+        if data_manager_runner_enabled:
+            logger.info("Starting Data Manager runner")
+            tasks.append(self.start_data_manager_runner())
         await asyncio.gather(*tasks)
 
     async def stop_client_background_tasks(self):
         """stops all background tasks (called on shutdown event)"""
         await super().stop_client_background_tasks()
-        await self.stop_gopal_runner()
+        await self.stop_data_manager_runner()
