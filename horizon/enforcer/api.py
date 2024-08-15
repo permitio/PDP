@@ -271,14 +271,14 @@ async def _is_allowed(query: BaseSchema, request: Request, policy_package: str):
     return await post_to_opa(request, path, opa_input)
 
 
-async def _is_allowed_gopal(query: BaseSchema, request: Request):
+async def _is_allowed_data_manager(query: BaseSchema, request: Request):
     headers = transform_headers(request)
-    url = f"{sidecar_config.GOPAL_SERVICE_URL}/v1/authz/check"
+    url = f"{sidecar_config.DATA_MANAGER_SERVICE_URL}/v1/authz/check"
     payload = {"input": query.dict()}
     exc = None
     _set_use_debugger(payload)
     try:
-        logger.info(f"calling GOPAL at '{url}' with input: {payload}")
+        logger.info(f"calling Data Manager at '{url}' with input: {payload}")
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 url,
@@ -293,7 +293,7 @@ async def _is_allowed_gopal(query: BaseSchema, request: Request):
         stats_manager.report_failure()
         exc = HTTPException(
             status.HTTP_504_GATEWAY_TIMEOUT,
-            detail="GOPAL request timed out (url: {url}, timeout: {timeout}s)".format(
+            detail="Data Manager request timed out (url: {url}, timeout: {timeout}s)".format(
                 url=url,
                 timeout=sidecar_config.OPA_CLIENT_QUERY_TIMEOUT,
             ),
@@ -302,7 +302,7 @@ async def _is_allowed_gopal(query: BaseSchema, request: Request):
         stats_manager.report_failure()
         exc = HTTPException(
             status.HTTP_502_BAD_GATEWAY,  # 502 indicates server got an error from another server
-            detail="GOPAL request failed (url: {url}, status: {status}, message: {message})".format(
+            detail="Data Manager request failed (url: {url}, status: {status}, message: {message})".format(
                 url=url, status=e.status, message=e.message
             ),
         )
@@ -310,7 +310,7 @@ async def _is_allowed_gopal(query: BaseSchema, request: Request):
         stats_manager.report_failure()
         exc = HTTPException(
             status.HTTP_502_BAD_GATEWAY,
-            detail="GOPAL request failed (url: {url}, error: {error}".format(
+            detail="Data Manager request failed (url: {url}, error: {error}".format(
                 url=url, error=str(e)
             ),
         )
@@ -578,8 +578,8 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
                 "hint: try to update your client version to v2",
             )
         query = cast(AuthorizationQuery, query)
-        if sidecar_config.ENABLE_GOPAL:
-            response = await _is_allowed_gopal(query, request)
+        if sidecar_config.ENABLE_EXTERNAL_DATA_MANAGER:
+            response = await _is_allowed_data_manager(query, request)
             raw_result = json.loads(response.body)
             log_query_result(query, response, is_inner=True)
         else:
