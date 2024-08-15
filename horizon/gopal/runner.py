@@ -6,19 +6,23 @@ import aiohttp
 from opal_client.config import EngineLogFormat
 from opal_client.engine.runner import PolicyEngineRunner
 
-from horizon.config import sidecar_config
-
 
 class GopalRunner(PolicyEngineRunner):
     def __init__(
         self,
         engine_token: str,
         gopal_url: str,
+        gopal_token: str | None,
+        gopal_remote_backup_enabled: bool,
+        gopal_remote_backup_url: str | None,
         piped_logs_format: EngineLogFormat = EngineLogFormat.NONE,
     ):
         super().__init__(piped_logs_format=piped_logs_format)
         self._engine_token = engine_token
         self._gopal_url = gopal_url
+        self._gopal_token = gopal_token
+        self._gopal_remote_backup_enabled = gopal_remote_backup_enabled
+        self._gopal_remote_backup_url = gopal_remote_backup_url
         self.__client = None
 
     @property
@@ -31,6 +35,7 @@ class GopalRunner(PolicyEngineRunner):
         return self.__client
 
     async def __aenter__(self):
+        self.set_envs()
         await super().__aenter__()
         await self._client.__aenter__()
         return self
@@ -57,10 +62,18 @@ class GopalRunner(PolicyEngineRunner):
             else:
                 return True
 
+    def set_envs(self) -> None:
+        os.environ["PDP_ENGINE_TOKEN"] = self._engine_token
+        if self._gopal_token:
+            os.environ["PDP_GOPAL_TOKEN"] = self._gopal_token
+        os.environ["PDP_GOPAL_ENABLE_REMOTE_BACKUP"] = "true" if self._gopal_remote_backup_enabled else "false"
+        if self._gopal_remote_backup_url:
+            os.environ["PDP_GOPAL_REMOTE_BACKUP_URL"] = self._gopal_remote_backup_url
+
     @property
     def command(self) -> str:
         current_dir = Path(__file__).parent
-        os.environ["PDP_ENGINE_TOKEN"] = self._engine_token
+
         arch = platform.machine()
         if arch == "x86_64":
             binary_path = "gopal-amd"
