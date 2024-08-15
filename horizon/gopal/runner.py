@@ -66,7 +66,9 @@ class GopalRunner(PolicyEngineRunner):
         os.environ["PDP_ENGINE_TOKEN"] = self._engine_token
         if self._gopal_token:
             os.environ["PDP_GOPAL_TOKEN"] = self._gopal_token
-        os.environ["PDP_GOPAL_ENABLE_REMOTE_BACKUP"] = "true" if self._gopal_remote_backup_enabled else "false"
+        os.environ["PDP_GOPAL_ENABLE_REMOTE_BACKUP"] = (
+            "true" if self._gopal_remote_backup_enabled else "false"
+        )
         if self._gopal_remote_backup_url:
             os.environ["PDP_GOPAL_REMOTE_BACKUP_URL"] = self._gopal_remote_backup_url
 
