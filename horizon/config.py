@@ -18,34 +18,38 @@ class SidecarConfig(Confi):
             cls.instance = super(SidecarConfig, cls).__new__(cls)
         return cls.instance
 
-    ENABLE_GOPAL = confi.bool(
-        "ENABLE_GOPAL",
+    ENABLE_EXTERNAL_DATA_MANAGER = confi.bool(
+        "ENABLE_EXTERNAL_DATA_MANAGER",
         False,
-        description="if true, the sidecar will enable the GOPAL service to manage the PDP",
+        description="if true, the sidecar will enable the Data Manager service to manage the PDP data in "
+        "external data store",
     )
 
-    GOPAL_SERVICE_URL = confi.str(
-        "GOPAL_SERVICE_URL",
+    DATA_MANAGER_SERVICE_URL = confi.str(
+        "DATA_MANAGER_SERVICE_URL",
         "http://localhost:8080",
-        description="URL to the Go opal service that manages this PDP, typically Permit.io cloud (api.permit.io)",
+        description="URL to the Data Manager service that manages the PDP data, will only be used if "
+        "ENABLE_EXTERNAL_DATA_MANAGER is true",
     )
 
-    GOPAL_ENABLE_REMOTE_BACKUP = confi.bool(
-        "GOPAL_ENABLE_REMOTE_BACKUP",
+    DATA_MANAGER_ENABLE_REMOTE_BACKUP = confi.bool(
+        "DATA_MANAGER_ENABLE_REMOTE_BACKUP",
         False,
-        description="if true, the sidecar will enable the GOPAL service to manage the PDP",
+        description="if true, the sidecar Data Manager service will fetch the PDP data backup from the configured"
+        "url",
     )
 
-    GOPAL_REMOTE_BACKUP_URL = confi.str(
-        "GOPAL_REMOTE_BACKUP_URL",
+    DATA_MANAGER_REMOTE_BACKUP_URL = confi.str(
+        "DATA_MANAGER_REMOTE_BACKUP_URL",
         None,
-        description="URL to the Go opal service that manages this PDP, typically Permit.io cloud (api.permit.io)",
+        description="URL from which the Data Manager service will fetch the PDP data backup from, will only be used if "
+        "DATA_MANAGER_ENABLE_REMOTE_BACKUP is true",
     )
 
-    GOPAL_TOKEN = confi.str(
-        "GOPAL_TOKEN",
+    DATA_MANAGER_TOKEN = confi.str(
+        "DATA_MANAGER_TOKEN",
         "secret",
-        description="the token to authenticate with the GOPAL service",
+        description="The Data Manager service token for internal data manager communication",
     )
 
     SHARD_ID = confi.str(
