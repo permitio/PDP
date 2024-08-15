@@ -29,6 +29,24 @@ class SidecarConfig(Confi):
         description="URL to the Go opal service that manages this PDP, typically Permit.io cloud (api.permit.io)",
     )
 
+    GOPAL_ENABLE_REMOTE_BACKUP = confi.bool(
+        "GOPAL_ENABLE_REMOTE_BACKUP",
+        False,
+        description="if true, the sidecar will enable the GOPAL service to manage the PDP",
+    )
+
+    GOPAL_REMOTE_BACKUP_URL = confi.str(
+        "GOPAL_REMOTE_BACKUP_URL",
+        None,
+        description="URL to the Go opal service that manages this PDP, typically Permit.io cloud (api.permit.io)",
+    )
+
+    GOPAL_TOKEN = confi.str(
+        "GOPAL_TOKEN",
+        "secret",
+        description="the token to authenticate with the GOPAL service",
+    )
+
     SHARD_ID = confi.str(
         "SHARD_ID",
         None,
