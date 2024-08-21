@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from loguru import logger
 from opal_client import OpalClient
 from opal_client.callbacks.api import init_callbacks_api
+from opal_client.config import opal_client_config
 from opal_client.data.api import init_data_router
 from opal_client.data.updater import DataUpdater
 from opal_client.engine.options import OpaServerOptions, CedarServerOptions
@@ -115,7 +116,19 @@ class DataManagerClient(ExtendedOpalClient):
             engine_token=sidecar_config.API_KEY,
         )
         policy_store = policy_store or DataManagerPolicyStoreClient(
-            data_manager_client=self._data_manager_runner.client
+            data_manager_client=self._data_manager_runner.client,
+            opa_server_url=opal_client_config.POLICY_STORE_URL,
+            opa_auth_token=opal_client_config.POLICY_STORE_AUTH_TOKEN,
+            auth_type=opal_client_config.POLICY_STORE_AUTH_TYPE,
+            oauth_client_id=opal_client_config.POLICY_STORE_AUTH_OAUTH_CLIENT_ID,
+            oauth_client_secret=opal_client_config.POLICY_STORE_AUTH_OAUTH_CLIENT_SECRET,
+            oauth_server=opal_client_config.POLICY_STORE_AUTH_OAUTH_SERVER,
+            data_updater_enabled=opal_client_config.DATA_UPDATER_ENABLED,
+            policy_updater_enabled=opal_client_config.POLICY_UPDATER_ENABLED,
+            cache_policy_data=opal_client_config.OFFLINE_MODE_ENABLED,
+            tls_client_cert=opal_client_config.POLICY_STORE_TLS_CLIENT_CERT,
+            tls_client_key=opal_client_config.POLICY_STORE_TLS_CLIENT_KEY,
+            tls_ca=opal_client_config.POLICY_STORE_TLS_CA,
         )
         super().__init__(
             policy_store_type=policy_store_type,
