@@ -6,14 +6,21 @@ from loguru import logger
 from opal_client import OpalClient
 from opal_client.callbacks.api import init_callbacks_api
 from opal_client.data.api import init_data_router
+from opal_client.data.updater import DataUpdater
+from opal_client.engine.options import OpaServerOptions, CedarServerOptions
 from opal_client.engine.runner import PolicyEngineRunner
 from opal_client.policy.api import init_policy_router
+from opal_client.policy.updater import PolicyUpdater
 from opal_client.policy_store.api import init_policy_store_router
+from opal_client.policy_store.base_policy_store_client import BasePolicyStoreClient
+from opal_client.policy_store.schemas import PolicyStoreTypes
 from opal_common.authentication.deps import JWTAuthenticator
+from opal_common.authentication.verifier import JWTVerifier
 from starlette import status
 from starlette.responses import JSONResponse
 
 from horizon.config import sidecar_config
+from horizon.data_manager.policy_store import DataManagerPolicyStoreClient
 from horizon.data_manager.runner import DataManagerRunner
 
 
@@ -83,6 +90,50 @@ class ExtendedOpalClient(OpalClient):
 
 
 class DataManagerClient(ExtendedOpalClient):
+    def __init__(
+        self,
+        policy_store_type: PolicyStoreTypes = None,
+        policy_store: BasePolicyStoreClient = None,
+        data_updater: DataUpdater = None,
+        data_topics: list[str] = None,
+        policy_updater: PolicyUpdater = None,
+        inline_opa_enabled: bool = None,
+        inline_opa_options: OpaServerOptions = None,
+        inline_cedar_enabled: bool = None,
+        inline_cedar_options: CedarServerOptions = None,
+        verifier: Optional[JWTVerifier] = None,
+        store_backup_path: Optional[str] = None,
+        store_backup_interval: Optional[int] = None,
+        offline_mode_enabled: bool = False,
+        shard_id: Optional[str] = None,
+    ):
+        self._data_manager_runner = DataManagerRunner(
+            data_manager_url=sidecar_config.DATA_MANAGER_SERVICE_URL,
+            data_manager_token=sidecar_config.DATA_MANAGER_TOKEN,
+            data_manager_remote_backup_enabled=sidecar_config.DATA_MANAGER_ENABLE_REMOTE_BACKUP,
+            data_manager_remote_backup_url=sidecar_config.DATA_MANAGER_REMOTE_BACKUP_URL,
+            engine_token=sidecar_config.API_KEY,
+        )
+        policy_store = policy_store or DataManagerPolicyStoreClient(
+            data_manager_client=self._data_manager_runner.client
+        )
+        super().__init__(
+            policy_store_type=policy_store_type,
+            policy_store=policy_store,
+            data_updater=data_updater,
+            data_topics=data_topics,
+            policy_updater=policy_updater,
+            inline_opa_enabled=inline_opa_enabled,
+            inline_opa_options=inline_opa_options,
+            inline_cedar_enabled=inline_cedar_enabled,
+            inline_cedar_options=inline_cedar_options,
+            verifier=verifier,
+            store_backup_path=store_backup_path,
+            store_backup_interval=store_backup_interval,
+            offline_mode_enabled=offline_mode_enabled,
+            shard_id=shard_id,
+        )
+
     @staticmethod
     async def _run_engine_runner(
         callback: Optional[Callable[[], Awaitable]],
@@ -96,13 +147,6 @@ class DataManagerClient(ExtendedOpalClient):
             await engine_runner.wait_until_done()
 
     async def start_data_manager_runner(self):
-        self._data_manager_runner = DataManagerRunner(
-            data_manager_url=sidecar_config.DATA_MANAGER_SERVICE_URL,
-            data_manager_token=sidecar_config.DATA_MANAGER_TOKEN,
-            data_manager_remote_backup_enabled=sidecar_config.DATA_MANAGER_ENABLE_REMOTE_BACKUP,
-            data_manager_remote_backup_url=sidecar_config.DATA_MANAGER_REMOTE_BACKUP_URL,
-            engine_token=sidecar_config.API_KEY,
-        )
         await self._run_engine_runner(None, self._data_manager_runner)
 
     async def stop_data_manager_runner(self):
