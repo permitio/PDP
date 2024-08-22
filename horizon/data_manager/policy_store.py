@@ -1,11 +1,10 @@
 from typing import Optional
 
-from aiofiles.threadpool.text import AsyncTextIOWrapper
 from aiohttp import ClientSession
+from loguru import logger
 from opal_client.policy_store.opa_client import OpaClient
 from opal_client.policy_store.schemas import PolicyStoreAuth
 from opal_common.schemas.data import JsonableValue
-from pydantic import BaseModel
 
 
 class DataManagerPolicyStoreClient(OpaClient):
@@ -47,24 +46,94 @@ class DataManagerPolicyStoreClient(OpaClient):
         path: str = "",
         transaction_id: Optional[str] = None,
     ):
-        ...  # TODO
+        parts = path.lstrip("/").split("/")
+        match parts:
+            case ["relationship_tuples", subject]:
+                for full_relation, targets in policy_data.items():
+                    relation = full_relation.lstrip("relation:")
+                    for target_type, target_objects in targets.items():
+                        for target in target_objects:
+                            # TODO missing subject_type and target_type
+                            await self._insert_fact(
+                                "relationships",
+                                {
+                                    "subject": subject,
+                                    "relation": relation,
+                                    "object": target,
+                                    "tenant": "",  # TODO unnecessary?
+                                },
+                            )
+            case ["role_assignments", full_user_key]:
+                user_key = full_user_key.lstrip("user:")
+                for subject, roles in policy_data.items():
+                    subject_type, subject_key = subject.split(":", 1)
+                    for role_key in roles:
+                        if subject_key == "__tenant":
+                            await self._insert_fact(
+                                "role_assignments",
+                                {
+                                    "actor": user_key,
+                                    "tenant": subject_key,
+                                    "role": role_key,
+                                    "resource": "",
+                                },
+                            )
+                        else:
+                            # TODO missing resource_type
+                            await self._insert_fact(
+                                "role_assignments",
+                                {
+                                    "actor": user_key,
+                                    "tenant": "",
+                                    "role": role_key,
+                                    "resource": subject_key,
+                                },
+                            )
+            case ["users", user_key]:
+                attributes = policy_data.get("attributes", {})
+                attributes.pop("key", None)
+                return await self._insert_fact(
+                    "users",
+                    {
+                        "key": user_key,
+                        "first_name": attributes.pop("first_name", ""),
+                        "last_name": attributes.pop("last_name", ""),
+                        "email": attributes.pop("email", ""),
+                        "attributes": attributes,
+                    },
+                )
+            case ["resource_instances", instance_key]:
+                # TODO missing resource_type
+                return await self._insert_fact(
+                    "resource_instance",
+                    {
+                        "key": instance_key,
+                        "attributes": policy_data.get("attributes", {}),
+                    },
+                )
+            case _:
+                return await super().set_policy_data(
+                    policy_data=policy_data, path=path, transaction_id=transaction_id
+                )
+
+    async def _insert_fact(self, fact_type: str, attributes: dict[str, str]):
+        try:
+            res = await self._client.post(
+                "/facts/insert",
+                json={
+                    "type": fact_type,
+                    "attributes": attributes,
+                },
+            )
+            if res.status != 200:
+                error = await res.text()
+                logger.error(f"Failed to insert fact: {res.status}\n{error}")
+            return res
+        except Exception as e:
+            logger.exception(f"Failed to insert fact: {e}")
 
     async def delete_policy_data(
         self, path: str = "", transaction_id: Optional[str] = None
     ):
-        ...  # TODO
-
-    async def get_data(self, path: str) -> dict:
-        ...  # TODO
-
-    async def get_data_with_input(self, path: str, input: BaseModel) -> dict:
-        ...  # TODO
-
-    async def init_healthcheck_policy(self, policy_id: str, policy_code: str):
-        ...  # TODO
-
-    async def full_export(self, writer: AsyncTextIOWrapper) -> None:
-        ...  # TODO
-
-    async def full_import(self, reader: AsyncTextIOWrapper) -> None:
-        ...  # TODO
+        # TODO forward relevant objects to data manager instead of OPA
+        return super().delete_policy_data(path=path, transaction_id=transaction_id)

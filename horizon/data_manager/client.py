@@ -163,9 +163,8 @@ class DataManagerClient(ExtendedOpalClient):
         await self._run_engine_runner(None, self._data_manager_runner)
 
     async def stop_data_manager_runner(self):
-        if hasattr(self, "_data_manager_runner") and self._data_manager_runner:
-            logger.info("Stopping Data Manager runner")
-            await self._data_manager_runner.stop()
+        logger.info("Stopping Data Manager runner")
+        await self._data_manager_runner.stop()
 
     async def check_healthy(self) -> bool:
         opal_health = await super().check_healthy()
