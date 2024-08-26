@@ -1,4 +1,5 @@
 from typing import Optional
+from uuid import uuid4
 
 from aiohttp import ClientSession
 from loguru import logger
@@ -48,19 +49,18 @@ class DataManagerPolicyStoreClient(OpaClient):
     ):
         parts = path.lstrip("/").split("/")
         match parts:
-            case ["relationship_tuples", subject]:
+            case ["relationships", obj]:
                 for full_relation, targets in policy_data.items():
                     relation = full_relation.lstrip("relation:")
                     for target_type, target_objects in targets.items():
                         for target in target_objects:
-                            # TODO missing subject_type and target_type
                             await self._insert_fact(
-                                "relationships",
+                                "relationship_tuples",
                                 {
-                                    "subject": subject,
+                                    "id": uuid4(),
+                                    "subject": f"{target_type}:{target}",
                                     "relation": relation,
-                                    "object": target,
-                                    "tenant": "",  # TODO unnecessary?
+                                    "object": obj,
                                 },
                             )
             case ["role_assignments", full_user_key]:
@@ -68,10 +68,11 @@ class DataManagerPolicyStoreClient(OpaClient):
                 for subject, roles in policy_data.items():
                     subject_type, subject_key = subject.split(":", 1)
                     for role_key in roles:
-                        if subject_key == "__tenant":
+                        if subject_type == "__tenant":
                             await self._insert_fact(
                                 "role_assignments",
                                 {
+                                    "id": uuid4(),
                                     "actor": user_key,
                                     "tenant": subject_key,
                                     "role": role_key,
@@ -79,35 +80,30 @@ class DataManagerPolicyStoreClient(OpaClient):
                                 },
                             )
                         else:
-                            # TODO missing resource_type
                             await self._insert_fact(
                                 "role_assignments",
                                 {
+                                    "id": uuid4(),
                                     "actor": user_key,
                                     "tenant": "",
                                     "role": role_key,
-                                    "resource": subject_key,
+                                    "resource": subject,
                                 },
                             )
             case ["users", user_key]:
                 attributes = policy_data.get("attributes", {})
-                attributes.pop("key", None)
                 return await self._insert_fact(
                     "users",
                     {
-                        "key": user_key,
-                        "first_name": attributes.pop("first_name", ""),
-                        "last_name": attributes.pop("last_name", ""),
-                        "email": attributes.pop("email", ""),
+                        "id": user_key,
                         "attributes": attributes,
                     },
                 )
             case ["resource_instances", instance_key]:
-                # TODO missing resource_type
                 return await self._insert_fact(
                     "resource_instance",
                     {
-                        "key": instance_key,
+                        "id": instance_key,
                         "attributes": policy_data.get("attributes", {}),
                     },
                 )
