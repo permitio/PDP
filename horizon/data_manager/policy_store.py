@@ -1,3 +1,4 @@
+import time
 from typing import Optional, Iterator
 
 import aiohttp
@@ -92,13 +93,19 @@ class DataManagerPolicyStoreClient(OpaClient):
     async def _apply_data_update(
         self, data_update: DataUpdate
     ) -> aiohttp.ClientResponse:
+        start_time = time.perf_counter_ns()
         res = await self._client.post(
             "/v1/facts/applyUpdate",
             json=data_update.dict(),
         )
+        elapsed_time_ms = (time.perf_counter_ns() - start_time) / 1_000
         if res.status != 200:
             logger.error(
                 "Failed to apply data update to External Data Manager: {}",
                 await res.text(),
+            )
+        else:
+            logger.info(
+                f"Data update applied to External Data Manager: status={res.status} duration={elapsed_time_ms:.2f}ms"
             )
         return res
