@@ -1,5 +1,4 @@
 import logging
-import os
 import sys
 from typing import List
 from uuid import uuid4, UUID
@@ -8,7 +7,6 @@ from fastapi import Depends, FastAPI, status
 from fastapi.responses import RedirectResponse
 from loguru import logger
 from logzio.handler import LogzioHandler
-from opal_client.client import OpalClient
 from opal_client.config import (
     EngineLogFormat,
     opal_client_config,
@@ -20,21 +18,21 @@ from opal_client.engine.options import OpaServerOptions
 from opal_common.confi import Confi
 from opal_common.logging_utils.formatter import Formatter
 
-from horizon.facts.router import facts_router
 from horizon.authentication import enforce_pdp_token
 from horizon.config import MOCK_API_KEY, sidecar_config
+from horizon.data_manager.client import DataManagerClient
 from horizon.enforcer.api import init_enforcer_api_router, stats_manager
 from horizon.enforcer.opa.config_maker import (
     get_opa_authz_policy_file_path,
     get_opa_config_file_path,
 )
-from horizon.data_manager.client import DataManagerClient
+from horizon.facts.router import facts_router
 from horizon.local.api import init_local_cache_api_router
 from horizon.opal_relay_api import OpalRelayAPIClient
 from horizon.proxy.api import router as proxy_router
-from horizon.startup.remote_config import get_remote_config
-from horizon.startup.exceptions import InvalidPDPTokenException
 from horizon.startup.api_keys import get_env_api_key
+from horizon.startup.exceptions import InvalidPDPTokenException
+from horizon.startup.remote_config import get_remote_config
 from horizon.state import PersistentStateHandler
 from horizon.system.api import init_system_api_router
 from horizon.system.consts import GUNICORN_EXIT_APP
