@@ -23,29 +23,29 @@ class DataManagerRunner(PolicyEngineRunner):
         self._data_manager_token = data_manager_token
         self._data_manager_remote_backup_enabled = data_manager_remote_backup_enabled
         self._data_manager_remote_backup_url = data_manager_remote_backup_url
-        self.__client = None
+        self._client = None
 
     @property
-    def _client(self) -> aiohttp.ClientSession:
-        if self.__client is None:
-            self.__client = aiohttp.ClientSession(
+    def client(self) -> aiohttp.ClientSession:
+        if self._client is None:
+            self._client = aiohttp.ClientSession(
                 base_url=self._data_manager_url,
                 headers={"Authorization": f"Bearer {self._engine_token}"},
             )
-        return self.__client
+        return self._client
 
     async def __aenter__(self):
         self.set_envs()
         await super().__aenter__()
-        await self._client.__aenter__()
+        await self.client.__aenter__()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await super().__aexit__(exc_type, exc_val, exc_tb)
-        await self._client.__aexit__(exc_type, exc_val, exc_tb)
+        await self.client.__aexit__(exc_type, exc_val, exc_tb)
 
     async def is_healthy(self) -> bool:
-        async with self._client.get("/healthy") as resp:
+        async with self.client.get("/healthy") as resp:
             try:
                 resp.raise_for_status()
             except aiohttp.ClientResponseError:
@@ -54,7 +54,7 @@ class DataManagerRunner(PolicyEngineRunner):
                 return True
 
     async def is_ready(self) -> bool:
-        async with self._client.get("/ready") as resp:
+        async with self.client.get("/ready") as resp:
             try:
                 resp.raise_for_status()
             except aiohttp.ClientResponseError:
