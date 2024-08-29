@@ -95,6 +95,8 @@ def _get_operations_for_update_user(
             ),
         )
     else:
+        # When an object is deleted, a data update with an empty attributes object is sent
+        # We cascade the deletion to all related facts
         yield DeleteOperation(
             fact=Fact(
                 type="users",
@@ -125,6 +127,8 @@ def _get_operations_for_update_resource_instance(
             ),
         )
     else:
+        # When an object is deleted, a data update with an empty attributes object is sent
+        # We cascade the deletion to all related facts
         yield DeleteOperation(
             fact=Fact(
                 type="resource_instance",
