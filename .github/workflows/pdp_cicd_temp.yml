@@ -7,6 +7,9 @@ on:
   pull_request_target:
     branches:
       - 'external-data-source'
+  push:
+    branches:
+      - 'omer/per-10669-adapt-pdp-ci-to-autouse-the-go-service'
 
 jobs:
   build-and-push-pdp:
