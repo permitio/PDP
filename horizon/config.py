@@ -38,13 +38,6 @@ class SidecarConfig(Confi):
         "ENABLE_EXTERNAL_DATA_MANAGER is true",
     )
 
-    DATA_MANAGER_ENABLE_REMOTE_BACKUP = confi.bool(
-        "DATA_MANAGER_ENABLE_REMOTE_BACKUP",
-        False,
-        description="if true, the sidecar Data Manager service will fetch the PDP data backup from the configured"
-        "url",
-    )
-
     DATA_MANAGER_REMOTE_BACKUP_URL = confi.str(
         "DATA_MANAGER_REMOTE_BACKUP_URL",
         None,
