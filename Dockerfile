@@ -68,7 +68,7 @@ RUN chown -R permit:permit /opa
 RUN chown -R permit:permit /config
 
 COPY factstore_server/factstore_server-linux-amd64 horizon/data_manager/data_manager-amd
-COPY factstore_server/factstore_server-linux-arm horizon/data_manager/data_manager-arm
+COPY factstore_server/factstore_server-linux-arm64 horizon/data_manager/data_manager-arm
 RUN chmod +x horizon/data_manager/data_manager-amd
 RUN chmod +x horizon/data_manager/data_manager-arm
 # copy wait-for-it (use only for development! e.g: docker compose)
