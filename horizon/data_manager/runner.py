@@ -1,10 +1,14 @@
+import json
+import logging
 import os
 import platform
 from pathlib import Path
 
 import aiohttp
 from opal_client.config import EngineLogFormat
+from opal_client.engine.logger import logging_level_from_string, log_entire_dict
 from opal_client.engine.runner import PolicyEngineRunner
+from opal_client.logger import logger
 
 
 class DataManagerRunner(PolicyEngineRunner):
@@ -16,6 +20,7 @@ class DataManagerRunner(PolicyEngineRunner):
         data_manager_remote_backup_enabled: bool,
         data_manager_remote_backup_url: str | None,
         piped_logs_format: EngineLogFormat = EngineLogFormat.NONE,
+        binary_file_name: str = "data_manager",
     ):
         super().__init__(piped_logs_format=piped_logs_format)
         self._engine_token = engine_token
@@ -23,6 +28,7 @@ class DataManagerRunner(PolicyEngineRunner):
         self._data_manager_token = data_manager_token
         self._data_manager_remote_backup_enabled = data_manager_remote_backup_enabled
         self._data_manager_remote_backup_url = data_manager_remote_backup_url
+        self._binary_file_name = binary_file_name
         self._client = None
 
     @property
@@ -33,6 +39,17 @@ class DataManagerRunner(PolicyEngineRunner):
                 headers={"Authorization": f"Bearer {self._engine_token}"},
             )
         return self._client
+
+    async def handle_log_line(self, line: bytes) -> None:
+        try:
+            log_line = json.loads(line)
+            level = logging.getLevelName(
+                logging_level_from_string(log_line.pop("level", "info"))
+            )
+            msg = log_line.pop("msg", None)
+            log_entire_dict(level, msg, log_line)
+        except json.JSONDecodeError:
+            logger.info(line.decode("utf-8"))
 
     async def __aenter__(self):
         self.set_envs()
@@ -78,9 +95,9 @@ class DataManagerRunner(PolicyEngineRunner):
 
         arch = platform.machine()
         if arch == "x86_64":
-            binary_path = "data_manager-amd"
+            binary_path = f"{self._binary_file_name}-amd"
         elif arch == "arm64" or arch == "aarch64":
-            binary_path = "data_manager-arm"
+            binary_path = f"{self._binary_file_name}-arm"
         else:
             raise ValueError(f"Unsupported architecture: {arch}")
         return os.path.join(current_dir, binary_path)
