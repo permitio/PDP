@@ -48,7 +48,7 @@ jobs:
 
     - uses: robinraju/release-downloader@v1
       with:
-        repo: permitio/datasync
+        repository: permitio/datasync
         latest: true
         fileName: factstore_server*
         token: ${{ secrets.CLONE_REPO_TOKEN }}
