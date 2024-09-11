@@ -117,7 +117,7 @@ class DataManagerClient(ExtendedOpalClient):
             piped_logs_format=EngineLogFormat.FULL,
         )
         policy_store = policy_store or DataManagerPolicyStoreClient(
-            data_manager_client=self._data_manager_runner.client,
+            data_manager_client=lambda: self._data_manager_runner.client,
             opa_server_url=opal_client_config.POLICY_STORE_URL,
             opa_auth_token=opal_client_config.POLICY_STORE_AUTH_TOKEN,
             auth_type=opal_client_config.POLICY_STORE_AUTH_TYPE,
