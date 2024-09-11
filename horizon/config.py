@@ -22,28 +22,28 @@ class SidecarConfig(Confi):
         "ENABLE_EXTERNAL_DATA_MANAGER",
         False,
         description="if true, the sidecar will enable the Data Manager service to manage the PDP data in "
-                    "external data store",
+        "external data store",
     )
 
     DATA_MANAGER_SERVICE_URL = confi.str(
         "DATA_MANAGER_SERVICE_URL",
         "http://localhost:8080",
         description="URL to the Data Manager service that manages the PDP data, will only be used if "
-                    "ENABLE_EXTERNAL_DATA_MANAGER is true",
+        "ENABLE_EXTERNAL_DATA_MANAGER is true",
     )
 
     DATA_MANAGER_ENABLE_REMOTE_BACKUP = confi.bool(
         "DATA_MANAGER_ENABLE_REMOTE_BACKUP",
         False,
         description="if true, the sidecar Data Manager service will fetch the PDP data backup from the configured"
-                    "url",
+        "url",
     )
 
     DATA_MANAGER_REMOTE_BACKUP_URL = confi.str(
         "DATA_MANAGER_REMOTE_BACKUP_URL",
         None,
         description="URL from which the Data Manager service will fetch the PDP data backup from, will only be used if "
-                    "DATA_MANAGER_ENABLE_REMOTE_BACKUP is true",
+        "DATA_MANAGER_ENABLE_REMOTE_BACKUP is true",
     )
 
     SHARD_ID = confi.str(
@@ -279,13 +279,13 @@ class SidecarConfig(Confi):
         {
             "name": "Authorization API",
             "description": "Authorization queries to OPA. These queries are answered locally by OPA "
-                           + "and do not require the cloud service. Latency should be very low (< 20ms per query)",
+            + "and do not require the cloud service. Latency should be very low (< 20ms per query)",
         },
         {
             "name": "Local Queries",
             "description": "These queries are done locally against the sidecar and do not "
-                           + "involve a network round-trip to Permit.io cloud API. Therefore they are safe "
-                           + "to use with reasonable performance (i.e: with negligible latency) in the context of a user request.",
+            + "involve a network round-trip to Permit.io cloud API. Therefore they are safe "
+            + "to use with reasonable performance (i.e: with negligible latency) in the context of a user request.",
         },
         {
             "name": "Policy Updater",
@@ -294,10 +294,10 @@ class SidecarConfig(Confi):
         {
             "name": "Cloud API Proxy",
             "description": "These endpoints proxy the Permit.io cloud api, and therefore **incur high-latency**. "
-                           + "You should not use the cloud API in the standard request flow of users, i.e in places where the incurred "
-                           + "added latency will affect your entire api. A good place to call the cloud API will be in one-time user events "
-                           + "such as user registration (i.e: calling sync user, assigning initial user roles, etc.). "
-                           + "The sidecar will proxy to the cloud every request prefixed with '/sdk'.",
+            + "You should not use the cloud API in the standard request flow of users, i.e in places where the incurred "
+            + "added latency will affect your entire api. A good place to call the cloud API will be in one-time user events "
+            + "such as user registration (i.e: calling sync user, assigning initial user roles, etc.). "
+            + "The sidecar will proxy to the cloud every request prefixed with '/sdk'.",
             "externalDocs": {
                 "description": "The cloud api complete docs are located here:",
                 "url": "https://api.permit.io/redoc",
