@@ -4,9 +4,9 @@
 FROM python:3.10 as BuildStage
 # install linux libraries necessary to compile some python packages
 RUN apt-get update && \
-    apt-get install -y build-essential libffi-dev && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+  apt-get install -y build-essential libffi-dev && \
+  apt-get clean && \
+  rm -rf /var/lib/apt/lists/*
 # from now on, work in the /app directory
 WORKDIR /app/
 
@@ -17,39 +17,62 @@ RUN pip install --upgrade pip && pip install setuptools -U && pip install --user
 COPY horizon setup.py MANIFEST.in ./
 RUN python setup.py install --user
 
-FROM golang:bullseye as OPABuildStage
+FROM golang:bullseye as BinariesBuildStage
 
 COPY custom* /custom
+COPY datasync* /datasync
 
 RUN if [ -f /custom/custom_opa.tar.gz ]; \
-    then \
-      cd /custom && \
-      tar xzf custom_opa.tar.gz && \
-      go build -o /opa && \
-      rm -rf /custom ; \
-    else \
-      case $(uname -m) in \
-      	x86_64) \
-      		curl -L -o /opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static ; \
-      		;; \
-      	aarch64) \
-      		curl -L -o /opa https://openpolicyagent.org/downloads/latest/opa_linux_arm64_static ; \
-      		;; \
-      	*) \
-      		echo "Unknown architecture." ; \
-      		exit 1 ; \
-      		;; \
-      esac ; \
-    fi
+  then \
+  cd /custom && \
+  tar xzf custom_opa.tar.gz && \
+  go build -o /opa && \
+  rm -rf /custom ; \
+  else \
+  case $(uname -m) in \
+  x86_64) \
+  curl -L -o /opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static ; \
+  ;; \
+  aarch64) \
+  curl -L -o /opa https://openpolicyagent.org/downloads/latest/opa_linux_arm64_static ; \
+  ;; \
+  *) \
+  echo "Unknown architecture." ; \
+  exit 1 ; \
+  ;; \
+  esac ; \
+  fi
+
+RUN if [ -f /datasync/datasync.tar.gz ]; \
+  then \
+  cd /datasync && \
+  tar xzf datasync.tar.gz && \
+  go build -o /factstore ./cmd/factstore_server && \
+  rm -rf /datasync ; \
+  else \
+  case $(uname -m) in \
+  x86_64) \
+  cp datasync/factstore_server-linux-amd64 /factstore \
+  ;; \
+  aarch64) \
+  cp datasync/factstore_server-linux-arm64 /factstore \
+  ;; \
+  *) \
+  echo "Unknown architecture." ; \
+  exit 1 ; \
+  ;; \
+  esac ; \
+  fi
 
 # MAIN IMAGE ----------------------------------------
 # most of the time only this image should be built
 # ---------------------------------------------------
 FROM python:3.10-slim
+
 RUN apt-get update && \
-    apt-get install -y bash curl procps htop net-tools tcpdump && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+  apt-get install -y bash curl procps htop net-tools tcpdump && \
+  apt-get clean && \
+  rm -rf /var/lib/apt/lists/*
 
 RUN groupadd -r permit
 RUN useradd -m -s /bin/bash -g permit -d /home/permit permit
@@ -58,7 +81,8 @@ RUN useradd -m -s /bin/bash -g permit -d /home/permit permit
 RUN mkdir /home/permit/.local
 COPY --from=BuildStage /root/.local /home/permit/.local
 
-COPY --from=OPABuildStage --chmod=755 /opa /opa
+COPY --from=BinariesBuildStage --chmod=755 /opa /opa
+COPY --from=BinariesBuildStage --chmod=755 /factstore /factstore
 
 # bash is needed for ./start/sh script
 COPY scripts ./
@@ -67,10 +91,6 @@ RUN mkdir -p /config
 RUN chown -R permit:permit /opa
 RUN chown -R permit:permit /config
 
-COPY factstore_server/factstore_server-linux-amd64 horizon/data_manager/data_manager-amd
-COPY factstore_server/factstore_server-linux-arm64 horizon/data_manager/data_manager-arm
-RUN chmod +x horizon/data_manager/data_manager-amd
-RUN chmod +x horizon/data_manager/data_manager-arm
 # copy wait-for-it (use only for development! e.g: docker compose)
 COPY scripts/wait-for-it.sh /usr/wait-for-it.sh
 RUN chmod +x /usr/wait-for-it.sh
@@ -123,5 +143,6 @@ ENV PDP_REMOTE_STATE_ENDPOINT=/v2/pdps/me/state
 EXPOSE 7000
 # expose opa directly
 EXPOSE 8181
+
 # run gunicorn
 CMD ["/start.sh"]
