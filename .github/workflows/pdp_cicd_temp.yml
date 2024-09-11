@@ -3,7 +3,10 @@ name: Build and Push PDP Docker Image
 on:
   pull_request:
     branches:
-      - 'omer/*'
+      - 'omer/per-10669-adapt-pdp-ci-to-autouse-the-go-service'
+  pull_request_target:
+    branches:
+      - 'external-data-source'
 
 jobs:
   build-and-push-pdp:
@@ -33,7 +36,7 @@ jobs:
 
     - name: Pre build PDP
       run: |
-        echo "${{ github.event.release.tag_name }}" | cut -d '-' -f 1 > permit_pdp_version
+        echo "0.6.0-alpha.1" | cut -d '-' -f 1 > permit_pdp_version
         rm -rf custom
         mkdir custom
         build_root="$PWD"
