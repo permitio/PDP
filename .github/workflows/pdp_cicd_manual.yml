@@ -1,19 +1,18 @@
-name: Build and Push PDP Docker Image
+name: Build and Push PDP Docker Image Manually
 
 on:
-  pull_request:
-    branches:
-      - 'omer/per-10669-adapt-pdp-ci-to-autouse-the-go-service'
-  pull_request_target:
-    branches:
-      - 'external-data-source'
-  push:
-    branches:
-      - 'omer/per-10669-adapt-pdp-ci-to-autouse-the-go-service'
+  workflow_dispatch:
+    inputs:
+      tag:
+        required: true
+        description: 'The tag for the image'
+        type: string
 
 jobs:
   build-and-push-pdp:
     runs-on: ubuntu-latest
+    env:
+      IMAGE_TAG: ${{ inputs.tag }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -39,12 +38,16 @@ jobs:
 
     - name: Pre build PDP
       run: |
-        echo "0.6.0-alpha.2" | cut -d '-' -f 1 > permit_pdp_version
+        echo "${IMAGE_TAG}" | cut -d '-' -f 1 > permit_pdp_version
         rm -rf custom
         mkdir custom
         build_root="$PWD"
         cd ./permit-opa
         find * -name '*go*' -print0 | xargs -0 tar -czf "$build_root"/custom/custom_opa.tar.gz --exclude '.*'
+        if [[ "${IMAGE_TAG}" != *alpha* ]]; then
+          echo "Alpha version not detected, exiting..."
+          exit 1
+        fi
 
     - uses: robinraju/release-downloader@v1
       with:
@@ -60,7 +63,7 @@ jobs:
         push: true
         context: .
         platforms: linux/amd64,linux/arm64
-        tags: permitio/pdp-v2:0.6.0-alpha.2
+        tags: permitio/pdp-v2:${{ inputs.tag }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
 
