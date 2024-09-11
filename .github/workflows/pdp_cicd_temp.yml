@@ -1,7 +1,7 @@
 name: Build and Push PDP Docker Image
 
 on:
-  pull_request:
+  pull_request_target:
     branches:
       - external-data-source
 
