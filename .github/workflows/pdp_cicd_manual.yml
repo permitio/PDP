@@ -66,4 +66,3 @@ jobs:
         tags: permitio/pdp-v2:${{ inputs.tag }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
-
