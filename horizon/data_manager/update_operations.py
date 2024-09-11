@@ -57,7 +57,7 @@ def _get_operations_for_update_role_assigment(
                         type="role_assignments",
                         attributes={
                             "id": str(uuid4()),
-                            "actor": user_key,
+                            "actor": f"user:{user_key}",
                             "tenant": subject_key,
                             "role": role_key,
                             "resource": "",
@@ -70,7 +70,7 @@ def _get_operations_for_update_role_assigment(
                         type="role_assignments",
                         attributes={
                             "id": str(uuid4()),
-                            "actor": user_key,
+                            "actor": f"user:{user_key}",
                             "tenant": "",
                             "role": role_key,
                             "resource": subject,
@@ -88,7 +88,7 @@ def _get_operations_for_update_user(
             fact=Fact(
                 type="users",
                 attributes={
-                    "id": user_key,
+                    "id": f"user:{user_key}",
                     "attributes": json.dumps(attributes),
                     # TODO remove the json.dumps after fixing the map[string]string issue in Go
                 },
@@ -100,13 +100,13 @@ def _get_operations_for_update_user(
         yield DeleteOperation(
             fact=Fact(
                 type="users",
-                attributes={"id": user_key},
+                attributes={"id": f"user:{user_key}"},
             ),
         )
         yield DeleteOperation(
             fact=Fact(
                 type="role_assignments",
-                attributes={"actor": user_key},
+                attributes={"actor": f"user:{user_key}"},
             ),
         )
 
