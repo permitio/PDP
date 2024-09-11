@@ -1,5 +1,5 @@
 import time
-from typing import Optional, Iterator
+from typing import Optional, Iterator, Callable
 
 import aiohttp
 from aiohttp import ClientSession
@@ -20,7 +20,7 @@ from horizon.data_manager.update_operations import (
 class DataManagerPolicyStoreClient(OpaClient):
     def __init__(
         self,
-        data_manager_client: ClientSession,
+        data_manager_client: ClientSession | Callable[[], ClientSession],
         opa_server_url=None,
         opa_auth_token: Optional[str] = None,
         auth_type: PolicyStoreAuth = PolicyStoreAuth.NONE,
@@ -49,6 +49,12 @@ class DataManagerPolicyStoreClient(OpaClient):
             tls_ca,
         )
         self._client = data_manager_client
+
+    @property
+    def client(self):
+        if isinstance(self._client, ClientSession):
+            return self._client
+        return self._client()
 
     async def set_policy_data(
         self,
@@ -94,7 +100,7 @@ class DataManagerPolicyStoreClient(OpaClient):
         self, data_update: DataUpdate
     ) -> aiohttp.ClientResponse:
         start_time = time.perf_counter_ns()
-        res = await self._client.post(
+        res = await self.client.post(
             "/v1/facts/applyUpdate",
             json=data_update.dict(),
         )
