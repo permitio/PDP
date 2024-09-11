@@ -57,7 +57,7 @@ jobs:
     - name: Build and push PDP image - (pre-release)
       uses: docker/build-push-action@v5
       with:
-        push: false
+        push: true
         context: .
         platforms: linux/amd64,linux/arm64
         tags: permitio/pdp-v2:0.6.0-alpha.1
