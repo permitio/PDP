@@ -18,7 +18,6 @@ class DataManagerRunner(PolicyEngineRunner):
         data_manager_url: str,
         data_manager_binary_path: str,
         data_manager_token: str | None,
-        data_manager_remote_backup_enabled: bool,
         data_manager_remote_backup_url: str | None,
         piped_logs_format: EngineLogFormat = EngineLogFormat.NONE,
     ):
@@ -27,7 +26,6 @@ class DataManagerRunner(PolicyEngineRunner):
         self._data_manager_url = data_manager_url
         self._data_manager_binary_path = data_manager_binary_path
         self._data_manager_token = data_manager_token
-        self._data_manager_remote_backup_enabled = data_manager_remote_backup_enabled
         self._data_manager_remote_backup_url = data_manager_remote_backup_url
         self._client = None
 
@@ -83,9 +81,7 @@ class DataManagerRunner(PolicyEngineRunner):
         os.environ["PDP_ENGINE_TOKEN"] = self._engine_token
         if self._data_manager_token:
             os.environ["PDP_TOKEN"] = self._data_manager_token
-        os.environ["PDP_BACKUP_ENABLED"] = (
-            "true" if self._data_manager_remote_backup_enabled else "false"
-        )
+        os.environ["PDP_BACKUP_ENABLED"] = "true"
         if self._data_manager_remote_backup_url:
             os.environ["PDP_BACKUP_URL"] = self._data_manager_remote_backup_url
 
