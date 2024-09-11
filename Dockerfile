@@ -4,27 +4,49 @@
 FROM golang:bullseye AS opa_build
 
 COPY custom* /custom
+COPY datasync* /datasync
 
 RUN if [ -f /custom/custom_opa.tar.gz ]; \
-    then \
-      cd /custom && \
-      tar xzf custom_opa.tar.gz && \
-      go build -o /opa && \
-      rm -rf /custom ; \
-    else \
-      case $(uname -m) in \
-      	x86_64) \
-      		curl -L -o /opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static ; \
-      		;; \
-      	aarch64) \
-      		curl -L -o /opa https://openpolicyagent.org/downloads/latest/opa_linux_arm64_static ; \
-      		;; \
-      	*) \
-      		echo "Unknown architecture." ; \
-      		exit 1 ; \
-      		;; \
-      esac ; \
-    fi
+  then \
+  cd /custom && \
+  tar xzf custom_opa.tar.gz && \
+  go build -o /opa && \
+  rm -rf /custom ; \
+  else \
+  case $(uname -m) in \
+  x86_64) \
+  curl -L -o /opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static ; \
+  ;; \
+  aarch64) \
+  curl -L -o /opa https://openpolicyagent.org/downloads/latest/opa_linux_arm64_static ; \
+  ;; \
+  *) \
+  echo "Unknown architecture." ; \
+  exit 1 ; \
+  ;; \
+  esac ; \
+  fi
+
+RUN if [ -f /datasync/datasync.tar.gz ]; \
+  then \
+  cd /datasync && \
+  tar xzf datasync.tar.gz && \
+  go build -o /factstore ./cmd/factstore_server && \
+  rm -rf /datasync ; \
+  else \
+  case $(uname -m) in \
+  x86_64) \
+  cp datasync/factstore_server-linux-amd64 /factstore \
+  ;; \
+  aarch64) \
+  cp datasync/factstore_server-linux-arm64 /factstore \
+  ;; \
+  *) \
+  echo "Unknown architecture." ; \
+  exit 1 ; \
+  ;; \
+  esac ; \
+  fi
 
 # MAIN IMAGE ----------------------------------------
 # most of the time only this image should be built
@@ -47,6 +69,7 @@ RUN apk update && \
 RUN mkdir /app/bin
 RUN chown -R permit:permit /app/bin
 COPY --from=opa_build --chmod=755 /opa /app/bin/opa
+COPY --from=opa_build --chmod=755 /factstore /app/bin/factstore
 
 # bash is needed for ./start/sh script
 COPY scripts ./
@@ -54,10 +77,6 @@ COPY scripts ./
 RUN mkdir -p /config
 RUN chown -R permit:permit /config
 
-COPY factstore_server/factstore_server-linux-amd64 horizon/data_manager/data_manager-amd
-COPY factstore_server/factstore_server-linux-arm64 horizon/data_manager/data_manager-arm
-RUN chmod +x horizon/data_manager/data_manager-amd
-RUN chmod +x horizon/data_manager/data_manager-arm
 # copy wait-for-it (use only for development! e.g: docker compose)
 COPY scripts/wait-for-it.sh /usr/wait-for-it.sh
 RUN chmod +x /usr/wait-for-it.sh
@@ -125,5 +144,6 @@ ENV OPAL_AUTH_PUBLIC_KEY="ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDe2iQ+/E01P2W5/E
 EXPOSE 7000
 # expose opa directly
 EXPOSE 8181
+
 # run gunicorn
 CMD ["/app/start.sh"]
