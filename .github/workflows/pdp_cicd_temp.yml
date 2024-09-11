@@ -39,7 +39,7 @@ jobs:
 
     - name: Pre build PDP
       run: |
-        echo "0.6.0-alpha.1" | cut -d '-' -f 1 > permit_pdp_version
+        echo "0.6.0-alpha.2" | cut -d '-' -f 1 > permit_pdp_version
         rm -rf custom
         mkdir custom
         build_root="$PWD"
@@ -60,7 +60,7 @@ jobs:
         push: true
         context: .
         platforms: linux/amd64,linux/arm64
-        tags: permitio/pdp-v2:0.6.0-alpha.1
+        tags: permitio/pdp-v2:0.6.0-alpha.2
         cache-from: type=gha
         cache-to: type=gha,mode=max
 
