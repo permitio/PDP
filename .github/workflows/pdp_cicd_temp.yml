@@ -1,7 +1,9 @@
 name: Build and Push PDP Docker Image
 
 on:
-  pull_request:
+  push:
+    branches:
+      - omer/per-10669-adapt-pdp-ci-to-autouse-the-go-service
 
 jobs:
   build-and-push-pdp:
