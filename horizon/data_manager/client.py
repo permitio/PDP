@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from loguru import logger
 from opal_client import OpalClient
 from opal_client.callbacks.api import init_callbacks_api
-from opal_client.config import opal_client_config
+from opal_client.config import opal_client_config, EngineLogFormat
 from opal_client.data.api import init_data_router
 from opal_client.data.updater import DataUpdater
 from opal_client.engine.options import OpaServerOptions, CedarServerOptions
@@ -110,13 +110,14 @@ class DataManagerClient(ExtendedOpalClient):
     ):
         self._data_manager_runner = DataManagerRunner(
             data_manager_url=sidecar_config.DATA_MANAGER_SERVICE_URL,
-            data_manager_token=sidecar_config.DATA_MANAGER_TOKEN,
+            data_manager_token=opal_client_config.CLIENT_TOKEN,
             data_manager_remote_backup_enabled=sidecar_config.DATA_MANAGER_ENABLE_REMOTE_BACKUP,
             data_manager_remote_backup_url=sidecar_config.DATA_MANAGER_REMOTE_BACKUP_URL,
             engine_token=sidecar_config.API_KEY,
+            piped_logs_format=EngineLogFormat.FULL,
         )
         policy_store = policy_store or DataManagerPolicyStoreClient(
-            data_manager_client=self._data_manager_runner.client,
+            data_manager_client=lambda: self._data_manager_runner.client,
             opa_server_url=opal_client_config.POLICY_STORE_URL,
             opa_auth_token=opal_client_config.POLICY_STORE_AUTH_TOKEN,
             auth_type=opal_client_config.POLICY_STORE_AUTH_TYPE,

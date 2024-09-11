@@ -2,6 +2,7 @@ from opal_common.confi import Confi, confi
 
 MOCK_API_KEY = "MUST BE DEFINED"
 
+
 # scopes enum
 class ApiKeyLevel(str):
     ORGANIZATION = "organization"
@@ -43,12 +44,6 @@ class SidecarConfig(Confi):
         None,
         description="URL from which the Data Manager service will fetch the PDP data backup from, will only be used if "
         "DATA_MANAGER_ENABLE_REMOTE_BACKUP is true",
-    )
-
-    DATA_MANAGER_TOKEN = confi.str(
-        "DATA_MANAGER_TOKEN",
-        "secret",
-        description="The Data Manager service token for internal data manager communication",
     )
 
     SHARD_ID = confi.str(
