@@ -153,7 +153,7 @@ jobs:
         latest: true
         fileName: factstore_server*
         token: ${{ secrets.CLONE_REPO_TOKEN }}
-        out-file-path: "factstore_server"
+        out-file-path: "datasync"
 
     - name: Build and push PDP image - (pre-release)
       if: "github.event.release.prerelease"

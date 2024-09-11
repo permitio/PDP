@@ -25,6 +25,12 @@ class SidecarConfig(Confi):
         "external data store",
     )
 
+    DATA_MANAGER_BINARY_PATH = confi.str(
+        "DATA_MANAGER_BINARY_PATH",
+        "factstore",
+        description="path in which to find the data manager executable",
+    )
+
     DATA_MANAGER_SERVICE_URL = confi.str(
         "DATA_MANAGER_SERVICE_URL",
         "http://localhost:8080",
