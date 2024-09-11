@@ -1,13 +1,12 @@
 name: Build and Push PDP Docker Image
 
 on:
-  push:
+  pull_request:
     branches:
-      - omer/per-10669-adapt-pdp-ci-to-autouse-the-go-service
+      - 'omer/*'
 
 jobs:
   build-and-push-pdp:
-    needs: pdp-tests
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
