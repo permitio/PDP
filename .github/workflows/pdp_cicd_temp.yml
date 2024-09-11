@@ -1,9 +1,9 @@
 name: Build and Push PDP Docker Image
 
 on:
-  pull_request_target:
+  pull_request:
     branches:
-      - external-data-source
+      - 'omer/*'
 
 jobs:
   build-and-push-pdp:
