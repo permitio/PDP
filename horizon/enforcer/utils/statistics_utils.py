@@ -83,4 +83,5 @@ class StatisticsManager:
     async def status(self) -> bool:
         rate = await self.current_rate()
         if rate > self._failures_threshold_percentage:
-            self._dbf._had_failure
+            self._had_failure = True
+        return self._had_failure
