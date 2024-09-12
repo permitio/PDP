@@ -4,9 +4,9 @@
 FROM python:3.10 as BuildStage
 # install linux libraries necessary to compile some python packages
 RUN apt-get update && \
-  apt-get install -y build-essential libffi-dev && \
-  apt-get clean && \
-  rm -rf /var/lib/apt/lists/*
+    apt-get install -y build-essential libffi-dev && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 # from now on, work in the /app directory
 WORKDIR /app/
 
@@ -68,11 +68,10 @@ RUN if [ -f /datasync/datasync.tar.gz ]; \
 # most of the time only this image should be built
 # ---------------------------------------------------
 FROM python:3.10-slim
-
 RUN apt-get update && \
-  apt-get install -y bash curl procps htop net-tools tcpdump && \
-  apt-get clean && \
-  rm -rf /var/lib/apt/lists/*
+    apt-get install -y bash curl procps htop net-tools tcpdump && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 RUN groupadd -r permit
 RUN useradd -m -s /bin/bash -g permit -d /home/permit permit
@@ -143,6 +142,5 @@ ENV PDP_REMOTE_STATE_ENDPOINT=/v2/pdps/me/state
 EXPOSE 7000
 # expose opa directly
 EXPOSE 8181
-
 # run gunicorn
 CMD ["/start.sh"]
