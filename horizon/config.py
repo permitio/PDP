@@ -27,7 +27,7 @@ class SidecarConfig(Confi):
 
     DATA_MANAGER_BINARY_PATH = confi.str(
         "DATA_MANAGER_BINARY_PATH",
-        "factstore",
+        "/factstore",
         description="path in which to find the data manager executable",
     )
 
