@@ -4,7 +4,7 @@ import re
 from typing import cast, Optional, Union, Dict, List
 
 import aiohttp
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, Query
 from fastapi import HTTPException
 from fastapi import Request, Response, status
 from opal_client.config import opal_client_config
@@ -14,6 +14,7 @@ from opal_client.policy_store.policy_store_client_factory import (
     DEFAULT_POLICY_STORE_GETTER,
 )
 from opal_client.utils import proxy_response
+from permit_datafilter.compile_api.compile_client import OpaCompileClient
 from pydantic import parse_obj_as
 from starlette.responses import JSONResponse
 
@@ -57,6 +58,34 @@ USER_PERMISSIONS_POLICY_PACKAGE = "permit.user_permissions"
 AUTHORIZED_USERS_POLICY_PACKAGE = "permit.authorized_users.authorized_users"
 USER_TENANTS_POLICY_PACKAGE = USER_PERMISSIONS_POLICY_PACKAGE + ".tenants"
 KONG_ROUTES_TABLE_FILE = "/config/kong_routes.json"
+MAIN_PARTIAL_EVAL_PACKAGE = "permit.partial_eval"
+
+# TODO: a more robust policy needs to be added to permit default managed policy
+# this policy is partial-eval friendly, but only supports RBAC at the moment
+TEMP_PARTIAL_EVAL_POLICY = """
+package permit.partial_eval
+
+import future.keywords.contains
+import future.keywords.if
+import future.keywords.in
+
+default allow := false
+
+allow if {
+	checked_permission := sprintf("%s:%s", [input.resource.type, input.action])
+
+	some granting_role, role_data in data.roles
+	some resource_type, actions in role_data.grants
+	granted_action := actions[_]
+	granted_permission := sprintf("%s:%s", [resource_type, granted_action])
+
+	some tenant, roles in data.users[input.user.key].roleAssignments
+	role := roles[_]
+	role == granting_role
+	checked_permission == granted_permission
+	input.resource.tenant == tenant
+}
+"""
 
 stats_manager = StatisticsManager(
     interval_seconds=sidecar_config.OPA_CLIENT_FAILURE_THRESHOLD_INTERVAL,
@@ -675,5 +704,43 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
                 reason="cannot decode opa response",
             )
         return result
+
+    @router.post(
+        "/filter_resources",
+        response_model=AuthorizationResult,
+        status_code=status.HTTP_200_OK,
+        response_model_exclude_none=True,
+        dependencies=[Depends(enforce_pdp_token)],
+    )
+    async def filter_resources(
+        request: Request,
+        input: AuthorizationQuery,
+        raw: bool = Query(
+            False,
+            description="whether we should include the OPA raw compilation result in the response. this can help us debug the translation of the AST",
+        ),
+        x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
+    ):
+        headers = transform_headers(request)
+        client = OpaCompileClient(
+            base_url=f"{opal_client_config.POLICY_STORE_URL}", headers=headers
+        )
+        COMPILE_ROOT_RULE_REFERENCE = f"data.{MAIN_PARTIAL_EVAL_PACKAGE}.allow"
+        query = f"{COMPILE_ROOT_RULE_REFERENCE} == true"
+        residual_policy = await client.compile_query(
+            query=query,
+            input=input.dict(),
+            unknowns=[
+                "input.resource.key",
+                "input.resource.tenant",
+                "input.resource.attributes",
+            ],
+            raw=raw,
+        )
+        return Response(
+            content=json.dumps(residual_policy.dict()),
+            status_code=status.HTTP_200_OK,
+            media_type="application/json",
+        )
 
     return router
