@@ -16,19 +16,17 @@ class DataManagerRunner(PolicyEngineRunner):
         self,
         engine_token: str,
         data_manager_url: str,
+        data_manager_binary_path: str,
         data_manager_token: str | None,
-        data_manager_remote_backup_enabled: bool,
         data_manager_remote_backup_url: str | None,
         piped_logs_format: EngineLogFormat = EngineLogFormat.NONE,
-        binary_file_name: str = "data_manager",
     ):
         super().__init__(piped_logs_format=piped_logs_format)
         self._engine_token = engine_token
         self._data_manager_url = data_manager_url
+        self._data_manager_binary_path = data_manager_binary_path
         self._data_manager_token = data_manager_token
-        self._data_manager_remote_backup_enabled = data_manager_remote_backup_enabled
         self._data_manager_remote_backup_url = data_manager_remote_backup_url
-        self._binary_file_name = binary_file_name
         self._client = None
 
     @property
@@ -83,21 +81,10 @@ class DataManagerRunner(PolicyEngineRunner):
         os.environ["PDP_ENGINE_TOKEN"] = self._engine_token
         if self._data_manager_token:
             os.environ["PDP_TOKEN"] = self._data_manager_token
-        os.environ["PDP_BACKUP_ENABLED"] = (
-            "true" if self._data_manager_remote_backup_enabled else "false"
-        )
+        os.environ["PDP_BACKUP_ENABLED"] = "true"
         if self._data_manager_remote_backup_url:
             os.environ["PDP_BACKUP_URL"] = self._data_manager_remote_backup_url
 
     @property
     def command(self) -> str:
-        current_dir = Path(__file__).parent
-
-        arch = platform.machine()
-        if arch == "x86_64":
-            binary_path = f"{self._binary_file_name}-amd"
-        elif arch == "arm64" or arch == "aarch64":
-            binary_path = f"{self._binary_file_name}-arm"
-        else:
-            raise ValueError(f"Unsupported architecture: {arch}")
-        return os.path.join(current_dir, binary_path)
+        return self._data_manager_binary_path

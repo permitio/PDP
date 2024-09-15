@@ -110,8 +110,8 @@ class DataManagerClient(ExtendedOpalClient):
     ):
         self._data_manager_runner = DataManagerRunner(
             data_manager_url=sidecar_config.DATA_MANAGER_SERVICE_URL,
+            data_manager_binary_path=sidecar_config.DATA_MANAGER_BINARY_PATH,
             data_manager_token=opal_client_config.CLIENT_TOKEN,
-            data_manager_remote_backup_enabled=sidecar_config.DATA_MANAGER_ENABLE_REMOTE_BACKUP,
             data_manager_remote_backup_url=sidecar_config.DATA_MANAGER_REMOTE_BACKUP_URL,
             engine_token=sidecar_config.API_KEY,
             piped_logs_format=EngineLogFormat.FULL,
