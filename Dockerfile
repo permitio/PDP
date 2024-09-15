@@ -1,14 +1,15 @@
+FROM python:3.10-alpine AS python-base
+
+# install linux libraries necessary to compile some python packages
+RUN apk update && \
+    apk add --no-cache bash build-base libffi-dev libressl-dev musl-dev zlib-dev
+
 # BUILD STAGE ---------------------------------------
 # split this stage to save time and reduce image size
 # ---------------------------------------------------
-FROM python:3.10 as BuildStage
-# install linux libraries necessary to compile some python packages
-RUN apt-get update && \
-    apt-get install -y build-essential libffi-dev && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-# from now on, work in the /app directory
-WORKDIR /app/
+FROM python-base AS build
+
+WORKDIR /app
 
 # install python deps
 COPY requirements.txt requirements.txt
@@ -17,7 +18,10 @@ RUN pip install --upgrade pip && pip install setuptools -U && pip install --user
 COPY horizon setup.py MANIFEST.in ./
 RUN python setup.py install --user
 
-FROM golang:bullseye as OPABuildStage
+# OPA BUILD STAGE -----------------------------------
+# build opa from source or download precompiled binary
+# ---------------------------------------------------
+FROM golang:bullseye AS opa_build
 
 COPY custom* /custom
 
@@ -45,20 +49,18 @@ RUN if [ -f /custom/custom_opa.tar.gz ]; \
 # MAIN IMAGE ----------------------------------------
 # most of the time only this image should be built
 # ---------------------------------------------------
-FROM python:3.10-slim
-RUN apt-get update && \
-    apt-get install -y bash curl procps htop net-tools tcpdump && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+FROM python-base
 
-RUN groupadd -r permit
-RUN useradd -m -s /bin/bash -g permit -d /home/permit permit
+WORKDIR /app
+
+RUN addgroup -S permit
+RUN adduser -S -G permit permit
 
 # copy libraries from build stage
 RUN mkdir /home/permit/.local
-COPY --from=BuildStage /root/.local /home/permit/.local
+COPY --from=build /root/.local /home/permit/.local
 
-COPY --from=OPABuildStage --chmod=755 /opa /opa
+COPY --from=opa_build --chmod=755 /opa /opa
 
 # bash is needed for ./start/sh script
 COPY scripts ./
@@ -71,8 +73,8 @@ RUN chown -R permit:permit /config
 COPY scripts/wait-for-it.sh /usr/wait-for-it.sh
 RUN chmod +x /usr/wait-for-it.sh
 # copy startup script
-COPY ./scripts/start.sh /start.sh
-RUN chmod +x /start.sh
+COPY ./scripts/start.sh ./start.sh
+RUN chmod +x ./start.sh
 
 RUN chown -R permit:permit /home/permit
 RUN chown -R permit:permit /usr/
@@ -83,11 +85,11 @@ COPY kong_routes.json /config/kong_routes.json
 # install sidecar package
 
 # copy gunicorn_config
-COPY ./scripts/gunicorn_conf.py /gunicorn_conf.py
+COPY ./scripts/gunicorn_conf.py ./gunicorn_conf.py
 # copy app code
 COPY . ./
 # Make sure scripts in .local are usable:
-ENV PATH=/:/home/permit/.local/bin:$PATH
+ENV PATH="/:/home/permit/.local/bin:$PATH"
 # uvicorn config ------------------------------------
 
 # WARNING: do not change the number of workers on the opal client!
@@ -96,28 +98,28 @@ ENV PATH=/:/home/permit/.local/bin:$PATH
 # number of uvicorn workers
 ENV UVICORN_NUM_WORKERS=1
 # uvicorn asgi app
-ENV UVICORN_ASGI_APP=horizon.main:app
+ENV UVICORN_ASGI_APP="horizon.main:app"
 # uvicorn port
 ENV UVICORN_PORT=7000
 
 # opal configuration --------------------------------
-ENV OPAL_SERVER_URL=https://opal.permit.io
-ENV OPAL_LOG_DIAGNOSE=false
-ENV OPAL_LOG_TRACEBACK=false
+ENV OPAL_SERVER_URL="https://opal.permit.io"
+ENV OPAL_LOG_DIAGNOSE="false"
+ENV OPAL_LOG_TRACEBACK="false"
 ENV OPAL_LOG_MODULE_EXCLUDE_LIST="[]"
-ENV OPAL_INLINE_OPA_ENABLED=true
-ENV OPAL_INLINE_OPA_LOG_FORMAT=http
+ENV OPAL_INLINE_OPA_ENABLED="true"
+ENV OPAL_INLINE_OPA_LOG_FORMAT="http"
 
 # horizon configuration -----------------------------
 # by default, the backend is at port 8000 on the docker host
 # in prod, you must pass the correct url
-ENV PDP_CONTROL_PLANE=https://api.permit.io
+ENV PDP_CONTROL_PLANE="https://api.permit.io"
 ENV PDP_API_KEY="MUST BE DEFINED"
-ENV PDP_REMOTE_CONFIG_ENDPOINT=/v2/pdps/me/config
-ENV PDP_REMOTE_STATE_ENDPOINT=/v2/pdps/me/state
+ENV PDP_REMOTE_CONFIG_ENDPOINT="/v2/pdps/me/config"
+ENV PDP_REMOTE_STATE_ENDPOINT="/v2/pdps/me/state"
 # expose sidecar port
 EXPOSE 7000
 # expose opa directly
 EXPOSE 8181
 # run gunicorn
-CMD ["/start.sh"]
+CMD ["/app/start.sh"]

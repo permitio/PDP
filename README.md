@@ -17,12 +17,12 @@ AUTHZ_SERVICE_URL=https://api.permit.io CLIENT_TOKEN=<CLIENT_TOKEN> uvicorn hori
 
 Pull the image from docker hub
 ```
-docker pull permitio/pdp
+docker pull permitio/pdp-v2
 ```
 
 Run the image: don't forget to pass your authorization service API KEY:
 ```
-docker run -it -e "CLIENT_TOKEN=<YOUR API KEY>" -p 7000:7000 permitio/pdp
+docker run -it -e "CLIENT_TOKEN=<YOUR API KEY>" -p 7000:7000 permitio/pdp-v2
 ```
 
 By default the image exposes port 7000 but you can change it.

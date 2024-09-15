@@ -1,6 +1,6 @@
 #!/bin/bash
 
-export GUNICORN_CONF=${GUNICORN_CONF:-/gunicorn_conf.py}
+export GUNICORN_CONF=${GUNICORN_CONF:-./gunicorn_conf.py}
 export GUNICORN_TIMEOUT=${GUNICORN_TIMEOUT:-600}
 ddtrace=""
 if [ "${PDP_ENABLE_MONITORING}" == "true" ]
