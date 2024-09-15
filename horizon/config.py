@@ -2,6 +2,7 @@ from opal_common.confi import Confi, confi
 
 MOCK_API_KEY = "MUST BE DEFINED"
 
+
 # scopes enum
 class ApiKeyLevel(str):
     ORGANIZATION = "organization"
@@ -16,6 +17,33 @@ class SidecarConfig(Confi):
         if not hasattr(cls, "instance"):
             cls.instance = super(SidecarConfig, cls).__new__(cls)
         return cls.instance
+
+    ENABLE_EXTERNAL_DATA_MANAGER = confi.bool(
+        "ENABLE_EXTERNAL_DATA_MANAGER",
+        False,
+        description="if true, the sidecar will enable the Data Manager service to manage the PDP data in "
+        "external data store",
+    )
+
+    DATA_MANAGER_BINARY_PATH = confi.str(
+        "DATA_MANAGER_BINARY_PATH",
+        "/factstore",
+        description="path in which to find the data manager executable",
+    )
+
+    DATA_MANAGER_SERVICE_URL = confi.str(
+        "DATA_MANAGER_SERVICE_URL",
+        "http://localhost:8080",
+        description="URL to the Data Manager service that manages the PDP data, will only be used if "
+        "ENABLE_EXTERNAL_DATA_MANAGER is true",
+    )
+
+    DATA_MANAGER_REMOTE_BACKUP_URL = confi.str(
+        "DATA_MANAGER_REMOTE_BACKUP_URL",
+        None,
+        description="URL from which the Data Manager service will fetch the PDP data backup from, will only be used if "
+        "DATA_MANAGER_ENABLE_REMOTE_BACKUP is true",
+    )
 
     SHARD_ID = confi.str(
         "SHARD_ID",
