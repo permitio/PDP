@@ -12,8 +12,10 @@ FROM python-base AS build
 WORKDIR /app
 
 # install python deps
+RUN pip install --upgrade pip
+
 COPY requirements.txt requirements.txt
-RUN pip install --upgrade pip && pip install setuptools -U && pip install --user -r requirements.txt
+RUN pip install --user -r requirements.txt
 
 COPY horizon setup.py MANIFEST.in ./
 RUN python setup.py install --user
