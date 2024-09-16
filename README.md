@@ -28,13 +28,16 @@ docker run -it -e "CLIENT_TOKEN=<YOUR API KEY>" -p 7000:7000 permitio/pdp-v2
 By default the image exposes port 7000 but you can change it.
 
 ## Building the docker image yourself
+on arm architecture:
 ```
-READ_ONLY_GITHUB_TOKEN=<GITHUB_TOKEN> make build
+VERSION=<TAG> make build-arm64
 ```
-you must declare the environment variable `READ_ONLY_GITHUB_TOKEN` for this command to work.
+on amd64 architecture:
+```
+VERSION=<TAG> make build-amd64
+```
 
 ## Running the image in development mode
 ```
-DEV_MODE_CLIENT_TOKEN=<CLIENT_TOKEN> make run
+VERSION=<TAG> API_KEY=<PDP_API_KEY> make run
 ```
-you must declare the environment variable `DEV_MODE_CLIENT_TOKEN` for this command to work.
