@@ -2,7 +2,7 @@ FROM python:3.10-alpine AS python-base
 
 # install linux libraries necessary to compile some python packages
 RUN apk update && \
-    apk add --no-cache bash build-base libffi-dev libressl-dev musl-dev zlib-dev
+    apk add --no-cache bash build-base libffi-dev libressl-dev musl-dev zlib-dev gcompat
 
 # BUILD STAGE ---------------------------------------
 # split this stage to save time and reduce image size
@@ -56,19 +56,20 @@ FROM python-base
 WORKDIR /app
 
 RUN addgroup -S permit
-RUN adduser -S -G permit permit
+RUN adduser -S -s /bin/bash -G permit -h /home/permit permit
 
 # copy libraries from build stage
 RUN mkdir /home/permit/.local
+RUN mkdir /app/bin
 COPY --from=build /root/.local /home/permit/.local
 
-COPY --from=opa_build --chmod=755 /opa /opa
+COPY --from=opa_build --chmod=755 /opa /app/bin/opa
 
 # bash is needed for ./start/sh script
 COPY scripts ./
 
 RUN mkdir -p /config
-RUN chown -R permit:permit /opa
+RUN chown -R permit:permit /app/bin
 RUN chown -R permit:permit /config
 
 # copy wait-for-it (use only for development! e.g: docker compose)
@@ -91,7 +92,7 @@ COPY ./scripts/gunicorn_conf.py ./gunicorn_conf.py
 # copy app code
 COPY . ./
 # Make sure scripts in .local are usable:
-ENV PATH="/:/home/permit/.local/bin:$PATH"
+ENV PATH="/:/app/bin:/home/permit/.local/bin:$PATH"
 # uvicorn config ------------------------------------
 
 # WARNING: do not change the number of workers on the opal client!
