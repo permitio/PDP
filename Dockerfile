@@ -91,6 +91,9 @@ COPY kong_routes.json /config/kong_routes.json
 COPY ./scripts/gunicorn_conf.py ./gunicorn_conf.py
 # copy app code
 COPY . ./
+
+RUN pip uninstall -y pip setuptools
+
 # Make sure scripts in .local are usable:
 ENV PATH="/:/app/bin:/home/permit/.local/bin:$PATH"
 # uvicorn config ------------------------------------
