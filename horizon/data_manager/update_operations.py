@@ -118,7 +118,7 @@ def _get_operations_for_update_resource_instance(
     if attributes:
         yield InsertOperation(
             fact=Fact(
-                type="resource_instance",
+                type="instances",
                 attributes={
                     "id": instance_key,
                     "attributes": json.dumps(attributes),
@@ -131,7 +131,7 @@ def _get_operations_for_update_resource_instance(
         # We cascade the deletion to all related facts
         yield DeleteOperation(
             fact=Fact(
-                type="resource_instance",
+                type="instances",
                 attributes={"id": instance_key},
             ),
         )
