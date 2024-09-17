@@ -60,7 +60,7 @@ def _get_operations_for_update_role_assigment(
                             "actor": f"user:{user_key}",
                             "tenant": subject_key,
                             "role": role_key,
-                            "resource": "",
+                            "resource": subject,
                         },
                     ),
                 )
