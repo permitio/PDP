@@ -1,6 +1,5 @@
 import json
 from typing import Iterator
-from uuid import uuid4
 
 from opal_common.schemas.data import JsonableValue
 
@@ -29,7 +28,6 @@ def _get_operations_for_update_relationship_tuple(
                     fact=Fact(
                         type="relationship_tuples",
                         attributes={
-                            "id": str(uuid4()),
                             "subject": f"{target_type}:{target}",
                             "relation": relation,
                             "object": obj,
@@ -56,7 +54,6 @@ def _get_operations_for_update_role_assigment(
                     fact=Fact(
                         type="role_assignments",
                         attributes={
-                            "id": str(uuid4()),
                             "actor": f"user:{user_key}",
                             "tenant": subject_key,
                             "role": role_key,
@@ -69,7 +66,6 @@ def _get_operations_for_update_role_assigment(
                     fact=Fact(
                         type="role_assignments",
                         attributes={
-                            "id": str(uuid4()),
                             "actor": f"user:{user_key}",
                             "tenant": "",
                             "role": role_key,
