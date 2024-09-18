@@ -55,7 +55,7 @@ FROM python-base
 
 WORKDIR /app
 
-RUN addgroup -S permit -g 1000
+RUN addgroup -S permit -g 999
 RUN adduser -S -s /bin/bash -u 1000 -G permit -h /home/permit permit
 
 # copy libraries from build stage
