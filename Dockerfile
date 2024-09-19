@@ -73,6 +73,7 @@ COPY ./scripts/gunicorn_conf.py ./gunicorn_conf.py
 COPY ./requirements.txt ./requirements.txt
 RUN pip install -r requirements.txt
 RUN python -m pip uninstall -y pip setuptools
+RUN rm -r /usr/local/lib/python3.10/ensurepip
 
 # copy app code
 COPY ./horizon ./horizon
