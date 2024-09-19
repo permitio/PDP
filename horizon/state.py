@@ -5,6 +5,7 @@ import platform
 import subprocess
 import time
 from contextlib import asynccontextmanager
+from functools import cache
 from typing import Any, AsyncGenerator, List, Optional
 from uuid import UUID, uuid4
 
@@ -18,7 +19,6 @@ from horizon.config import sidecar_config
 from horizon.system.consts import API_VERSION
 
 PERSISTENT_STATE_FILENAME = "/home/permit/persistent_state.json"
-PDP_VERSION_FILENAME = "/permit_pdp_version"
 MAX_STATE_UPDATE_INTERVAL_SECONDS = 60
 
 
@@ -121,9 +121,10 @@ class PersistentStateHandler:
                 self._state = prev_state
 
     @classmethod
+    @cache
     def _get_pdp_version(cls) -> Optional[str]:
-        if os.path.exists(PDP_VERSION_FILENAME):
-            with open(PDP_VERSION_FILENAME) as f:
+        if os.path.exists(sidecar_config.VERSION_FILE_PATH):
+            with open(sidecar_config.VERSION_FILE_PATH) as f:
                 return f.read().strip()
         return None
 

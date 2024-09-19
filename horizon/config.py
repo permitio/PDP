@@ -209,6 +209,11 @@ class SidecarConfig(Confi):
         10,
         description="The amount of time in seconds to wait for the local facts to be synced before timing out",
     )
+    VERSION_FILE_PATH = confi.str(
+        "VERSION_FILE_PATH",
+        "/permit_pdp_version",
+        description="The path to the file that contains the PDP version",
+    )
 
     # non configurable values -------------------------------------------------
 
