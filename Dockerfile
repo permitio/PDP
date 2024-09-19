@@ -123,6 +123,7 @@ ENV PDP_CONTROL_PLANE="https://api.permit.io"
 ENV PDP_API_KEY="MUST BE DEFINED"
 ENV PDP_REMOTE_CONFIG_ENDPOINT="/v2/pdps/me/config"
 ENV PDP_REMOTE_STATE_ENDPOINT="/v2/pdps/me/state"
+ENV PDP_VERSION_FILE_PATH="/app/permit_pdp_version"
 # expose sidecar port
 EXPOSE 7000
 # expose opa directly
