@@ -1,25 +1,3 @@
-FROM python:3.10-alpine AS python-base
-
-# install linux libraries necessary to compile some python packages
-RUN apk update && \
-    apk add --no-cache bash build-base libffi-dev libressl-dev musl-dev zlib-dev gcompat
-
-# BUILD STAGE ---------------------------------------
-# split this stage to save time and reduce image size
-# ---------------------------------------------------
-FROM python-base AS build
-
-WORKDIR /app
-
-# install python deps
-RUN pip install --upgrade pip
-
-COPY requirements.txt requirements.txt
-RUN pip install --user -r requirements.txt
-
-COPY horizon setup.py MANIFEST.in ./
-RUN python setup.py install --user
-
 # OPA BUILD STAGE -----------------------------------
 # build opa from source or download precompiled binary
 # ---------------------------------------------------
@@ -51,30 +29,32 @@ RUN if [ -f /custom/custom_opa.tar.gz ]; \
 # MAIN IMAGE ----------------------------------------
 # most of the time only this image should be built
 # ---------------------------------------------------
-FROM python-base
+FROM python:3.10-alpine
 
 WORKDIR /app
 
 RUN addgroup -S permit -g 1001
 RUN adduser -S -s /bin/bash -u 1000 -G permit -h /home/permit permit
 
-# copy libraries from build stage
-RUN mkdir /home/permit/.local
-RUN mkdir /app/bin
-COPY --from=build /root/.local /home/permit/.local
+# install linux libraries necessary to compile some python packages
+RUN apk update && \
+    apk add --no-cache bash build-base libffi-dev libressl-dev musl-dev zlib-dev gcompat
 
+# Copy custom opa binary
+RUN mkdir /app/bin
+RUN chown -R permit:permit /app/bin
 COPY --from=opa_build --chmod=755 /opa /app/bin/opa
 
 # bash is needed for ./start/sh script
 COPY scripts ./
 
 RUN mkdir -p /config
-RUN chown -R permit:permit /app/bin
 RUN chown -R permit:permit /config
 
 # copy wait-for-it (use only for development! e.g: docker compose)
 COPY scripts/wait-for-it.sh /usr/wait-for-it.sh
 RUN chmod +x /usr/wait-for-it.sh
+
 # copy startup script
 COPY ./scripts/start.sh ./start.sh
 RUN chmod +x ./start.sh
@@ -85,14 +65,18 @@ USER permit
 
 # copy Kong route-to-resource translation table
 COPY kong_routes.json /config/kong_routes.json
-# install sidecar package
 
 # copy gunicorn_config
 COPY ./scripts/gunicorn_conf.py ./gunicorn_conf.py
-# copy app code
-COPY . ./
 
-RUN pip uninstall -y pip setuptools
+# install python dependencies
+COPY ./requirements.txt ./requirements.txt
+RUN pip install -r requirements.txt
+RUN python -m pip uninstall -y pip setuptools
+RUN rm -r /usr/local/lib/python3.10/ensurepip
+
+# copy app code
+COPY ./horizon ./horizon
 
 # Make sure scripts in .local are usable:
 ENV PATH="/:/app/bin:/home/permit/.local/bin:$PATH"
