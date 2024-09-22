@@ -33,12 +33,22 @@ jobs:
         cd ./permit-opa
         find * -name '*go*' -print0 | xargs -0 tar -czf "$build_root"/custom/custom_opa.tar.gz --exclude '.*'
 
+    - uses: robinraju/release-downloader@v1
+      with:
+        repository: permitio/datasync
+        latest: true
+        fileName: factstore_server*
+        token: ${{ secrets.CLONE_REPO_TOKEN }}
+        out-file-path: "datasync"
+
     - name: Build and load image for PDP E2E tests
       uses: docker/build-push-action@v5
       with:
         push: false
         load: true
         context: .
+        build-args: |
+          ALLOW_MISSING_FACTSTORE=false
         platforms: linux/amd64
         tags: permitio/pdp-v2:test
         cache-from: type=gha
@@ -162,6 +172,8 @@ jobs:
         push: true
         context: .
         platforms: linux/amd64,linux/arm64
+        build-args: |
+          ALLOW_MISSING_FACTSTORE=false
         tags: permitio/pdp-v2:${{ github.event.release.tag_name }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
@@ -173,6 +185,8 @@ jobs:
         push: true
         context: .
         platforms: linux/amd64,linux/arm64
+        build-args: |
+          ALLOW_MISSING_FACTSTORE=false
         tags: permitio/pdp-v2:${{ github.event.release.tag_name }},permitio/pdp-v2:latest
         cache-from: type=gha
         cache-to: type=gha,mode=max
