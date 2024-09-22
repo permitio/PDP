@@ -44,7 +44,6 @@ from horizon.enforcer.schemas_kong import (
     KongWrappedAuthorizationQuery,
 )
 from horizon.enforcer.schemas_v1 import AuthorizationQueryV1
-from horizon.enforcer.utils.headers_utils import get_case_insensitive
 from horizon.enforcer.utils.mapping_rules_utils import MappingRulesUtils
 from horizon.enforcer.utils.statistics_utils import StatisticsManager
 from horizon.state import PersistentStateHandler
@@ -201,7 +200,7 @@ def get_v1_processed_query(result: dict) -> Optional[dict]:
 
 
 def get_v2_processed_query(result: dict) -> Optional[dict]:
-    return result.get("debug", {}).get("input", None)
+    return (result.get("debug", {}) or {}).get("input", None)
 
 
 async def notify_seen_sdk(
