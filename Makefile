@@ -21,7 +21,7 @@ build-amd64: prepare
 	@docker buildx build --platform linux/amd64 -t permitio/pdp-v2:$(VERSION) . --load
 
 build-arm64: prepare
-	@docker buildx build --platform linux/arm64 -t permitio/pdp-v2:$(VERSION) . --load
+	@docker buildx build --build-arg ALLOW_MISSING_FACTSTORE=false --platform linux/arm64 -t permitio/pdp-v2:$(VERSION) . --load
 
 run: run-prepare
 	@docker run -p 7766:7000 --env PDP_API_KEY=$(API_KEY) --env PDP_DEBUG=true permitio/pdp-v2:$(VERSION)
