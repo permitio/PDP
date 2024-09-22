@@ -18,7 +18,7 @@ COPY horizon setup.py MANIFEST.in ./
 RUN python setup.py install --user
 
 FROM golang:bullseye as BinariesBuildStage
-
+ARG ALLOW_MISSING_FACTSTORE=true
 COPY custom* /custom
 COPY datasync* /datasync
 
@@ -52,17 +52,38 @@ RUN if [ -f /datasync/datasync.tar.gz ]; \
   else \
   case $(uname -m) in \
   x86_64) \
-  cp datasync/factstore_server-linux-amd64 /factstore \
+    if [ -f /datasync/factstore_server-linux-amd64 ]; then \
+      cp /datasync/factstore_server-linux-amd64 /factstore; \
+    else \
+      echo "factstore_server-linux-amd64 not found." ; \
+      if [ "$ALLOW_MISSING_FACTSTORE" = "false" ]; then \
+        echo "Missing Factstore is not allowed, exiting..."; exit 1; \
+      else \
+        echo "Missing Factstore is allowed, continuing..."; \
+        touch /factstore ; \
+      fi \
+    fi \
   ;; \
   aarch64) \
-  cp datasync/factstore_server-linux-arm64 /factstore \
+    if [ -f /datasync/factstore_server-linux-arm64 ]; then \
+      cp /datasync/factstore_server-linux-arm64 /factstore; \
+    else \
+      echo "factstore_server-linux-arm64 not found." ; \
+      if [ "$ALLOW_MISSING_FACTSTORE" = "false" ]; then \
+        echo "Missing Factstore is not allowed, exiting..."; exit 1; \
+      else \
+        echo "Missing Factstore is allowed, continuing..."; \
+        touch /factstore ; \
+      fi \
+    fi \
   ;; \
   *) \
-  echo "Unknown architecture." ; \
-  exit 1 ; \
+    echo "Unknown architecture." ; \
+    exit 1 ; \
   ;; \
   esac ; \
   fi
+
 
 # MAIN IMAGE ----------------------------------------
 # most of the time only this image should be built
