@@ -10,7 +10,7 @@ RUN if [ -f /custom/custom_opa.tar.gz ]; \
   then \
   cd /custom && \
   tar xzf custom_opa.tar.gz && \
-  go build -o /opa && \
+  go build -ldflags="-extldflags=-static" -o /opa && \
   rm -rf /custom ; \
   else \
   case $(uname -m) in \
@@ -31,7 +31,7 @@ RUN if [ -f /datasync/datasync.tar.gz ]; \
   then \
   cd /datasync && \
   tar xzf datasync.tar.gz && \
-  go build -o /factstore ./cmd/factstore_server && \
+  go build -ldflags="-extldflags=-static" -o /factstore ./cmd/factstore_server && \
   rm -rf /datasync ; \
   else \
   case $(uname -m) in \
@@ -155,6 +155,7 @@ ENV PDP_API_KEY="MUST BE DEFINED"
 ENV PDP_REMOTE_CONFIG_ENDPOINT="/v2/pdps/me/config"
 ENV PDP_REMOTE_STATE_ENDPOINT="/v2/pdps/me/state"
 ENV PDP_VERSION_FILE_PATH="/app/permit_pdp_version"
+ENV PDP_DATA_MANAGER_BINARY_PATH="/app/bin/factstore"
 # expose sidecar port
 EXPOSE 7000
 # expose opa directly
