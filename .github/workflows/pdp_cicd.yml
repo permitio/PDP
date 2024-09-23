@@ -24,6 +24,9 @@ jobs:
         path: './permit-opa'
         token: ${{ secrets.CLONE_REPO_TOKEN }}
 
+    - name: Create version file
+      run: echo "${{ github.event.release.tag_name }}-test" | cut -d '-' -f 1 > permit_pdp_version
+
     - name: Pre build PDP tests
       run: |
         rm -rf custom
