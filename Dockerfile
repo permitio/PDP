@@ -78,6 +78,9 @@ RUN rm -r /usr/local/lib/python3.10/ensurepip
 # copy app code
 COPY ./horizon ./horizon
 
+# copy version file
+COPY ./permit_pdp_version /app/permit_pdp_version
+
 # Make sure scripts in .local are usable:
 ENV PATH="/:/app/bin:/home/permit/.local/bin:$PATH"
 # uvicorn config ------------------------------------
