@@ -38,7 +38,11 @@ RUN adduser -S -s /bin/bash -u 1000 -G permit -h /home/permit permit
 
 # install linux libraries necessary to compile some python packages
 RUN apk update && \
-    apk add --no-cache bash build-base libffi-dev libressl-dev musl-dev zlib-dev gcompat
+    apk add --no-cache bash build-base libffi-dev libressl-dev musl-dev zlib-dev gcompat ca-certificates
+
+# Copy maccabi.crt into the system certificate store and update the CA store
+COPY ./maccabi.crt /usr/local/share/ca-certificates/maccabi.crt
+RUN update-ca-certificates
 
 # Copy custom opa binary
 RUN mkdir /app/bin

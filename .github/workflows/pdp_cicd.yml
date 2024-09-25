@@ -16,6 +16,9 @@ jobs:
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
+    
+    - name: Write maccabi.crt file from secret
+      run: echo "${{ secrets.MACCABI_CA_FILE }}" > ./maccabi.crt
 
     - uses: actions/checkout@v3
       with:
@@ -89,6 +92,9 @@ jobs:
       with:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_TOKEN }}
+    
+    - name: Write maccabi.crt file from secret
+      run: echo "${{ secrets.MACCABI_CA_FILE }}" > ./maccabi.crt
 
     - name: Pre build - for PDP-Vanilla
       run: echo "${{ github.event.release.tag_name }}" | cut -d '-' -f 1 > permit_pdp_version
@@ -133,6 +139,9 @@ jobs:
       with:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_TOKEN }}
+    
+    - name: Write maccabi.crt file from secret
+      run: echo "${{ secrets.MACCABI_CA_FILE }}" > ./maccabi.crt
 
     - uses: actions/checkout@v3
       with:
@@ -171,3 +180,6 @@ jobs:
         tags: permitio/pdp-v2:${{ github.event.release.tag_name }},permitio/pdp-v2:latest
         cache-from: type=gha
         cache-to: type=gha,mode=max
+    
+    - name: Clean up maccabi.crt file
+      run: rm ./maccabi.crt
