@@ -99,14 +99,14 @@ class PermitPDP:
             raise SystemExit(GUNICORN_EXIT_APP)
 
         if not remote_config:
-            logger.warning(
-                "Could not fetch config from cloud control plane, reverting to local config!"
-            )
-        else:
-            logger.info("Applying config overrides from cloud control plane...")
-            apply_config(remote_config.opal_common or {}, opal_common_config)
-            apply_config(remote_config.opal_client or {}, opal_client_config)
-            apply_config(remote_config.pdp or {}, sidecar_config)
+            logger.critical("No cloud configuration found. Exiting.")
+            raise SystemExit(GUNICORN_EXIT_APP)
+
+        logger.info("Applying config overrides from cloud control plane...")
+
+        apply_config(remote_config.opal_common or {}, opal_common_config)
+        apply_config(remote_config.opal_client or {}, opal_client_config)
+        apply_config(remote_config.pdp or {}, sidecar_config)
 
         self._log_environment(remote_config.context)
 

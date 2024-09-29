@@ -84,3 +84,16 @@ class OfflineModeManager:
         return RemoteConfig.parse_raw(
             Fernet(dec_key).decrypt(remote_config_backup.enc_remote_config)
         )
+
+    def process_remote_config(
+        self, remote_config: Optional[RemoteConfig]
+    ) -> Optional[RemoteConfig]:
+        if remote_config is None:
+            # Cloud fetch failed, try to restore from backup
+            remote_config = self.restore_config()
+        else:
+            # Cloud fetch succeeded, backup the fetched config
+            self.backup_config(remote_config)
+
+        # We handle enabling OPAL's offline mode in pdp.py
+        return remote_config

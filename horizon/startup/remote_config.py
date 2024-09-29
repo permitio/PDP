@@ -78,7 +78,7 @@ class RemoteConfigFetcher:
         try:
             return fetch_with_retry()
         except requests.RequestException:
-            logger.warning("Failed to get PDP config")
+            logger.warning("Failed to get PDP config from control plane")
             return None
 
     def _fetch_config(self) -> RemoteConfig:
@@ -130,9 +130,6 @@ def get_remote_config():
         offline_mode = OfflineModeManager(
             sidecar_config.OFFLINE_MODE_BACKUP_PATH, get_env_api_key()
         )
-        if _remote_config is None:
-            _remote_config = offline_mode.restore_config()
-        else:
-            offline_mode.backup_config(_remote_config)
+        _remote_config = offline_mode.process_remote_config(_remote_config)
 
     return _remote_config
