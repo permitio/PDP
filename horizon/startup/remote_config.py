@@ -40,8 +40,8 @@ class RemoteConfigFetcher:
 
     DEFAULT_RETRY_CONFIG = {
         "retry": retry_if_not_exception_type(NoRetryException),
-        "wait": wait.wait_random_exponential(max=10),
-        "stop": stop.stop_after_attempt(10),
+        "wait": wait.wait_random_exponential(max=5),
+        "stop": stop.stop_after_attempt(6),
         "reraise": True,
     }
 
