@@ -40,10 +40,6 @@ class OfflineModeManager:
         return base64.urlsafe_b64encode(key_bytes), base64.urlsafe_b64encode(salt)
 
     def backup_config(self, remote_config: RemoteConfig):
-        # TODO: Don't use backup when remote config fetching fails due to an error which isn't a network error
-        # TODO: Opal backup should be encrypted as well
-        # TODO: Atomic writing the backup file
-
         logger.info(
             "Backing up remote config to {path}",
             path=self._backup_path,
@@ -51,16 +47,18 @@ class OfflineModeManager:
 
         enc_key, salt = self._derive_backup_key()
 
-        with open(self._backup_path, "w") as f:
-            f.write(
-                RemoteConfigBackup(
-                    enc_remote_config=Fernet(enc_key).encrypt(
-                        remote_config.json(ensure_ascii=False).encode()
-                    ),
-                    key_derivation_salt=salt,
-                ).json(ensure_ascii=False)
-            )
-        # TODO: Handle exceptions
+        try:
+            with open(self._backup_path, "w") as f:
+                f.write(
+                    RemoteConfigBackup(
+                        enc_remote_config=Fernet(enc_key).encrypt(
+                            remote_config.json(ensure_ascii=False).encode()
+                        ),
+                        key_derivation_salt=salt,
+                    ).json(ensure_ascii=False)
+                )
+        except Exception as e:
+            logger.exception("Failed to backup sidecar config")
 
     def restore_config(self) -> Optional[RemoteConfig]:
         logger.info(
@@ -75,7 +73,7 @@ class OfflineModeManager:
             logger.warning("Local backup file of sidecar config not found")
             return None
         except ValidationError:
-            logger.error("Failed to parse backup remote config")
+            logger.error("Failed to parse sidecar config backup file")
             return None
 
         dec_key, _ = self._derive_backup_key(remote_config_backup.key_derivation_salt)
