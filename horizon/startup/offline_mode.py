@@ -42,7 +42,6 @@ class OfflineModeManager:
     def backup_config(self, remote_config: RemoteConfig):
         # TODO: Don't use backup when remote config fetching fails due to an error which isn't a network error
         # TODO: Opal backup should be encrypted as well
-        # TODO: Use a resaonable retry policy for fetching, should be configurable, should exit PDP if everything fails
         # TODO: Atomic writing the backup file
 
         logger.info(

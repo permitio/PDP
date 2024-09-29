@@ -2,6 +2,7 @@ from opal_common.confi import Confi, confi
 
 MOCK_API_KEY = "MUST BE DEFINED"
 
+
 # scopes enum
 class ApiKeyLevel(str):
     ORGANIZATION = "organization"
@@ -113,6 +114,12 @@ class SidecarConfig(Confi):
         "OFFLINE_MODE_BACKUP_PATH",
         "/app/backup/sidecar_config.json",
         description="Path to backup sidecar cloud configuration to when in offline mode",
+    )
+
+    CONFIG_FETCH_MAX_RETRIES = confi.int(
+        "CONFIG_FETCH_MAX_RETRIES",
+        6,
+        description="Number of times to retry fetching the sidecar configuration from control plane",
     )
 
     # centralized logging
