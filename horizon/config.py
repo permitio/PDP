@@ -111,7 +111,7 @@ class SidecarConfig(Confi):
 
     OFFLINE_MODE_BACKUP_PATH = confi.str(
         "OFFLINE_MODE_BACKUP_PATH",
-        "./permit_pdp_config_backup",  # TODO: Fix this path
+        "/app/backup/sidecar_config.json",
         description="Path to backup sidecar cloud configuration to when in offline mode",
     )
 
