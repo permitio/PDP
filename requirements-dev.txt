@@ -1,5 +1,5 @@
 pytest
 aioresponses
-httpx
+httpx==0.27.0
 pytest-asyncio
 aiohttp>=3.9.4,<4
