@@ -10,6 +10,7 @@ from horizon.startup.api_keys import get_env_api_key
 from horizon.startup.blocking_request import BlockingRequest
 from horizon.startup.exceptions import NoRetryException
 from horizon.startup.schemas import RemoteConfig
+from horizon.startup.offline_mode import OfflineModeManager
 from horizon.state import PersistentStateHandler
 
 
@@ -124,5 +125,14 @@ def get_remote_config():
     global _remote_config
     if _remote_config is None:
         _remote_config = RemoteConfigFetcher().fetch_config()
+
+    if sidecar_config.ENABLE_OFFLINE_MODE:
+        offline_mode = OfflineModeManager(
+            sidecar_config.OFFLINE_MODE_BACKUP_PATH, get_env_api_key()
+        )
+        if _remote_config is None:
+            _remote_config = offline_mode.restore_config()
+        else:
+            offline_mode.backup_config(_remote_config)
 
     return _remote_config

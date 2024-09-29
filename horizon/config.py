@@ -103,6 +103,18 @@ class SidecarConfig(Confi):
     # enable datadog APM tracing
     ENABLE_MONITORING = confi.bool("ENABLE_MONITORING", False)
 
+    ENABLE_OFFLINE_MODE = confi.bool(
+        "ENABLE_OFFLINE_MODE",
+        False,
+        description="if true, sidecar will use a file backup to restore configuration and policy data when cloud services are unavailable",
+    )
+
+    OFFLINE_MODE_BACKUP_PATH = confi.str(
+        "OFFLINE_MODE_BACKUP_PATH",
+        "./permit_pdp_config_backup",  # TODO: Fix this path
+        description="Path to backup sidecar cloud configuration to when in offline mode",
+    )
+
     # centralized logging
     CENTRAL_LOG_DRAIN_URL = confi.str(
         "CENTRAL_LOG_DRAIN_URL", "https://listener.logz.io:8071"
