@@ -1,5 +1,7 @@
 from typing import Optional, Any, Dict
 
+from loguru import logger
+
 import requests
 
 from horizon.ssl import get_mtls_requests_kwargs
@@ -24,6 +26,24 @@ class BlockingRequest:
         headers.update(self._extra_headers)
         return headers
 
+    def _process_response(self, response: requests.Response) -> dict:
+        content_type = response.headers.get("Content-Type", "")
+
+        # if the response is not json, log the issue so we know what went wrong
+        if "application/json" not in content_type:
+            error_text = f"Non-JSON response: {response.text}"
+            logger.error(error_text)
+            raise ValueError(error_text)
+
+        if response.status_code == 401:
+            raise InvalidPDPTokenException()
+
+        try:
+            return response.json()
+        except ValueError:
+            logger.error(f"Failed to parse JSON response: {response.text}")
+            raise ValueError("unable to parse json")
+
     def get(self, url: str, params=None) -> dict:
         """
         utility method to send a *blocking* HTTP GET request and get the response back.
@@ -31,11 +51,7 @@ class BlockingRequest:
         response = requests.get(
             url, headers=self._headers(), params=params, **self._mtls_kwargs
         )
-
-        if response.status_code == 401:
-            raise InvalidPDPTokenException()
-
-        return response.json()
+        return self._process_response(response)
 
     def post(self, url: str, payload: dict = None, params=None) -> dict:
         """
@@ -48,8 +64,4 @@ class BlockingRequest:
             params=params,
             **self._mtls_kwargs,
         )
-
-        if response.status_code == 401:
-            raise InvalidPDPTokenException()
-
-        return response.json()
+        return self._process_response(response)
