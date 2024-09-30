@@ -16,6 +16,7 @@ from opal_common.schemas.data import DataUpdateReport
 from pydantic import BaseModel, ValidationError
 
 from horizon.config import sidecar_config
+from horizon.ssl import get_mtls_aiohttp_kwargs
 from horizon.system.consts import API_VERSION
 
 PERSISTENT_STATE_FILENAME = "/home/permit/persistent_state.json"
@@ -42,6 +43,7 @@ class PersistentStateHandler:
         self._seen_sdk_update_lock = asyncio.Lock()
         self._state_update_lock = asyncio.Lock()
         self._env_api_key = env_api_key
+        self._mtls_kwargs = get_mtls_aiohttp_kwargs()
         if not self._load():
             self._new()
 
@@ -214,6 +216,7 @@ class PersistentStateHandler:
                 url=config_url,
                 headers={"Authorization": f"Bearer {self._env_api_key}"},
                 json=await PersistentStateHandler.build_state_payload(state),
+                **self._mtls_kwargs,
             )
             if response.status != status.HTTP_204_NO_CONTENT:
                 logger.warning(

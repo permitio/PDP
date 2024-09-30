@@ -9,6 +9,7 @@ from starlette.requests import Request as FastApiRequest
 from starlette.responses import Response as FastApiResponse, StreamingResponse
 
 from horizon.config import sidecar_config
+from horizon.ssl import get_mtls_httpx_kwargs
 from horizon.startup.remote_config import get_remote_config
 from horizon.startup.api_keys import get_env_api_key
 
@@ -16,6 +17,7 @@ from horizon.startup.api_keys import get_env_api_key
 class FactsClient:
     def __init__(self):
         self._client: Optional[AsyncClient] = None
+        self._mtls_kwargs = get_mtls_httpx_kwargs()
 
     @property
     def client(self) -> AsyncClient:
@@ -24,6 +26,7 @@ class FactsClient:
             self._client = AsyncClient(
                 base_url=sidecar_config.CONTROL_PLANE,
                 headers={"Authorization": f"Bearer {env_api_key}"},
+                **self._mtls_kwargs,
             )
         return self._client
 

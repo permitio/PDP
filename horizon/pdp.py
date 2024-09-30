@@ -30,7 +30,7 @@ from horizon.enforcer.opa.config_maker import (
 )
 from horizon.local.api import init_local_cache_api_router
 from horizon.opal_relay_api import OpalRelayAPIClient
-from horizon.proxy.api import router as proxy_router
+from horizon.proxy.api import init_cloud_proxy_router
 from horizon.startup.remote_config import get_remote_config
 from horizon.startup.exceptions import InvalidPDPTokenException
 from horizon.startup.api_keys import get_env_api_key
@@ -330,6 +330,8 @@ class PermitPDP:
         local_router = init_local_cache_api_router(policy_store=self._opal.policy_store)
         # Init system router
         system_router = init_system_api_router()
+
+        proxy_router = init_cloud_proxy_router()
 
         # include the api routes
         app.include_router(

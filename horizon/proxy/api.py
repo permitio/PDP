@@ -12,6 +12,7 @@ from opal_common.logger import logger
 from pydantic import BaseModel, Field, parse_obj_as
 
 from horizon.config import sidecar_config
+from horizon.ssl import get_mtls_aiohttp_kwargs
 
 HTTP_GET = "GET"
 HTTP_DELETE = "DELETE"
@@ -40,9 +41,6 @@ class JSONPatchAction(BaseModel):
     value: Optional[Dict[str, Any]] = Field(
         None, description="json document, the operand of the action"
     )
-
-
-router = APIRouter()
 
 
 async def patch_handler(response: Response) -> Response:
@@ -82,94 +80,98 @@ write_routes = {
 }
 
 
-@router.api_route(
-    "/cloud/{path:path}",
-    methods=ALL_METHODS,
-    summary="Proxy Endpoint",
-    include_in_schema=False,
-)
-async def cloud_proxy(request: Request, path: str):
-    """
-    Proxies the request to the cloud API. Actual API docs are located here: https://api.permit.io/redoc
-    """
-    write_route = any(
-        request.method == route[0] and route[1].match(request.path_params["path"])
-        for route in write_routes
+def init_cloud_proxy_router() -> APIRouter:
+    mtls_kwargs = get_mtls_aiohttp_kwargs()
+
+    router = APIRouter()
+
+    @router.api_route(
+        "/cloud/{path:path}",
+        methods=ALL_METHODS,
+        summary="Proxy Endpoint",
+        include_in_schema=False,
     )
+    async def cloud_proxy(request: Request, path: str):
+        """
+        Proxies the request to the cloud API. Actual API docs are located here: https://api.permit.io/redoc
+        """
+        write_route = any(
+            request.method == route[0] and route[1].match(request.path_params["path"])
+            for route in write_routes
+        )
 
-    headers = {}
-    if write_route:
-        headers["X-Include-Patch"] = "true"
+        headers = {}
+        if write_route:
+            headers["X-Include-Patch"] = "true"
 
-    response = await proxy_request_to_cloud_service(
-        request,
-        path,
-        cloud_service_url=sidecar_config.BACKEND_SERVICE_URL,
-        additional_headers=headers,
+        response = await proxy_request_to_cloud_service(
+            request,
+            path,
+            cloud_service_url=sidecar_config.BACKEND_SERVICE_URL,
+            additional_headers=headers,
+            request_kwargs=mtls_kwargs,
+        )
+
+        if write_route:
+            return await patch_handler(response)
+
+        return response
+
+    @router.api_route(
+        "/healthchecks/opa/ready",
+        methods=[HTTP_GET],
+        summary="Proxy ready healthcheck - OPAL_OPA_HEALTH_CHECK_POLICY_ENABLED must be set to True",
     )
+    async def ready_opa_healthcheck(request: Request):
+        return await proxy_request_to_cloud_service(
+            request,
+            path="v1/data/system/opal/ready",
+            cloud_service_url=opal_client_config.POLICY_STORE_URL,
+            additional_headers={},
+        )
 
-    if write_route:
-        return await patch_handler(response)
-
-    return response
-
-
-@router.api_route(
-    "/healthchecks/opa/ready",
-    methods=[HTTP_GET],
-    summary="Proxy ready healthcheck - OPAL_OPA_HEALTH_CHECK_POLICY_ENABLED must be set to True",
-)
-async def ready_opa_healthcheck(request: Request):
-    return await proxy_request_to_cloud_service(
-        request,
-        path="v1/data/system/opal/ready",
-        cloud_service_url=opal_client_config.POLICY_STORE_URL,
-        additional_headers={},
+    @router.api_route(
+        "/healthchecks/opa/healthy",
+        methods=[HTTP_GET],
+        summary="Proxy healthy healthcheck -  OPAL_OPA_HEALTH_CHECK_POLICY_ENABLED must be set to True",
     )
+    async def health_opa_healthcheck(request: Request):
+        return await proxy_request_to_cloud_service(
+            request,
+            path="v1/data/system/opal/healthy",
+            cloud_service_url=opal_client_config.POLICY_STORE_URL,
+            additional_headers={},
+        )
 
-
-@router.api_route(
-    "/healthchecks/opa/healthy",
-    methods=[HTTP_GET],
-    summary="Proxy healthy healthcheck -  OPAL_OPA_HEALTH_CHECK_POLICY_ENABLED must be set to True",
-)
-async def health_opa_healthcheck(request: Request):
-    return await proxy_request_to_cloud_service(
-        request,
-        path="v1/data/system/opal/healthy",
-        cloud_service_url=opal_client_config.POLICY_STORE_URL,
-        additional_headers={},
+    @router.api_route(
+        "/healthchecks/opa/system",
+        methods=[HTTP_GET],
+        summary="Proxy system data -  OPAL_OPA_HEALTH_CHECK_POLICY_ENABLED must be set to True",
     )
+    async def system_opa_healthcheck(request: Request):
+        return await proxy_request_to_cloud_service(
+            request,
+            path="v1/data/system/opal",
+            cloud_service_url=opal_client_config.POLICY_STORE_URL,
+            additional_headers={},
+        )
 
-
-@router.api_route(
-    "/healthchecks/opa/system",
-    methods=[HTTP_GET],
-    summary="Proxy system data -  OPAL_OPA_HEALTH_CHECK_POLICY_ENABLED must be set to True",
-)
-async def system_opa_healthcheck(request: Request):
-    return await proxy_request_to_cloud_service(
-        request,
-        path="v1/data/system/opal",
-        cloud_service_url=opal_client_config.POLICY_STORE_URL,
-        additional_headers={},
+    # TODO: remove this once we migrate all clients
+    @router.api_route(
+        "/sdk/{path:path}",
+        methods=ALL_METHODS,
+        summary="Old Proxy Endpoint",
+        include_in_schema=False,
     )
+    async def old_proxy(request: Request, path: str):
+        return await proxy_request_to_cloud_service(
+            request,
+            path,
+            cloud_service_url=sidecar_config.BACKEND_LEGACY_URL,
+            additional_headers={},
+        )
 
-
-# TODO: remove this once we migrate all clients
-@router.api_route(
-    "/sdk/{path:path}",
-    methods=ALL_METHODS,
-    summary="Old Proxy Endpoint",
-    include_in_schema=False,
-)
-async def old_proxy(request: Request, path: str):
-    return await proxy_request_to_cloud_service(
-        request,
-        path,
-        cloud_service_url=sidecar_config.BACKEND_LEGACY_URL,
-        additional_headers={},
-    )
+    return router
 
 
 async def proxy_request_to_cloud_service(
@@ -177,6 +179,7 @@ async def proxy_request_to_cloud_service(
     path: str,
     cloud_service_url: str,
     additional_headers: Dict[str, str],
+    request_kwargs: dict = {},
 ) -> Response:
     auth_header = request.headers.get("Authorization")
     if auth_header is None:
@@ -210,13 +213,13 @@ async def proxy_request_to_cloud_service(
     async with aiohttp.ClientSession() as session:
         if request.method == HTTP_GET:
             async with session.get(
-                path, headers=headers, params=params
+                path, headers=headers, params=params, **request_kwargs
             ) as backend_response:
                 return await proxy_response(backend_response)
 
         if request.method == HTTP_DELETE:
             async with session.delete(
-                path, headers=headers, params=params
+                path, headers=headers, params=params, **request_kwargs
             ) as backend_response:
                 return await proxy_response(backend_response)
 
@@ -225,19 +228,19 @@ async def proxy_request_to_cloud_service(
 
         if request.method == HTTP_POST:
             async with session.post(
-                path, headers=headers, data=data, params=params
+                path, headers=headers, data=data, params=params, **request_kwargs
             ) as backend_response:
                 return await proxy_response(backend_response)
 
         if request.method == HTTP_PUT:
             async with session.put(
-                path, headers=headers, data=data, params=params
+                path, headers=headers, data=data, params=params, **request_kwargs
             ) as backend_response:
                 return await proxy_response(backend_response)
 
         if request.method == HTTP_PATCH:
             async with session.patch(
-                path, headers=headers, data=data, params=params
+                path, headers=headers, data=data, params=params, **request_kwargs
             ) as backend_response:
                 return await proxy_response(backend_response)
 

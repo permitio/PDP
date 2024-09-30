@@ -2,12 +2,8 @@ from typing import Optional, Any, Dict
 
 import requests
 
+from horizon.ssl import get_mtls_requests_kwargs
 from horizon.startup.exceptions import InvalidPDPTokenException
-from opal_common.config import opal_common_config
-from opal_common.security.sslcontext import (
-    get_custom_ssl_context_for_mtls,
-    CustomSSLContext,
-)
 
 
 class BlockingRequest:
@@ -18,24 +14,7 @@ class BlockingRequest:
         self._extra_headers = {
             k: v for k, v in (extra_headers or {}).items() if v is not None
         }
-        custom_ssl_context: Optional[CustomSSLContext] = (
-            get_custom_ssl_context_for_mtls(
-                client_cert_file=opal_common_config.MTLS_CLIENT_CERT,
-                client_key_file=opal_common_config.MTLS_CLIENT_KEY,
-                ca_file=opal_common_config.MTLS_CA_CERT,
-            )
-            if opal_common_config.MTLS_CLIENT_CERT is not None
-            and opal_common_config.MTLS_CLIENT_KEY is not None
-            else None
-        )
-        self._ssl_kwargs = {}
-        if custom_ssl_context is not None:
-            self._ssl_kwargs["cert"] = (
-                custom_ssl_context.certfile,
-                custom_ssl_context.keyfile,
-            )
-            if custom_ssl_context.cafile is not None:
-                self._ssl_kwargs["verify"] = custom_ssl_context.cafile
+        self._mtls_kwargs = get_mtls_requests_kwargs()
 
     def _headers(self) -> Dict[str, str]:
         headers = {}
@@ -50,7 +29,7 @@ class BlockingRequest:
         utility method to send a *blocking* HTTP GET request and get the response back.
         """
         response = requests.get(
-            url, headers=self._headers(), params=params, **self._ssl_kwargs
+            url, headers=self._headers(), params=params, **self._mtls_kwargs
         )
 
         if response.status_code == 401:
@@ -67,7 +46,7 @@ class BlockingRequest:
             json=payload,
             headers=self._headers(),
             params=params,
-            **self._ssl_kwargs,
+            **self._mtls_kwargs,
         )
 
         if response.status_code == 401:
