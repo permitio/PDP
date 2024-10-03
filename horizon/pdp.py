@@ -290,8 +290,8 @@ class PermitPDP:
         """
         opal_client_config.OFFLINE_MODE_ENABLED = sidecar_config.ENABLE_OFFLINE_MODE
         opal_client_config.STORE_BACKUP_PATH = os.path.join(
-            os.path.dirname(sidecar_config.OFFLINE_MODE_BACKUP_PATH),
-            "policy_store_data.json",
+            sidecar_config.OFFLINE_MODE_BACKUP_DIR,
+            "policy_store_backup.json",
         )
 
     def _fix_data_topics(self) -> List[str]:

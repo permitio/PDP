@@ -110,10 +110,15 @@ class SidecarConfig(Confi):
         description="if true, sidecar will use a file backup to restore configuration and policy data when cloud services are unavailable",
     )
 
-    OFFLINE_MODE_BACKUP_PATH = confi.str(
-        "OFFLINE_MODE_BACKUP_PATH",
-        "/app/backup/sidecar_config.json",
-        description="Path to backup sidecar cloud configuration to when in offline mode",
+    OFFLINE_MODE_BACKUP_DIR = confi.str(
+        "OFFLINE_MODE_BACKUP_DIR",
+        "/app/backup",
+        description="Dir path where pdp would backup its cloud configuration when in offline mode",
+    )
+    OFFLINE_MODE_BACKUP_FILENAME = confi.str(
+        "OFFLINE_MODE_BACKUP_FILENAME",
+        "pdp_cloud_config_backup.json",
+        description="Filename for offline mode's cloud configuration backup",
     )
 
     CONFIG_FETCH_MAX_RETRIES = confi.int(

@@ -7,6 +7,7 @@ from cryptography.fernet import Fernet
 from pydantic import ValidationError
 import base64
 import secrets
+import os
 
 from horizon.startup.schemas import RemoteConfig, RemoteConfigBackup
 from opal_common.logger import logger
@@ -46,7 +47,7 @@ class OfflineModeManager:
         )
 
         enc_key, salt = self._derive_backup_key()
-
+        os.makedirs(os.path.dirname(self._backup_path), exist_ok=True)
         try:
             with open(self._backup_path, "w") as f:
                 f.write(

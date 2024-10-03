@@ -1,5 +1,6 @@
 from typing import Optional
 
+import os.path
 import requests
 from opal_common.logger import logger
 from pydantic import ValidationError
@@ -128,7 +129,11 @@ def get_remote_config():
 
     if sidecar_config.ENABLE_OFFLINE_MODE:
         offline_mode = OfflineModeManager(
-            sidecar_config.OFFLINE_MODE_BACKUP_PATH, get_env_api_key()
+            os.path.join(
+                sidecar_config.OFFLINE_MODE_BACKUP_DIR,
+                sidecar_config.OFFLINE_MODE_BACKUP_FILENAME,
+            ),
+            get_env_api_key(),
         )
         _remote_config = offline_mode.process_remote_config(_remote_config)
 
