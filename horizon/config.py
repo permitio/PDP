@@ -2,6 +2,7 @@ from opal_common.confi import Confi, confi
 
 MOCK_API_KEY = "MUST BE DEFINED"
 
+
 # scopes enum
 class ApiKeyLevel(str):
     ORGANIZATION = "organization"
@@ -102,6 +103,29 @@ class SidecarConfig(Confi):
 
     # enable datadog APM tracing
     ENABLE_MONITORING = confi.bool("ENABLE_MONITORING", False)
+
+    ENABLE_OFFLINE_MODE = confi.bool(
+        "ENABLE_OFFLINE_MODE",
+        False,
+        description="if true, sidecar will use a file backup to restore configuration and policy data when cloud services are unavailable",
+    )
+
+    OFFLINE_MODE_BACKUP_DIR = confi.str(
+        "OFFLINE_MODE_BACKUP_DIR",
+        "/app/backup",
+        description="Dir path where pdp would backup its cloud configuration when in offline mode",
+    )
+    OFFLINE_MODE_BACKUP_FILENAME = confi.str(
+        "OFFLINE_MODE_BACKUP_FILENAME",
+        "pdp_cloud_config_backup.json",
+        description="Filename for offline mode's cloud configuration backup",
+    )
+
+    CONFIG_FETCH_MAX_RETRIES = confi.int(
+        "CONFIG_FETCH_MAX_RETRIES",
+        6,
+        description="Number of times to retry fetching the sidecar configuration from control plane",
+    )
 
     # centralized logging
     CENTRAL_LOG_DRAIN_URL = confi.str(

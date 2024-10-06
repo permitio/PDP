@@ -1,5 +1,6 @@
 from typing import Optional
 
+import os.path
 import requests
 from opal_common.logger import logger
 from pydantic import ValidationError
@@ -10,6 +11,7 @@ from horizon.startup.api_keys import get_env_api_key
 from horizon.startup.blocking_request import BlockingRequest
 from horizon.startup.exceptions import NoRetryException
 from horizon.startup.schemas import RemoteConfig
+from horizon.startup.offline_mode import OfflineModeManager
 from horizon.state import PersistentStateHandler
 
 
@@ -39,8 +41,8 @@ class RemoteConfigFetcher:
 
     DEFAULT_RETRY_CONFIG = {
         "retry": retry_if_not_exception_type(NoRetryException),
-        "wait": wait.wait_random_exponential(max=10),
-        "stop": stop.stop_after_attempt(10),
+        "wait": wait.wait_random_exponential(max=5),
+        "stop": stop.stop_after_attempt(sidecar_config.CONFIG_FETCH_MAX_RETRIES),
         "reraise": True,
     }
 
@@ -77,7 +79,7 @@ class RemoteConfigFetcher:
         try:
             return fetch_with_retry()
         except requests.RequestException:
-            logger.warning("Failed to get PDP config")
+            logger.warning("Failed to get PDP config from control plane")
             return None
 
     def _fetch_config(self) -> RemoteConfig:
@@ -124,5 +126,15 @@ def get_remote_config():
     global _remote_config
     if _remote_config is None:
         _remote_config = RemoteConfigFetcher().fetch_config()
+
+    if sidecar_config.ENABLE_OFFLINE_MODE:
+        offline_mode = OfflineModeManager(
+            os.path.join(
+                sidecar_config.OFFLINE_MODE_BACKUP_DIR,
+                sidecar_config.OFFLINE_MODE_BACKUP_FILENAME,
+            ),
+            get_env_api_key(),
+        )
+        _remote_config = offline_mode.process_remote_config(_remote_config)
 
     return _remote_config

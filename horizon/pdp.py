@@ -22,7 +22,7 @@ from opal_common.logging.formatter import Formatter
 
 from horizon.facts.router import facts_router
 from horizon.authentication import enforce_pdp_token
-from horizon.config import MOCK_API_KEY, sidecar_config, ApiKeyLevel
+from horizon.config import MOCK_API_KEY, sidecar_config
 from horizon.enforcer.api import init_enforcer_api_router, stats_manager
 from horizon.enforcer.opa.config_maker import (
     get_opa_authz_policy_file_path,
@@ -99,14 +99,14 @@ class PermitPDP:
             raise SystemExit(GUNICORN_EXIT_APP)
 
         if not remote_config:
-            logger.warning(
-                "Could not fetch config from cloud control plane, reverting to local config!"
-            )
-        else:
-            logger.info("Applying config overrides from cloud control plane...")
-            apply_config(remote_config.opal_common or {}, opal_common_config)
-            apply_config(remote_config.opal_client or {}, opal_client_config)
-            apply_config(remote_config.pdp or {}, sidecar_config)
+            logger.critical("No cloud configuration found. Exiting.")
+            raise SystemExit(GUNICORN_EXIT_APP)
+
+        logger.info("Applying config overrides from cloud control plane...")
+
+        apply_config(remote_config.opal_common or {}, opal_common_config)
+        apply_config(remote_config.opal_client or {}, opal_client_config)
+        apply_config(remote_config.pdp or {}, sidecar_config)
 
         self._log_environment(remote_config.context)
 
@@ -118,6 +118,7 @@ class PermitPDP:
             self._configure_inline_opa_config()
 
         self._configure_opal_data_updater()
+        self._configure_opal_offline_mode()
 
         if sidecar_config.PRINT_CONFIG_ON_STARTUP:
             logger.info(
@@ -281,6 +282,16 @@ class PermitPDP:
             wait_strategy="random_exponential",
             attempts=14,
             wait_time=1,
+        )
+
+    def _configure_opal_offline_mode(self):
+        """
+        configure opal to use offline mode when enabled
+        """
+        opal_client_config.OFFLINE_MODE_ENABLED = sidecar_config.ENABLE_OFFLINE_MODE
+        opal_client_config.STORE_BACKUP_PATH = os.path.join(
+            sidecar_config.OFFLINE_MODE_BACKUP_DIR,
+            "policy_store_backup.json",
         )
 
     def _fix_data_topics(self) -> List[str]:
