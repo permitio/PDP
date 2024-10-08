@@ -18,7 +18,7 @@ from opal_client.config import (
 )
 from opal_client.engine.options import OpaServerOptions
 from opal_common.confi import Confi
-from opal_common.logging.formatter import Formatter
+from opal_common.logging_utils.formatter import Formatter
 
 from horizon.facts.router import facts_router
 from horizon.authentication import enforce_pdp_token
