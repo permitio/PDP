@@ -270,9 +270,11 @@ async def _is_allowed(query: BaseSchema, request: Request, policy_package: str):
     return await post_to_opa(request, path, opa_input)
 
 
-async def _is_allowed_data_manager(query: BaseSchema, request: Request):
+async def _is_allowed_data_manager(
+    query: BaseSchema, request: Request, *, path: str = "/check"
+):
     headers = transform_headers(request)
-    url = f"{sidecar_config.DATA_MANAGER_SERVICE_URL}/v1/authz/check"
+    url = f"{sidecar_config.DATA_MANAGER_SERVICE_URL}/v1/authz{path}"
     payload = {"input": query.dict()}
     exc = None
     _set_use_debugger(payload)
@@ -536,10 +538,17 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
     ):
         bulk_query = BulkAuthorizationQuery(checks=queries)
-        response = await _is_allowed(bulk_query, request, BULK_POLICY_PACKAGE)
-        log_query_result(bulk_query, response)
-        try:
+        if sidecar_config.ENABLE_EXTERNAL_DATA_MANAGER:
+            response = await _is_allowed_data_manager(
+                bulk_query, request, path="/check/bulk"
+            )
+            raw_result = json.loads(response.body)
+            log_query_result(bulk_query, response, is_inner=True)
+        else:
+            response = await _is_allowed(bulk_query, request, BULK_POLICY_PACKAGE)
             raw_result = json.loads(response.body).get("result", {})
+            log_query_result(bulk_query, response)
+        try:
             processed_query = (
                 get_v1_processed_query(raw_result)
                 or get_v2_processed_query(raw_result)
@@ -548,7 +557,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             result = BulkAuthorizationResult(
                 allow=raw_result.get("allow", []),
             )
-        except:
+        except Exception:
             result = BulkAuthorizationResult(
                 allow=[],
             )
