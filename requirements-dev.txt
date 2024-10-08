@@ -1,5 +1,4 @@
 pytest
 aioresponses
-httpx
 pytest-asyncio
 aiohttp>=3.9.4,<4
