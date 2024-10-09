@@ -21,7 +21,5 @@ jobs:
       run: |
         export PYTHONPATH=$(pwd)
         python -m pip install --upgrade pip
-        python setup.py install
-        if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        pip install -r requirements.txt -r requirements-dev.txt
         pytest -s --cache-clear horizon/tests/
