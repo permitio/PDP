@@ -19,8 +19,6 @@ jobs:
 
     - name: Run Pytests
       run: |
-        export PYTHONPATH=$(pwd)
         python -m pip install --upgrade pip
-        pip install -r requirements.txt -r requirements-dev.txt
-        python setup.py install
+        pip install ".[dev]"
         pytest -s --cache-clear horizon/tests/

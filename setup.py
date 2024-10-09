@@ -33,5 +33,7 @@ setup(
     include_package_data=True,
     data_files=get_data_files("horizon/static"),
     install_requires=get_requirements(),
-    # dev_requires=get_requirements("dev"),
+    extras_require={
+        "dev": get_requirements("dev"),
+    },
 )
