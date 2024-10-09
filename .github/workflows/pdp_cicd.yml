@@ -58,11 +58,8 @@ jobs:
 
     - name: Run Pytests
       run: |
-        export PYTHONPATH=$(pwd)
         python -m pip install --upgrade pip
-        python setup.py install
-        if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        pip install ".[dev]"
         pytest -s --cache-clear horizon/tests/
 
     - name: Run E2E tests
