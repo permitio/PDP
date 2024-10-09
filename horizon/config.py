@@ -120,6 +120,11 @@ class SidecarConfig(Confi):
         "pdp_cloud_config_backup.json",
         description="Filename for offline mode's cloud configuration backup",
     )
+    OFFLINE_MODE_POLICY_BACKUP_FILENAME = confi.str(
+        "OFFLINE_MODE_POLICY_BACKUP_FILENAME",
+        "policy_store_backup.json",
+        description="Filename for offline mode's policy backup (OPAL's offline mode backup)",
+    )
 
     CONFIG_FETCH_MAX_RETRIES = confi.int(
         "CONFIG_FETCH_MAX_RETRIES",
