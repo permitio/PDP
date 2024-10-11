@@ -505,10 +505,17 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         query: AuthorizationQuery,
         x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
     ):
-        response = await _is_allowed(query, request, ALL_TENANTS_POLICY_PACKAGE)
-        log_query_result(query, response)
-        try:
+        if sidecar_config.ENABLE_EXTERNAL_DATA_MANAGER:
+            response = await _is_allowed_data_manager(
+                query, request, path="/check/all-tenants"
+            )
+            raw_result = json.loads(response.body)
+            log_query_result(query, response, is_inner=True)
+        else:
+            response = await _is_allowed(query, request, ALL_TENANTS_POLICY_PACKAGE)
             raw_result = json.loads(response.body).get("result", {})
+            log_query_result(query, response)
+        try:
             processed_query = (
                 get_v1_processed_query(raw_result)
                 or get_v2_processed_query(raw_result)
