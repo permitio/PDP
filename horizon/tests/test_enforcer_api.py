@@ -6,6 +6,7 @@ import aiohttp
 import pytest
 from aioresponses import aioresponses
 from fastapi import FastAPI
+from fastapi.encoders import jsonable_encoder
 from fastapi.testclient import TestClient
 from opal_client.client import OpalClient
 from opal_client.config import opal_client_config
@@ -162,6 +163,60 @@ ALLOWED_ENDPOINTS = [
         [{"attributes": {}, "key": "tenant-1"}],
     )
     # TODO: Add Kong
+]
+
+ALLOWED_ENDPOINTS_DATASYNC = [
+    (
+        "/allowed",
+        "/check",
+        AuthorizationQuery(
+            user=User(key="user1"),
+            action="read",
+            resource=Resource(type="resource1"),
+        ),
+        {"allow": True},
+        {"allow": True},
+    ),
+    (
+        "/allowed/all-tenants",
+        "/check/all-tenants",
+        AuthorizationQuery(
+            user=User(key="user1"),
+            action="read",
+            resource=Resource(type="resource1"),
+        ),
+        {
+            "allowed_tenants": [
+                {
+                    "tenant": {"key": "default", "attributes": {}},
+                    "allow": True,
+                    "result": True,
+                }
+            ]
+        },
+        {
+            "allowed_tenants": [
+                {
+                    "tenant": {"key": "default", "attributes": {}},
+                    "allow": True,
+                    "result": True,
+                }
+            ]
+        },
+    ),
+    (
+        "/allowed/bulk",
+        "/check/bulk",
+        [
+            AuthorizationQuery(
+                user=User(key="user1"),
+                action="read",
+                resource=Resource(type="resource1"),
+            )
+        ],
+        {"allow": [{"allow": True, "result": True}]},
+        {"allow": [{"allow": True, "result": True}]},
+    ),
 ]
 
 
@@ -342,3 +397,83 @@ def test_enforce_endpoint(
         response = post_endpoint()
         assert response.status_code == 504
         assert "OPA request timed out" in response.text
+
+
+@pytest.mark.parametrize(
+    ("endpoint, datasync_endpoint, query, datasync_response, expected_response"),
+    ALLOWED_ENDPOINTS_DATASYNC,
+)
+def test_enforce_endpoint_datasync(
+    endpoint,
+    datasync_endpoint,
+    query,
+    datasync_response,
+    expected_response,
+):
+    sidecar_config.ENABLE_EXTERNAL_DATA_MANAGER = True
+    _client = TestClient(sidecar._app)
+
+    def post_endpoint():
+        return _client.post(
+            endpoint,
+            headers={"authorization": f"Bearer {sidecar_config.API_KEY}"},
+            json=jsonable_encoder(query),
+        )
+
+    with aioresponses() as m:
+        datasync_url = (
+            f"{sidecar_config.DATA_MANAGER_SERVICE_URL}/v1/authz{datasync_endpoint}"
+        )
+
+        # Test valid response from OPA
+        m.post(
+            datasync_url,
+            status=200,
+            payload=datasync_response,
+        )
+
+        response = post_endpoint()
+        assert response.status_code == 200
+        print(response.json())
+        if isinstance(expected_response, list):
+            assert response.json() == expected_response
+        elif isinstance(expected_response, dict):
+            for k, v in expected_response.items():
+                assert (
+                    response.json()[k] == v
+                ), f"Expected {k} to be {v} but got {response.json()[k]}"
+        else:
+            raise TypeError(
+                f"Unexpected expected response type, expected one of list, dict and got {type(expected_response)}"
+            )
+
+        # Test bad status from OPA
+        bad_status = random.choice([401, 404, 400, 500, 503])
+        m.post(
+            datasync_url,
+            status=bad_status,
+            payload=datasync_response,
+        )
+        response = post_endpoint()
+        assert response.status_code == 502
+        assert "Data Manager request failed" in response.text
+        assert f"status: {bad_status}" in response.text
+
+        # Test connection error
+        m.post(
+            datasync_url,
+            exception=aiohttp.ClientConnectionError("don't want to connect"),
+        )
+        response = post_endpoint()
+        assert response.status_code == 502
+        assert "Data Manager request failed" in response.text
+        assert "don't want to connect" in response.text
+
+        # Test timeout - not working yet
+        m.post(
+            datasync_url,
+            exception=asyncio.exceptions.TimeoutError(),
+        )
+        response = post_endpoint()
+        assert response.status_code == 504
+        assert "Data Manager request timed out" in response.text
