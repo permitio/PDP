@@ -174,6 +174,33 @@ ALLOWED_ENDPOINTS_DATASYNC = [
             action="read",
             resource=Resource(type="resource1"),
         ),
+        None,
+        {"allow": True},
+        {"allow": True},
+    ),
+    (
+        "/allowed_url",
+        "/check",
+        UrlAuthorizationQuery(
+            user=User(key="user1"),
+            http_method="DELETE",
+            url="https://some.url/important_resource",
+            tenant="default",
+        ),
+        None,
+        {"allow": True},
+        {"allow": True},
+    ),
+    (
+        "/nginx_allowed",
+        "/check",
+        None,
+        {
+            "permit-user-key": "user1",
+            "permit-tenant-id": "default",
+            "permit-action": "read",
+            "permit-resource-type": "resource1",
+        },
         {"allow": True},
         {"allow": True},
     ),
@@ -185,6 +212,7 @@ ALLOWED_ENDPOINTS_DATASYNC = [
             action="read",
             resource=Resource(type="resource1"),
         ),
+        None,
         {
             "allowed_tenants": [
                 {
@@ -214,6 +242,7 @@ ALLOWED_ENDPOINTS_DATASYNC = [
                 resource=Resource(type="resource1"),
             )
         ],
+        None,
         {"allow": [{"allow": True, "result": True}]},
         {"allow": [{"allow": True, "result": True}]},
     ),
@@ -400,15 +429,16 @@ def test_enforce_endpoint(
 
 
 @pytest.mark.parametrize(
-    ("endpoint, datasync_endpoint, query, datasync_response, expected_response"),
+    ("endpoint", "datasync_endpoint", "query", "headers", "datasync_response", "expected_response"),
     ALLOWED_ENDPOINTS_DATASYNC,
 )
 def test_enforce_endpoint_datasync(
-    endpoint,
-    datasync_endpoint,
-    query,
-    datasync_response,
-    expected_response,
+    endpoint: str,
+    datasync_endpoint: str,
+    query: list[BaseModel] | BaseModel | None,
+    headers: dict | None,
+    datasync_response: dict,
+    expected_response: dict,
 ):
     sidecar_config.ENABLE_EXTERNAL_DATA_MANAGER = True
     _client = TestClient(sidecar._app)
@@ -416,8 +446,8 @@ def test_enforce_endpoint_datasync(
     def post_endpoint():
         return _client.post(
             endpoint,
-            headers={"authorization": f"Bearer {sidecar_config.API_KEY}"},
-            json=jsonable_encoder(query),
+            headers={"authorization": f"Bearer {sidecar_config.API_KEY}"} | (headers or {}),
+            json=jsonable_encoder(query) if query else None,
         )
 
     with aioresponses() as m:
@@ -431,6 +461,26 @@ def test_enforce_endpoint_datasync(
             status=200,
             payload=datasync_response,
         )
+
+        if endpoint == "/allowed_url":
+            # allowed_url gonna first call the mapping rules endpoint then the normal OPA allow endpoint
+            m.post(
+                url=f"{opal_client_config.POLICY_STORE_URL}/v1/data/mapping_rules",
+                status=200,
+                payload={
+                    "result": {
+                        "all": [
+                            {
+                                "url": "https://some.url/important_resource",
+                                "http_method": "delete",
+                                "action": "delete",
+                                "resource": "resource1",
+                            }
+                        ]
+                    }
+                },
+                repeat=True,
+            )
 
         response = post_endpoint()
         assert response.status_code == 200
