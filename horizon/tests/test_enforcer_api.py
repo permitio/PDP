@@ -246,6 +246,35 @@ ALLOWED_ENDPOINTS_DATASYNC = [
         {"allow": [{"allow": True, "result": True}]},
         {"allow": [{"allow": True, "result": True}]},
     ),
+    (
+        "/user-tenants",
+        "/users/user1/tenants",
+        UserTenantsQuery(
+            user=User(key="user1"),
+        ),
+        None,
+        [
+            {
+                "key": "default-2",
+                "attributes": {}
+            },
+            {
+                "key": "default",
+                "attributes": {}
+            }
+        ],
+        [
+            {
+                "key": "default-2",
+                "attributes": {}
+            },
+            {
+                "key": "default",
+                "attributes": {}
+            }
+        ],
+    ),
+
 ]
 
 
@@ -455,32 +484,38 @@ def test_enforce_endpoint_datasync(
             f"{sidecar_config.DATA_MANAGER_SERVICE_URL}/v1/authz{datasync_endpoint}"
         )
 
+        method = "POST"
+
+        match endpoint:
+            case "/allowed_url":
+                # allowed_url gonna first call the mapping rules endpoint then the normal OPA allow endpoint
+                m.post(
+                    url=f"{opal_client_config.POLICY_STORE_URL}/v1/data/mapping_rules",
+                    status=200,
+                    payload={
+                        "result": {
+                            "all": [
+                                {
+                                    "url": "https://some.url/important_resource",
+                                    "http_method": "delete",
+                                    "action": "delete",
+                                    "resource": "resource1",
+                                }
+                            ]
+                        }
+                    },
+                    repeat=True,
+                )
+            case "/user-tenants":
+                method = "GET"
+
         # Test valid response from OPA
-        m.post(
+        m.add(
             datasync_url,
+            method=method,
             status=200,
             payload=datasync_response,
         )
-
-        if endpoint == "/allowed_url":
-            # allowed_url gonna first call the mapping rules endpoint then the normal OPA allow endpoint
-            m.post(
-                url=f"{opal_client_config.POLICY_STORE_URL}/v1/data/mapping_rules",
-                status=200,
-                payload={
-                    "result": {
-                        "all": [
-                            {
-                                "url": "https://some.url/important_resource",
-                                "http_method": "delete",
-                                "action": "delete",
-                                "resource": "resource1",
-                            }
-                        ]
-                    }
-                },
-                repeat=True,
-            )
 
         response = post_endpoint()
         assert response.status_code == 200
@@ -499,8 +534,9 @@ def test_enforce_endpoint_datasync(
 
         # Test bad status from OPA
         bad_status = random.choice([401, 404, 400, 500, 503])
-        m.post(
+        m.add(
             datasync_url,
+            method=method,
             status=bad_status,
             payload=datasync_response,
         )
@@ -510,8 +546,9 @@ def test_enforce_endpoint_datasync(
         assert f"status: {bad_status}" in response.text
 
         # Test connection error
-        m.post(
+        m.add(
             datasync_url,
+            method=method,
             exception=aiohttp.ClientConnectionError("don't want to connect"),
         )
         response = post_endpoint()
@@ -520,8 +557,9 @@ def test_enforce_endpoint_datasync(
         assert "don't want to connect" in response.text
 
         # Test timeout - not working yet
-        m.post(
+        m.add(
             datasync_url,
+            method=method,
             exception=asyncio.exceptions.TimeoutError(),
         )
         response = post_endpoint()
