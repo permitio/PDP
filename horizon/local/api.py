@@ -1,6 +1,7 @@
 from typing import Any, Dict, List, Optional, cast
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
+from loguru import logger
 from opal_client.policy_store.base_policy_store_client import BasePolicyStoreClient
 from opal_client.policy_store.policy_store_client_factory import (
     DEFAULT_POLICY_STORE_GETTER,
@@ -9,14 +10,15 @@ from pydantic import parse_raw_as, parse_obj_as
 from starlette.responses import Response
 
 from horizon.authentication import enforce_pdp_token
+from horizon.config import sidecar_config
+from horizon.data_manager.policy_store import DataManagerPolicyStoreClient
 from horizon.local.schemas import (
     Message,
     SyncedRole,
-    SyncedUser,
     RoleAssignment,
     ListRoleAssignmentsFilters,
     ListRoleAssignmentsPDPBody,
-    WrappedResponse,
+    WrappedResponse, ListRoleAssignmentsPagination,
 )
 
 
@@ -90,27 +92,27 @@ def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
         user: Optional[str] = Query(
             None,
             description="optional user filter, "
-            "will only return role assignments granted to this user.",
+                        "will only return role assignments granted to this user.",
         ),
         role: Optional[str] = Query(
             None,
             description="optional role filter, "
-            "will only return role assignments granting this role.",
+                        "will only return role assignments granting this role.",
         ),
         tenant: Optional[str] = Query(
             None,
             description="optional tenant filter, "
-            "will only return role assignments granted in that tenant.",
+                        "will only return role assignments granted in that tenant.",
         ),
         resource: Optional[str] = Query(
             None,
             description="optional resource **type** filter, "
-            "will only return role assignments granted on that resource type.",
+                        "will only return role assignments granted on that resource type.",
         ),
         resource_instance: Optional[str] = Query(
             None,
             description="optional resource instance filter, "
-            "will only return role assignments granted on that resource instance.",
+                        "will only return role assignments granted on that resource instance.",
         ),
         page: int = Query(
             default=1,
@@ -136,25 +138,38 @@ def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
             resource=resource,
             resource_instance=resource_instance,
         ).dict(exclude_none=True)
-        pagination = ListRoleAssignmentsFilters.construct(
+        pagination = ListRoleAssignmentsPagination.construct(
             page=page,
             per_page=per_page,
         )
 
-        # the type hint of the get_data_with_input is incorrect, it claims it returns a dict but it
-        # actually returns a Response
-        result = cast(
-            Response | Dict,
-            await policy_store.get_data_with_input(
-                "/permit/api/role_assignments/list_role_assignments",
-                ListRoleAssignmentsPDPBody.construct(
-                    filters=filters, pagination=pagination
+        async def legacy_list_role_assignments() -> list[RoleAssignment]:
+            # the type hint of the get_data_with_input is incorrect, it claims it returns a dict but it
+            # actually returns a Response
+            result = cast(
+                Response | Dict,
+                await policy_store.get_data_with_input(
+                    "/permit/api/role_assignments/list_role_assignments",
+                    ListRoleAssignmentsPDPBody.construct(
+                        filters=filters, pagination=pagination
+                    ),
                 ),
-            ),
-        )
-        if isinstance(result, Response):
-            return parse_raw_as(WrappedResponse, result.body).result
-        else:
-            return parse_obj_as(WrappedResponse, result).result
+            )
+            if isinstance(result, Response):
+                return parse_raw_as(WrappedResponse, result.body).result
+            else:
+                return parse_obj_as(WrappedResponse, result).result
 
+        if sidecar_config.ENABLE_EXTERNAL_DATA_MANAGER:
+            if not isinstance(policy_store, DataManagerPolicyStoreClient):
+                logger.warning(
+                    "External Data Manager is enabled by policy store is not set to {store_type}",
+                    store_type=DataManagerPolicyStoreClient.__name__
+                )
+                return await legacy_list_role_assignments()
+            else:
+                res = await policy_store.list_facts_by_type("role_assignments")
+                return parse_obj_as(list[RoleAssignment], await res.json())
+        else:
+            return await legacy_list_role_assignments()
     return router
