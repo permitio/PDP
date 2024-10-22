@@ -1,5 +1,5 @@
 import time
-from typing import Optional, Iterator, Callable
+from typing import Optional, Iterator, Callable, Any
 
 import aiohttp
 from aiohttp import ClientSession
@@ -114,4 +114,30 @@ class DataManagerPolicyStoreClient(OpaClient):
             logger.info(
                 f"Data update applied to External Data Manager: status={res.status} duration={elapsed_time_ms:.2f}ms"
             )
+        return res
+
+    async def list_facts_by_type(
+        self,
+        fact_type: str,
+        page: int = 1,
+        per_page: int = 30,
+        filters: dict[str, Any] | None = None,
+    ) -> aiohttp.ClientResponse:
+        logger.info("Performing list facts for '{fact_type}' fact type from the External Data Manager",
+                    fact_type=fact_type)
+        query_params = {
+                           "page": page,
+                           "per_page": per_page,
+                       } | (filters or {})
+        res = await self.client.get(
+            f"/v1/facts/{fact_type}",
+            params=query_params,
+        )
+        if res.status != 200:
+            logger.error(
+                "Failed to list '{fact_type}' facts from External Data Manager: {res}",
+                fact_type=fact_type,
+                res=await res.text(),
+            )
+            res.raise_for_status()
         return res
