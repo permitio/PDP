@@ -253,28 +253,9 @@ ALLOWED_ENDPOINTS_DATASYNC = [
             user=User(key="user1"),
         ),
         None,
-        [
-            {
-                "key": "default-2",
-                "attributes": {}
-            },
-            {
-                "key": "default",
-                "attributes": {}
-            }
-        ],
-        [
-            {
-                "key": "default-2",
-                "attributes": {}
-            },
-            {
-                "key": "default",
-                "attributes": {}
-            }
-        ],
+        [{"key": "default-2", "attributes": {}}, {"key": "default", "attributes": {}}],
+        [{"key": "default-2", "attributes": {}}, {"key": "default", "attributes": {}}],
     ),
-
 ]
 
 
@@ -458,7 +439,14 @@ def test_enforce_endpoint(
 
 
 @pytest.mark.parametrize(
-    ("endpoint", "datasync_endpoint", "query", "headers", "datasync_response", "expected_response"),
+    (
+        "endpoint",
+        "datasync_endpoint",
+        "query",
+        "headers",
+        "datasync_response",
+        "expected_response",
+    ),
     ALLOWED_ENDPOINTS_DATASYNC,
 )
 def test_enforce_endpoint_datasync(
@@ -475,7 +463,8 @@ def test_enforce_endpoint_datasync(
     def post_endpoint():
         return _client.post(
             endpoint,
-            headers={"authorization": f"Bearer {sidecar_config.API_KEY}"} | (headers or {}),
+            headers={"authorization": f"Bearer {sidecar_config.API_KEY}"}
+            | (headers or {}),
             json=jsonable_encoder(query) if query else None,
         )
 
