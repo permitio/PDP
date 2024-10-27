@@ -28,9 +28,11 @@ class MockPermitPDP(PermitPDP):
 
 class MockDataManagerPermitPDP(MockPermitPDP):
     def __init__(self):
-        super().__init__(opal=DataManagerClient(
-            shard_id=sidecar_config.SHARD_ID, data_topics=self._fix_data_topics()
-        ))
+        super().__init__(
+            opal=DataManagerClient(
+                shard_id=sidecar_config.SHARD_ID, data_topics=self._fix_data_topics()
+            )
+        )
 
 
 sidecar = MockPermitPDP()
@@ -145,7 +147,7 @@ async def test_list_role_assignments_external_data_store() -> None:
                     "tenant": "tenant1",
                     "resource_instance": "resource_instance1",
                 }
-            ]
+            ],
         )
 
         response = _client.get(
