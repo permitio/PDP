@@ -278,7 +278,7 @@ async def conditional_is_allowed(
     external_data_manager_path: str = "/check",
     external_data_manager_method: str = "POST",
     external_data_manager_params: dict | None = None,
-    legacy_parse_func: Callable[[dict | list], dict] | None = None
+    legacy_parse_func: Callable[[dict | list], dict] | None = None,
 ) -> dict:
     if sidecar_config.ENABLE_EXTERNAL_DATA_MANAGER:
         response = await _is_allowed_data_manager(
@@ -300,8 +300,12 @@ async def conditional_is_allowed(
 
 
 async def _is_allowed_data_manager(
-    query: BaseSchema | None, request: Request, *, path: str = "/check", method: str = "POST",
-    params: dict | None = None
+    query: BaseSchema | None,
+    request: Request,
+    *,
+    path: str = "/check",
+    method: str = "POST",
+    params: dict | None = None,
 ):
     headers = transform_headers(request)
     url = f"{sidecar_config.DATA_MANAGER_SERVICE_URL}/v1/authz{path}"
@@ -514,6 +518,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
                     f"Expected raw result to be dict or list, got {type(raw_result)}"
                 )
             return tenants
+
         raw_result = await conditional_is_allowed(
             query,
             request,
@@ -628,8 +633,8 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             raise HTTPException(
                 status_code=status.HTTP_421_MISDIRECTED_REQUEST,
                 detail="Mismatch between client version and PDP version,"
-                       " required v2 request body, got v1. "
-                       "hint: try to update your client version to v2",
+                " required v2 request body, got v1. "
+                "hint: try to update your client version to v2",
             )
         query = cast(AuthorizationQuery, query)
 
@@ -710,7 +715,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             raise HTTPException(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Kong integration is disabled. "
-                       "Please set the PDP_KONG_INTEGRATION variable to true to enable it.",
+                "Please set the PDP_KONG_INTEGRATION variable to true to enable it.",
             )
 
         await PersistentStateHandler.get_instance().seen_sdk("kong")
