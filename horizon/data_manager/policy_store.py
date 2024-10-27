@@ -123,12 +123,14 @@ class DataManagerPolicyStoreClient(OpaClient):
         per_page: int = 30,
         filters: dict[str, Any] | None = None,
     ) -> aiohttp.ClientResponse:
-        logger.info("Performing list facts for '{fact_type}' fact type from the External Data Manager",
-                    fact_type=fact_type)
+        logger.info(
+            "Performing list facts for '{fact_type}' fact type from the External Data Manager",
+            fact_type=fact_type,
+        )
         query_params = {
-                           "page": page,
-                           "per_page": per_page,
-                       } | (filters or {})
+            "page": page,
+            "per_page": per_page,
+        } | (filters or {})
         res = await self.client.get(
             f"/v1/facts/{fact_type}",
             params=query_params,

@@ -18,7 +18,8 @@ from horizon.local.schemas import (
     RoleAssignment,
     ListRoleAssignmentsFilters,
     ListRoleAssignmentsPDPBody,
-    WrappedResponse, ListRoleAssignmentsPagination,
+    WrappedResponse,
+    ListRoleAssignmentsPagination,
 )
 
 
@@ -92,27 +93,27 @@ def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
         user: Optional[str] = Query(
             None,
             description="optional user filter, "
-                        "will only return role assignments granted to this user.",
+            "will only return role assignments granted to this user.",
         ),
         role: Optional[str] = Query(
             None,
             description="optional role filter, "
-                        "will only return role assignments granting this role.",
+            "will only return role assignments granting this role.",
         ),
         tenant: Optional[str] = Query(
             None,
             description="optional tenant filter, "
-                        "will only return role assignments granted in that tenant.",
+            "will only return role assignments granted in that tenant.",
         ),
         resource: Optional[str] = Query(
             None,
             description="optional resource **type** filter, "
-                        "will only return role assignments granted on that resource type.",
+            "will only return role assignments granted on that resource type.",
         ),
         resource_instance: Optional[str] = Query(
             None,
             description="optional resource instance filter, "
-                        "will only return role assignments granted on that resource instance.",
+            "will only return role assignments granted on that resource instance.",
         ),
         page: int = Query(
             default=1,
@@ -164,7 +165,7 @@ def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
             if not isinstance(policy_store, DataManagerPolicyStoreClient):
                 logger.warning(
                     "External Data Manager is enabled by policy store is not set to {store_type}",
-                    store_type=DataManagerPolicyStoreClient.__name__
+                    store_type=DataManagerPolicyStoreClient.__name__,
                 )
                 return await legacy_list_role_assignments()
             else:
@@ -172,4 +173,5 @@ def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
                 return parse_obj_as(list[RoleAssignment], await res.json())
         else:
             return await legacy_list_role_assignments()
+
     return router
