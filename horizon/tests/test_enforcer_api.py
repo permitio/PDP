@@ -256,6 +256,44 @@ ALLOWED_ENDPOINTS_DATASYNC = [
         [{"key": "default-2", "attributes": {}}, {"key": "default", "attributes": {}}],
         [{"key": "default-2", "attributes": {}}, {"key": "default", "attributes": {}}],
     ),
+    (
+        "/user-permissions",
+        "/user-permissions",
+        UserPermissionsQuery(
+            user=User(key="user1"),
+        ),
+        None,
+        {
+            "user1": {
+                "resource": {
+                    "key": "resource_x",
+                    "attributes": {},
+                    "type": "resource1",
+                },
+                "tenant": {
+                    "key": "default",
+                    "attributes": {}
+                },
+                "permissions": ["read:read"],
+                "roles": ["admin"]
+            }
+        },
+        {
+            "user1": {
+                "resource": {
+                    "key": "resource_x",
+                    "attributes": {},
+                    "type": "resource1",
+                },
+                "tenant": {
+                    "key": "default",
+                    "attributes": {}
+                },
+                "permissions": ["read:read"],
+                "roles": ["admin"]
+            }
+        },
+    ),
 ]
 
 
@@ -464,7 +502,7 @@ def test_enforce_endpoint_datasync(
         return _client.post(
             endpoint,
             headers={"authorization": f"Bearer {sidecar_config.API_KEY}"}
-            | (headers or {}),
+                    | (headers or {}),
             json=jsonable_encoder(query) if query else None,
         )
 
@@ -513,9 +551,12 @@ def test_enforce_endpoint_datasync(
             assert response.json() == expected_response
         elif isinstance(expected_response, dict):
             for k, v in expected_response.items():
-                assert (
-                    response.json()[k] == v
-                ), f"Expected {k} to be {v} but got {response.json()[k]}"
+                try:
+                    assert (
+                        response.json()[k] == v
+                    ), f"Expected {k} to be {v} but got {response.json()[k]}"
+                except KeyError:
+                    pytest.fail(f"response missing key {k} from expected response:\n,{response.json()}")
         else:
             raise TypeError(
                 f"Unexpected expected response type, expected one of list, dict and got {type(expected_response)}"

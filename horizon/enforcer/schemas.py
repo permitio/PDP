@@ -74,6 +74,16 @@ class UserPermissionsQuery(BaseSchema):
     resource_types: Optional[list[str]] = None
     context: Optional[dict[str, Any]] = {}
 
+    def get_filters(self) -> dict:
+        filters = {}
+        if self.tenants:
+            filters["tenants"] = self.tenants
+        if self.resources:
+            filters["resource_instances"] = self.resources
+        if self.resource_types:
+            filters["resource_types"] = self.resource_types
+        return filters
+
 
 class AuthorizationResult(BaseSchema):
     allow: bool = False
@@ -142,15 +152,15 @@ class AuthorizedUsersResult(BaseSchema):
     resource: str = Field(
         ...,
         description="The resource that the result is about."
-        "Can be either 'resource:*' or 'resource:resource_instance'",
+                    "Can be either 'resource:*' or 'resource:resource_instance'",
     )
     tenant: str = Field(..., description="The tenant that the result is about")
     users: AuthorizedUsersDict = Field(
         ...,
         description="A key value mapping of the users that are "
-        "authorized for the resource."
-        "The key is the user key and the value is a list of assignments allowing the user to perform"
-        "the requested action",
+                    "authorized for the resource."
+                    "The key is the user key and the value is a list of assignments allowing the user to perform"
+                    "the requested action",
     )
 
     @classmethod
