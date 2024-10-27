@@ -270,12 +270,9 @@ ALLOWED_ENDPOINTS_DATASYNC = [
                     "attributes": {},
                     "type": "resource1",
                 },
-                "tenant": {
-                    "key": "default",
-                    "attributes": {}
-                },
+                "tenant": {"key": "default", "attributes": {}},
                 "permissions": ["read:read"],
-                "roles": ["admin"]
+                "roles": ["admin"],
             }
         },
         {
@@ -285,12 +282,9 @@ ALLOWED_ENDPOINTS_DATASYNC = [
                     "attributes": {},
                     "type": "resource1",
                 },
-                "tenant": {
-                    "key": "default",
-                    "attributes": {}
-                },
+                "tenant": {"key": "default", "attributes": {}},
                 "permissions": ["read:read"],
-                "roles": ["admin"]
+                "roles": ["admin"],
             }
         },
     ),
@@ -502,7 +496,7 @@ def test_enforce_endpoint_datasync(
         return _client.post(
             endpoint,
             headers={"authorization": f"Bearer {sidecar_config.API_KEY}"}
-                    | (headers or {}),
+            | (headers or {}),
             json=jsonable_encoder(query) if query else None,
         )
 
@@ -556,7 +550,9 @@ def test_enforce_endpoint_datasync(
                         response.json()[k] == v
                     ), f"Expected {k} to be {v} but got {response.json()[k]}"
                 except KeyError:
-                    pytest.fail(f"response missing key {k} from expected response:\n,{response.json()}")
+                    pytest.fail(
+                        f"response missing key {k} from expected response:\n,{response.json()}"
+                    )
         else:
             raise TypeError(
                 f"Unexpected expected response type, expected one of list, dict and got {type(expected_response)}"
