@@ -554,3 +554,5 @@ def test_enforce_endpoint_datasync(
         response = post_endpoint()
         assert response.status_code == 504
         assert "Data Manager request timed out" in response.text
+
+    sidecar_config.ENABLE_EXTERNAL_DATA_MANAGER = False
