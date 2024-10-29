@@ -21,7 +21,7 @@ def _get_operations_for_update_relationship_tuple(
         ),
     )
     for full_relation, targets in data.items():
-        relation = full_relation.lstrip("relation:")
+        relation = full_relation.removeprefix("relation:")
         for target_type, target_objects in targets.items():
             for target in target_objects:
                 yield InsertOperation(
@@ -39,7 +39,7 @@ def _get_operations_for_update_relationship_tuple(
 def _get_operations_for_update_role_assigment(
     full_user_key: str, data: JsonableValue
 ) -> Iterator[AnyOperation]:
-    user_key = full_user_key.lstrip("user:")
+    user_key = full_user_key.removeprefix("user:")
     yield DeleteOperation(
         fact=Fact(
             type="role_assignments",
