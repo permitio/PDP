@@ -509,13 +509,13 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
     ):
         def parse_func(result: dict | list) -> dict | list:
-            if isinstance(raw_result, dict):
+            if isinstance(result, dict):
                 tenants = result.get("tenants", [])
-            elif isinstance(raw_result, list):
+            elif isinstance(result, list):
                 tenants = result
             else:
                 raise TypeError(
-                    f"Expected raw result to be dict or list, got {type(raw_result)}"
+                    f"Expected raw result to be dict or list, got {type(result)}"
                 )
             return tenants
 
