@@ -495,6 +495,17 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             )
         return result
 
+    def parse_user_tenants_result(result: dict | list) -> dict | list:
+        if isinstance(result, dict):
+            tenants = result.get("tenants", [])
+        elif isinstance(result, list):
+            tenants = result
+        else:
+            raise TypeError(
+                f"Expected raw result to be dict or list, got {type(result)}"
+            )
+        return tenants
+
     @router.post(
         "/user-tenants",
         response_model=UserTenantsResult,
@@ -508,24 +519,13 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         query: UserTenantsQuery,
         x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
     ):
-        def parse_func(result: dict | list) -> dict | list:
-            if isinstance(raw_result, dict):
-                tenants = result.get("tenants", [])
-            elif isinstance(raw_result, list):
-                tenants = result
-            else:
-                raise TypeError(
-                    f"Expected raw result to be dict or list, got {type(raw_result)}"
-                )
-            return tenants
-
         raw_result = await conditional_is_allowed(
             query,
             request,
             policy_package=USER_TENANTS_POLICY_PACKAGE,
             external_data_manager_path=f"/users/{query.user.key}/tenants",
             external_data_manager_method="GET",
-            legacy_parse_func=parse_func,
+            legacy_parse_func=parse_user_tenants_result,
         )
         try:
             result = parse_obj_as(UserTenantsResult, raw_result)
