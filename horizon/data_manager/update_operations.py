@@ -43,7 +43,7 @@ def _get_operations_for_update_role_assigment(
     yield DeleteOperation(
         fact=Fact(
             type="role_assignments",
-            attributes={"actor": user_key},
+            attributes={"actor": f"user:{user_key}"},
         ),
     )
     for subject, roles in data.items():
