@@ -133,7 +133,7 @@ async def test_list_role_assignments_external_data_store() -> None:
     with aioresponses() as m:
         # The policy store client of the data manager has base url configured, this means that the url
         # we need to mock is '/v1/facts/role_assignments' - without the base url server
-        data_manager_url = f"/v1/facts/role_assignments?page=1"
+        data_manager_url = f"/v1/facts/role_assignments?page=1&per_page=30"
         logger.info("mocking data manager url: {}", data_manager_url)
         # Test valid response from OPA
         m.get(
@@ -164,3 +164,4 @@ async def test_list_role_assignments_external_data_store() -> None:
             "tenant": "tenant1",
             "resource_instance": "resource_instance1",
         }
+    sidecar_config.ENABLE_EXTERNAL_DATA_MANAGER = False
