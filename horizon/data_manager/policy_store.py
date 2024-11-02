@@ -104,7 +104,7 @@ class DataManagerPolicyStoreClient(OpaClient):
             "/v1/facts/applyUpdate",
             json=data_update.dict(),
         )
-        elapsed_time_ms = (time.perf_counter_ns() - start_time) / 1_000
+        elapsed_time_ms = (time.perf_counter_ns() - start_time) / 1_000_000
         if res.status != 200:
             logger.error(
                 "Failed to apply data update to External Data Manager: {}",
