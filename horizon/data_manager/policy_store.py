@@ -68,9 +68,13 @@ class DataManagerPolicyStoreClient(OpaClient):
                 self._generate_operations(parts, policy_data),
             )
         except NotImplementedError as e:
-            logger.warning(f"{e}, storing in OPA directly...")
+            logger.info("Storing policy data in OPA, target_path='{}'", path)
             return await super().set_policy_data(
                 policy_data=policy_data, path=path, transaction_id=transaction_id
+            )
+        else:
+            logger.info(
+                "Storing policy data in external factstore, target_path='{}'", path
             )
 
         return await self._apply_data_update(update)
@@ -93,7 +97,7 @@ class DataManagerPolicyStoreClient(OpaClient):
                 )
             case _:
                 raise NotImplementedError(
-                    f"Unsupported path for External Data Manager: {parts}"
+                    f"Unsupported path for external factstore: {parts}"
                 )
 
     async def _apply_data_update(
@@ -107,11 +111,11 @@ class DataManagerPolicyStoreClient(OpaClient):
         elapsed_time_ms = (time.perf_counter_ns() - start_time) / 1_000
         if res.status != 200:
             logger.error(
-                "Failed to apply data update to External Data Manager: {}",
+                "Failed to apply data update to external factstore: {}",
                 await res.text(),
             )
         else:
             logger.info(
-                f"Data update applied to External Data Manager: status={res.status} duration={elapsed_time_ms:.2f}ms"
+                f"Data update applied to external factstore: status={res.status} duration={elapsed_time_ms:.2f}ms"
             )
         return res
