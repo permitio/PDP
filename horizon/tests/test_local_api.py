@@ -142,10 +142,14 @@ async def test_list_role_assignments_external_data_store() -> None:
             repeat=True,
             payload=[
                 {
-                    "user": "user1",
-                    "role": "role1",
-                    "tenant": "tenant1",
-                    "resource_instance": "resource_instance1",
+                    "type": "role_assignment",
+                    "attributes": {
+                        "actor": "user:user1",
+                        "role": "role1",
+                        "tenant": "tenant1",
+                        "resource": "resource_instance1",
+                        "id": "user:user1-role1-resource_instance1",
+                    },
                 }
             ],
         )

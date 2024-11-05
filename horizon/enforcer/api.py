@@ -7,6 +7,7 @@ import aiohttp
 from fastapi import APIRouter, Depends, Header
 from fastapi import HTTPException
 from fastapi import Request, Response, status
+from fastapi.encoders import jsonable_encoder
 from opal_client.config import opal_client_config
 from opal_client.logger import logger
 from opal_client.policy_store.base_policy_store_client import BasePolicyStoreClient
@@ -307,7 +308,7 @@ async def conditional_is_allowed(
 
 
 async def _is_allowed_data_manager(
-    query: BaseSchema | None,
+    query: BaseSchema | list[BaseSchema] | None,
     request: Request,
     *,
     path: str = "/check",
@@ -316,9 +317,10 @@ async def _is_allowed_data_manager(
 ):
     headers = transform_headers(request)
     url = f"{sidecar_config.DATA_MANAGER_SERVICE_URL}/v1/authz{path}"
-    payload = None if query is None else {"input": query.dict()}
+    payload = None if query is None else {"input": jsonable_encoder(query)}
     exc = None
-    _set_use_debugger(payload)
+    if query is not None and isinstance(query, dict):
+        _set_use_debugger(payload)
     try:
         logger.info(f"calling Data Manager at '{url}' with input: {payload}")
         async with aiohttp.ClientSession() as session:
@@ -603,25 +605,19 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         queries: list[AuthorizationQuery],
         x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
     ):
-        bulk_query = BulkAuthorizationQuery(checks=queries)
         if sidecar_config.ENABLE_EXTERNAL_DATA_MANAGER:
             response = await _is_allowed_data_manager(
-                bulk_query, request, path="/check/bulk"
+                queries, request, path="/check/bulk"
             )
             raw_result = json.loads(response.body)
-            log_query_result(bulk_query, response, is_inner=True)
         else:
+            bulk_query = BulkAuthorizationQuery(checks=queries)
             response = await _is_allowed(bulk_query, request, BULK_POLICY_PACKAGE)
-            raw_result = json.loads(response.body).get("result", {})
+            raw_result = json.loads(response.body).get("result", {}).get("allow", [])
             log_query_result(bulk_query, response)
         try:
-            processed_query = (
-                get_v1_processed_query(raw_result)
-                or get_v2_processed_query(raw_result)
-                or {}
-            )
             result = BulkAuthorizationResult(
-                allow=raw_result.get("allow", []),
+                allow=raw_result,
             )
         except Exception:
             result = BulkAuthorizationResult(
