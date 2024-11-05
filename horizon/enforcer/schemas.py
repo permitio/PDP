@@ -74,6 +74,16 @@ class UserPermissionsQuery(BaseSchema):
     resource_types: Optional[list[str]] = None
     context: Optional[dict[str, Any]] = {}
 
+    def get_filters(self) -> dict:
+        filters = {}
+        if self.tenants:
+            filters["tenants"] = self.tenants
+        if self.resources:
+            filters["resource_instances"] = self.resources
+        if self.resource_types:
+            filters["resource_types"] = self.resource_types
+        return filters
+
 
 class AuthorizationResult(BaseSchema):
     allow: bool = False

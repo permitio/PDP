@@ -475,23 +475,24 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         query: UserPermissionsQuery,
         x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
     ):
-        response = await _is_allowed(query, request, USER_PERMISSIONS_POLICY_PACKAGE)
-        log_query_result(query, response)
-        try:
-            raw_result = json.loads(response.body).get("result", {})
-            processed_query = (
-                get_v1_processed_query(raw_result)
-                or get_v2_processed_query(raw_result)
-                or {}
-            )
+        def parse_func(result: dict) -> dict | list:
+            return result.get("permissions", {})
 
-            result = parse_obj_as(
-                UserPermissionsResult, raw_result.get("permissions", {})
-            )
-        except:
+        response = await conditional_is_allowed(
+            query,
+            request,
+            policy_package=USER_PERMISSIONS_POLICY_PACKAGE,
+            external_data_manager_path=f"/user-permissions",
+            external_data_manager_params=query.get_filters(),
+            legacy_parse_func=parse_func,
+        )
+        try:
+            result = parse_obj_as(UserPermissionsResult, response)
+        except Exception as e:
             result = parse_obj_as(UserPermissionsResult, {})
             logger.warning(
-                "is allowed (fallback response)", reason="cannot decode opa response"
+                "user permissions (fallback response)",
+                reason="cannot decode opa response",
             )
         return result
 
