@@ -295,7 +295,14 @@ async def conditional_is_allowed(
         raw_result = json.loads(response.body).get("result", {})
         log_query_result(query, response)
         if legacy_parse_func:
-            raw_result = legacy_parse_func(raw_result)
+            try:
+                raw_result = legacy_parse_func(raw_result)
+            except Exception as e:
+                logger.opt(exception=e).warning(
+                    "is allowed (fallback response)",
+                    reason="cannot parse opa response",
+                )
+                return {}
     return raw_result
 
 
@@ -378,6 +385,11 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
 
         return JSONResponse(status_code=status.HTTP_200_OK, content={"status": "ok"})
 
+    def authorized_users_parse_func(result: dict | list) -> dict:
+        if isinstance(result, list):
+            raise TypeError("Invalid result for authorized users from OPA")
+        return result.get("result", {})
+
     @router.post(
         "/authorized_users",
         response_model=AuthorizedUsersResult,
@@ -388,19 +400,21 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
     async def authorized_users(
         request: Request, query: AuthorizedUsersAuthorizationQuery
     ):
-        response = await _is_allowed(query, request, AUTHORIZED_USERS_POLICY_PACKAGE)
-        log_query_result(query, response)
-        response_json = None
+        raw_result = await conditional_is_allowed(
+            query,
+            request,
+            policy_package=AUTHORIZED_USERS_POLICY_PACKAGE,
+            external_data_manager_path=f"/authorized-users",
+            legacy_parse_func=authorized_users_parse_func,
+        )
         try:
-            response_json = json.loads(response.body)
-            raw_result = response_json.get("result", {}).get("result", {})
             result = parse_obj_as(AuthorizedUsersResult, raw_result)
         except:
             result = AuthorizedUsersResult.empty(query.resource)
             logger.warning(
                 "authorized users (fallback response), response: {res}",
                 reason="cannot decode opa response",
-                res=response_json,
+                res=raw_result,
             )
         return result
 
