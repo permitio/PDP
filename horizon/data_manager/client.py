@@ -3,6 +3,8 @@ from typing import Optional, Awaitable, Callable
 
 from fastapi import FastAPI
 from loguru import logger
+from fastapi_websocket_rpc.rpc_channel import RpcChannel
+from fastapi_websocket_pubsub import PubSubClient
 from opal_client import OpalClient
 from opal_client.callbacks.api import init_callbacks_api
 from opal_client.config import opal_client_config, EngineLogFormat
@@ -109,6 +111,7 @@ class DataManagerClient(ExtendedOpalClient):
         shard_id: Optional[str] = None,
     ):
         self._enable_external_data_manager = sidecar_config.ENABLE_EXTERNAL_DATA_MANAGER
+        self._connect_count = 0
         if self._enable_external_data_manager:
             self._data_manager_runner = DataManagerRunner(
                 data_manager_url=sidecar_config.DATA_MANAGER_SERVICE_URL,
@@ -148,6 +151,7 @@ class DataManagerClient(ExtendedOpalClient):
             store_backup_interval=store_backup_interval,
             offline_mode_enabled=offline_mode_enabled,
             shard_id=shard_id,
+            on_data_updater_connect=[self.on_data_updater_ws_connection],
         )
 
     @staticmethod
@@ -168,6 +172,16 @@ class DataManagerClient(ExtendedOpalClient):
     async def stop_data_manager_runner(self):
         logger.info("Stopping Data Manager runner")
         await self._data_manager_runner.stop()
+
+    async def on_data_updater_ws_connection(
+        self, client: PubSubClient, channel: RpcChannel
+    ):
+        """triggered when the data updater in OPAL client is connected or reconnected to the server"""
+        self._connect_count += 1
+        logger.info("Data updater connected to server, count={}", self._connect_count)
+        if self._connect_count > 1 and self._enable_external_data_manager:
+            logger.info("Detected reconnect, triggering factdb coldstart")
+            await self._data_manager_runner.trigger_coldstart()
 
     async def check_healthy(self) -> bool:
         try:
