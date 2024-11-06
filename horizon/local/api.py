@@ -20,6 +20,7 @@ from horizon.local.schemas import (
     ListRoleAssignmentsPDPBody,
     WrappedResponse,
     ListRoleAssignmentsPagination,
+    RoleAssignmentFactDBFact,
 )
 
 
@@ -170,7 +171,10 @@ def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
                 return await legacy_list_role_assignments()
             else:
                 res = await policy_store.list_facts_by_type("role_assignments")
-                return parse_obj_as(list[RoleAssignment], await res.json())
+                res_json = parse_obj_as(
+                    list[RoleAssignmentFactDBFact], await res.json()
+                )
+                return [fact.into_role_assignment() for fact in res_json]
         else:
             return await legacy_list_role_assignments()
 
