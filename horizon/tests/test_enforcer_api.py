@@ -243,7 +243,7 @@ ALLOWED_ENDPOINTS_DATASYNC = [
             )
         ],
         None,
-        {"allow": [{"allow": True, "result": True}]},
+        [{"allow": True, "result": True}],
         {"allow": [{"allow": True, "result": True}]},
     ),
     (
