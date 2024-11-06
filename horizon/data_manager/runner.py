@@ -77,6 +77,18 @@ class DataManagerRunner(PolicyEngineRunner):
             else:
                 return True
 
+    async def trigger_coldstart(self):
+        async with self.client.post("/v1/facts/coldstart") as resp:
+            try:
+                resp.raise_for_status()
+            except aiohttp.ClientResponseError:
+                logger.error(
+                    "Failed to trigger factstore coldstart: {}",
+                    await resp.text(),
+                )
+            else:
+                logger.info(f"Triggered factstore coldstart successfully")
+
     def set_envs(self) -> None:
         os.environ["PDP_ENGINE_TOKEN"] = self._engine_token
         if self._data_manager_token:
