@@ -36,6 +36,9 @@ WORKDIR /app
 RUN addgroup -S permit -g 1001
 RUN adduser -S -s /bin/bash -u 1000 -G permit -h /home/permit permit
 
+# create backup directory
+RUN mkdir -p /app/backup && chmod -R 777 /app/backup
+
 # install linux libraries necessary to compile some python packages
 RUN apk update && \
     apk add --no-cache bash build-base libffi-dev libressl-dev musl-dev zlib-dev gcompat

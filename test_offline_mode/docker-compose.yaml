@@ -1,0 +1,67 @@
+volumes:
+  backup:
+
+networks:
+  internet:
+    driver: bridge
+  no-internet:
+    driver: bridge
+    internal: true
+
+services:
+  online-pdp:
+    container_name: online-pdp
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    volumes:
+      - backup:/app/backup:rw
+    networks:
+      - internet
+    env_file: .env
+    healthcheck:
+      test: "wget --no-verbose --tries=1 --spider http://127.0.0.1:7000/healthy || exit 1"
+
+  offline-pdp:
+    container_name: offline-pdp
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    volumes:
+      - backup:/app/backup:rw
+    networks:
+      - no-internet
+    env_file: .env
+    healthcheck:
+      test: "wget --no-verbose --tries=1 --spider http://127.0.0.1:7000/healthy || exit 1"
+    depends_on:
+      online-pdp:
+        condition: service_healthy
+
+  online-tester:
+    container_name: online-tester
+    build:
+      context: .
+      dockerfile: Dockerfile
+    networks:
+      - internet
+    env_file: .env
+    environment:
+      - PDP_URL=http://online-pdp:7000
+    depends_on:
+      online-pdp:
+        condition: service_healthy
+
+  offline-tester:
+    container_name: offline-tester
+    build:
+      context: .
+      dockerfile: Dockerfile
+    networks:
+      - no-internet
+    env_file: .env
+    environment:
+      - PDP_URL=http://offline-pdp:7000
+    depends_on:
+      offline-pdp:
+        condition: service_healthy
