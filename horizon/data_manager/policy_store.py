@@ -79,14 +79,30 @@ class DataManagerPolicyStoreClient(OpaClient):
         self, parts: list[str], data: JsonableValue
     ) -> Iterator[AnyOperation]:
         match parts:
+            case ["relationships"]:
+                for obj, _data in data.items():
+                    yield from _get_operations_for_update_relationship_tuple(obj, _data)
             case ["relationships", obj]:
                 yield from _get_operations_for_update_relationship_tuple(obj, data)
+            case ["role_assignments"]:
+                for full_user_key, _data in data.items():
+                    yield from _get_operations_for_update_role_assigment(
+                        full_user_key, _data
+                    )
             case ["role_assignments", full_user_key]:
                 yield from _get_operations_for_update_role_assigment(
                     full_user_key, data
                 )
+            case ["users"]:
+                for user_key, _data in data.items():
+                    yield from _get_operations_for_update_user(user_key, _data)
             case ["users", user_key]:
                 yield from _get_operations_for_update_user(user_key, data)
+            case ["resource_instances"]:
+                for instance_key, _data in data.items():
+                    yield from _get_operations_for_update_resource_instance(
+                        instance_key, _data
+                    )
             case ["resource_instances", instance_key]:
                 yield from _get_operations_for_update_resource_instance(
                     instance_key, data
