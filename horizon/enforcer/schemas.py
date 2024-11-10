@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional, List
 
-from pydantic import BaseModel, Field, AnyHttpUrl
+from pydantic import BaseModel, Field, AnyHttpUrl, PositiveInt, PrivateAttr
 
 
 class BaseSchema(BaseModel):
@@ -73,16 +73,33 @@ class UserPermissionsQuery(BaseSchema):
     resources: Optional[list[str]] = None
     resource_types: Optional[list[str]] = None
     context: Optional[dict[str, Any]] = {}
+    _offset: Optional[PositiveInt] = PrivateAttr(None)
+    _limit: Optional[PositiveInt] = PrivateAttr(None)
 
-    def get_filters(self) -> dict:
-        filters = {}
+    def set_pagination(
+        self, page: Optional[PositiveInt], per_page: Optional[PositiveInt]
+    ) -> bool:
+        if per_page:
+            self._limit = per_page
+            if page:
+                self._offset = (page - 1) * per_page
+            return True
+        return False
+
+    def get_params(self) -> dict:
+        params = {}
         if self.tenants:
-            filters["tenants"] = self.tenants
+            params["tenants"] = self.tenants
         if self.resources:
-            filters["resource_instances"] = self.resources
+            params["resource_instances"] = self.resources
         if self.resource_types:
-            filters["resource_types"] = self.resource_types
-        return filters
+            params["resource_types"] = self.resource_types
+        if self._offset:
+            params["offset"] = self._offset
+        if self._limit:
+            params["limit"] = self._limit
+
+        return params
 
 
 class AuthorizationResult(BaseSchema):

@@ -4,7 +4,7 @@ import re
 from typing import cast, Optional, Union, Dict, List, Callable
 
 import aiohttp
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, Query
 from fastapi import HTTPException
 from fastapi import Request, Response, status
 from fastapi.encoders import jsonable_encoder
@@ -15,7 +15,7 @@ from opal_client.policy_store.policy_store_client_factory import (
     DEFAULT_POLICY_STORE_GETTER,
 )
 from opal_client.utils import proxy_response
-from pydantic import parse_obj_as
+from pydantic import parse_obj_as, PositiveInt
 from starlette.responses import JSONResponse
 
 from horizon.authentication import enforce_pdp_token
@@ -322,7 +322,9 @@ async def _is_allowed_data_manager(
     if query is not None and isinstance(query, dict):
         _set_use_debugger(payload)
     try:
-        logger.info(f"calling Data Manager at '{url}' with input: {payload}")
+        logger.info(
+            f"calling Data Manager at '{url}' with input: {payload} and params {params}"
+        )
         async with aiohttp.ClientSession() as session:
             async with session.request(
                 method,
@@ -489,8 +491,24 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
     async def user_permissions(
         request: Request,
         query: UserPermissionsQuery,
+        page: PositiveInt
+        | None = Query(
+            None,
+            description="Page number for pagination, must be set together with per_page",
+        ),
+        per_page: PositiveInt
+        | None = Query(None, description="Number of items per page for pagination"),
         x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
     ):
+        paginated = query.set_pagination(page, per_page)
+        if paginated:
+            if query.context.get("enable_abac_user_permissions", False) is True:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Pagination is not supported for ABAC user permissions",
+                )
+            logger.info("User permissions query with pagination")
+
         def parse_func(result: dict) -> dict | list:
             return result.get("permissions", {})
 
@@ -499,7 +517,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             request,
             policy_package=USER_PERMISSIONS_POLICY_PACKAGE,
             external_data_manager_path=f"/user-permissions",
-            external_data_manager_params=query.get_filters(),
+            external_data_manager_params=query.get_params(),
             legacy_parse_func=parse_func,
         )
         try:
