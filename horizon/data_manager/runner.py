@@ -1,7 +1,6 @@
 import json
 import logging
 import os
-import platform
 from pathlib import Path
 
 import aiohttp
@@ -14,20 +13,26 @@ from opal_client.logger import logger
 class DataManagerRunner(PolicyEngineRunner):
     def __init__(
         self,
+        storage_path: Path,
         engine_token: str,
         data_manager_url: str,
         data_manager_binary_path: str,
         data_manager_token: str | None,
         data_manager_remote_backup_url: str | None,
+        backup_fetch_max_retries: int,
         piped_logs_format: EngineLogFormat = EngineLogFormat.NONE,
     ):
         super().__init__(piped_logs_format=piped_logs_format)
+        self._storage_path = storage_path
         self._engine_token = engine_token
         self._data_manager_url = data_manager_url
         self._data_manager_binary_path = data_manager_binary_path
         self._data_manager_token = data_manager_token
         self._data_manager_remote_backup_url = data_manager_remote_backup_url
+        self._backup_fetch_max_retries = backup_fetch_max_retries
         self._client = None
+
+        self._storage_path.mkdir(parents=True, exist_ok=True)
 
     @property
     def client(self) -> aiohttp.ClientSession:
@@ -79,6 +84,8 @@ class DataManagerRunner(PolicyEngineRunner):
 
     def set_envs(self) -> None:
         os.environ["PDP_ENGINE_TOKEN"] = self._engine_token
+        os.environ["PDP_FACT_STORE_DSN"] = str(self._storage_path / "fact.db")
+        os.environ["PDP_BACKUP_MAX_RETRIES"] = str(self._backup_fetch_max_retries)
         if self._data_manager_token:
             os.environ["PDP_TOKEN"] = self._data_manager_token
         os.environ["PDP_BACKUP_ENABLED"] = "true"
