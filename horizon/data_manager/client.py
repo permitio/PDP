@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 from typing import Optional, Awaitable, Callable
 
 from fastapi import FastAPI
@@ -111,10 +112,15 @@ class DataManagerClient(ExtendedOpalClient):
         self._enable_external_data_manager = sidecar_config.ENABLE_EXTERNAL_DATA_MANAGER
         if self._enable_external_data_manager:
             self._data_manager_runner = DataManagerRunner(
+                storage_path=Path(sidecar_config.OFFLINE_MODE_BACKUP_DIR) / "factdb",
                 data_manager_url=sidecar_config.DATA_MANAGER_SERVICE_URL,
                 data_manager_binary_path=sidecar_config.DATA_MANAGER_BINARY_PATH,
                 data_manager_token=opal_client_config.CLIENT_TOKEN,
                 data_manager_remote_backup_url=sidecar_config.DATA_MANAGER_REMOTE_BACKUP_URL,
+                # Limit retires when in offline mode or 0 (infinite retries) when online
+                backup_fetch_max_retries=sidecar_config.CONFIG_FETCH_MAX_RETRIES
+                if sidecar_config.ENABLE_OFFLINE_MODE
+                else 0,
                 engine_token=sidecar_config.API_KEY,
                 piped_logs_format=EngineLogFormat.FULL,
             )
