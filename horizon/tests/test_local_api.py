@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from aioresponses import aioresponses
 from fastapi import FastAPI
@@ -126,8 +128,9 @@ async def test_list_role_assignments_wrong_data_manager_config() -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_role_assignments_external_data_store() -> None:
+async def test_list_role_assignments_external_data_store(tmp_path: Path) -> None:
     sidecar_config.ENABLE_EXTERNAL_DATA_MANAGER = True
+    sidecar_config.OFFLINE_MODE_BACKUP_DIR = tmp_path / "backup"
     _sidecar = MockDataManagerPermitPDP()
     _client = TestClient(_sidecar._app)
     with aioresponses() as m:
