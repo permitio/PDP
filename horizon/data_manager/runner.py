@@ -85,6 +85,8 @@ class DataManagerRunner(PolicyEngineRunner):
         if self._data_manager_remote_backup_url:
             os.environ["PDP_BACKUP_URL"] = self._data_manager_remote_backup_url
 
-    @property
-    def command(self) -> str:
+    def get_executable_path(self) -> str:
         return self._data_manager_binary_path
+
+    def get_arguments(self) -> list[str]:
+        return []
