@@ -49,19 +49,6 @@ async def main():
             pdp=pdp_url,
         )
     )
-    async with aiohttp.ClientSession(base_url=pdp_url) as client:
-        while True:
-            try:
-                resp = await client.get("/healthy")
-                if resp.status == 200:
-                    logger.info("PDP is healthy")
-                    break
-                else:
-                    logger.warning("PDP is not healthy")
-            except Exception as e:
-                logger.exception(f"Error: {e}")
-
-            await asyncio.sleep(1)
 
     while True:
         try:
