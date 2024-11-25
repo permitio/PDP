@@ -90,9 +90,11 @@ RUN apk update && \
 RUN mkdir /app/bin
 RUN chown -R permit:permit /app/bin
 COPY --from=opa_build --chmod=755 /opa /app/bin/opa
+ENV OPAL_INLINE_OPA_EXEC_PATH="/app/bin/opa"
+
 COPY --from=opa_build --chmod=755 /factstore /app/bin/factstore
 ENV OPAL_INLINE_OPA_EXEC_PATH="/app/bin/opa"
-ENV PDP_DATA_MANAGER_BINARY_PATH="/app/bin/factstore"
+ENV PDP_FACTDB_BINARY_PATH="/app/bin/factstore"
 
 # bash is needed for ./start/sh script
 COPY scripts ./
