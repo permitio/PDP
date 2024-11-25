@@ -116,7 +116,7 @@ class FactDBClient(ExtendedOpalClient):
                 factdb_url=sidecar_config.FACTDB_SERVICE_URL,
                 factdb_binary_path=sidecar_config.FACTDB_BINARY_PATH,
                 factdb_token=opal_client_config.CLIENT_TOKEN,
-                factdb_remote_backup_url=sidecar_config.FACTDB_REMOTE_BACKUP_URL,
+                factdb_backup_server_url=sidecar_config.FACTDB_BACKUP_SERVER_URL,
                 # Limit retires when in offline mode or 0 (infinite retries) when online
                 backup_fetch_max_retries=sidecar_config.CONFIG_FETCH_MAX_RETRIES
                 if sidecar_config.ENABLE_OFFLINE_MODE
