@@ -18,7 +18,7 @@ class FactDBRunner(PolicyEngineRunner):
         factdb_url: str,
         factdb_binary_path: str,
         factdb_token: str | None,
-        factdb_remote_backup_url: str | None,
+        factdb_backup_server_url: str | None,
         backup_fetch_max_retries: int,
         piped_logs_format: EngineLogFormat = EngineLogFormat.NONE,
     ):
@@ -28,7 +28,7 @@ class FactDBRunner(PolicyEngineRunner):
         self._factdb_url = factdb_url
         self._factdb_binary_path = factdb_binary_path
         self._factdb_token = factdb_token
-        self._factdb_remote_backup_url = factdb_remote_backup_url
+        self._factdb_backup_server_url = factdb_backup_server_url
         self._backup_fetch_max_retries = backup_fetch_max_retries
         self._client = None
 
@@ -89,8 +89,8 @@ class FactDBRunner(PolicyEngineRunner):
         if self._factdb_token:
             os.environ["PDP_TOKEN"] = self._factdb_token
         os.environ["PDP_BACKUP_ENABLED"] = "true"
-        if self._factdb_remote_backup_url:
-            os.environ["PDP_BACKUP_URL"] = self._factdb_remote_backup_url
+        if self._factdb_backup_server_url:
+            os.environ["PDP_BACKUP_URL"] = self._factdb_backup_server_url
 
     def get_executable_path(self) -> str:
         return self._factdb_binary_path
