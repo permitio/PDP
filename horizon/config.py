@@ -18,31 +18,31 @@ class SidecarConfig(Confi):
             cls.instance = super(SidecarConfig, cls).__new__(cls)
         return cls.instance
 
-    ENABLE_EXTERNAL_DATA_MANAGER = confi.bool(
-        "ENABLE_EXTERNAL_DATA_MANAGER",
+    FACTDB_ENABLED = confi.bool(
+        "FACTDB_ENABLED",
         False,
-        description="if true, the sidecar will enable the Data Manager service to manage the PDP data in "
-        "external data store",
+        description="if true, the sidecar will enable the FactDB service to manage the PDP data in "
+        "FactDB",
     )
 
-    DATA_MANAGER_BINARY_PATH = confi.str(
-        "DATA_MANAGER_BINARY_PATH",
+    FACTDB_BINARY_PATH = confi.str(
+        "FACTDB_BINARY_PATH",
         "/factstore",
-        description="path in which to find the data manager executable",
+        description="path in which to find the FactDB executable",
     )
 
-    DATA_MANAGER_SERVICE_URL = confi.str(
-        "DATA_MANAGER_SERVICE_URL",
+    FACTDB_SERVICE_URL = confi.str(
+        "FACTDB_SERVICE_URL",
         "http://localhost:8080",
-        description="URL to the Data Manager service that manages the PDP data, will only be used if "
-        "ENABLE_EXTERNAL_DATA_MANAGER is true",
+        description="URL to the FactDB service that manages the PDP data, will only be used if "
+        "FACTDB_ENABLED is true",
     )
 
-    DATA_MANAGER_REMOTE_BACKUP_URL = confi.str(
-        "DATA_MANAGER_REMOTE_BACKUP_URL",
+    FACTDB_BACKUP_SERVER_URL = confi.str(
+        "FACTDB_BACKUP_SERVER_URL",
         None,
-        description="URL from which the Data Manager service will fetch the PDP data backup from, will only be used if "
-        "DATA_MANAGER_ENABLE_REMOTE_BACKUP is true",
+        description="URL from which the FactDB service will fetch the PDP data backup from, will only be used if "
+        "FACTDB_ENABLE_REMOTE_BACKUP is true",
     )
 
     SHARD_ID = confi.str(
