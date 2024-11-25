@@ -3,7 +3,7 @@ from typing import Iterator
 
 from opal_common.schemas.data import JsonableValue
 
-from horizon.data_manager.data_update import (
+from horizon.factdb.data_update import (
     AnyOperation,
     InsertOperation,
     Fact,

@@ -15,12 +15,12 @@ else
   echo "permit-opa directory already exists. Skipping clone operation."
 fi
 
-# Check if datasync directory already exists
-if [ ! -d "../datasync" ]; then
+# Check if factdb directory already exists
+if [ ! -d "../factdb" ]; then
   # Clone the permit-opa repository into the parent directory if it doesn't exist
-  git clone git@github.com:permitio/datasync.git ../datasync
+  git clone git@github.com:permitio/datasync.git ../factdb
 else
-  echo "datasync directory already exists. Skipping clone operation."
+  echo "factdb directory already exists. Skipping clone operation."
 fi
 
 # Conditionally execute the custom OPA tarball creation section based on the value of PDP_VANILLA
@@ -32,12 +32,12 @@ if [ "$PDP_VANILLA" != "true" ]; then
   cd "../permit-opa"
   find * -name '*go*' -print0 | xargs -0 tar -czf "$build_root"/custom/custom_opa.tar.gz --exclude '.*'
   cd "$build_root"
-  # Datasync tarball creation section
-  rm -rf datasync
-  mkdir datasync
+  # factdb tarball creation section
+  rm -rf factdb
+  mkdir factdb
   build_root="$PWD"
-  cd "../datasync"
-  find * -name '*go*' -print0 | xargs -0 tar -czf "$build_root"/datasync/datasync.tar.gz --exclude '.*'
+  cd "../factdb"
+  find * -name '*go*' -print0 | xargs -0 tar -czf "$build_root"/factdb/factdb.tar.gz --exclude '.*'
   cd "$build_root"
 else
   echo "Skipping custom OPA tarball creation for pdp-vanilla environment."

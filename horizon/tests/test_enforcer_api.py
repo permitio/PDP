@@ -165,7 +165,7 @@ ALLOWED_ENDPOINTS = [
     # TODO: Add Kong
 ]
 
-ALLOWED_ENDPOINTS_DATASYNC = [
+ALLOWED_ENDPOINTS_FACTDB = [
     (
         "/allowed",
         "/check",
@@ -473,23 +473,23 @@ def test_enforce_endpoint(
 @pytest.mark.parametrize(
     (
         "endpoint",
-        "datasync_endpoint",
+        "factdb_endpoint",
         "query",
         "headers",
-        "datasync_response",
+        "factdb_response",
         "expected_response",
     ),
-    ALLOWED_ENDPOINTS_DATASYNC,
+    ALLOWED_ENDPOINTS_FACTDB,
 )
-def test_enforce_endpoint_datasync(
+def test_enforce_endpoint_factdb(
     endpoint: str,
-    datasync_endpoint: str,
+    factdb_endpoint: str,
     query: list[BaseModel] | BaseModel | None,
     headers: dict | None,
-    datasync_response: dict,
+    factdb_response: dict,
     expected_response: dict,
 ):
-    sidecar_config.ENABLE_EXTERNAL_DATA_MANAGER = True
+    sidecar_config.FACTDB_ENABLED = True
     _client = TestClient(sidecar._app)
 
     def post_endpoint():
@@ -501,9 +501,7 @@ def test_enforce_endpoint_datasync(
         )
 
     with aioresponses() as m:
-        datasync_url = (
-            f"{sidecar_config.DATA_MANAGER_SERVICE_URL}/v1/authz{datasync_endpoint}"
-        )
+        factdb_url = f"{sidecar_config.FACTDB_SERVICE_URL}/v1/authz{factdb_endpoint}"
 
         method = "POST"
 
@@ -532,10 +530,10 @@ def test_enforce_endpoint_datasync(
 
         # Test valid response from OPA
         m.add(
-            datasync_url,
+            factdb_url,
             method=method,
             status=200,
-            payload=datasync_response,
+            payload=factdb_response,
         )
 
         response = post_endpoint()
@@ -561,35 +559,35 @@ def test_enforce_endpoint_datasync(
         # Test bad status from OPA
         bad_status = random.choice([401, 404, 400, 500, 503])
         m.add(
-            datasync_url,
+            factdb_url,
             method=method,
             status=bad_status,
-            payload=datasync_response,
+            payload=factdb_response,
         )
         response = post_endpoint()
         assert response.status_code == 502
-        assert "Data Manager request failed" in response.text
+        assert "FactDB request failed" in response.text
         assert f"status: {bad_status}" in response.text
 
         # Test connection error
         m.add(
-            datasync_url,
+            factdb_url,
             method=method,
             exception=aiohttp.ClientConnectionError("don't want to connect"),
         )
         response = post_endpoint()
         assert response.status_code == 502
-        assert "Data Manager request failed" in response.text
+        assert "FactDB request failed" in response.text
         assert "don't want to connect" in response.text
 
         # Test timeout - not working yet
         m.add(
-            datasync_url,
+            factdb_url,
             method=method,
             exception=asyncio.exceptions.TimeoutError(),
         )
         response = post_endpoint()
         assert response.status_code == 504
-        assert "Data Manager request timed out" in response.text
+        assert "FactDB request timed out" in response.text
 
-    sidecar_config.ENABLE_EXTERNAL_DATA_MANAGER = False
+    sidecar_config.FACTDB_ENABLED = False

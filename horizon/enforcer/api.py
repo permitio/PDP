@@ -276,18 +276,18 @@ async def conditional_is_allowed(
     request: Request,
     *,
     policy_package: str = MAIN_POLICY_PACKAGE,
-    external_data_manager_path: str = "/check",
-    external_data_manager_method: str = "POST",
-    external_data_manager_params: dict | None = None,
+    factdb_path: str = "/check",
+    factdb_method: str = "POST",
+    factdb_params: dict | None = None,
     legacy_parse_func: Callable[[dict | list], dict] | None = None,
 ) -> dict:
-    if sidecar_config.ENABLE_EXTERNAL_DATA_MANAGER:
-        response = await _is_allowed_data_manager(
-            query if external_data_manager_method != "GET" else None,
+    if sidecar_config.FACTDB_ENABLED:
+        response = await _is_allowed_factdb(
+            query if factdb_method != "GET" else None,
             request,
-            path=external_data_manager_path,
-            method=external_data_manager_method,
-            params=external_data_manager_params,
+            path=factdb_path,
+            method=factdb_method,
+            params=factdb_params,
         )
         raw_result = json.loads(response.body)
         log_query_result(query, response, is_inner=True)
@@ -307,7 +307,7 @@ async def conditional_is_allowed(
     return raw_result
 
 
-async def _is_allowed_data_manager(
+async def _is_allowed_factdb(
     query: BaseSchema | list[BaseSchema] | None,
     request: Request,
     *,
@@ -316,14 +316,14 @@ async def _is_allowed_data_manager(
     params: dict | None = None,
 ):
     headers = transform_headers(request)
-    url = f"{sidecar_config.DATA_MANAGER_SERVICE_URL}/v1/authz{path}"
+    url = f"{sidecar_config.FACTDB_SERVICE_URL}/v1/authz{path}"
     payload = None if query is None else {"input": jsonable_encoder(query)}
     exc = None
     if query is not None and isinstance(query, dict):
         _set_use_debugger(payload)
     try:
         logger.info(
-            f"calling Data Manager at '{url}' with input: {payload} and params {params}"
+            f"calling FactDB at '{url}' with input: {payload} and params {params}"
         )
         async with aiohttp.ClientSession() as session:
             async with session.request(
@@ -341,7 +341,7 @@ async def _is_allowed_data_manager(
         stats_manager.report_failure()
         exc = HTTPException(
             status.HTTP_504_GATEWAY_TIMEOUT,
-            detail="Data Manager request timed out (url: {url}, timeout: {timeout}s)".format(
+            detail="FactDB request timed out (url: {url}, timeout: {timeout}s)".format(
                 url=url,
                 timeout=sidecar_config.OPA_CLIENT_QUERY_TIMEOUT,
             ),
@@ -350,7 +350,7 @@ async def _is_allowed_data_manager(
         stats_manager.report_failure()
         exc = HTTPException(
             status.HTTP_502_BAD_GATEWAY,  # 502 indicates server got an error from another server
-            detail="Data Manager request failed (url: {url}, status: {status}, message: {message})".format(
+            detail="FactDB request failed (url: {url}, status: {status}, message: {message})".format(
                 url=url, status=e.status, message=e.message
             ),
         )
@@ -358,7 +358,7 @@ async def _is_allowed_data_manager(
         stats_manager.report_failure()
         exc = HTTPException(
             status.HTTP_502_BAD_GATEWAY,
-            detail="Data Manager request failed (url: {url}, error: {error}".format(
+            detail="FactDB request failed (url: {url}, error: {error}".format(
                 url=url, error=str(e)
             ),
         )
@@ -408,7 +408,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             query,
             request,
             policy_package=AUTHORIZED_USERS_POLICY_PACKAGE,
-            external_data_manager_path=f"/authorized-users",
+            factdb_path=f"/authorized-users",
             legacy_parse_func=authorized_users_parse_func,
         )
         try:
@@ -510,14 +510,27 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             logger.info("User permissions query with pagination")
 
         def parse_func(result: dict) -> dict | list:
-            return result.get("permissions", {})
+            results = result.get("permissions", {})
+            if not query._offset and not query._limit:
+                return results
+
+            resource_keys = sorted(results.keys())
+            if query._offset and query._limit:
+                resource_keys = resource_keys[
+                    query._offset : query._offset + query._limit
+                ]
+            elif query._offset:
+                resource_keys = resource_keys[query._offset :]
+            elif query._limit:
+                resource_keys = resource_keys[: query._limit]
+            return {resource: results[resource] for resource in resource_keys}
 
         response = await conditional_is_allowed(
             query,
             request,
             policy_package=USER_PERMISSIONS_POLICY_PACKAGE,
-            external_data_manager_path=f"/user-permissions",
-            external_data_manager_params=query.get_params(),
+            factdb_path=f"/user-permissions",
+            factdb_params=query.get_params(),
             legacy_parse_func=parse_func,
         )
         try:
@@ -558,8 +571,8 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             query,
             request,
             policy_package=USER_TENANTS_POLICY_PACKAGE,
-            external_data_manager_path=f"/users/{query.user.key}/tenants",
-            external_data_manager_method="GET",
+            factdb_path=f"/users/{query.user.key}/tenants",
+            factdb_method="GET",
             legacy_parse_func=parse_user_tenants_result,
         )
         try:
@@ -584,8 +597,8 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         query: AuthorizationQuery,
         x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
     ):
-        if sidecar_config.ENABLE_EXTERNAL_DATA_MANAGER:
-            response = await _is_allowed_data_manager(
+        if sidecar_config.FACTDB_ENABLED:
+            response = await _is_allowed_factdb(
                 query, request, path="/check/all-tenants"
             )
             raw_result = json.loads(response.body)
@@ -623,10 +636,8 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         queries: list[AuthorizationQuery],
         x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
     ):
-        if sidecar_config.ENABLE_EXTERNAL_DATA_MANAGER:
-            response = await _is_allowed_data_manager(
-                queries, request, path="/check/bulk"
-            )
+        if sidecar_config.FACTDB_ENABLED:
+            response = await _is_allowed_factdb(queries, request, path="/check/bulk")
             raw_result = json.loads(response.body)
         else:
             bulk_query = BulkAuthorizationQuery(checks=queries)
