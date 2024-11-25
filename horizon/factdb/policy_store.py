@@ -8,8 +8,8 @@ from opal_client.policy_store.opa_client import OpaClient
 from opal_client.policy_store.schemas import PolicyStoreAuth
 from opal_common.schemas.data import JsonableValue
 
-from horizon.data_manager.data_update import DataUpdate, AnyOperation
-from horizon.data_manager.update_operations import (
+from horizon.factdb.data_update import DataUpdate, AnyOperation
+from horizon.factdb.update_operations import (
     _get_operations_for_update_relationship_tuple,
     _get_operations_for_update_role_assigment,
     _get_operations_for_update_user,
@@ -17,10 +17,10 @@ from horizon.data_manager.update_operations import (
 )
 
 
-class DataManagerPolicyStoreClient(OpaClient):
+class FactDBPolicyStoreClient(OpaClient):
     def __init__(
         self,
-        data_manager_client: ClientSession | Callable[[], ClientSession],
+        factdb_client: ClientSession | Callable[[], ClientSession],
         opa_server_url=None,
         opa_auth_token: Optional[str] = None,
         auth_type: PolicyStoreAuth = PolicyStoreAuth.NONE,
@@ -48,7 +48,7 @@ class DataManagerPolicyStoreClient(OpaClient):
             tls_client_key,
             tls_ca,
         )
-        self._client = data_manager_client
+        self._client = factdb_client
 
     @property
     def client(self):
@@ -108,9 +108,7 @@ class DataManagerPolicyStoreClient(OpaClient):
                     instance_key, data
                 )
             case _:
-                raise NotImplementedError(
-                    f"Unsupported path for External Data Manager: {parts}"
-                )
+                raise NotImplementedError(f"Unsupported path for FactDB: {parts}")
 
     async def _apply_data_update(
         self, data_update: DataUpdate
@@ -123,12 +121,12 @@ class DataManagerPolicyStoreClient(OpaClient):
         elapsed_time_ms = (time.perf_counter_ns() - start_time) / 1_000_000
         if res.status != 200:
             logger.error(
-                "Failed to apply data update to External Data Manager: {}",
+                "Failed to apply data update to FactDB: {}",
                 await res.text(),
             )
         else:
             logger.info(
-                f"Data update applied to External Data Manager: status={res.status} duration={elapsed_time_ms:.2f}ms"
+                f"Data update applied to FactDB: status={res.status} duration={elapsed_time_ms:.2f}ms"
             )
         return res
 
@@ -140,7 +138,7 @@ class DataManagerPolicyStoreClient(OpaClient):
         filters: dict[str, Any] | None = None,
     ) -> aiohttp.ClientResponse:
         logger.info(
-            "Performing list facts for '{fact_type}' fact type from the External Data Manager",
+            "Performing list facts for '{fact_type}' fact type from the FactDB",
             fact_type=fact_type,
         )
         query_params = {
@@ -153,7 +151,7 @@ class DataManagerPolicyStoreClient(OpaClient):
         )
         if res.status != 200:
             logger.error(
-                "Failed to list '{fact_type}' facts from External Data Manager: {res}",
+                "Failed to list '{fact_type}' facts from FactDB: {res}",
                 fact_type=fact_type,
                 res=await res.text(),
             )

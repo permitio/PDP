@@ -21,7 +21,7 @@ from opal_common.logging_utils.formatter import Formatter
 
 from horizon.authentication import enforce_pdp_token
 from horizon.config import MOCK_API_KEY, sidecar_config
-from horizon.data_manager.client import DataManagerClient
+from horizon.factdb.client import FactDBClient
 from horizon.enforcer.api import init_enforcer_api_router, stats_manager
 from horizon.enforcer.opa.config_maker import (
     get_opa_authz_policy_file_path,
@@ -131,7 +131,7 @@ class PermitPDP:
         if sidecar_config.ENABLE_MONITORING:
             self._configure_monitoring()
 
-        self._opal = DataManagerClient(
+        self._opal = FactDBClient(
             shard_id=sidecar_config.SHARD_ID, data_topics=self._fix_data_topics()
         )
         self._configure_cloud_logging(remote_config.context)

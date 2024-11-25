@@ -9,7 +9,7 @@ from opal_client.client import OpalClient
 from opal_client.config import opal_client_config
 
 from horizon.config import sidecar_config
-from horizon.data_manager.client import DataManagerClient
+from horizon.factdb.client import FactDBClient
 from horizon.pdp import PermitPDP
 
 
@@ -28,10 +28,10 @@ class MockPermitPDP(PermitPDP):
         self._app: FastAPI = app
 
 
-class MockDataManagerPermitPDP(MockPermitPDP):
+class MockFactDBPermitPDP(MockPermitPDP):
     def __init__(self):
         super().__init__(
-            opal=DataManagerClient(
+            opal=FactDBClient(
                 shard_id=sidecar_config.SHARD_ID, data_topics=self._fix_data_topics()
             )
         )
@@ -82,12 +82,12 @@ async def test_list_role_assignments() -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_role_assignments_wrong_data_manager_config() -> None:
-    _sidecar = MockDataManagerPermitPDP()
-    # the ENABLE_EXTERNAL_DATA_MANAGER is set to True after the PDP was created
-    # this causes the PDP to be without the DataManagerPolicyStoreClient - it is a uniquely rare case
+async def test_list_role_assignments_wrong_factdb_config() -> None:
+    _sidecar = MockFactDBPermitPDP()
+    # the FACTDB_ENABLED is set to True after the PDP was created
+    # this causes the PDP to be without the FactDBPolicyStoreClient - it is a uniquely rare case
     # that will probably never happen as this config is managed either by a remote config or env var
-    sidecar_config.ENABLE_EXTERNAL_DATA_MANAGER = True
+    sidecar_config.FACTDB_ENABLED = True
     _client = TestClient(_sidecar._app)
     with aioresponses() as m:
         # 'http://localhost:8181/v1/data/permit/api/role_assignments/list_role_assignments'
@@ -128,19 +128,19 @@ async def test_list_role_assignments_wrong_data_manager_config() -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_role_assignments_external_data_store(tmp_path: Path) -> None:
-    sidecar_config.ENABLE_EXTERNAL_DATA_MANAGER = True
+async def test_list_role_assignments_factdb(tmp_path: Path) -> None:
+    sidecar_config.FACTDB_ENABLED = True
     sidecar_config.OFFLINE_MODE_BACKUP_DIR = tmp_path / "backup"
-    _sidecar = MockDataManagerPermitPDP()
+    _sidecar = MockFactDBPermitPDP()
     _client = TestClient(_sidecar._app)
     with aioresponses() as m:
-        # The policy store client of the data manager has base url configured, this means that the url
+        # The policy store client of the FactDB has base url configured, this means that the url
         # we need to mock is '/v1/facts/role_assignments' - without the base url server
-        data_manager_url = f"/v1/facts/role_assignments?page=1&per_page=30"
-        logger.info("mocking data manager url: {}", data_manager_url)
+        factdb_url = f"/v1/facts/role_assignments?page=1&per_page=30"
+        logger.info("mocking FactDB url: {}", factdb_url)
         # Test valid response from OPA
         m.get(
-            data_manager_url,
+            factdb_url,
             status=200,
             repeat=True,
             payload=[
@@ -171,4 +171,4 @@ async def test_list_role_assignments_external_data_store(tmp_path: Path) -> None
             "tenant": "tenant1",
             "resource_instance": "resource_instance1",
         }
-    sidecar_config.ENABLE_EXTERNAL_DATA_MANAGER = False
+    sidecar_config.FACTDB_ENABLED = False

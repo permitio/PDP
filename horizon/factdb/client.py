@@ -22,15 +22,15 @@ from starlette import status
 from starlette.responses import JSONResponse
 
 from horizon.config import sidecar_config
-from horizon.data_manager.policy_store import DataManagerPolicyStoreClient
-from horizon.data_manager.runner import DataManagerRunner
+from horizon.factdb.policy_store import FactDBPolicyStoreClient
+from horizon.factdb.runner import FactDBRunner
 
 
 class ExtendedOpalClient(OpalClient):
     """
     Extended OpalClient that allows for additional healthchecks besides of the
     policy store one
-    it is only used in data manager and will later be removed when we add Data Manager Policy Store implementation
+    it is only used in FactDB and will later be removed when we add FactDB Policy Store implementation
     """
 
     async def check_healthy(self) -> bool:
@@ -91,7 +91,7 @@ class ExtendedOpalClient(OpalClient):
         return app
 
 
-class DataManagerClient(ExtendedOpalClient):
+class FactDBClient(ExtendedOpalClient):
     def __init__(
         self,
         policy_store_type: PolicyStoreTypes = None,
@@ -109,14 +109,14 @@ class DataManagerClient(ExtendedOpalClient):
         offline_mode_enabled: bool = False,
         shard_id: Optional[str] = None,
     ):
-        self._enable_external_data_manager = sidecar_config.ENABLE_EXTERNAL_DATA_MANAGER
-        if self._enable_external_data_manager:
-            self._data_manager_runner = DataManagerRunner(
+        self._factdb_enabled = sidecar_config.FACTDB_ENABLED
+        if self._factdb_enabled:
+            self._factdb_runner = FactDBRunner(
                 storage_path=Path(sidecar_config.OFFLINE_MODE_BACKUP_DIR) / "factdb",
-                data_manager_url=sidecar_config.DATA_MANAGER_SERVICE_URL,
-                data_manager_binary_path=sidecar_config.DATA_MANAGER_BINARY_PATH,
-                data_manager_token=opal_client_config.CLIENT_TOKEN,
-                data_manager_remote_backup_url=sidecar_config.DATA_MANAGER_REMOTE_BACKUP_URL,
+                factdb_url=sidecar_config.FACTDB_SERVICE_URL,
+                factdb_binary_path=sidecar_config.FACTDB_BINARY_PATH,
+                factdb_token=opal_client_config.CLIENT_TOKEN,
+                factdb_backup_server_url=sidecar_config.FACTDB_BACKUP_SERVER_URL,
                 # Limit retires when in offline mode or 0 (infinite retries) when online
                 backup_fetch_max_retries=sidecar_config.CONFIG_FETCH_MAX_RETRIES
                 if sidecar_config.ENABLE_OFFLINE_MODE
@@ -124,8 +124,8 @@ class DataManagerClient(ExtendedOpalClient):
                 engine_token=sidecar_config.API_KEY,
                 piped_logs_format=EngineLogFormat.FULL,
             )
-            policy_store = policy_store or DataManagerPolicyStoreClient(
-                data_manager_client=lambda: self._data_manager_runner.client,
+            policy_store = policy_store or FactDBPolicyStoreClient(
+                factdb_client=lambda: self._factdb_runner.client,
                 opa_server_url=opal_client_config.POLICY_STORE_URL,
                 opa_auth_token=opal_client_config.POLICY_STORE_AUTH_TOKEN,
                 auth_type=opal_client_config.POLICY_STORE_AUTH_TYPE,
@@ -168,20 +168,20 @@ class DataManagerClient(ExtendedOpalClient):
         async with engine_runner:
             await engine_runner.wait_until_done()
 
-    async def start_data_manager_runner(self):
-        await self._run_engine_runner(None, self._data_manager_runner)
+    async def start_factdb_runner(self):
+        await self._run_engine_runner(None, self._factdb_runner)
 
-    async def stop_data_manager_runner(self):
-        logger.info("Stopping Data Manager runner")
-        await self._data_manager_runner.stop()
+    async def stop_factdb_runner(self):
+        logger.info("Stopping FactDB runner")
+        await self._factdb_runner.stop()
 
     async def check_healthy(self) -> bool:
         try:
             opal_health = await super().check_healthy()
             if not opal_health:
                 return False
-            if self._enable_external_data_manager:
-                return await self._data_manager_runner.is_healthy()
+            if self._factdb_enabled:
+                return await self._factdb_runner.is_healthy()
         except Exception as e:
             logger.exception("Error checking health: {e}", e=e)
             return False
@@ -193,8 +193,8 @@ class DataManagerClient(ExtendedOpalClient):
             opal_ready = await super().check_ready()
             if not opal_ready:
                 return False
-            if self._enable_external_data_manager:
-                return await self._data_manager_runner.is_ready()
+            if self._factdb_enabled:
+                return await self._factdb_runner.is_ready()
         except Exception as e:
             logger.exception("Error checking ready: {e}", e=e)
             return False
@@ -203,13 +203,13 @@ class DataManagerClient(ExtendedOpalClient):
 
     async def start_client_background_tasks(self):
         tasks = [super().start_client_background_tasks()]
-        if self._enable_external_data_manager:
-            logger.info("Starting Data Manager runner")
-            tasks.append(self.start_data_manager_runner())
+        if self._factdb_enabled:
+            logger.info("Starting FactDB runner")
+            tasks.append(self.start_factdb_runner())
         await asyncio.gather(*tasks)
 
     async def stop_client_background_tasks(self):
         """stops all background tasks (called on shutdown event)"""
         await super().stop_client_background_tasks()
-        if self._enable_external_data_manager:
-            await self.stop_data_manager_runner()
+        if self._factdb_enabled:
+            await self.stop_factdb_runner()

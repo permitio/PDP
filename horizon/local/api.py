@@ -11,7 +11,7 @@ from starlette.responses import Response
 
 from horizon.authentication import enforce_pdp_token
 from horizon.config import sidecar_config
-from horizon.data_manager.policy_store import DataManagerPolicyStoreClient
+from horizon.factdb.policy_store import FactDBPolicyStoreClient
 from horizon.local.schemas import (
     Message,
     SyncedRole,
@@ -162,11 +162,11 @@ def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
             else:
                 return parse_obj_as(WrappedResponse, result).result
 
-        if sidecar_config.ENABLE_EXTERNAL_DATA_MANAGER:
-            if not isinstance(policy_store, DataManagerPolicyStoreClient):
+        if sidecar_config.FACTDB_ENABLED:
+            if not isinstance(policy_store, FactDBPolicyStoreClient):
                 logger.warning(
-                    "External Data Manager is enabled by policy store is not set to {store_type}",
-                    store_type=DataManagerPolicyStoreClient.__name__,
+                    "FactDB is enabled by policy store is not set to {store_type}",
+                    store_type=FactDBPolicyStoreClient.__name__,
                 )
                 return await legacy_list_role_assignments()
             else:
