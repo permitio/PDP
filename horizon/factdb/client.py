@@ -111,7 +111,7 @@ class FactDBClient(ExtendedOpalClient):
     ):
         self._factdb_enabled = sidecar_config.FACTDB_ENABLED
         if self._factdb_enabled:
-            self._data_manager_runner = FactDBRunner(
+            self._factdb_runner = FactDBRunner(
                 storage_path=Path(sidecar_config.OFFLINE_MODE_BACKUP_DIR) / "factdb",
                 factdb_url=sidecar_config.FACTDB_SERVICE_URL,
                 factdb_binary_path=sidecar_config.FACTDB_BINARY_PATH,
