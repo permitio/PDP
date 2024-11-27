@@ -18,6 +18,10 @@ from opal_client.policy_store.base_policy_store_client import BasePolicyStoreCli
 from opal_client.policy_store.schemas import PolicyStoreTypes
 from opal_common.authentication.deps import JWTAuthenticator
 from opal_common.authentication.verifier import JWTVerifier
+from opal_common.fetcher.providers.http_fetch_provider import (
+    HttpFetcherConfig,
+    HttpMethods,
+)
 from starlette import status
 from starlette.responses import JSONResponse
 
@@ -39,6 +43,11 @@ class ExtendedOpalClient(OpalClient):
     async def check_ready(self) -> bool:
         return self._backup_loaded or await self.policy_store.is_ready()
 
+    def _init_fast_api_app(self) -> FastAPI:
+        # Called at the of OPALClient.__init__
+        self._inject_extra_callbacks()
+        return super()._init_fast_api_app()
+
     def _configure_api_routes(self, app: FastAPI):
         """mounts the api routes on the app object."""
 
@@ -48,13 +57,14 @@ class ExtendedOpalClient(OpalClient):
         policy_router = init_policy_router(policy_updater=self.policy_updater)
         data_router = init_data_router(data_updater=self.data_updater)
         policy_store_router = init_policy_store_router(authenticator)
-        callbacks_router = init_callbacks_api(authenticator, self._callbacks_register)
 
         # mount the api routes on the app object
         app.include_router(policy_router, tags=["Policy Updater"])
         app.include_router(data_router, tags=["Data Updater"])
         app.include_router(policy_store_router, tags=["Policy Store"])
-        app.include_router(callbacks_router, tags=["Callbacks"])
+
+        # excluded callbacks api from the main api, since we use it internally.
+        # Use the DATA_UPDATE_CALLBACKS config to configure callbacks instead
 
         # top level routes (i.e: healthchecks)
         @app.get("/healthcheck", include_in_schema=False)
@@ -89,6 +99,28 @@ class ExtendedOpalClient(OpalClient):
                 )
 
         return app
+
+    def _inject_extra_callbacks(self) -> None:
+        register = self._callbacks_register
+        default_config = HttpFetcherConfig(
+            method=HttpMethods.POST,
+            headers={"content-type": "application/json"},
+            process_data=False,
+            fetcher=None,
+        )
+        for entry in sidecar_config.DATA_UPDATE_CALLBACKS:
+            entry.config = entry.config or default_config
+            entry.key = entry.key or register.calc_hash(entry.url, entry.config)
+
+            if register.get(entry.key):
+                raise RuntimeError(
+                    f"Callback with key '{entry.key}' already exists. Please specify a different key."
+                )
+
+            logger.info(
+                f"Registering data update callback to url '{entry.url}' with key '{entry.key}'"
+            )
+            register.put(entry.url, entry.config, entry.key)
 
 
 class FactDBClient(ExtendedOpalClient):

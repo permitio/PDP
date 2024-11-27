@@ -1,4 +1,8 @@
+from typing import Any
+
 from opal_common.confi import Confi, confi
+from opal_common.schemas.data import CallbackEntry
+from pydantic import parse_obj_as, parse_raw_as
 
 MOCK_API_KEY = "MUST BE DEFINED"
 
@@ -269,6 +273,21 @@ class SidecarConfig(Confi):
         "VERSION_FILE_PATH",
         "/permit_pdp_version",
         description="The path to the file that contains the PDP version",
+    )
+
+    @staticmethod
+    def parse_callbacks(value: Any) -> list[CallbackEntry]:
+        if isinstance(value, str):
+            return parse_raw_as(list[CallbackEntry], value)
+        else:
+            return parse_obj_as(list[CallbackEntry], value)
+
+    DATA_UPDATE_CALLBACKS: list[CallbackEntry] = confi.str(
+        "DATA_UPDATE_CALLBACKS",
+        [],
+        description="List of callbacks to be triggered when data is updated",
+        cast=parse_callbacks,
+        cast_from_json=parse_callbacks,
     )
 
     # non configurable values -------------------------------------------------
