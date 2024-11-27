@@ -1,12 +1,13 @@
 import asyncio
 import json
 import re
-from typing import cast, Optional, Union, Dict, List
+from typing import cast, Optional, Union, Dict, List, Callable
 
 import aiohttp
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, Query
 from fastapi import HTTPException
 from fastapi import Request, Response, status
+from fastapi.encoders import jsonable_encoder
 from opal_client.config import opal_client_config
 from opal_client.logger import logger
 from opal_client.policy_store.base_policy_store_client import BasePolicyStoreClient
@@ -14,7 +15,7 @@ from opal_client.policy_store.policy_store_client_factory import (
     DEFAULT_POLICY_STORE_GETTER,
 )
 from opal_client.utils import proxy_response
-from pydantic import parse_obj_as
+from pydantic import parse_obj_as, PositiveInt
 from starlette.responses import JSONResponse
 
 from horizon.authentication import enforce_pdp_token
@@ -44,7 +45,6 @@ from horizon.enforcer.schemas_kong import (
     KongWrappedAuthorizationQuery,
 )
 from horizon.enforcer.schemas_v1 import AuthorizationQueryV1
-from horizon.enforcer.utils.headers_utils import get_case_insensitive
 from horizon.enforcer.utils.mapping_rules_utils import MappingRulesUtils
 from horizon.enforcer.utils.statistics_utils import StatisticsManager
 from horizon.state import PersistentStateHandler
@@ -86,13 +86,14 @@ def transform_headers(request: Request) -> dict:
     }
 
 
-def log_query_result(query: BaseSchema, response: Response):
+def log_query_result(query: BaseSchema, response: Response, *, is_inner: bool = False):
     """
     formats a nice log to default logger with the results of permit.check()
     """
     params = repr(query)
     try:
-        result: Dict = json.loads(response.body).get("result", {})
+        response_json = json.loads(response.body)
+        result: Dict = response_json if is_inner else response_json.get("result", {})
         allowed: bool | List[Dict] = result.get("allow", None)
         color = "<red>"
         allow_output = False
@@ -200,7 +201,7 @@ def get_v1_processed_query(result: dict) -> Optional[dict]:
 
 
 def get_v2_processed_query(result: dict) -> Optional[dict]:
-    return result.get("debug", {}).get("input", None)
+    return (result.get("debug", {}) or {}).get("input", None)
 
 
 async def notify_seen_sdk(
@@ -270,6 +271,101 @@ async def _is_allowed(query: BaseSchema, request: Request, policy_package: str):
     return await post_to_opa(request, path, opa_input)
 
 
+async def conditional_is_allowed(
+    query: BaseSchema,
+    request: Request,
+    *,
+    policy_package: str = MAIN_POLICY_PACKAGE,
+    factdb_path: str = "/check",
+    factdb_method: str = "POST",
+    factdb_params: dict | None = None,
+    legacy_parse_func: Callable[[dict | list], dict] | None = None,
+) -> dict:
+    if sidecar_config.FACTDB_ENABLED:
+        response = await _is_allowed_factdb(
+            query if factdb_method != "GET" else None,
+            request,
+            path=factdb_path,
+            method=factdb_method,
+            params=factdb_params,
+        )
+        raw_result = json.loads(response.body)
+        log_query_result(query, response, is_inner=True)
+    else:
+        response = await _is_allowed(query, request, policy_package)
+        raw_result = json.loads(response.body).get("result", {})
+        log_query_result(query, response)
+        if legacy_parse_func:
+            try:
+                raw_result = legacy_parse_func(raw_result)
+            except Exception as e:
+                logger.opt(exception=e).warning(
+                    "is allowed (fallback response)",
+                    reason="cannot parse opa response",
+                )
+                return {}
+    return raw_result
+
+
+async def _is_allowed_factdb(
+    query: BaseSchema | list[BaseSchema] | None,
+    request: Request,
+    *,
+    path: str = "/check",
+    method: str = "POST",
+    params: dict | None = None,
+):
+    headers = transform_headers(request)
+    url = f"{sidecar_config.FACTDB_SERVICE_URL}/v1/authz{path}"
+    payload = None if query is None else {"input": jsonable_encoder(query)}
+    exc = None
+    if query is not None and isinstance(query, dict):
+        _set_use_debugger(payload)
+    try:
+        logger.info(
+            f"calling FactDB at '{url}' with input: {payload} and params {params}"
+        )
+        async with aiohttp.ClientSession() as session:
+            async with session.request(
+                method,
+                url,
+                data=json.dumps(payload["input"]) if payload is not None else None,
+                params=params,
+                headers=headers,
+                timeout=sidecar_config.OPA_CLIENT_QUERY_TIMEOUT,
+                raise_for_status=True,
+            ) as opa_response:
+                stats_manager.report_success()
+                return await proxy_response(opa_response)
+    except asyncio.exceptions.TimeoutError:
+        stats_manager.report_failure()
+        exc = HTTPException(
+            status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="FactDB request timed out (url: {url}, timeout: {timeout}s)".format(
+                url=url,
+                timeout=sidecar_config.OPA_CLIENT_QUERY_TIMEOUT,
+            ),
+        )
+    except aiohttp.ClientResponseError as e:
+        stats_manager.report_failure()
+        exc = HTTPException(
+            status.HTTP_502_BAD_GATEWAY,  # 502 indicates server got an error from another server
+            detail="FactDB request failed (url: {url}, status: {status}, message: {message})".format(
+                url=url, status=e.status, message=e.message
+            ),
+        )
+    except aiohttp.ClientError as e:
+        stats_manager.report_failure()
+        exc = HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            detail="FactDB request failed (url: {url}, error: {error}".format(
+                url=url, error=str(e)
+            ),
+        )
+    logger.warning(exc.detail)
+    raise exc
+
+
 def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
     policy_store = policy_store or DEFAULT_POLICY_STORE_GETTER()
     router = APIRouter()
@@ -293,6 +389,11 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
 
         return JSONResponse(status_code=status.HTTP_200_OK, content={"status": "ok"})
 
+    def authorized_users_parse_func(result: dict | list) -> dict:
+        if isinstance(result, list):
+            raise TypeError("Invalid result for authorized users from OPA")
+        return result.get("result", {})
+
     @router.post(
         "/authorized_users",
         response_model=AuthorizedUsersResult,
@@ -303,19 +404,21 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
     async def authorized_users(
         request: Request, query: AuthorizedUsersAuthorizationQuery
     ):
-        response = await _is_allowed(query, request, AUTHORIZED_USERS_POLICY_PACKAGE)
-        log_query_result(query, response)
-        response_json = None
+        raw_result = await conditional_is_allowed(
+            query,
+            request,
+            policy_package=AUTHORIZED_USERS_POLICY_PACKAGE,
+            factdb_path=f"/authorized-users",
+            legacy_parse_func=authorized_users_parse_func,
+        )
         try:
-            response_json = json.loads(response.body)
-            raw_result = response_json.get("result", {}).get("result", {})
             result = parse_obj_as(AuthorizedUsersResult, raw_result)
         except:
             result = AuthorizedUsersResult.empty(query.resource)
             logger.warning(
                 "authorized users (fallback response), response: {res}",
                 reason="cannot decode opa response",
-                res=response_json,
+                res=raw_result,
             )
         return result
 
@@ -388,27 +491,68 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
     async def user_permissions(
         request: Request,
         query: UserPermissionsQuery,
+        page: PositiveInt
+        | None = Query(
+            None,
+            description="Page number for pagination, must be set together with per_page",
+        ),
+        per_page: PositiveInt
+        | None = Query(None, description="Number of items per page for pagination"),
         x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
     ):
-        response = await _is_allowed(query, request, USER_PERMISSIONS_POLICY_PACKAGE)
-        log_query_result(query, response)
-        try:
-            raw_result = json.loads(response.body).get("result", {})
-            processed_query = (
-                get_v1_processed_query(raw_result)
-                or get_v2_processed_query(raw_result)
-                or {}
-            )
+        paginated = query.set_pagination(page, per_page)
+        if paginated:
+            if query.context.get("enable_abac_user_permissions", False) is True:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Pagination is not supported for ABAC user permissions",
+                )
+            logger.info("User permissions query with pagination")
 
-            result = parse_obj_as(
-                UserPermissionsResult, raw_result.get("permissions", {})
-            )
-        except:
+        def parse_func(result: dict) -> dict | list:
+            results = result.get("permissions", {})
+            if not query._offset and not query._limit:
+                return results
+
+            resource_keys = sorted(results.keys())
+            if query._offset and query._limit:
+                resource_keys = resource_keys[
+                    query._offset : query._offset + query._limit
+                ]
+            elif query._offset:
+                resource_keys = resource_keys[query._offset :]
+            elif query._limit:
+                resource_keys = resource_keys[: query._limit]
+            return {resource: results[resource] for resource in resource_keys}
+
+        response = await conditional_is_allowed(
+            query,
+            request,
+            policy_package=USER_PERMISSIONS_POLICY_PACKAGE,
+            factdb_path=f"/user-permissions",
+            factdb_params=query.get_params(),
+            legacy_parse_func=parse_func,
+        )
+        try:
+            result = parse_obj_as(UserPermissionsResult, response)
+        except Exception as e:
             result = parse_obj_as(UserPermissionsResult, {})
             logger.warning(
-                "is allowed (fallback response)", reason="cannot decode opa response"
+                "user permissions (fallback response)",
+                reason="cannot decode opa response",
             )
         return result
+
+    def parse_user_tenants_result(result: dict | list) -> dict | list:
+        if isinstance(result, dict):
+            tenants = result.get("tenants", [])
+        elif isinstance(result, list):
+            tenants = result
+        else:
+            raise TypeError(
+                f"Expected raw result to be dict or list, got {type(result)}"
+            )
+        return tenants
 
     @router.post(
         "/user-tenants",
@@ -423,19 +567,16 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         query: UserTenantsQuery,
         x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
     ):
-        response = await _is_allowed(query, request, USER_TENANTS_POLICY_PACKAGE)
-        log_query_result(query, response)
+        raw_result = await conditional_is_allowed(
+            query,
+            request,
+            policy_package=USER_TENANTS_POLICY_PACKAGE,
+            factdb_path=f"/users/{query.user.key}/tenants",
+            factdb_method="GET",
+            legacy_parse_func=parse_user_tenants_result,
+        )
         try:
-            raw_result = json.loads(response.body).get("result", {})
-            if isinstance(raw_result, dict):
-                tenants = raw_result.get("tenants", {})
-            elif isinstance(raw_result, list):
-                tenants = raw_result
-            else:
-                raise TypeError(
-                    f"Expected raw result to be dict or list, got {type(raw_result)}"
-                )
-            result = parse_obj_as(UserTenantsResult, tenants)
+            result = parse_obj_as(UserTenantsResult, raw_result)
         except:
             result = parse_obj_as(UserTenantsResult, [])
             logger.warning(
@@ -456,10 +597,17 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         query: AuthorizationQuery,
         x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
     ):
-        response = await _is_allowed(query, request, ALL_TENANTS_POLICY_PACKAGE)
-        log_query_result(query, response)
-        try:
+        if sidecar_config.FACTDB_ENABLED:
+            response = await _is_allowed_factdb(
+                query, request, path="/check/all-tenants"
+            )
+            raw_result = json.loads(response.body)
+            log_query_result(query, response, is_inner=True)
+        else:
+            response = await _is_allowed(query, request, ALL_TENANTS_POLICY_PACKAGE)
             raw_result = json.loads(response.body).get("result", {})
+            log_query_result(query, response)
+        try:
             processed_query = (
                 get_v1_processed_query(raw_result)
                 or get_v2_processed_query(raw_result)
@@ -488,20 +636,19 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         queries: list[AuthorizationQuery],
         x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
     ):
-        bulk_query = BulkAuthorizationQuery(checks=queries)
-        response = await _is_allowed(bulk_query, request, BULK_POLICY_PACKAGE)
-        log_query_result(bulk_query, response)
+        if sidecar_config.FACTDB_ENABLED:
+            response = await _is_allowed_factdb(queries, request, path="/check/bulk")
+            raw_result = json.loads(response.body)
+        else:
+            bulk_query = BulkAuthorizationQuery(checks=queries)
+            response = await _is_allowed(bulk_query, request, BULK_POLICY_PACKAGE)
+            raw_result = json.loads(response.body).get("result", {}).get("allow", [])
+            log_query_result(bulk_query, response)
         try:
-            raw_result = json.loads(response.body).get("result", {})
-            processed_query = (
-                get_v1_processed_query(raw_result)
-                or get_v2_processed_query(raw_result)
-                or {}
-            )
             result = BulkAuthorizationResult(
-                allow=raw_result.get("allow", []),
+                allow=raw_result,
             )
-        except:
+        except Exception:
             result = BulkAuthorizationResult(
                 allow=[],
             )
@@ -531,10 +678,8 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             )
         query = cast(AuthorizationQuery, query)
 
-        response = await _is_allowed(query, request, MAIN_POLICY_PACKAGE)
-        log_query_result(query, response)
+        raw_result = await conditional_is_allowed(query, request)
         try:
-            raw_result = json.loads(response.body).get("result", {})
             processed_query = (
                 get_v1_processed_query(raw_result)
                 or get_v2_processed_query(raw_result)
@@ -576,10 +721,8 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             resource=Resource(type=permit_resource_type, tenant=permit_tenant_id),
         )
 
-        response = await _is_allowed(query, request, MAIN_POLICY_PACKAGE)
-        log_query_result(query, response)
+        raw_result = await conditional_is_allowed(query, request)
         try:
-            raw_result = json.loads(response.body).get("result", {})
             processed_query = (
                 get_v1_processed_query(raw_result)
                 or get_v2_processed_query(raw_result)
@@ -660,11 +803,8 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
                 action=query.input.request.http.method.lower(),
             ),
             request,
-            MAIN_POLICY_PACKAGE,
         )
-        log_query_result_kong(query.input, response)
         try:
-            raw_result = json.loads(response.body).get("result", {})
             result = {
                 "result": raw_result.get("allow", False),
             }

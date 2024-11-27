@@ -84,3 +84,49 @@ class RoleAssignment(BaseSchema):
 
 class WrappedResponse(BaseSchema):
     result: list[RoleAssignment]
+
+
+class FactDBFact(BaseSchema):
+    type: str
+    attributes: dict[str, Any]
+
+
+class RoleAssignmentFactDBFact(FactDBFact):
+    @property
+    def user(self) -> str:
+        return self.attributes.get("actor", "").removeprefix("user:")
+
+    @property
+    def role(self) -> str:
+        return self.attributes.get("role", "")
+
+    @property
+    def tenant(self) -> str:
+        return self.attributes.get("tenant", "")
+
+    @property
+    def resource_instance(self) -> str:
+        return self.attributes.get("resource", "")
+
+    def into_role_assignment(self) -> RoleAssignment:
+        return RoleAssignment(
+            user=self.user,
+            role=self.role,
+            tenant=self.tenant,
+            resource_instance=self.resource_instance,
+        )
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "type": "role_assignments",
+                "attributes": {
+                    "actor": "user:author-user",
+                    "id": "user:author-user-author-document:doc-1",
+                    "last_modified": "2024-09-23 09:10:10 +0000 UTC",
+                    "resource": "document:doc-1",
+                    "role": "author",
+                    "tenant": "default",
+                },
+            }
+        }

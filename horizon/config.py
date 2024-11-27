@@ -18,6 +18,33 @@ class SidecarConfig(Confi):
             cls.instance = super(SidecarConfig, cls).__new__(cls)
         return cls.instance
 
+    FACTDB_ENABLED = confi.bool(
+        "FACTDB_ENABLED",
+        False,
+        description="if true, the sidecar will enable the FactDB service to manage the PDP data in "
+        "FactDB",
+    )
+
+    FACTDB_BINARY_PATH = confi.str(
+        "FACTDB_BINARY_PATH",
+        "/factstore",
+        description="path in which to find the FactDB executable",
+    )
+
+    FACTDB_SERVICE_URL = confi.str(
+        "FACTDB_SERVICE_URL",
+        "http://localhost:8080",
+        description="URL to the FactDB service that manages the PDP data, will only be used if "
+        "FACTDB_ENABLED is true",
+    )
+
+    FACTDB_BACKUP_SERVER_URL = confi.str(
+        "FACTDB_BACKUP_SERVER_URL",
+        None,
+        description="URL from which the FactDB service will fetch the PDP data backup from, will only be used if "
+        "FACTDB_ENABLE_REMOTE_BACKUP is true",
+    )
+
     SHARD_ID = confi.str(
         "SHARD_ID",
         None,

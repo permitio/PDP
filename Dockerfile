@@ -4,27 +4,70 @@
 FROM golang:bullseye AS opa_build
 
 COPY custom* /custom
+COPY factdb* /factdb
 
 RUN if [ -f /custom/custom_opa.tar.gz ]; \
-    then \
-      cd /custom && \
-      tar xzf custom_opa.tar.gz && \
-      go build -o /opa && \
-      rm -rf /custom ; \
+  then \
+  cd /custom && \
+  tar xzf custom_opa.tar.gz && \
+  go build -ldflags="-extldflags=-static" -o /opa && \
+  rm -rf /custom ; \
+  else \
+  case $(uname -m) in \
+  x86_64) \
+  curl -L -o /opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static ; \
+  ;; \
+  aarch64) \
+  curl -L -o /opa https://openpolicyagent.org/downloads/latest/opa_linux_arm64_static ; \
+  ;; \
+  *) \
+  echo "Unknown architecture." ; \
+  exit 1 ; \
+  ;; \
+  esac ; \
+  fi
+
+RUN if [ -f /factdb/factdb.tar.gz ]; \
+  then \
+  cd /factdb && \
+  tar xzf factdb.tar.gz && \
+  go build -ldflags="-extldflags=-static" -o /bin/factdb ./cmd/factstore_server && \
+  rm -rf /factdb ; \
+  else \
+  case $(uname -m) in \
+  x86_64) \
+    if [ -f /factdb/factstore_server-linux-amd64 ]; then \
+      cp /factdb/factstore_server-linux-amd64 /bin/factdb; \
     else \
-      case $(uname -m) in \
-      	x86_64) \
-      		curl -L -o /opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static ; \
-      		;; \
-      	aarch64) \
-      		curl -L -o /opa https://openpolicyagent.org/downloads/latest/opa_linux_arm64_static ; \
-      		;; \
-      	*) \
-      		echo "Unknown architecture." ; \
-      		exit 1 ; \
-      		;; \
-      esac ; \
-    fi
+      echo "factstore_server-linux-amd64 not found." ; \
+      if [ "$ALLOW_MISSING_FACTSTORE" = "false" ]; then \
+        echo "Missing Factstore is not allowed, exiting..."; exit 1; \
+      else \
+        echo "Missing Factstore is allowed, continuing..."; \
+        touch /bin/factdb ; \
+      fi \
+    fi \
+  ;; \
+  aarch64) \
+    if [ -f /factdb/factstore_server-linux-arm64 ]; then \
+      cp /factdb/factstore_server-linux-arm64 /bin/factdb; \
+    else \
+      echo "factstore_server-linux-arm64 not found." ; \
+      if [ "$ALLOW_MISSING_FACTSTORE" = "false" ]; then \
+        echo "Missing Factstore is not allowed, exiting..."; exit 1; \
+      else \
+        echo "Missing Factstore is allowed, continuing..."; \
+        touch /bin/factdb ; \
+      fi \
+    fi \
+  ;; \
+  *) \
+    echo "Unknown architecture." ; \
+    exit 1 ; \
+  ;; \
+  esac ; \
+  fi
+
 
 # MAIN IMAGE ----------------------------------------
 # most of the time only this image should be built
@@ -48,6 +91,9 @@ RUN mkdir /app/bin
 RUN chown -R permit:permit /app/bin
 COPY --from=opa_build --chmod=755 /opa /app/bin/opa
 ENV OPAL_INLINE_OPA_EXEC_PATH="/app/bin/opa"
+
+COPY --from=opa_build --chmod=755 /bin/factdb /app/bin/factdb
+ENV PDP_FACTDB_BINARY_PATH="/app/bin/factdb"
 
 # bash is needed for ./start/sh script
 COPY scripts ./
@@ -115,6 +161,7 @@ ENV PDP_API_KEY="MUST BE DEFINED"
 ENV PDP_REMOTE_CONFIG_ENDPOINT="/v2/pdps/me/config"
 ENV PDP_REMOTE_STATE_ENDPOINT="/v2/pdps/me/state"
 ENV PDP_VERSION_FILE_PATH="/app/permit_pdp_version"
+ENV PDP_FACTDB_BINARY_PATH="/app/bin/factdb"
 # This is a default PUBLIC (not secret) key,
 # and it is here as a safety measure on purpose.
 ENV OPAL_AUTH_PUBLIC_KEY="ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDe2iQ+/E01P2W5/EZwD5NpRiSQ8/r/k18pFnym+vWCSNMWpd9UVpgOUWfA9CAX4oEo5G6RfVVId/epPH/qVSL87uh5PakkLZ3E+PWVnYtbzuFPs/lHZ9HhSqNtOQ3WcPDTcY/ST2jyib2z0sURYDMInSc1jnYKqPQ6YuREdoaNdPHwaTFN1tEKhQ1GyyhL5EDK97qU1ejvcYjpGm+EeE2sjauHYn2iVXa2UA9fC+FAKUwKqNcwRTf3VBLQTE6EHGWbxVzXv1Feo8lPZgL7Yu/UPgp7ivCZhZCROGDdagAfK9sveYjkKiWCLNUSpado/E5Vb+/1EVdAYj6fCzk45AdQzA9vwZefP0sVg7EuZ8VQvlz7cU9m+XYIeWqduN4Qodu87rtBYtSEAsru/8YDCXBDWlLJfuZb0p/klbte3TayKnQNSWD+tNYSJHrtA/3ZewP+tGDmtgLeB38NLy1xEsgd31v6ISOSCTHNS8ku9yWQXttv0/xRnuITr8a3TCLuqtUrNOhCx+nKLmYF2cyjYeQjOWWpn/Z6VkZvOa35jhG1ETI8IwE+t5zXqrf2s505mh18LwA1DhC8L/wHk8ZG7bnUe56QwxEo32myUBN8nHdu7XmPCVP8MWQNLh406QRAysishWhXVs/+0PbgfBJ/FxKP8BXW9zqzeIG+7b/yk8tRHQ=="
@@ -122,5 +169,6 @@ ENV OPAL_AUTH_PUBLIC_KEY="ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDe2iQ+/E01P2W5/E
 EXPOSE 7000
 # expose opa directly
 EXPOSE 8181
+
 # run gunicorn
 CMD ["/app/start.sh"]
