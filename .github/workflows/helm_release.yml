@@ -28,3 +28,5 @@ jobs:
         uses: helm/chart-releaser-action@v1.6.0
         env:
           CR_TOKEN: "${{ secrets.PAGES }}"
+        with:
+          skip_existing: false
