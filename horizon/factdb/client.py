@@ -44,7 +44,7 @@ class ExtendedOpalClient(OpalClient):
         return self._backup_loaded or await self.policy_store.is_ready()
 
     def _init_fast_api_app(self) -> FastAPI:
-        # Called at the of OPALClient.__init__
+        # Called at the end of OPALClient.__init__
         self._inject_extra_callbacks()
         return super()._init_fast_api_app()
 
