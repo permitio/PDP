@@ -1,4 +1,7 @@
 pdp:
+  pdpEnvs: []
+    # - name: custom_env
+    #   value: "custom_env"
   ApiKey: "<your PDP API Key>"
   port: 7766
   replicas: 1
@@ -16,3 +19,10 @@ pdp:
       port: 443
       index: "<elasticsearch index>"
   debug_mode: false
+
+resources:
+  requests:
+    cpu: "256m"
+    memory: "512Mi"
+  limits:
+    memory: "1Gi"
