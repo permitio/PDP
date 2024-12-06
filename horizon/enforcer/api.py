@@ -445,9 +445,11 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
 
         for mapping_rule in mapping_rules_json:
             mapping_rules.append(parse_obj_as(MappingRuleData, mapping_rule))
+        
         matched_mapping_rule = MappingRulesUtils.extract_mapping_rule_by_request(
             mapping_rules, query.http_method, query.url
         )
+        
         if matched_mapping_rule is None:
             return {
                 "allow": False,
@@ -458,14 +460,29 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
                     "mapping_rules": mapping_rules_json,
                 },
             }
-        path_attributes = MappingRulesUtils.extract_attributes_from_url(
-            matched_mapping_rule.url, query.url
-        )
+
+        # Extract attributes based on the mapping rule type
+        if matched_mapping_rule.type == "regex":
+            # For regex patterns, use only named capture groups
+            pattern = re.compile(matched_mapping_rule.url)
+            match = pattern.match(query.url)
+            if match:
+                path_attributes = match.groupdict()
+            else:
+                path_attributes = {}
+        else:
+            # Use existing logic for traditional {var} style patterns
+            path_attributes = MappingRulesUtils.extract_attributes_from_url(
+                matched_mapping_rule.url, query.url
+            )
+
+        # Query params handling remains the same for both types
         query_params_attributes = (
             MappingRulesUtils.extract_attributes_from_query_params(
                 matched_mapping_rule.url, query.url
             )
         )
+        
         attributes = {**path_attributes, **query_params_attributes}
         allowed_query = AuthorizationQuery(
             user=query.user,
@@ -817,3 +834,68 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         return result
 
     return router
+
+def _extract_regex_attributes(pattern: str, url: str) -> dict:
+    """
+    Extract attributes from a URL using regex pattern matching.
+    
+    Args:
+        pattern: The regex pattern with named/numbered capture groups
+        url: The URL to match against
+        
+    Returns:
+        Dictionary of extracted attributes
+    """
+    try:
+        compiled_pattern = re.compile(pattern)
+        match = compiled_pattern.match(url)
+        if not match:
+            return {}
+            
+        # Get named groups first (more specific)
+        attributes = match.groupdict()
+        
+        # Only process numbered groups if we have any and didn't get named groups
+        if not attributes and match.groups():
+            # More efficient than using enumerate when we just need numbers
+            attributes = {f"capture_{i+1}": value for i, value in enumerate(match.groups())}
+            
+        return attributes
+    except re.error:
+        logger.warning(f"Invalid regex pattern: {pattern}")
+        return {}
+
+def _extract_url_attributes(matched_rule: MappingRuleData, url: str) -> dict:
+    """
+    Extract attributes from a URL based on the mapping rule type.
+    
+    Args:
+        matched_rule: The matched MappingRuleData object
+        url: The URL to extract attributes from
+        
+    Returns:
+        Dictionary of combined path and query parameter attributes
+    """
+    # Early return if no rule matched
+    if not matched_rule:
+        return {}
+        
+    # Use dict.update() instead of dict unpacking for better performance
+    attributes = {}
+    
+    # Extract path attributes based on rule type
+    if matched_rule.type == "regex":
+        attributes.update(_extract_regex_attributes(matched_rule.url, url))
+    else:
+        attributes.update(
+            MappingRulesUtils.extract_attributes_from_url(matched_rule.url, url)
+        )
+    
+    # Extract query parameters (same for both types)
+    query_params = MappingRulesUtils.extract_attributes_from_query_params(
+        matched_rule.url, url
+    )
+    if query_params:
+        attributes.update(query_params)
+    
+    return attributes

@@ -141,12 +141,13 @@ class AllTenantsAuthorizationResult(BaseSchema):
     allowed_tenants: List[_AllTenantsAuthorizationResult] = []
 
 
-class MappingRuleData(BaseSchema):
-    url: AnyHttpUrl
+class MappingRuleData(BaseModel):
+    url: str
     http_method: str
     resource: str
     action: str
     priority: int | None = None
+    type: Optional[str] = None
 
     @property
     def resource_action(self) -> str:
