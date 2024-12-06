@@ -1,7 +1,6 @@
 from pydantic import AnyHttpUrl
 from starlette.datastructures import QueryParams
 import re
-from urllib.parse import urlparse
 from typing import List, Optional
 
 from horizon.enforcer.schemas import MappingRuleData
@@ -134,21 +133,22 @@ class MappingRulesUtils:
                     error=str(e)
                 )
                 return False
-            
-        # Otherwise use the traditional URL comparison logic
+        
+        # For traditional URL matching
         try:
-            mapping_url = urlparse(mapping_rule_url)
-            req_url = urlparse(request_url)
-            
-            if mapping_url.scheme and mapping_url.scheme != req_url.scheme:
+            # Compare paths
+            if not cls._compare_url_path(mapping_rule_url, request_url):
                 return False
             
-            if mapping_url.netloc and mapping_url.netloc != req_url.netloc:
-                return False
-            
-            # Compare paths using the existing template matching logic
-            return cls._match_url_template(mapping_url.path, req_url.path)
-        except Exception:
+            return True
+        except Exception as e:
+            logger.warning(
+                "URL comparison failed - verify URL format and structure",
+                mapping_url=mapping_rule_url,
+                request_url=request_url,
+                error_message=str(e),
+                error_type=type(e).__name__
+            )
             return False
 
     @classmethod
