@@ -1,6 +1,6 @@
 import asyncio
 import json
-import re
+import re2 as re
 from typing import cast, Optional, Union, Dict, List, Callable
 
 import aiohttp

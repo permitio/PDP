@@ -1,6 +1,6 @@
 from pydantic import AnyHttpUrl
 from starlette.datastructures import QueryParams
-import re
+import re2 as re
 from typing import List, Optional
 
 from horizon.enforcer.schemas import MappingRuleData
