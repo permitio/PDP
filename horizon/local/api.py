@@ -170,7 +170,12 @@ def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
                 )
                 return await legacy_list_role_assignments()
             else:
-                res = await policy_store.list_facts_by_type("role_assignments")
+                res = await policy_store.list_facts_by_type(
+                    "role_assignments",
+                    page=page,
+                    per_page=per_page,
+                    filters=filters,
+                )
                 res_json = parse_obj_as(
                     list[RoleAssignmentFactDBFact], await res.json()
                 )

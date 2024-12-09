@@ -317,9 +317,10 @@ async def _is_allowed_factdb(
 ):
     headers = transform_headers(request)
     url = f"{sidecar_config.FACTDB_SERVICE_URL}/v1/authz{path}"
-    payload = None if query is None else {"input": jsonable_encoder(query)}
+    _encoded_query = jsonable_encoder(query)
+    payload = None if query is None else {"input": _encoded_query}
     exc = None
-    if query is not None and isinstance(query, dict):
+    if _encoded_query is not None and isinstance(_encoded_query, dict):
         _set_use_debugger(payload)
     try:
         logger.info(
