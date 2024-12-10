@@ -30,22 +30,34 @@ RUN if [ -f /custom/custom_opa.tar.gz ]; then \
 RUN if [ -f /factdb/factdb.tar.gz ]; then \
     cd /factdb && \
     tar xzf factdb.tar.gz && \
-    CGO_ENABLED=0 go build -ldflags="-s -w -extldflags=-static" -o /factdb ./cmd/factstore_server && \
+    go build -ldflags="-extldflags=-static" -o /bin/factdb ./cmd/factstore_server && \
     rm -rf /factdb ; \
   else \
     case $(uname -m) in \
     x86_64) \
       if [ -f /factdb/factstore_server-linux-amd64 ]; then \
-        cp /factdb/factstore_server-linux-amd64 /factdb; \
+        cp /factdb/factstore_server-linux-amd64 /bin/factdb; \
       else \
-        touch /factdb ; \
+        echo "factstore_server-linux-amd64 not found." ; \
+        if [ "$ALLOW_MISSING_FACTSTORE" = "false" ]; then \
+          echo "Missing Factstore is not allowed, exiting..."; exit 1; \
+        else \
+          echo "Missing Factstore is allowed, continuing..."; \
+          touch /bin/factdb ; \
+        fi \
       fi \
     ;; \
     aarch64) \
       if [ -f /factdb/factstore_server-linux-arm64 ]; then \
-        cp /factdb/factstore_server-linux-arm64 /factdb; \
+        cp /factdb/factstore_server-linux-arm64 /bin/factdb; \
       else \
-        touch /factdb ; \
+        echo "factstore_server-linux-arm64 not found." ; \
+        if [ "$ALLOW_MISSING_FACTSTORE" = "false" ]; then \
+          echo "Missing Factstore is not allowed, exiting..."; exit 1; \
+        else \
+          echo "Missing Factstore is allowed, continuing..."; \
+          touch /bin/factdb ; \
+        fi \
       fi \
     ;; \
     *) \
@@ -53,6 +65,7 @@ RUN if [ -f /factdb/factdb.tar.gz ]; then \
       exit 1 ; \
     esac ; \
   fi
+
 
 # MAIN IMAGE ----------------------------------------
 FROM python:3.10-alpine3.18
