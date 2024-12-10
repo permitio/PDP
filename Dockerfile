@@ -115,7 +115,7 @@ ENV OPAL_INLINE_OPA_EXEC_PATH="/app/bin/opa" \
     PDP_API_KEY="MUST BE DEFINED" \
     PDP_REMOTE_CONFIG_ENDPOINT="/v2/pdps/me/config" \
     PDP_REMOTE_STATE_ENDPOINT="/v2/pdps/me/state" \
-    # PDP_VERSION_FILE_PATH="/app/permit_pdp_version" \
+    PDP_VERSION_FILE_PATH="/app/permit_pdp_version" \
     OPAL_AUTH_PUBLIC_KEY="ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDe2iQ+/E01P2W5/EZwD5NpRiSQ8/r/k18pFnym+vWCSNMWpd9UVpgOUWfA9CAX4oEo5G6RfVVId/epPH/qVSL87uh5PakkLZ3E+PWVnYtbzuFPs/lHZ9HhSqNtOQ3WcPDTcY/ST2jyib2z0sURYDMInSc1jnYKqPQ6YuREdoaNdPHwaTFN1tEKhQ1GyyhL5EDK97qU1ejvcYjpGm+EeE2sjauHYn2iVXa2UA9fC+FAKUwKqNcwRTf3VBLQTE6EHGWbxVzXv1Feo8lPZgL7Yu/UPgp7ivCZhZCROGDdagAfK9sveYjkKiWCLNUSpado/E5Vb+/1EVdAYj6fCzk45AdQzA9vwZefP0sVg7EuZ8VQvlz7cU9m+XYIeWqduN4Qodu87rtBYtSEAsru/8YDCXBDWlLJfuZb0p/klbte3TayKnQNSWD+tNYSJHrtA/3ZewP+tGDmtgLeB38NLy1xEsgd31v6ISOSCTHNS8ku9yWQXttv0/xRnuITr8a3TCLuqtUrNOhCx+nKLmYF2cyjYeQjOWWpn/Z6VkZvOa35jhG1ETI8IwE+t5zXqrf2s505mh18LwA1DhC8L/wHk8ZG7bnUe56QwxEo32myUBN8nHdu7XmPCVP8MWQNLh406QRAysishWhXVs/+0PbgfBJ/FxKP8BXW9zqzeIG+7b/yk8tRHQ=="
 
 # Copy scripts efficiently
@@ -139,7 +139,7 @@ RUN pip install --no-cache-dir -r requirements.txt && \
 
 # Copy application code
 COPY --chown=permit:permit ./horizon ./horizon
-# COPY --chown=permit:permit ./permit_pdp_version /app/permit_pdp_version
+COPY --chown=permit:permit ./permit_pdp_version /app/permit_pdp_version
 
 # Switch to non-root user
 USER permit
