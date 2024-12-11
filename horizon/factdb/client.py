@@ -22,6 +22,7 @@ from opal_common.fetcher.providers.http_fetch_provider import (
     HttpFetcherConfig,
     HttpMethods,
 )
+from scalar_fastapi import get_scalar_api_reference
 from starlette import status
 from starlette.responses import JSONResponse
 
@@ -50,6 +51,13 @@ class ExtendedOpalClient(OpalClient):
 
     def _configure_api_routes(self, app: FastAPI):
         """mounts the api routes on the app object."""
+
+        @app.get("/scalar", include_in_schema=False)
+        async def scalar_html():
+            return get_scalar_api_reference(
+                openapi_url="/openapi.json",
+                title="Permit.io PDP API",
+            )
 
         authenticator = JWTAuthenticator(self.verifier)
 
