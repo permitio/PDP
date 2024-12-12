@@ -77,7 +77,7 @@ RUN addgroup -S permit -g 1001 && \
     adduser -S -s /bin/bash -u 1000 -G permit -h /home/permit permit
 
 # Create backup directory with permissions
-RUN mkdir -p /app/backup && chmod 777 /app/backup
+RUN mkdir -p /app/backup && chmod -R 777 /app/backup
 
 # Install necessary libraries in a single RUN command
 RUN apk update && \
