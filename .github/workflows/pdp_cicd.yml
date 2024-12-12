@@ -26,8 +26,7 @@ jobs:
 
     - name: Pre build PDP tests
       run: |
-        #echo "${{ github.event.release.tag_name }}" | cut -d '-' -f 1 > permit_pdp_version
-        echo "1.1.1" | cut -d '-' -f 1 > permit_pdp_version
+        echo "${{ github.event.release.tag_name }}" | cut -d '-' -f 1 > permit_pdp_version
         rm -rf custom
         mkdir custom
         build_root="$PWD"
