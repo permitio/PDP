@@ -30,9 +30,38 @@ RUN if [ -f /factdb/factdb.tar.gz ]; \
   rm -rf /factdb; \
   else \
   case $(uname -m) in \
-    x86_64) cp /factdb/factstore_server-linux-amd64 /bin/factdb ;; \
-    aarch64) cp /factdb/factstore_server-linux-arm64 /bin/factdb ;; \
-    *) echo "Unknown architecture." && exit 1 ;; \
+  x86_64) \
+    if [ -f /factdb/factstore_server-linux-amd64 ]; then \
+      cp /factdb/factstore_server-linux-amd64 /bin/factdb; \
+    else \
+      echo "factstore_server-linux-amd64 not found."; \
+      if [ "$ALLOW_MISSING_FACTSTORE" = "false" ]; then \
+        echo "Missing Factstore is not allowed, exiting..."; \
+        exit 1; \
+      else \
+        echo "Missing Factstore is allowed, continuing..."; \
+        touch /bin/factdb; \
+      fi; \
+    fi \
+  ;; \
+  aarch64) \
+    if [ -f /factdb/factstore_server-linux-arm64 ]; then \
+      cp /factdb/factstore_server-linux-arm64 /bin/factdb; \
+    else \
+      echo "factstore_server-linux-arm64 not found."; \
+      if [ "$ALLOW_MISSING_FACTSTORE" = "false" ]; then \
+        echo "Missing Factstore is not allowed, exiting..."; \
+        exit 1; \
+      else \
+        echo "Missing Factstore is allowed, continuing..."; \
+        touch /bin/factdb; \
+      fi; \
+    fi \
+  ;; \
+  *) \
+    echo "Unknown architecture."; \
+    exit 1; \
+  ;; \
   esac; \
   fi
 
@@ -104,7 +133,7 @@ ENV UVICORN_NUM_WORKERS=1
 ENV UVICORN_ASGI_APP="horizon.main:app"
 ENV UVICORN_PORT=7000
 
-# OPA configuration
+# opal configuration --------------------------------
 ENV OPAL_SERVER_URL="https://opal.permit.io"
 ENV OPAL_LOG_DIAGNOSE="false"
 ENV OPAL_LOG_TRACEBACK="false"
@@ -112,16 +141,20 @@ ENV OPAL_LOG_MODULE_EXCLUDE_LIST="[]"
 ENV OPAL_INLINE_OPA_ENABLED="true"
 ENV OPAL_INLINE_OPA_LOG_FORMAT="http"
 
-# Horizon configuration
+# horizon configuration -----------------------------
+# by default, the backend is at port 8000 on the docker host
+# in prod, you must pass the correct url
 ENV PDP_CONTROL_PLANE="https://api.permit.io"
 ENV PDP_API_KEY="MUST BE DEFINED"
 ENV PDP_REMOTE_CONFIG_ENDPOINT="/v2/pdps/me/config"
 ENV PDP_REMOTE_STATE_ENDPOINT="/v2/pdps/me/state"
 ENV PDP_VERSION_FILE_PATH="/app/permit_pdp_version"
 ENV PDP_FACTDB_BINARY_PATH="/app/bin/factdb"
+# This is a default PUBLIC (not secret) key,
+# and it is here as a safety measure on purpose.
 ENV OPAL_AUTH_PUBLIC_KEY="ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDe2iQ+/E01P2W5/EZwD5NpRiSQ8/r/k18pFnym+vWCSNMWpd9UVpgOUWfA9CAX4oEo5G6RfVVId/epPH/qVSL87uh5PakkLZ3E+PWVnYtbzuFPs/lHZ9HhSqNtOQ3WcPDTcY/ST2jyib2z0sURYDMInSc1jnYKqPQ6YuREdoaNdPHwaTFN1tEKhQ1GyyhL5EDK97qU1ejvcYjpGm+EeE2sjauHYn2iVXa2UA9fC+FAKUwKqNcwRTf3VBLQTE6EHGWbxVzXv1Feo8lPZgL7Yu/UPgp7ivCZhZCROGDdagAfK9sveYjkKiWCLNUSpado/E5Vb+/1EVdAYj6fCzk45AdQzA9vwZefP0sVg7EuZ8VQvlz7cU9m+XYIeWqduN4Qodu87rtBYtSEAsru/8YDCXBDWlLJfuZb0p/klbte3TayKnQNSWD+tNYSJHrtA/3ZewP+tGDmtgLeB38NLy1xEsgd31v6ISOSCTHNS8ku9yWQXttv0/xRnuITr8a3TCLuqtUrNOhCx+nKLmYF2cyjYeQjOWWpn/Z6VkZvOa35jhG1ETI8IwE+t5zXqrf2s505mh18LwA1DhC8L/wHk8ZG7bnUe56QwxEo32myUBN8nHdu7XmPCVP8MWQNLh406QRAysishWhXVs/+0PbgfBJ/FxKP8BXW9zqzeIG+7b/yk8tRHQ=="
-
-# Expose required ports
+# 7000 sidecar port
+# 8181 opa port
 EXPOSE 7000 8181
 
 # Run the application using the startup script
