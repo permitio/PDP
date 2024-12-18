@@ -37,7 +37,7 @@ ban-relative-imports = "all"
 [tool.mypy]
 python_version = "3.10"
 packages = ["horizon"]
-plugins = ["pydantic.mypy"]
+plugins = ["pydantic.v1.mypy"]
 
 check_untyped_defs = true
 warn_unused_configs = true

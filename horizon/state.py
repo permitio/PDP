@@ -96,7 +96,7 @@ class PersistentStateHandler:
                 raise StateUpdateThrottledError(next_allowed_update)
             prev_state = self._state
             try:
-                with self._write_lock:
+                async with self._write_lock:
                     await asyncio.gather(*self._tasks)
                     new_state = self._state.copy()
                     yield new_state
@@ -213,7 +213,7 @@ class PersistentStateHandler:
     async def seen_sdk(self, sdk: str):
         if sdk not in self._state.seen_sdks:
             # ensure_future is expensive, only call it if actually needed
-            with self._write_lock:
+            async with self._write_lock:
                 self._tasks.append(asyncio.create_task(self._report_seen_sdk(sdk)))
 
     async def _report_seen_sdk(self, sdk: str):

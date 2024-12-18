@@ -102,8 +102,8 @@ def log_query_result(query: BaseSchema, response: Response, *, is_inner: bool = 
             if allowed:
                 color = "<green>"
         elif isinstance(allowed, list):
-            allow_output = [a.get("allow", False) for a in allowed]
-            if any(allow_output):
+            allow_output = any(a.get("allow", False) for a in allowed)
+            if allow_output:
                 color = "<green>"
 
         if allowed is None:

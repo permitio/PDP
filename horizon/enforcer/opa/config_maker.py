@@ -14,10 +14,10 @@ def get_jinja_environment() -> jinja2.Environment:
 
 
 def persist_to_file(contents: str, path: str) -> str:
-    path = Path(path).expanduser()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(contents)
-    return str(path)
+    path_obj = Path(path).expanduser()
+    path_obj.parent.mkdir(parents=True, exist_ok=True)
+    path_obj.write_text(contents)
+    return str(path_obj)
 
 
 def get_opa_config_file_path(

@@ -23,8 +23,8 @@ class Resource(BaseSchema):
     type: str
     key: str | None = None
     tenant: str | None = None
-    attributes: dict[str, Any] | None = {}
-    context: dict[str, Any] | None = {}
+    attributes: dict[str, Any] | None = Field(default_factory=dict)
+    context: dict[str, Any] | None = Field(default_factory=dict)
 
 
 class AuthorizationQuery(BaseSchema):
@@ -35,8 +35,8 @@ class AuthorizationQuery(BaseSchema):
     user: User
     action: str
     resource: Resource
-    context: dict[str, Any] | None = {}
-    sdk: str | None
+    context: dict[str, Any] | None = Field(default_factory=dict)
+    sdk: str | None = None
 
     def __repr__(self) -> str:
         return f"({self.user.key}, {self.action}, {self.resource.type})"
@@ -84,7 +84,7 @@ class UserPermissionsQuery(BaseSchema):
             return True
         return False
 
-    def get_params(self) -> dict:
+    def get_params(self) -> dict[str, Any]:
         params = {}
         if self.tenants:
             params["tenants"] = self.tenants
@@ -93,9 +93,9 @@ class UserPermissionsQuery(BaseSchema):
         if self.resource_types:
             params["resource_types"] = self.resource_types
         if self._offset:
-            params["offset"] = self._offset
+            params["offset"] = str(self._offset)
         if self._limit:
-            params["limit"] = self._limit
+            params["limit"] = str(self._limit)
 
         return params
 
@@ -123,7 +123,7 @@ class _ResourceDetails(_TenantDetails):
 class _UserPermissionsResult(BaseSchema):
     tenant: _TenantDetails | None
     resource: _ResourceDetails | None
-    permissions: list[str] = Field(..., regex="^.+:.+$")
+    permissions: list[str] = Field(default_factory=list, regex="^.+:.+$")
     roles: list[str] | None = None
 
 
