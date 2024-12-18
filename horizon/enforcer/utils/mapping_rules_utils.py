@@ -13,7 +13,7 @@ class MappingRulesUtils:
             return False
         if not MappingRulesUtils._compare_url_path(mapping_rule_url.path, request_url.path):
             return False
-        if not MappingRulesUtils._compare_query_params(mapping_rule_url.query, request_url.query):
+        if not MappingRulesUtils._compare_query_params(mapping_rule_url.query, request_url.query):  # noqa: SIM103
             return False
         return True
 
@@ -51,7 +51,7 @@ class MappingRulesUtils:
         mapping_rule_query_params = QueryParams(mapping_rule_query_string)
         request_query_params = QueryParams(request_url_query_string)
 
-        for key in mapping_rule_query_params.keys():
+        for key in mapping_rule_query_params:
             if key not in request_query_params:
                 return False
 
@@ -83,7 +83,7 @@ class MappingRulesUtils:
         rule_query_params = QueryParams(rule_url.split("?")[1])
         request_query_params = QueryParams(request_url.split("?")[1])
         attributes = {}
-        for key in rule_query_params.keys():
+        for key in rule_query_params:
             if rule_query_params[key].startswith("{") and rule_query_params[key].endswith("}"):
                 attributes[rule_query_params[key][1:-1]] = request_query_params[key]
         return attributes

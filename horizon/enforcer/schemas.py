@@ -178,10 +178,7 @@ class AuthorizedUsersResult(BaseSchema):
 
     @classmethod
     def empty(cls, resource: Resource) -> AuthorizedUsersResult:
-        if resource.key is None:
-            resource_key = "*"
-        else:
-            resource_key = resource.key
+        resource_key = "*" if resource.key is None else resource.key
         return cls(
             resource=f"{resource.type}:{resource_key}",
             tenant=resource.tenant or "default",
@@ -189,7 +186,7 @@ class AuthorizedUsersResult(BaseSchema):
         )
 
     class Config:
-        schema_extra = {
+        schema_extra = {  # noqa: RUF012
             "examples": [
                 {
                     "resource": "repo:*",

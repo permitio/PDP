@@ -125,14 +125,15 @@ class ExtendedOpalClient(OpalClient):
 class FactDBClient(ExtendedOpalClient):
     def __init__(
         self,
+        *,
         policy_store_type: PolicyStoreTypes = None,
         policy_store: BasePolicyStoreClient = None,
         data_updater: DataUpdater = None,
-        data_topics: list[str] = None,
+        data_topics: list[str] | None = None,
         policy_updater: PolicyUpdater = None,
-        inline_opa_enabled: bool = None,
+        inline_opa_enabled: bool | None = None,
         inline_opa_options: OpaServerOptions = None,
-        inline_cedar_enabled: bool = None,
+        inline_cedar_enabled: bool | None = None,
         inline_cedar_options: CedarServerOptions = None,
         verifier: JWTVerifier | None = None,
         store_backup_path: str | None = None,
@@ -211,7 +212,7 @@ class FactDBClient(ExtendedOpalClient):
                 return False
             if self._factdb_enabled:
                 return await self._factdb_runner.is_healthy()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.exception("Error checking health: {e}", e=e)
             return False
         else:
@@ -224,7 +225,7 @@ class FactDBClient(ExtendedOpalClient):
                 return False
             if self._factdb_enabled:
                 return await self._factdb_runner.is_ready()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.exception("Error checking ready: {e}", e=e)
             return False
         else:

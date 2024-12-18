@@ -7,22 +7,22 @@ from horizon.startup.blocking_request import BlockingRequest
 from horizon.startup.exceptions import NoRetryError
 from horizon.system.consts import GUNICORN_EXIT_APP
 
+DEFAULT_RETRY_CONFIG = {
+    "retry": retry_if_not_exception_type(NoRetryError),
+    "wait": wait.wait_random_exponential(max=10),
+    "stop": stop.stop_after_attempt(10),
+    "reraise": True,
+}
+
 
 class EnvApiKeyFetcher:
-    DEFAULT_RETRY_CONFIG = {
-        "retry": retry_if_not_exception_type(NoRetryError),
-        "wait": wait.wait_random_exponential(max=10),
-        "stop": stop.stop_after_attempt(10),
-        "reraise": True,
-    }
-
     def __init__(
         self,
         backend_url: str = sidecar_config.CONTROL_PLANE,
         retry_config=None,
     ):
         self._backend_url = backend_url
-        self._retry_config = retry_config or self.DEFAULT_RETRY_CONFIG
+        self._retry_config = retry_config or DEFAULT_RETRY_CONFIG
         self.api_key_level = self._get_api_key_level()
 
     @staticmethod
@@ -47,7 +47,8 @@ class EnvApiKeyFetcher:
         if sidecar_config.ORG_API_KEY:
             if not sidecar_config.ACTIVE_ENV or not sidecar_config.ACTIVE_PROJECT:
                 logger.error(
-                    "PDP_ORG_API_KEY is set, but PDP_ACTIVE_ENV or PDP_ACTIVE_PROJECT are not. Please set them with Environment ID/Key and Project ID/Key."
+                    "PDP_ORG_API_KEY is set, but PDP_ACTIVE_ENV or PDP_ACTIVE_PROJECT are not. "
+                    "Please set them with Environment ID/Key and Project ID/Key."
                 )
                 raise
             return ApiKeyLevel.ORGANIZATION
@@ -123,7 +124,7 @@ def get_env_api_key() -> str:
             _env_api_key = EnvApiKeyFetcher().get_env_api_key_by_level()
         except Exception as e:
             logger.error(f"Failed to get Environment API Key: {e}")
-            raise SystemExit(GUNICORN_EXIT_APP)
+            raise SystemExit(GUNICORN_EXIT_APP) from e
     return _env_api_key
 
 

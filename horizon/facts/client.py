@@ -104,7 +104,7 @@ class FactsClient:
 
         try:
             body = response.json()
-        except Exception:
+        except Exception:  # noqa: BLE001
             logger.exception("Failed to parse response body as JSON, skipping wait for update.")
             return None
         else:

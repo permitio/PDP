@@ -13,13 +13,13 @@ from horizon.startup.offline_mode import OfflineModeManager
 from horizon.startup.schemas import RemoteConfig
 from horizon.state import PersistentStateHandler
 
-
 DEFAULT_RETRY_CONFIG = {
     "retry": retry_if_not_exception_type(NoRetryError),
     "wait": wait.wait_random_exponential(max=5),
     "stop": stop.stop_after_attempt(sidecar_config.CONFIG_FETCH_MAX_RETRIES),
     "reraise": True,
 }
+
 
 class RemoteConfigFetcher:
     """

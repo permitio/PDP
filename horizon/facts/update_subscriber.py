@@ -64,13 +64,16 @@ class DataUpdateSubscriber:
         await asyncio.sleep(0)  # allow other wait task to run before publishing
         topics = [topic for entry in data_update.entries for topic in entry.topics]
         logger.debug(
-            f"Publishing data update with id={data_update.id!r} to topics {topics} as {self._notifier_id=}: {data_update}"
+            f"Publishing data update with id={data_update.id!r} to topics {topics} as {self._notifier_id=}: "
+            f"{data_update}"
         )
         return await self._updater._client.publish(
             topics=topics,
             data=data_update.dict(),
-            notifier_id=self._notifier_id,  # we fake a different notifier id to make the other side broadcast the message back to our main channel
-            sync=False,  # sync=False means we don't wait for the other side to acknowledge the message, as it causes a deadlock because we fake a different notifier id
+            notifier_id=self._notifier_id,  # we fake a different notifier id to make the other side broadcast
+            # the message back to our main channel
+            sync=False,  # sync=False means we don't wait for the other side to acknowledge the message,
+            # as it causes a deadlock because we fake a different notifier id
         )
 
     async def publish_and_wait(self, data_update: DataUpdate, timeout: float | None = None) -> bool:

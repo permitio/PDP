@@ -62,8 +62,8 @@ async def patch_handler(response: Response) -> Response:
 
         patch = parse_obj_as(list[JSONPatchAction], patch_json)
         await store.patch_data("", patch)
-    except Exception as ex:
-        logger.error("Failed to update OPAL store with: {err}", err=ex)
+    except Exception as ex:  # noqa: BLE001
+        logger.exception("Failed to update OPAL store with: {err}", err=ex)
 
     del response_json["patch"]
     del response.headers["Content-Length"]
@@ -194,7 +194,7 @@ async def proxy_request_to_cloud_service(
     # override host header (required by k8s ingress)
     try:
         headers["host"] = urlparse(cloud_service_url).netloc
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         # fallback
         logger.error(f"could not urlparse cloud service url: {cloud_service_url}, exception: {e}")
 

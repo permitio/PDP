@@ -1,6 +1,6 @@
-from typing import Any, cast
+from typing import cast
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query
 from loguru import logger
 from opal_client.policy_store.base_policy_store_client import BasePolicyStoreClient
 from opal_client.policy_store.policy_store_client_factory import (
@@ -16,10 +16,8 @@ from horizon.local.schemas import (
     ListRoleAssignmentsFilters,
     ListRoleAssignmentsPagination,
     ListRoleAssignmentsPDPBody,
-    Message,
     RoleAssignment,
     RoleAssignmentFactDBFact,
-    SyncedRole,
     WrappedResponse,
 )
 
@@ -27,62 +25,6 @@ from horizon.local.schemas import (
 def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
     policy_store = policy_store or DEFAULT_POLICY_STORE_GETTER()
     router = APIRouter(dependencies=[Depends(enforce_pdp_token)])
-
-    def error_message(msg: str):
-        return {
-            "model": Message,
-            "description": msg,
-        }
-
-    async def get_grants_for_role(role_name: str) -> list[str]:
-        response = (await policy_store.get_data(f"/roles/{role_name}")).get("result")
-
-        if not response:
-            return []
-
-        grants = response.get("grants", {})
-        result = []
-
-        for resource_name, actions in grants.items():
-            for action in actions:
-                result.append(f"{resource_name}:{action}")
-
-        return result
-
-    async def get_roles_for_user(opa_user: dict[str, Any]) -> list[SyncedRole]:
-        role_assignments = opa_user.get("roleAssignments", {})
-        roles_grants = {}
-        result = []
-
-        for tenant_name, roles in role_assignments.items():
-            for role in roles:
-                grants = roles_grants.get(role)
-
-                if not grants:
-                    grants = await get_grants_for_role(role)
-                    roles_grants[role] = grants
-
-                result.append(SyncedRole(id=role, tenant_id=tenant_name, permissions=grants))
-
-        return result
-
-    async def get_data_for_synced_user(user_id: str) -> dict[str, Any]:
-        response = await policy_store.get_data(f"/users/{user_id}")
-        result = response.get("result", None)
-        if result is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"user with id '{user_id}' was not found in OPA cache! (not synced)",
-            )
-        return result
-
-    def permission_shortname(permission: dict[str, Any]) -> str | None:
-        resource = permission.get("resource", {}).get("type", None)
-        action = permission.get("action")
-
-        if resource is None or action is None:
-            return None
-        return f"{resource}:{action}"
 
     @router.get(
         "/role_assignments",

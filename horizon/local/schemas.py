@@ -57,7 +57,7 @@ class RoleAssignment(BaseSchema):
     resource_instance: str | None = Field(None, description="the resource instance the role is associated with")
 
     class Config:
-        schema_extra = {
+        schema_extra = {  # noqa: RUF012
             "example": [
                 {
                     "user": "jane@coolcompany.com",
@@ -109,7 +109,7 @@ class RoleAssignmentFactDBFact(FactDBFact):
         )
 
     class Config:
-        schema_extra = {
+        schema_extra = {  # noqa: RUF012
             "example": {
                 "type": "role_assignments",
                 "attributes": {

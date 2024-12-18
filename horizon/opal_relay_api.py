@@ -18,7 +18,7 @@ from horizon.startup.api_keys import get_env_api_key
 from horizon.state import PersistentStateHandler
 
 
-class RelayAPIException(Exception):
+class RelayAPIError(Exception):
     def __init__(self, service: str, status_code: int, message: str):
         self.service = service
         self.status_code = status_code
@@ -114,7 +114,7 @@ class OpalRelayAPIClient:
             ) as response:
                 if response.status != status.HTTP_200_OK:
                     text = await response.text()
-                    raise RelayAPIException(
+                    raise RelayAPIError(
                         "relay-jwt-api",
                         response.status,
                         f"Server responded to token request with a bad status: {text}",
@@ -124,13 +124,12 @@ class OpalRelayAPIClient:
                 except TypeError:
                     try:
                         text = await response.text()
-                    except:
-                        text = None
-                    raise RelayAPIException(
-                        "relay-jwt-api",
-                        response.status,
-                        f"Server responded to token request with an invalid result: {text}",
-                    )
+                    except Exception as e:
+                        raise RelayAPIError(
+                            "relay-jwt-api",
+                            response.status,
+                            f"Server responded to token request with an invalid result: {text}",
+                        ) from e
             self._relay_token = obj.token
             self._relay_session = ClientSession(headers={"Authorization": f"Bearer {self._relay_token}"})
         return self._relay_session
@@ -159,28 +158,29 @@ class OpalRelayAPIClient:
             if response.status != status.HTTP_202_ACCEPTED:
                 try:
                     text = await response.text()
-                except:
-                    text = None
-                raise RelayAPIException(
-                    "relay-api",
-                    response.status,
-                    f"Server responded to token request with a bad status: {text}",
-                )
+                except Exception as e:
+                    raise RelayAPIError(
+                        "relay-api",
+                        response.status,
+                        f"Server responded to token request with a bad status: {text}",
+                    ) from e
         logger.debug("Sent ping.")
 
     async def _run(self):
         while True:
             try:
                 await self.send_ping()
-            except RelayAPIException as e:
+            except RelayAPIError as e:
                 logger.warning(
-                    "Could not report uptime status to server: got status code {} from {}. This does not affect the PDP's operational state or data updates.",
+                    "Could not report uptime status to server: got status code {} from {}. "
+                    "This does not affect the PDP's operational state or data updates.",
                     e.status_code,
                     e.service,
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.warning(
-                    "Could not report uptime status to server: {}. This does not affect the PDP's operational state or data updates.",
+                    "Could not report uptime status to server: {}. This does not affect the PDP's operational state "
+                    "or data updates.",
                     str(e),
                 )
 

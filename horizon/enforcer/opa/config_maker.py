@@ -1,4 +1,4 @@
-import os
+from pathlib import Path
 
 import jinja2
 from opal_common.logger import logger
@@ -6,23 +6,18 @@ from opal_common.logger import logger
 from horizon.config import SidecarConfig
 from horizon.startup.api_keys import get_env_api_key
 
+TEMPLATES_PATH = Path(__file__).parent.parent / "static" / "templates"
+
 
 def get_jinja_environment() -> jinja2.Environment:
-    path = os.path.join(os.path.dirname(__file__), "../../static/templates")
-    return jinja2.Environment(loader=jinja2.FileSystemLoader(path))
+    return jinja2.Environment(loader=jinja2.FileSystemLoader(TEMPLATES_PATH))
 
 
 def persist_to_file(contents: str, path: str) -> str:
-    path = os.path.expanduser(path)
-
-    # make sure the directory exists
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-
-    # persist to file
-    with open(path, "w") as f:
-        f.write(contents)
-
-    return path
+    path = Path(path).expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(contents)
+    return str(path)
 
 
 def get_opa_config_file_path(

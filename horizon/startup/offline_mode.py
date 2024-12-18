@@ -48,7 +48,8 @@ class OfflineModeManager:
         try:
             content = RemoteConfigBackup(
                 enc_remote_config=Fernet(enc_key).encrypt(remote_config.json(ensure_ascii=False).encode()),
-                key_derivation_salt=salt, ).json(ensure_ascii=False)
+                key_derivation_salt=salt,
+            ).json(ensure_ascii=False)
             self._backup_path.write_text(content)
         except Exception as e:  # noqa: BLE001
             logger.exception(f"Failed to backup sidecar config: {e}")

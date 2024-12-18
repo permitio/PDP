@@ -29,7 +29,7 @@ class BlockingRequest:
 
         return response.json()
 
-    def post(self, url: str, payload: dict = None, params=None) -> dict:
+    def post(self, url: str, payload: dict | None = None, params=None) -> dict:
         """
         utility method to send a *blocking* HTTP POST request with a JSON payload and get the response back.
         """

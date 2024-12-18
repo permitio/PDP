@@ -64,11 +64,11 @@ class StatisticsManager:
 
     def report_success(self) -> None:
         logger.debug("Reporting success")
-        self._messages.put_nowait(True)
+        self._messages.put_nowait(item=True)
 
     def report_failure(self) -> None:
         logger.debug("Reporting failure")
-        self._messages.put_nowait(False)
+        self._messages.put_nowait(item=False)
 
     async def current_rate(self) -> float:
         current_requests, current_failures = float(self._requests), float(self._failures)

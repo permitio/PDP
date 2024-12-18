@@ -27,7 +27,8 @@ select = [
     "FAST", # https://docs.astral.sh/ruff/rules/#fastapi-fast
 ]
 ignore = [
-    "FAST001" # https://docs.astral.sh/ruff/rules/fast-api-redundant-response-model/#fast-api-redundant-response-model-fast001
+    "FAST001", # https://docs.astral.sh/ruff/rules/fast-api-redundant-response-model/#fast-api-redundant-response-model-fast001
+    "FAST002", # https://docs.astral.sh/ruff/rules/fast-api-non-annotated-dependency/#fast-api-non-annotated-dependency-fast002
 ]
 
 [tool.ruff.lint.flake8-tidy-imports]

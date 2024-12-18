@@ -15,11 +15,11 @@ class ApiKeyLevel(str):
 
 
 class SidecarConfig(Confi):
-    def __new__(cls, prefix=None, is_model=True):
+    def __new__(cls, *, prefix=None, is_model=True):  # noqa: ARG003
         """creates a singleton object, if it is not created,
         or else returns the previous singleton object"""
         if not hasattr(cls, "instance"):
-            cls.instance = super(SidecarConfig, cls).__new__(cls)
+            cls.instance = super().__new__(cls)
         return cls.instance
 
     FACTDB_ENABLED = confi.bool(
@@ -98,14 +98,16 @@ class SidecarConfig(Confi):
     ORG_API_KEY = confi.str(
         "ORG_API_KEY",
         None,
-        description="set this to your organization's API key if you prefer to use the organization level API key. If not set, the PDP will use the project level API key",
+        description="set this to your organization's API key if you prefer to use the organization level API key. "
+        "By default, the PDP will use the project level API key",
     )
 
     # access token to your project
     PROJECT_API_KEY = confi.str(
         "PROJECT_API_KEY",
         None,
-        description="set this to your project's API key if you prefer to use the project level API key. If not set, the PDP will use the default project API key",
+        description="set this to your project's API key if you prefer to use the project level API key. "
+        "By default, the PDP will use the default project API key",
     )
 
     # chosen project id/key to use for the PDP
@@ -129,7 +131,8 @@ class SidecarConfig(Confi):
     ENABLE_OFFLINE_MODE = confi.bool(
         "ENABLE_OFFLINE_MODE",
         False,
-        description="if true, sidecar will use a file backup to restore configuration and policy data when cloud services are unavailable",
+        description="When true, sidecar will use a file backup to restore configuration and policy data when "
+        "cloud services are unavailable",
     )
 
     OFFLINE_MODE_BACKUP_DIR = confi.str(
@@ -205,7 +208,8 @@ class SidecarConfig(Confi):
     OPA_DECISION_LOG_CONSOLE = confi.bool(
         "OPA_DECISION_LOG_CONSOLE",
         False,
-        description="if true, OPA decision logs will also be printed to console (only relevant if `OPA_DECISION_LOG_ENABLED` is true)",
+        description="if true, OPA decision logs will also be printed to console "
+        "(only relevant if `OPA_DECISION_LOG_ENABLED` is true)",
     )
     OPA_DECISION_LOG_INGRESS_ROUTE = confi.str(
         "OPA_DECISION_LOG_INGRESS_ROUTE",
@@ -282,7 +286,7 @@ class SidecarConfig(Confi):
     # non configurable values -------------------------------------------------
 
     # redoc configuration (openapi schema)
-    OPENAPI_TAGS_METADATA = [
+    OPENAPI_TAGS_METADATA = [  # noqa: RUF012
         {
             "name": "Authorization API",
             "description": "Authorization queries to OPA. These queries are answered locally by OPA "
@@ -300,11 +304,14 @@ class SidecarConfig(Confi):
         },
         {
             "name": "Cloud API Proxy",
-            "description": "These endpoints proxy the Permit.io cloud api, and therefore **incur high-latency**. "
-            + "You should not use the cloud API in the standard request flow of users, i.e in places where the incurred "
-            + "added latency will affect your entire api. A good place to call the cloud API will be in one-time user events "
-            + "such as user registration (i.e: calling sync user, assigning initial user roles, etc.). "
-            + "The sidecar will proxy to the cloud every request prefixed with '/sdk'.",
+            "description": (
+                "These endpoints proxy the Permit.io cloud api, and therefore **incur high-latency**. "
+                "You should not use the cloud API in the standard request flow of users, i.e in places "
+                "where the incurred added latency will affect your entire api. "
+                "A good place to call the cloud API will be in one-time user events such as user registration "
+                "(i.e: calling sync user, assigning initial user roles, etc.). "
+                "The sidecar will proxy to the cloud every request prefixed with '/sdk'."
+            ),
             "externalDocs": {
                 "description": "The cloud api complete docs are located here:",
                 "url": "https://api.permit.io/redoc",

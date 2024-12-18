@@ -87,9 +87,7 @@ class PersistentStateHandler:
     @asynccontextmanager
     async def update_state(self) -> AsyncGenerator[PersistentState, None]:
         async with self._state_update_lock:
-            next_allowed_update = MAX_STATE_UPDATE_INTERVAL_SECONDS - (
-                time.time() - self._prev_state_update_attempt
-            )
+            next_allowed_update = MAX_STATE_UPDATE_INTERVAL_SECONDS - (time.time() - self._prev_state_update_attempt)
             # Since state updated are (for now) opportunistic and happen
             # regularly, we simply refuse to send them if they're too fast.
             # TODO: When we actually report information that doesn't repeat,

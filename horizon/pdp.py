@@ -1,6 +1,6 @@
 import logging
-import os
 import sys
+from pathlib import Path
 from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, status
@@ -53,8 +53,8 @@ def apply_config(overrides_dict: dict, config_object: Confi):
                     key,
                     config_object.entries[key].cast_from_json(value),
                 )
-            except Exception:
-                logger.opt(exception=True).warning(f"Unable to set config key {prefixed_key} from overrides:")
+            except Exception as e:  # noqa: BLE001
+                logger.opt(exception=True).warning(f"Unable to set config key {prefixed_key} from overrides: {e}")
                 continue
             logger.info(f"Overriden config key: {prefixed_key}")
             continue
@@ -89,9 +89,9 @@ class PermitPDP:
         # fetch and apply config override from cloud control plane
         try:
             remote_config = get_remote_config()
-        except InvalidPDPTokenError:
+        except InvalidPDPTokenError as e:
             logger.critical("An invalid API key was specified. Please verify the PDP_API_KEY environment variable.")
-            raise SystemExit(GUNICORN_EXIT_APP)
+            raise SystemExit(GUNICORN_EXIT_APP) from e
 
         if not remote_config:
             logger.critical("No cloud configuration found. Exiting.")
@@ -114,7 +114,10 @@ class PermitPDP:
 
         if sidecar_config.PRINT_CONFIG_ON_STARTUP:
             logger.info(
-                "sidecar is loading with the following config:\n\n{sidecar_config}\n\n{opal_client_config}\n\n{opal_common_config}",
+                "sidecar is loading with the following config:"
+                "\n\n{sidecar_config}"
+                "\n\n{opal_client_config}"
+                "\n\n{opal_common_config}",
                 sidecar_config=sidecar_config.debug_repr(),
                 opal_client_config=opal_client_config.debug_repr(),
                 opal_common_config=opal_common_config.debug_repr(),
@@ -181,7 +184,7 @@ class PermitPDP:
         config.fastapi["service_name"] = "permit-pdp"
         config.fastapi["request_span_name"] = "permit-pdp"
 
-    def _configure_cloud_logging(self, remote_context: dict = {}):
+    def _configure_cloud_logging(self, remote_context: dict | None = None):
         if not sidecar_config.CENTRAL_LOG_ENABLED:
             return
 
@@ -199,7 +202,7 @@ class PermitPDP:
         # adds extra context to all loggers, helps identify between different sidecars.
         extra_context = {}
         extra_context["run_id"] = uuid4().hex
-        extra_context.update(remote_context)
+        extra_context.update(remote_context or {})
 
         logger.info(f"Adding the following context to all loggers: {extra_context}")
 
@@ -256,7 +259,8 @@ class PermitPDP:
                 opal_common_config.LOG_MODULE_EXCLUDE_LIST = exclude_list
 
     def _configure_opal_data_updater(self):
-        # Retry 10 times with (random) exponential backoff (wait times up to 1, 2, 4, 6, 8, 16, 32, 64, 128, 256 secs), and overall timeout of 64 seconds
+        # Retry 10 times with (random) exponential backoff (wait times up to 1, 2, 4, 6, 8, 16, 32, 64, 128, 256 secs),
+        # and overall timeout of 64 seconds
         opal_client_config.DATA_UPDATER_CONN_RETRY = ConnRetryOptions(
             wait_strategy="random_exponential",
             attempts=14,
@@ -268,22 +272,26 @@ class PermitPDP:
         configure opal to use offline mode when enabled
         """
         opal_client_config.OFFLINE_MODE_ENABLED = sidecar_config.ENABLE_OFFLINE_MODE
-        opal_client_config.STORE_BACKUP_PATH = os.path.join(
-            sidecar_config.OFFLINE_MODE_BACKUP_DIR,
-            sidecar_config.OFFLINE_MODE_POLICY_BACKUP_FILENAME,
+        opal_client_config.STORE_BACKUP_PATH = (
+            Path(sidecar_config.OFFLINE_MODE_BACKUP_DIR) / sidecar_config.OFFLINE_MODE_POLICY_BACKUP_FILENAME
         )
 
     def _fix_data_topics(self) -> list[str]:
         """
         This is a worksaround for the following issue:
-        Permit backend services use the the topic 'policy_data/{client_id}' to configure PDPs and to publish data updates.
-        However, opal-server is configured to return DataSourceConfig with the topic 'policy_data' (without the client_id suffix) from `/scope/{client_id}/data` endpoint.
-        In the new OPAL client, this is an issue since data updater validates DataSourceConfig's topics against its configured data topics.
+        Permit backend services use the topic 'policy_data/{client_id}' to configure PDPs and to publish data updates.
+        However, opal-server is configured to return DataSourceConfig with the topic 'policy_data'
+        (without the client_id suffix) from `/scope/{client_id}/data` endpoint.
+        In the new OPAL client, this is an issue since data updater validates DataSourceConfig's topics against its
+        configured data topics.
 
-        Simply fixing the backend to use the shorter topic everywhere is problematic since it would require a breaking change / migration for all clients.
-        The shorter version logically includes the longer version so it's fine having OPAL listen to the shorter version when updates are still published to the longer one.
+        Simply fixing the backend to use the shorter topic everywhere is problematic since it would require a breaking
+        change / migration for all clients.
+        The shorter version logically includes the longer version so it's fine having OPAL listen to the shorter
+        version when updates are still published to the longer one.
 
-        We don't edit `opal_client_config.DATA_TOPICS` directly because relay's ping reports it - and reported subscribed topics are expected to match the topics used in publish.
+        We don't edit `opal_client_config.DATA_TOPICS` directly because relay's ping reports it -
+        and reported subscribed topics are expected to match the topics used in publish.
             (relay ignores the hierarchical structure of topics - this could be fixed in the future)
         """
         if opal_client_config.SCOPE_ID == "default":
@@ -297,9 +305,9 @@ class PermitPDP:
     def _override_app_metadata(self, app: FastAPI):
         app.title = "Permit.io PDP"
         app.description = (
-            "The PDP (Policy decision point) container wraps Open Policy Agent (OPA) with a higher-level API intended for fine grained "
-            + "application-level authorization. The PDP automatically handles pulling policy updates in real-time "
-            + "from a centrally managed cloud-service (api.permit.io)."
+            "The PDP (Policy decision point) container wraps Open Policy Agent (OPA) with a higher-level API "
+            "intended for fine grained application-level authorization. The PDP automatically handles pulling policy "
+            "updates in real-time from a centrally managed cloud-service (api.permit.io)."
         )
         app.version = "0.2.0"
         app.openapi_tags = sidecar_config.OPENAPI_TAGS_METADATA
