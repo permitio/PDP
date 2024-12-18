@@ -1,12 +1,11 @@
 import asyncio
 import json
 import re
-from typing import cast, Optional, Union, Dict, List, Callable
+from collections.abc import Callable
+from typing import cast
 
 import aiohttp
-from fastapi import APIRouter, Depends, Header, Query
-from fastapi import HTTPException
-from fastapi import Request, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from fastapi.encoders import jsonable_encoder
 from opal_client.config import opal_client_config
 from opal_client.logger import logger
@@ -15,28 +14,28 @@ from opal_client.policy_store.policy_store_client_factory import (
     DEFAULT_POLICY_STORE_GETTER,
 )
 from opal_client.utils import proxy_response
-from pydantic import parse_obj_as, PositiveInt
+from pydantic import PositiveInt, parse_obj_as
 from starlette.responses import JSONResponse
 
 from horizon.authentication import enforce_pdp_token
 from horizon.config import sidecar_config
 from horizon.enforcer.schemas import (
+    AllTenantsAuthorizationResult,
     AuthorizationQuery,
     AuthorizationResult,
-    UrlAuthorizationQuery,
-    MappingRuleData,
-    Resource,
-    BulkAuthorizationResult,
-    AllTenantsAuthorizationResult,
+    AuthorizedUsersAuthorizationQuery,
+    AuthorizedUsersResult,
     BaseSchema,
     BulkAuthorizationQuery,
+    BulkAuthorizationResult,
+    MappingRuleData,
+    Resource,
+    UrlAuthorizationQuery,
+    User,
     UserPermissionsQuery,
     UserPermissionsResult,
     UserTenantsQuery,
     UserTenantsResult,
-    AuthorizedUsersResult,
-    AuthorizedUsersAuthorizationQuery,
-    User,
 )
 from horizon.enforcer.schemas_kong import (
     KongAuthorizationInput,
@@ -93,8 +92,8 @@ def log_query_result(query: BaseSchema, response: Response, *, is_inner: bool = 
     params = repr(query)
     try:
         response_json = json.loads(response.body)
-        result: Dict = response_json if is_inner else response_json.get("result", {})
-        allowed: bool | List[Dict] = result.get("allow", None)
+        result: dict = response_json if is_inner else response_json.get("result", {})
+        allowed: bool | list[dict] = result.get("allow")
         color = "<red>"
         allow_output = False
         if isinstance(allowed, bool):
@@ -144,7 +143,7 @@ def log_query_result_kong(input: KongAuthorizationInput, response: Response):
     """
     formats a nice log to default logger with the results of permit.check()
     """
-    params = "({}, {}, {})".format(input.consumer.username, input.request.http.method, input.request.http.path)
+    params = f"({input.consumer.username}, {input.request.http.method}, {input.request.http.path})"
     try:
         result: dict = json.loads(response.body).get("result", {})
         allowed = result.get("allow", False)
@@ -179,7 +178,7 @@ def log_query_result_kong(input: KongAuthorizationInput, response: Response):
         )
 
 
-def get_v1_processed_query(result: dict) -> Optional[dict]:
+def get_v1_processed_query(result: dict) -> dict | None:
     if "authorization_query" not in result:
         return None  # not a v1 query result
 
@@ -191,13 +190,13 @@ def get_v1_processed_query(result: dict) -> Optional[dict]:
     }
 
 
-def get_v2_processed_query(result: dict) -> Optional[dict]:
+def get_v2_processed_query(result: dict) -> dict | None:
     return (result.get("debug", {}) or {}).get("input", None)
 
 
 async def notify_seen_sdk(
-    x_permit_sdk_language: Optional[str] = Header(default=None),
-) -> Optional[str]:
+    x_permit_sdk_language: str | None = Header(default=None),
+) -> str | None:
     if x_permit_sdk_language is not None:
         await PersistentStateHandler.get_instance().seen_sdk(x_permit_sdk_language)
     return x_permit_sdk_language
@@ -224,24 +223,19 @@ async def post_to_opa(request: Request, path: str, data: dict | None):
         stats_manager.report_failure()
         exc = HTTPException(
             status.HTTP_504_GATEWAY_TIMEOUT,
-            detail="OPA request timed out (url: {url}, timeout: {timeout}s)".format(
-                url=url,
-                timeout=sidecar_config.OPA_CLIENT_QUERY_TIMEOUT,
-            ),
+            detail=f"OPA request timed out (url: {url}, timeout: {sidecar_config.OPA_CLIENT_QUERY_TIMEOUT}s)",
         )
     except aiohttp.ClientResponseError as e:
         stats_manager.report_failure()
         exc = HTTPException(
             status.HTTP_502_BAD_GATEWAY,  # 502 indicates server got an error from another server
-            detail="OPA request failed (url: {url}, status: {status}, message: {message})".format(
-                url=url, status=e.status, message=e.message
-            ),
+            detail=f"OPA request failed (url: {url}, status: {e.status}, message: {e.message})",
         )
     except aiohttp.ClientError as e:
         stats_manager.report_failure()
         exc = HTTPException(
             status.HTTP_502_BAD_GATEWAY,
-            detail="OPA request failed (url: {url}, error: {error}".format(url=url, error=str(e)),
+            detail=f"OPA request failed (url: {url}, error: {e!s}",
         )
     logger.warning(exc.detail)
     raise exc
@@ -329,24 +323,19 @@ async def _is_allowed_factdb(
         stats_manager.report_failure()
         exc = HTTPException(
             status.HTTP_504_GATEWAY_TIMEOUT,
-            detail="FactDB request timed out (url: {url}, timeout: {timeout}s)".format(
-                url=url,
-                timeout=sidecar_config.OPA_CLIENT_QUERY_TIMEOUT,
-            ),
+            detail=f"FactDB request timed out (url: {url}, timeout: {sidecar_config.OPA_CLIENT_QUERY_TIMEOUT}s)",
         )
     except aiohttp.ClientResponseError as e:
         stats_manager.report_failure()
         exc = HTTPException(
             status.HTTP_502_BAD_GATEWAY,  # 502 indicates server got an error from another server
-            detail="FactDB request failed (url: {url}, status: {status}, message: {message})".format(
-                url=url, status=e.status, message=e.message
-            ),
+            detail=f"FactDB request failed (url: {url}, status: {e.status}, message: {e.message})",
         )
     except aiohttp.ClientError as e:
         stats_manager.report_failure()
         exc = HTTPException(
             status.HTTP_502_BAD_GATEWAY,
-            detail="FactDB request failed (url: {url}, error: {error}".format(url=url, error=str(e)),
+            detail=f"FactDB request failed (url: {url}, error: {e!s}",
         )
     logger.warning(exc.detail)
     raise exc
@@ -356,7 +345,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
     policy_store = policy_store or DEFAULT_POLICY_STORE_GETTER()
     router = APIRouter()
     if sidecar_config.KONG_INTEGRATION:
-        with open(KONG_ROUTES_TABLE_FILE, "r") as f:
+        with open(KONG_ROUTES_TABLE_FILE) as f:
             kong_routes_table_raw = json.load(f)
         kong_routes_table = [(re.compile(regex), resource) for regex, resource in kong_routes_table_raw]
         logger.info(f"Kong integration: Loaded {len(kong_routes_table)} translation rules.")
@@ -388,7 +377,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             query,
             request,
             policy_package=AUTHORIZED_USERS_POLICY_PACKAGE,
-            factdb_path=f"/authorized-users",
+            factdb_path="/authorized-users",
             legacy_parse_func=authorized_users_parse_func,
         )
         try:
@@ -412,7 +401,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
     async def is_allowed_url(
         request: Request,
         query: UrlAuthorizationQuery,
-        x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
+        x_permit_sdk_language: str | None = Depends(notify_seen_sdk),
     ):
         data = await post_to_opa(request, "mapping_rules", None)
 
@@ -472,7 +461,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             description="Page number for pagination, must be set together with per_page",
         ),
         per_page: PositiveInt | None = Query(None, description="Number of items per page for pagination"),
-        x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
+        x_permit_sdk_language: str | None = Depends(notify_seen_sdk),
     ):
         paginated = query.set_pagination(page, per_page)
         if paginated:
@@ -501,13 +490,13 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             query,
             request,
             policy_package=USER_PERMISSIONS_POLICY_PACKAGE,
-            factdb_path=f"/user-permissions",
+            factdb_path="/user-permissions",
             factdb_params=query.get_params(),
             legacy_parse_func=parse_func,
         )
         try:
             result = parse_obj_as(UserPermissionsResult, response)
-        except Exception as e:
+        except Exception:
             result = parse_obj_as(UserPermissionsResult, {})
             logger.warning(
                 "user permissions (fallback response)",
@@ -535,7 +524,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
     async def user_tenants(
         request: Request,
         query: UserTenantsQuery,
-        x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
+        x_permit_sdk_language: str | None = Depends(notify_seen_sdk),
     ):
         raw_result = await conditional_is_allowed(
             query,
@@ -565,7 +554,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
     async def is_allowed_all_tenants(
         request: Request,
         query: AuthorizationQuery,
-        x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
+        x_permit_sdk_language: str | None = Depends(notify_seen_sdk),
     ):
         if sidecar_config.FACTDB_ENABLED:
             response = await _is_allowed_factdb(query, request, path="/check/all-tenants")
@@ -596,7 +585,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
     async def is_allowed_bulk(
         request: Request,
         queries: list[AuthorizationQuery],
-        x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
+        x_permit_sdk_language: str | None = Depends(notify_seen_sdk),
     ):
         if sidecar_config.FACTDB_ENABLED:
             response = await _is_allowed_factdb(queries, request, path="/check/bulk")
@@ -626,8 +615,8 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
     )
     async def is_allowed(
         request: Request,
-        query: Union[AuthorizationQuery, AuthorizationQueryV1],
-        x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
+        query: AuthorizationQuery | AuthorizationQueryV1,
+        x_permit_sdk_language: str | None = Depends(notify_seen_sdk),
     ):
         if isinstance(query, AuthorizationQueryV1):
             raise HTTPException(

@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -14,18 +14,18 @@ class Message(BaseModel):
 
 class SyncedRole(BaseSchema):
     id: str
-    name: Optional[str]
-    tenant_id: Optional[str]
-    metadata: Optional[Dict[str, Any]]
-    permissions: Optional[List[str]]
+    name: str | None
+    tenant_id: str | None
+    metadata: dict[str, Any] | None
+    permissions: list[str] | None
 
 
 class SyncedUser(BaseSchema):
     id: str
-    name: Optional[str]
-    email: Optional[str]
-    metadata: Optional[Dict[str, Any]]
-    roles: List[SyncedRole]
+    name: str | None
+    email: str | None
+    metadata: dict[str, Any] | None
+    roles: list[SyncedRole]
 
 
 class ListRoleAssignmentsFilters(BaseSchema):

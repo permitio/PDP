@@ -1,7 +1,7 @@
-from typing import Any, Iterator
-from typing_extensions import Self
+from collections.abc import Iterator
 
 from pydantic import BaseModel
+from typing_extensions import Self
 
 
 class Fact(BaseModel):

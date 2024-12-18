@@ -1,26 +1,26 @@
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, cast
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from loguru import logger
 from opal_client.policy_store.base_policy_store_client import BasePolicyStoreClient
 from opal_client.policy_store.policy_store_client_factory import (
     DEFAULT_POLICY_STORE_GETTER,
 )
-from pydantic import parse_raw_as, parse_obj_as
+from pydantic import parse_obj_as, parse_raw_as
 from starlette.responses import Response
 
 from horizon.authentication import enforce_pdp_token
 from horizon.config import sidecar_config
 from horizon.factdb.policy_store import FactDBPolicyStoreClient
 from horizon.local.schemas import (
-    Message,
-    SyncedRole,
-    RoleAssignment,
     ListRoleAssignmentsFilters,
-    ListRoleAssignmentsPDPBody,
-    WrappedResponse,
     ListRoleAssignmentsPagination,
+    ListRoleAssignmentsPDPBody,
+    Message,
+    RoleAssignment,
     RoleAssignmentFactDBFact,
+    SyncedRole,
+    WrappedResponse,
 )
 
 
@@ -34,7 +34,7 @@ def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
             "description": msg,
         }
 
-    async def get_grants_for_role(role_name: str) -> List[str]:
+    async def get_grants_for_role(role_name: str) -> list[str]:
         response = (await policy_store.get_data(f"/roles/{role_name}")).get("result")
 
         if not response:
@@ -49,7 +49,7 @@ def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
 
         return result
 
-    async def get_roles_for_user(opa_user: Dict[str, Any]) -> List[SyncedRole]:
+    async def get_roles_for_user(opa_user: dict[str, Any]) -> list[SyncedRole]:
         role_assignments = opa_user.get("roleAssignments", {})
         roles_grants = {}
         result = []
@@ -66,7 +66,7 @@ def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
 
         return result
 
-    async def get_data_for_synced_user(user_id: str) -> Dict[str, Any]:
+    async def get_data_for_synced_user(user_id: str) -> dict[str, Any]:
         response = await policy_store.get_data(f"/users/{user_id}")
         result = response.get("result", None)
         if result is None:
@@ -76,9 +76,9 @@ def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
             )
         return result
 
-    def permission_shortname(permission: Dict[str, Any]) -> Optional[str]:
+    def permission_shortname(permission: dict[str, Any]) -> str | None:
         resource = permission.get("resource", {}).get("type", None)
-        action = permission.get("action", None)
+        action = permission.get("action")
 
         if resource is None or action is None:
             return None
@@ -89,24 +89,24 @@ def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
         response_model=list[RoleAssignment],
     )
     async def list_role_assignments(
-        user: Optional[str] = Query(
+        user: str | None = Query(
             None,
             description="optional user filter, " "will only return role assignments granted to this user.",
         ),
-        role: Optional[str] = Query(
+        role: str | None = Query(
             None,
             description="optional role filter, " "will only return role assignments granting this role.",
         ),
-        tenant: Optional[str] = Query(
+        tenant: str | None = Query(
             None,
             description="optional tenant filter, " "will only return role assignments granted in that tenant.",
         ),
-        resource: Optional[str] = Query(
+        resource: str | None = Query(
             None,
             description="optional resource **type** filter, "
             "will only return role assignments granted on that resource type.",
         ),
-        resource_instance: Optional[str] = Query(
+        resource_instance: str | None = Query(
             None,
             description="optional resource instance filter, "
             "will only return role assignments granted on that resource instance.",
@@ -144,7 +144,7 @@ def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
             # the type hint of the get_data_with_input is incorrect, it claims it returns a dict but it
             # actually returns a Response
             result = cast(
-                Response | Dict,
+                Response | dict,
                 await policy_store.get_data_with_input(
                     "/permit/api/role_assignments/list_role_assignments",
                     ListRoleAssignmentsPDPBody.construct(filters=filters, pagination=pagination),

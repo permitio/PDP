@@ -1,7 +1,7 @@
 import asyncio
 import os
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, status
 from loguru import logger
 
 from horizon.authentication import enforce_pdp_control_key, enforce_pdp_token

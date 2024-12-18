@@ -4,13 +4,12 @@ import pytest
 from aioresponses import aioresponses
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from loguru import logger
-from opal_client.client import OpalClient
-from opal_client.config import opal_client_config
-
 from horizon.config import sidecar_config
 from horizon.factdb.client import FactDBClient
 from horizon.pdp import PermitPDP
+from loguru import logger
+from opal_client.client import OpalClient
+from opal_client.config import opal_client_config
 
 
 class MockPermitPDP(PermitPDP):
@@ -132,7 +131,7 @@ async def test_list_role_assignments_factdb(tmp_path: Path) -> None:
     with aioresponses() as m:
         # The policy store client of the FactDB has base url configured, this means that the url
         # we need to mock is '/v1/facts/role_assignments' - without the base url server
-        factdb_url = f"/v1/facts/role_assignments?page=1&per_page=30"
+        factdb_url = "/v1/facts/role_assignments?page=1&per_page=30"
         logger.info("mocking FactDB url: {}", factdb_url)
         # Test valid response from OPA
         m.get(

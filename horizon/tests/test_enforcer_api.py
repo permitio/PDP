@@ -8,14 +8,13 @@ from aioresponses import aioresponses
 from fastapi import FastAPI
 from fastapi.encoders import jsonable_encoder
 from fastapi.testclient import TestClient
-from opal_client.client import OpalClient
-from opal_client.config import opal_client_config
-from starlette import status
-
 from horizon.config import sidecar_config
 from horizon.enforcer.api import stats_manager
 from horizon.enforcer.schemas import *
 from horizon.pdp import PermitPDP
+from opal_client.client import OpalClient
+from opal_client.config import opal_client_config
+from starlette import status
 
 
 class MockPermitPDP(PermitPDP):

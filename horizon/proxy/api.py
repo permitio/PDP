@@ -1,6 +1,6 @@
 import json
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any
 from urllib.parse import urlparse
 
 import aiohttp
@@ -37,7 +37,7 @@ class JSONPatchAction(BaseModel):
 
     op: str = Field(..., description="patch action to perform")
     path: str = Field(..., description="target location in modified json")
-    value: Optional[Dict[str, Any]] = Field(None, description="json document, the operand of the action")
+    value: dict[str, Any] | None = Field(None, description="json document, the operand of the action")
 
 
 router = APIRouter()
@@ -60,7 +60,7 @@ async def patch_handler(response: Response) -> Response:
     try:
         store = OpalClientConfig.load_policy_store()
 
-        patch = parse_obj_as(List[JSONPatchAction], patch_json)
+        patch = parse_obj_as(list[JSONPatchAction], patch_json)
         await store.patch_data("", patch)
     except Exception as ex:
         logger.error("Failed to update OPAL store with: {err}", err=ex)
@@ -171,7 +171,7 @@ async def proxy_request_to_cloud_service(
     request: Request,
     path: str,
     cloud_service_url: str,
-    additional_headers: Dict[str, str],
+    additional_headers: dict[str, str],
 ) -> Response:
     auth_header = request.headers.get("Authorization")
     if auth_header is None:
@@ -188,7 +188,7 @@ async def proxy_request_to_cloud_service(
 
     # copy only required header
     for header_name in REQUIRED_HTTP_HEADERS:
-        if header_name in original_headers.keys():
+        if header_name in original_headers:
             headers[header_name] = original_headers[header_name]
 
     # override host header (required by k8s ingress)

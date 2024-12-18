@@ -4,9 +4,10 @@ import os
 import platform
 import subprocess
 import time
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from functools import cache
-from typing import Any, AsyncGenerator, List, Optional
+from typing import Any, Optional
 from uuid import UUID, uuid4
 
 import aiohttp
@@ -24,7 +25,7 @@ MAX_STATE_UPDATE_INTERVAL_SECONDS = 60
 
 class PersistentState(BaseModel):
     pdp_instance_id: UUID
-    seen_sdks: Optional[List[Optional[str]]] = None
+    seen_sdks: list[str | None] | None = None
 
 
 class StateUpdateThrottled(Exception):
@@ -53,7 +54,7 @@ class PersistentStateHandler:
 
     def _load(self) -> bool:
         if os.path.exists(self._filename):
-            with open(self._filename, "r") as f:
+            with open(self._filename) as f:
                 try:
                     data = json.load(f)
                 except json.JSONDecodeError:
@@ -118,7 +119,7 @@ class PersistentStateHandler:
 
     @classmethod
     @cache
-    def _get_pdp_version(cls) -> Optional[str]:
+    def _get_pdp_version(cls) -> str | None:
         if os.path.exists(sidecar_config.VERSION_FILE_PATH):
             with open(sidecar_config.VERSION_FILE_PATH) as f:
                 return f.read().strip()
@@ -164,7 +165,7 @@ class PersistentStateHandler:
         return result
 
     @classmethod
-    def _build_state_payload(cls, state: Optional[PersistentState] = None) -> dict:
+    def _build_state_payload(cls, state: PersistentState | None = None) -> dict:
         if state is None:
             state = cls.get()
         return {
@@ -181,18 +182,18 @@ class PersistentStateHandler:
         }
 
     @classmethod
-    async def build_state_payload(cls, state: Optional[PersistentState] = None) -> dict:
+    async def build_state_payload(cls, state: PersistentState | None = None) -> dict:
         payload = cls._build_state_payload()
         payload["state"].update(await asyncio.get_event_loop().run_in_executor(None, cls.get_runtime_state))
         return payload
 
     @classmethod
-    def build_state_payload_sync(cls, state: Optional[PersistentState] = None) -> dict:
+    def build_state_payload_sync(cls, state: PersistentState | None = None) -> dict:
         payload = cls._build_state_payload()
         payload["state"].update(cls.get_runtime_state())
         return payload
 
-    async def _report(self, state: Optional[PersistentState] = None):
+    async def _report(self, state: PersistentState | None = None):
         config_url = f"{sidecar_config.CONTROL_PLANE}{sidecar_config.REMOTE_STATE_ENDPOINT}"
         async with aiohttp.ClientSession() as session:
             logger.info("Reporting status update to server...")
@@ -209,14 +210,14 @@ class PersistentStateHandler:
                 raise RuntimeError("Unable to post PDP state update to server.")
 
     async def seen_sdk(self, sdk: str):
-        if not sdk in self._state.seen_sdks:
+        if sdk not in self._state.seen_sdks:
             # ensure_future is expensive, only call it if actually needed
             asyncio.ensure_future(self._report_seen_sdk(sdk))
 
     async def _report_seen_sdk(self, sdk: str):
         async with self._seen_sdk_update_lock:
             # We check this again because we might have waited because of the lock
-            if not sdk in self._state.seen_sdks:
+            if sdk not in self._state.seen_sdks:
                 try:
                     async with self.update_state() as new_state:
                         if new_state.seen_sdks is None:

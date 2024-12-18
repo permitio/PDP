@@ -2,7 +2,6 @@ import asyncio
 import logging.config
 import os
 
-import aiohttp
 from permit import Permit, PermitConfig
 
 logging.config.dictConfig(

@@ -1,13 +1,13 @@
 import json
-from typing import Iterator
+from collections.abc import Iterator
 
 from opal_common.schemas.data import JsonableValue
 
 from horizon.factdb.data_update import (
     AnyOperation,
-    InsertOperation,
-    Fact,
     DeleteOperation,
+    Fact,
+    InsertOperation,
 )
 
 

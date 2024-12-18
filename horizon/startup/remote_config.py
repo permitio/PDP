@@ -1,6 +1,5 @@
-from typing import Optional
-
 import os.path
+
 import requests
 from opal_common.logger import logger
 from pydantic import ValidationError
@@ -10,8 +9,8 @@ from horizon.config import sidecar_config
 from horizon.startup.api_keys import get_env_api_key
 from horizon.startup.blocking_request import BlockingRequest
 from horizon.startup.exceptions import NoRetryException
-from horizon.startup.schemas import RemoteConfig
 from horizon.startup.offline_mode import OfflineModeManager
+from horizon.startup.schemas import RemoteConfig
 from horizon.state import PersistentStateHandler
 
 
@@ -50,7 +49,7 @@ class RemoteConfigFetcher:
         self,
         backend_url: str = sidecar_config.CONTROL_PLANE,
         remote_config_route: str = sidecar_config.REMOTE_CONFIG_ENDPOINT,
-        shard_id: Optional[str] = sidecar_config.SHARD_ID,
+        shard_id: str | None = sidecar_config.SHARD_ID,
         retry_config=None,
     ):
         """
@@ -67,7 +66,7 @@ class RemoteConfigFetcher:
         self._retry_config = retry_config if retry_config is not None else self.DEFAULT_RETRY_CONFIG
         self._shard_id = shard_id
 
-    def fetch_config(self) -> Optional[RemoteConfig]:
+    def fetch_config(self) -> RemoteConfig | None:
         """
         fetches the sidecar config by identifying with the sidecar access token.
         if failed to get config from backend, returns None.
@@ -109,7 +108,7 @@ class RemoteConfigFetcher:
             raise
 
 
-_remote_config: Optional[RemoteConfig] = None
+_remote_config: RemoteConfig | None = None
 
 
 def get_remote_config():

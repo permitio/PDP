@@ -1,5 +1,6 @@
 import time
-from typing import Optional, Iterator, Callable, Any
+from collections.abc import Callable, Iterator
+from typing import Any
 
 import aiohttp
 from aiohttp import ClientSession
@@ -8,12 +9,12 @@ from opal_client.policy_store.opa_client import OpaClient
 from opal_client.policy_store.schemas import PolicyStoreAuth
 from opal_common.schemas.data import JsonableValue
 
-from horizon.factdb.data_update import DataUpdate, AnyOperation
+from horizon.factdb.data_update import AnyOperation, DataUpdate
 from horizon.factdb.update_operations import (
     _get_operations_for_update_relationship_tuple,
+    _get_operations_for_update_resource_instance,
     _get_operations_for_update_role_assigment,
     _get_operations_for_update_user,
-    _get_operations_for_update_resource_instance,
 )
 
 
@@ -22,17 +23,17 @@ class FactDBPolicyStoreClient(OpaClient):
         self,
         factdb_client: ClientSession | Callable[[], ClientSession],
         opa_server_url=None,
-        opa_auth_token: Optional[str] = None,
+        opa_auth_token: str | None = None,
         auth_type: PolicyStoreAuth = PolicyStoreAuth.NONE,
-        oauth_client_id: Optional[str] = None,
-        oauth_client_secret: Optional[str] = None,
-        oauth_server: Optional[str] = None,
+        oauth_client_id: str | None = None,
+        oauth_client_secret: str | None = None,
+        oauth_server: str | None = None,
         data_updater_enabled: bool = True,
         policy_updater_enabled: bool = True,
         cache_policy_data: bool = False,
-        tls_client_cert: Optional[str] = None,
-        tls_client_key: Optional[str] = None,
-        tls_ca: Optional[str] = None,
+        tls_client_cert: str | None = None,
+        tls_client_key: str | None = None,
+        tls_ca: str | None = None,
     ):
         super().__init__(
             opa_server_url,
@@ -60,7 +61,7 @@ class FactDBPolicyStoreClient(OpaClient):
         self,
         policy_data: JsonableValue,
         path: str = "",
-        transaction_id: Optional[str] = None,
+        transaction_id: str | None = None,
     ):
         parts = path.lstrip("/").split("/")
         try:

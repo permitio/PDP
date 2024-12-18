@@ -7,8 +7,6 @@ from loguru import logger
 from opal_client.data.updater import DataUpdater
 from opal_common.schemas.data import DataUpdate, DataUpdateReport
 
-from horizon.config import sidecar_config
-
 
 class DataUpdateSubscriber:
     def __init__(self, updater: DataUpdater):

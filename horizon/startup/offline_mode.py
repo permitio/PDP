@@ -1,16 +1,15 @@
-from typing import Optional, Tuple
-
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.backends import default_backend
-from cryptography.fernet import Fernet
-from pydantic import ValidationError
 import base64
-import secrets
 import os
+import secrets
+
+from cryptography.fernet import Fernet
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from opal_common.logger import logger
+from pydantic import ValidationError
 
 from horizon.startup.schemas import RemoteConfig, RemoteConfigBackup
-from opal_common.logger import logger
 
 
 class OfflineModeManager:
@@ -22,7 +21,7 @@ class OfflineModeManager:
         self._backup_path: str = backup_path
         self._api_key = api_key
 
-    def _derive_backup_key(self, salt: Optional[bytes] = None) -> Tuple[bytes, bytes]:
+    def _derive_backup_key(self, salt: bytes | None = None) -> tuple[bytes, bytes]:
         if salt is None:
             salt = secrets.token_bytes(16)
         else:
@@ -56,17 +55,17 @@ class OfflineModeManager:
                         key_derivation_salt=salt,
                     ).json(ensure_ascii=False)
                 )
-        except Exception as e:
+        except Exception:
             logger.exception("Failed to backup sidecar config")
 
-    def restore_config(self) -> Optional[RemoteConfig]:
+    def restore_config(self) -> RemoteConfig | None:
         logger.info(
             "Loading config from local backup at {path}",
             path=self._backup_path,
         )
         remote_config_backup: RemoteConfigBackup
         try:
-            with open(self._backup_path, "r") as f:
+            with open(self._backup_path) as f:
                 remote_config_backup = RemoteConfigBackup.parse_raw(f.read())
         except FileNotFoundError:
             logger.warning("Local backup file of sidecar config not found")
@@ -78,7 +77,7 @@ class OfflineModeManager:
         dec_key, _ = self._derive_backup_key(remote_config_backup.key_derivation_salt)
         return RemoteConfig.parse_raw(Fernet(dec_key).decrypt(remote_config_backup.enc_remote_config))
 
-    def process_remote_config(self, remote_config: Optional[RemoteConfig]) -> Optional[RemoteConfig]:
+    def process_remote_config(self, remote_config: RemoteConfig | None) -> RemoteConfig | None:
         if remote_config is None:
             # Cloud fetch failed, try to restore from backup
             remote_config = self.restore_config()

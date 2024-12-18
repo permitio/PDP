@@ -1,19 +1,18 @@
 import logging
 import os
 import sys
-from typing import List
-from uuid import uuid4, UUID
+from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, status
 from fastapi.responses import RedirectResponse
 from loguru import logger
 from logzio.handler import LogzioHandler
 from opal_client.config import (
+    ConnRetryOptions,
     EngineLogFormat,
+    PolicyStoreAuth,
     opal_client_config,
     opal_common_config,
-    PolicyStoreAuth,
-    ConnRetryOptions,
 )
 from opal_client.engine.options import OpaServerOptions
 from opal_common.confi import Confi
@@ -21,12 +20,12 @@ from opal_common.logging_utils.formatter import Formatter
 
 from horizon.authentication import enforce_pdp_token
 from horizon.config import MOCK_API_KEY, sidecar_config
-from horizon.factdb.client import FactDBClient
 from horizon.enforcer.api import init_enforcer_api_router, stats_manager
 from horizon.enforcer.opa.config_maker import (
     get_opa_authz_policy_file_path,
     get_opa_config_file_path,
 )
+from horizon.factdb.client import FactDBClient
 from horizon.facts.router import facts_router
 from horizon.local.api import init_local_cache_api_router
 from horizon.opal_relay_api import OpalRelayAPIClient
@@ -162,7 +161,7 @@ class PermitPDP:
         )
 
     def _log_environment(self, pdp_context: dict[str, str]):
-        if not "org_id" in pdp_context or not "project_id" in pdp_context or not "env_id" in pdp_context:
+        if "org_id" not in pdp_context or "project_id" not in pdp_context or "env_id" not in pdp_context:
             logger.warning("Didn't get org_id, project_id, or env_id context from backend.")
             return
         logger.info("PDP started at: ")
@@ -251,7 +250,7 @@ class PermitPDP:
         # override OPAL client default config to show OPA logs
         if sidecar_config.OPA_DECISION_LOG_CONSOLE:
             opal_client_config.INLINE_OPA_LOG_FORMAT = EngineLogFormat.FULL
-            exclude_list: List[str] = opal_common_config.LOG_MODULE_EXCLUDE_LIST.copy()
+            exclude_list: list[str] = opal_common_config.LOG_MODULE_EXCLUDE_LIST.copy()
             if OPA_LOGGER_MODULE in exclude_list:
                 exclude_list.remove(OPA_LOGGER_MODULE)
                 opal_common_config.LOG_MODULE_EXCLUDE_LIST = exclude_list
@@ -274,7 +273,7 @@ class PermitPDP:
             sidecar_config.OFFLINE_MODE_POLICY_BACKUP_FILENAME,
         )
 
-    def _fix_data_topics(self) -> List[str]:
+    def _fix_data_topics(self) -> list[str]:
         """
         This is a worksaround for the following issue:
         Permit backend services use the the topic 'policy_data/{client_id}' to configure PDPs and to publish data updates.

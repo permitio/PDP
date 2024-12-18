@@ -1,17 +1,19 @@
-from typing import Callable, Any, Iterable
+from collections.abc import Callable, Iterable
+from typing import Any
 
 from fastapi import (
     APIRouter,
     Depends,
-    Request as FastApiRequest,
-    status,
     Response,
+)
+from fastapi import (
+    Request as FastApiRequest,
 )
 from loguru import logger
 from opal_common.schemas.data import DataSourceEntry
 
 from horizon.authentication import enforce_pdp_token
-from horizon.facts.client import FactsClientDependency, FactsClient
+from horizon.facts.client import FactsClient, FactsClientDependency
 from horizon.facts.dependencies import (
     DataUpdateSubscriberDependency,
     WaitTimeoutDependency,
@@ -178,7 +180,7 @@ async def create_role_assignment(
         request,
         update_subscriber,
         wait_timeout,
-        path=f"/role_assignments",
+        path="/role_assignments",
         entries_callback=create_role_assignment_data_entries,
     )
 

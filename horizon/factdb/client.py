@@ -1,15 +1,14 @@
 import asyncio
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Optional, Awaitable, Callable
 
 from fastapi import FastAPI
 from loguru import logger
 from opal_client import OpalClient
-from opal_client.callbacks.api import init_callbacks_api
-from opal_client.config import opal_client_config, EngineLogFormat
+from opal_client.config import EngineLogFormat, opal_client_config
 from opal_client.data.api import init_data_router
 from opal_client.data.updater import DataUpdater
-from opal_client.engine.options import OpaServerOptions, CedarServerOptions
+from opal_client.engine.options import CedarServerOptions, OpaServerOptions
 from opal_client.engine.runner import PolicyEngineRunner
 from opal_client.policy.api import init_policy_router
 from opal_client.policy.updater import PolicyUpdater
@@ -135,11 +134,11 @@ class FactDBClient(ExtendedOpalClient):
         inline_opa_options: OpaServerOptions = None,
         inline_cedar_enabled: bool = None,
         inline_cedar_options: CedarServerOptions = None,
-        verifier: Optional[JWTVerifier] = None,
-        store_backup_path: Optional[str] = None,
-        store_backup_interval: Optional[int] = None,
+        verifier: JWTVerifier | None = None,
+        store_backup_path: str | None = None,
+        store_backup_interval: int | None = None,
         offline_mode_enabled: bool = False,
-        shard_id: Optional[str] = None,
+        shard_id: str | None = None,
     ):
         self._factdb_enabled = sidecar_config.FACTDB_ENABLED
         if self._factdb_enabled:
@@ -190,7 +189,7 @@ class FactDBClient(ExtendedOpalClient):
 
     @staticmethod
     async def _run_engine_runner(
-        callback: Optional[Callable[[], Awaitable]],
+        callback: Callable[[], Awaitable] | None,
         engine_runner: PolicyEngineRunner,
     ):
         # runs the callback after policy store is up

@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any
 
 from horizon.enforcer.schemas import BaseSchema
 
@@ -10,10 +10,10 @@ class BaseSchemaV1(BaseSchema):
 
 class ResourceV1(BaseSchemaV1):
     type: str
-    id: Optional[str] = None
-    tenant: Optional[str] = None
-    attributes: Optional[Dict[str, Any]] = None
-    context: Optional[Dict[str, Any]] = {}
+    id: str | None = None
+    tenant: str | None = None
+    attributes: dict[str, Any] | None = None
+    context: dict[str, Any] | None = {}
 
 
 class AuthorizationQueryV1(BaseSchema):
@@ -24,4 +24,4 @@ class AuthorizationQueryV1(BaseSchema):
     user: str  # user_id or jwt
     action: str
     resource: ResourceV1
-    context: Optional[Dict[str, Any]] = {}
+    context: dict[str, Any] | None = {}

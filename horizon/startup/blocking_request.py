@@ -1,4 +1,4 @@
-from typing import Optional, Any, Dict
+from typing import Any
 
 import requests
 
@@ -6,11 +6,11 @@ from horizon.startup.exceptions import InvalidPDPTokenException
 
 
 class BlockingRequest:
-    def __init__(self, token: Optional[str], extra_headers: dict[str, Any] | None = None):
+    def __init__(self, token: str | None, extra_headers: dict[str, Any] | None = None):
         self._token = token
         self._extra_headers = {k: v for k, v in (extra_headers or {}).items() if v is not None}
 
-    def _headers(self) -> Dict[str, str]:
+    def _headers(self) -> dict[str, str]:
         headers = {}
         if self._token is not None:
             headers["Authorization"] = f"Bearer {self._token}"

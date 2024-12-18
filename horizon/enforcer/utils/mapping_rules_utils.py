@@ -97,7 +97,7 @@ class MappingRulesUtils:
     ) -> MappingRuleData | None:
         matched_mapping_rules = []
         for mapping_rule in mapping_rules:
-            if not mapping_rule.http_method == http_method.lower():
+            if mapping_rule.http_method != http_method.lower():
                 # if the method is not the same, we don't need to check the url
                 continue
             if not cls._compare_urls(mapping_rule.url, url):

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import aiohttp
 from opal_client.config import EngineLogFormat
-from opal_client.engine.logger import logging_level_from_string, log_entire_dict
+from opal_client.engine.logger import log_entire_dict, logging_level_from_string
 from opal_client.engine.runner import PolicyEngineRunner
 from opal_client.logger import logger
 

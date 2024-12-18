@@ -1,11 +1,10 @@
 import requests
+from opal_common.logger import logger
 from tenacity import retry, retry_if_not_exception_type, stop, wait
 
-from horizon.config import ApiKeyLevel, sidecar_config, MOCK_API_KEY
-from opal_common.logger import logger
-
-from horizon.startup.exceptions import NoRetryException
+from horizon.config import MOCK_API_KEY, ApiKeyLevel, sidecar_config
 from horizon.startup.blocking_request import BlockingRequest
+from horizon.startup.exceptions import NoRetryException
 from horizon.system.consts import GUNICORN_EXIT_APP
 
 

@@ -1,21 +1,24 @@
-from typing import Optional, Annotated
+from typing import Annotated
 from urllib.parse import urljoin
 
-from fastapi import HTTPException, Depends
-from httpx import AsyncClient, Request as HttpxRequest, Response as HttpxResponse
+from fastapi import Depends, HTTPException
+from httpx import AsyncClient
+from httpx import Request as HttpxRequest
+from httpx import Response as HttpxResponse
 from loguru import logger
 from starlette import status
 from starlette.requests import Request as FastApiRequest
-from starlette.responses import Response as FastApiResponse, StreamingResponse
+from starlette.responses import Response as FastApiResponse
+from starlette.responses import StreamingResponse
 
 from horizon.config import sidecar_config
-from horizon.startup.remote_config import get_remote_config
 from horizon.startup.api_keys import get_env_api_key
+from horizon.startup.remote_config import get_remote_config
 
 
 class FactsClient:
     def __init__(self):
-        self._client: Optional[AsyncClient] = None
+        self._client: AsyncClient | None = None
 
     @property
     def client(self) -> AsyncClient:
@@ -102,13 +105,13 @@ class FactsClient:
         try:
             body = response.json()
         except Exception:
-            logger.exception(f"Failed to parse response body as JSON, skipping wait for update.")
+            logger.exception("Failed to parse response body as JSON, skipping wait for update.")
             return None
         else:
             return body
 
 
-_facts_client: Optional[FactsClient] = None
+_facts_client: FactsClient | None = None
 
 
 def get_facts_client() -> FactsClient:
