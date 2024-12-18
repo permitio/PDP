@@ -31,7 +31,7 @@ from horizon.local.api import init_local_cache_api_router
 from horizon.opal_relay_api import OpalRelayAPIClient
 from horizon.proxy.api import router as proxy_router
 from horizon.startup.api_keys import get_env_api_key
-from horizon.startup.exceptions import InvalidPDPTokenException
+from horizon.startup.exceptions import InvalidPDPTokenError
 from horizon.startup.remote_config import get_remote_config
 from horizon.state import PersistentStateHandler
 from horizon.system.api import init_system_api_router
@@ -89,7 +89,7 @@ class PermitPDP:
         # fetch and apply config override from cloud control plane
         try:
             remote_config = get_remote_config()
-        except InvalidPDPTokenException:
+        except InvalidPDPTokenError:
             logger.critical("An invalid API key was specified. Please verify the PDP_API_KEY environment variable.")
             raise SystemExit(GUNICORN_EXIT_APP)
 

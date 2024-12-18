@@ -2,7 +2,7 @@ from typing import Any
 
 import requests
 
-from horizon.startup.exceptions import InvalidPDPTokenException
+from horizon.startup.exceptions import InvalidPDPTokenError
 
 
 class BlockingRequest:
@@ -25,7 +25,7 @@ class BlockingRequest:
         response = requests.get(url, headers=self._headers(), params=params)
 
         if response.status_code == 401:
-            raise InvalidPDPTokenException()
+            raise InvalidPDPTokenError()
 
         return response.json()
 
@@ -36,6 +36,6 @@ class BlockingRequest:
         response = requests.post(url, json=payload, headers=self._headers(), params=params)
 
         if response.status_code == 401:
-            raise InvalidPDPTokenException()
+            raise InvalidPDPTokenError()
 
         return response.json()

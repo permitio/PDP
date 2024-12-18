@@ -8,14 +8,14 @@ from tenacity import retry, retry_if_not_exception_type, stop, wait
 from horizon.config import sidecar_config
 from horizon.startup.api_keys import get_env_api_key
 from horizon.startup.blocking_request import BlockingRequest
-from horizon.startup.exceptions import NoRetryException
+from horizon.startup.exceptions import NoRetryError
 from horizon.startup.offline_mode import OfflineModeManager
 from horizon.startup.schemas import RemoteConfig
 from horizon.state import PersistentStateHandler
 
 
 DEFAULT_RETRY_CONFIG = {
-    "retry": retry_if_not_exception_type(NoRetryException),
+    "retry": retry_if_not_exception_type(NoRetryError),
     "wait": wait.wait_random_exponential(max=5),
     "stop": stop.stop_after_attempt(sidecar_config.CONFIG_FETCH_MAX_RETRIES),
     "reraise": True,

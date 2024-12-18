@@ -4,13 +4,13 @@ from tenacity import retry, retry_if_not_exception_type, stop, wait
 
 from horizon.config import MOCK_API_KEY, ApiKeyLevel, sidecar_config
 from horizon.startup.blocking_request import BlockingRequest
-from horizon.startup.exceptions import NoRetryException
+from horizon.startup.exceptions import NoRetryError
 from horizon.system.consts import GUNICORN_EXIT_APP
 
 
 class EnvApiKeyFetcher:
     DEFAULT_RETRY_CONFIG = {
-        "retry": retry_if_not_exception_type(NoRetryException),
+        "retry": retry_if_not_exception_type(NoRetryError),
         "wait": wait.wait_random_exponential(max=10),
         "stop": stop.stop_after_attempt(10),
         "reraise": True,
