@@ -1,6 +1,6 @@
 import base64
-import os
 import secrets
+from pathlib import Path
 
 from cryptography.fernet import Fernet
 from cryptography.hazmat.backends import default_backend
@@ -17,15 +17,12 @@ class OfflineModeManager:
     A backup for the remote config, in case the sidecar can't fetch the remote config.
     """
 
-    def __init__(self, backup_path: str, api_key: str):
-        self._backup_path: str = backup_path
+    def __init__(self, backup_path: Path, api_key: str):
+        self._backup_path = backup_path
         self._api_key = api_key
 
     def _derive_backup_key(self, salt: bytes | None = None) -> tuple[bytes, bytes]:
-        if salt is None:
-            salt = secrets.token_bytes(16)
-        else:
-            salt = base64.urlsafe_b64decode(salt)
+        salt = secrets.token_bytes(16) if salt is None else base64.urlsafe_b64decode(salt)
 
         hkdf = HKDF(
             algorithm=hashes.SHA256(),
@@ -34,7 +31,8 @@ class OfflineModeManager:
             info=b"Sidecar's local remote-config backup Key",
             backend=default_backend(),
         )
-        # We don't bother extracting the actual cryptographic bytes from the API key (which has a urlsafe encoding + a prefix),
+        # We don't bother extracting the actual cryptographic bytes from the API key
+        # (which has a urlsafe encoding + a prefix),
         # The 512-bit entropy is still there, and HKDF's extract phase handles inputs of non-uniform randomness.
         key_bytes = hkdf.derive(self._api_key.encode("utf-8"))
         return base64.urlsafe_b64encode(key_bytes), base64.urlsafe_b64encode(salt)
@@ -46,17 +44,14 @@ class OfflineModeManager:
         )
 
         enc_key, salt = self._derive_backup_key()
-        os.makedirs(os.path.dirname(self._backup_path), exist_ok=True)
+        self._backup_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            with open(self._backup_path, "w") as f:
-                f.write(
-                    RemoteConfigBackup(
-                        enc_remote_config=Fernet(enc_key).encrypt(remote_config.json(ensure_ascii=False).encode()),
-                        key_derivation_salt=salt,
-                    ).json(ensure_ascii=False)
-                )
-        except Exception:
-            logger.exception("Failed to backup sidecar config")
+            content = RemoteConfigBackup(
+                enc_remote_config=Fernet(enc_key).encrypt(remote_config.json(ensure_ascii=False).encode()),
+                key_derivation_salt=salt, ).json(ensure_ascii=False)
+            self._backup_path.write_text(content)
+        except Exception as e:  # noqa: BLE001
+            logger.exception(f"Failed to backup sidecar config: {e}")
 
     def restore_config(self) -> RemoteConfig | None:
         logger.info(
@@ -65,8 +60,7 @@ class OfflineModeManager:
         )
         remote_config_backup: RemoteConfigBackup
         try:
-            with open(self._backup_path) as f:
-                remote_config_backup = RemoteConfigBackup.parse_raw(f.read())
+            remote_config_backup = RemoteConfigBackup.parse_file(self._backup_path)
         except FileNotFoundError:
             logger.warning("Local backup file of sidecar config not found")
             return None

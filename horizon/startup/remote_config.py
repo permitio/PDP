@@ -1,4 +1,4 @@
-import os.path
+from pathlib import Path
 
 import requests
 from opal_common.logger import logger
@@ -13,6 +13,13 @@ from horizon.startup.offline_mode import OfflineModeManager
 from horizon.startup.schemas import RemoteConfig
 from horizon.state import PersistentStateHandler
 
+
+DEFAULT_RETRY_CONFIG = {
+    "retry": retry_if_not_exception_type(NoRetryException),
+    "wait": wait.wait_random_exponential(max=5),
+    "stop": stop.stop_after_attempt(sidecar_config.CONFIG_FETCH_MAX_RETRIES),
+    "reraise": True,
+}
 
 class RemoteConfigFetcher:
     """
@@ -38,13 +45,6 @@ class RemoteConfigFetcher:
     organizations (which is not secure).
     """
 
-    DEFAULT_RETRY_CONFIG = {
-        "retry": retry_if_not_exception_type(NoRetryException),
-        "wait": wait.wait_random_exponential(max=5),
-        "stop": stop.stop_after_attempt(sidecar_config.CONFIG_FETCH_MAX_RETRIES),
-        "reraise": True,
-    }
-
     def __init__(
         self,
         backend_url: str = sidecar_config.CONTROL_PLANE,
@@ -63,7 +63,7 @@ class RemoteConfigFetcher:
         self._url = f"{backend_url}{remote_config_route}"
         self._backend_url = backend_url
         self._token = get_env_api_key()
-        self._retry_config = retry_config if retry_config is not None else self.DEFAULT_RETRY_CONFIG
+        self._retry_config = retry_config if retry_config is not None else DEFAULT_RETRY_CONFIG
         self._shard_id = shard_id
 
     def fetch_config(self) -> RemoteConfig | None:
@@ -118,10 +118,7 @@ def get_remote_config():
 
     if sidecar_config.ENABLE_OFFLINE_MODE:
         offline_mode = OfflineModeManager(
-            os.path.join(
-                sidecar_config.OFFLINE_MODE_BACKUP_DIR,
-                sidecar_config.OFFLINE_MODE_BACKUP_FILENAME,
-            ),
+            Path(sidecar_config.OFFLINE_MODE_BACKUP_DIR) / sidecar_config.OFFLINE_MODE_BACKUP_FILENAME,
             get_env_api_key(),
         )
         _remote_config = offline_mode.process_remote_config(_remote_config)
