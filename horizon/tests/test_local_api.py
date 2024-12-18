@@ -16,8 +16,6 @@ class MockPermitPDP(PermitPDP):
     def __init__(self, opal: OpalClient | None = None):
         self._setup_temp_logger()
 
-        # sidecar_config.OPA_BEARER_TOKEN_REQUIRED = False
-        # self._configure_inline_opa_config()
         self._opal = opal or OpalClient()
 
         sidecar_config.API_KEY = "mock_api_key"
@@ -39,7 +37,6 @@ sidecar = MockPermitPDP()
 async def test_list_role_assignments() -> None:
     _client = TestClient(sidecar._app)
     with aioresponses() as m:
-        # 'http://localhost:8181/v1/data/permit/api/role_assignments/list_role_assignments'
         opa_url = f"{opal_client_config.POLICY_STORE_URL}/v1/data/permit/api/role_assignments/list_role_assignments"
 
         # Test valid response from OPA
@@ -85,7 +82,7 @@ async def test_list_role_assignments_wrong_factdb_config() -> None:
     sidecar_config.FACTDB_ENABLED = True
     _client = TestClient(_sidecar._app)
     with aioresponses() as m:
-        # 'http://localhost:8181/v1/data/permit/api/role_assignments/list_role_assignments'
+        # Example 'http://localhost:8181/v1/data/permit/api/role_assignments/list_role_assignments'
         opa_url = f"{opal_client_config.POLICY_STORE_URL}/v1/data/permit/api/role_assignments/list_role_assignments"
 
         # Test valid response from OPA

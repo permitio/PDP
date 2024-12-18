@@ -10,10 +10,19 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.testclient import TestClient
 from horizon.config import sidecar_config
 from horizon.enforcer.api import stats_manager
-from horizon.enforcer.schemas import *
+from horizon.enforcer.schemas import (
+    AuthorizationQuery,
+    Resource,
+    UrlAuthorizationQuery,
+    User,
+    UserPermissionsQuery,
+    UserTenantsQuery,
+)
 from horizon.pdp import PermitPDP
+from loguru import logger
 from opal_client.client import OpalClient
 from opal_client.config import opal_client_config
+from pydantic import BaseModel
 from starlette import status
 
 
@@ -21,8 +30,6 @@ class MockPermitPDP(PermitPDP):
     def __init__(self):
         self._setup_temp_logger()
 
-        # sidecar_config.OPA_BEARER_TOKEN_REQUIRED = False
-        # self._configure_inline_opa_config()
         self._opal = OpalClient()
 
         sidecar_config.API_KEY = "mock_api_key"
@@ -323,7 +330,7 @@ async def test_enforce_endpoint_statistics(
             response = post_endpoint()
 
             assert response.status_code == 200
-            print(response.json())
+            logger.info(response.json())
             if isinstance(expected_response, list):
                 assert response.json() == expected_response
             elif isinstance(expected_response, dict):
@@ -412,7 +419,7 @@ def test_enforce_endpoint(
 
         response = post_endpoint()
         assert response.status_code == 200
-        print(response.json())
+        logger.info(response.json())
         if isinstance(expected_response, list):
             assert response.json() == expected_response
         elif isinstance(expected_response, dict):
@@ -522,7 +529,7 @@ def test_enforce_endpoint_factdb(
 
         response = post_endpoint()
         assert response.status_code == 200
-        print(response.json())
+        logger.info(response.json())
         if isinstance(expected_response, list):
             assert response.json() == expected_response
         elif isinstance(expected_response, dict):
