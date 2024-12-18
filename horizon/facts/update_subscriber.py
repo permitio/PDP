@@ -20,9 +20,7 @@ class DataUpdateSubscriber:
 
     def _inject_subscriber(self):
         reporter = self._updater.callbacks_reporter
-        reporter.report_update_results = self._reports_callback_decorator(
-            reporter.report_update_results
-        )
+        reporter.report_update_results = self._reports_callback_decorator(reporter.report_update_results)
 
     def _reports_callback_decorator(self, func):
         @wraps(func)
@@ -38,18 +36,12 @@ class DataUpdateSubscriber:
     def _resolve_listeners(self, update_id: str) -> None:
         event = self._update_listeners.get(update_id)
         if event is not None:
-            logger.debug(
-                f"Received acknowledgment for update ID {update_id!r}, resolving listener(s)"
-            )
+            logger.debug(f"Received acknowledgment for update ID {update_id!r}, resolving listener(s)")
             event.set()
         else:
-            logger.debug(
-                f"Received acknowledgment for update ID {update_id!r}, but no listener found"
-            )
+            logger.debug(f"Received acknowledgment for update ID {update_id!r}, but no listener found")
 
-    async def wait_for_message(
-        self, update_id: str, timeout: float | None = None
-    ) -> bool:
+    async def wait_for_message(self, update_id: str, timeout: float | None = None) -> bool:
         """
         Wait for a message with the given update ID to be received by the PubSub client.
         :param update_id: id of the update to wait for
@@ -83,9 +75,7 @@ class DataUpdateSubscriber:
             sync=False,  # sync=False means we don't wait for the other side to acknowledge the message, as it causes a deadlock because we fake a different notifier id
         )
 
-    async def publish_and_wait(
-        self, data_update: DataUpdate, timeout: float | None = None
-    ) -> bool:
+    async def publish_and_wait(self, data_update: DataUpdate, timeout: float | None = None) -> bool:
         """
         Publish a data update and wait for it to be received by the PubSub client.
         :param data_update: DataUpdate object to publish

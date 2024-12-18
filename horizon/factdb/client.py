@@ -83,9 +83,7 @@ class ExtendedOpalClient(OpalClient):
             server and applied to the policy store."""
             healthy = await self.check_healthy()
             if healthy:
-                return JSONResponse(
-                    status_code=status.HTTP_200_OK, content={"status": "ok"}
-                )
+                return JSONResponse(status_code=status.HTTP_200_OK, content={"status": "ok"})
             else:
                 return JSONResponse(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -97,9 +95,7 @@ class ExtendedOpalClient(OpalClient):
             """returns 200 if the policy store is ready to serve requests."""
             ready = await self.check_ready()
             if ready:
-                return JSONResponse(
-                    status_code=status.HTTP_200_OK, content={"status": "ok"}
-                )
+                return JSONResponse(status_code=status.HTTP_200_OK, content={"status": "ok"})
             else:
                 return JSONResponse(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -121,13 +117,9 @@ class ExtendedOpalClient(OpalClient):
             entry.key = entry.key or register.calc_hash(entry.url, entry.config)
 
             if register.get(entry.key):
-                raise RuntimeError(
-                    f"Callback with key '{entry.key}' already exists. Please specify a different key."
-                )
+                raise RuntimeError(f"Callback with key '{entry.key}' already exists. Please specify a different key.")
 
-            logger.info(
-                f"Registering data update callback to url '{entry.url}' with key '{entry.key}'"
-            )
+            logger.info(f"Registering data update callback to url '{entry.url}' with key '{entry.key}'")
             register.put(entry.url, entry.config, entry.key)
 
 
@@ -202,9 +194,7 @@ class FactDBClient(ExtendedOpalClient):
         engine_runner: PolicyEngineRunner,
     ):
         # runs the callback after policy store is up
-        engine_runner.register_process_initial_start_callbacks(
-            [callback] if callback else []
-        )
+        engine_runner.register_process_initial_start_callbacks([callback] if callback else [])
         async with engine_runner:
             await engine_runner.wait_until_done()
 

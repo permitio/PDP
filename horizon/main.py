@@ -7,7 +7,5 @@ try:
 except SystemExit:
     raise
 except Exception:
-    logger.opt(exception=True).critical(
-        "Sidecar failed to start because of exception: {err}"
-    )
+    logger.opt(exception=True).critical("Sidecar failed to start because of exception: {err}")
     raise SystemExit(1)

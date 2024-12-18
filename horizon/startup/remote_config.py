@@ -64,9 +64,7 @@ class RemoteConfigFetcher:
         self._url = f"{backend_url}{remote_config_route}"
         self._backend_url = backend_url
         self._token = get_env_api_key()
-        self._retry_config = (
-            retry_config if retry_config is not None else self.DEFAULT_RETRY_CONFIG
-        )
+        self._retry_config = retry_config if retry_config is not None else self.DEFAULT_RETRY_CONFIG
         self._shard_id = shard_id
 
     def fetch_config(self) -> Optional[RemoteConfig]:
@@ -94,24 +92,16 @@ class RemoteConfigFetcher:
         However, this is ok because the RemoteConfigFetcher runs *once* when the sidecar starts.
         """
         try:
-            response = BlockingRequest(
-                token=self._token, extra_headers={"X-Shard-ID": self._shard_id}
-            ).post(
+            response = BlockingRequest(token=self._token, extra_headers={"X-Shard-ID": self._shard_id}).post(
                 url=self._url, payload=PersistentStateHandler.build_state_payload_sync()
             )
 
             try:
                 sidecar_config = RemoteConfig(**response)
-                config_context = sidecar_config.dict(include={"context"}).get(
-                    "context", {}
-                )
-                logger.info(
-                    f"Received remote config with the following context: {config_context}"
-                )
+                config_context = sidecar_config.dict(include={"context"}).get("context", {})
+                logger.info(f"Received remote config with the following context: {config_context}")
             except ValidationError as exc:
-                logger.error(
-                    "Got invalid config contents: {exc}", exc=exc, response=response
-                )
+                logger.error("Got invalid config contents: {exc}", exc=exc, response=response)
                 raise
             return sidecar_config
         except requests.RequestException as exc:

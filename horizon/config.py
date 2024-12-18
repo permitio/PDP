@@ -25,8 +25,7 @@ class SidecarConfig(Confi):
     FACTDB_ENABLED = confi.bool(
         "FACTDB_ENABLED",
         False,
-        description="if true, the sidecar will enable the FactDB service to manage the PDP data in "
-        "FactDB",
+        description="if true, the sidecar will enable the FactDB service to manage the PDP data in " "FactDB",
     )
 
     FACTDB_BINARY_PATH = confi.str(
@@ -79,12 +78,8 @@ class SidecarConfig(Confi):
     )
 
     # backend api url, where proxy requests go
-    BACKEND_SERVICE_URL = confi.str(
-        "BACKEND_SERVICE_URL", confi.delay("{CONTROL_PLANE}/v1")
-    )
-    BACKEND_LEGACY_URL = confi.str(
-        "BACKEND_LEGACY_URL", confi.delay("{CONTROL_PLANE}/sdk")
-    )
+    BACKEND_SERVICE_URL = confi.str("BACKEND_SERVICE_URL", confi.delay("{CONTROL_PLANE}/v1"))
+    BACKEND_LEGACY_URL = confi.str("BACKEND_LEGACY_URL", confi.delay("{CONTROL_PLANE}/sdk"))
 
     # backend route to fetch policy data topics
     REMOTE_CONFIG_ENDPOINT = confi.str("REMOTE_CONFIG_ENDPOINT", "/v2/pdps/me/config")
@@ -114,14 +109,10 @@ class SidecarConfig(Confi):
     )
 
     # chosen project id/key to use for the PDP
-    ACTIVE_PROJECT = confi.str(
-        "ACTIVE_PROJECT", None, description="the project id/key to use for the PDP"
-    )
+    ACTIVE_PROJECT = confi.str("ACTIVE_PROJECT", None, description="the project id/key to use for the PDP")
 
     # chosen environment id/key to use for the PDP
-    ACTIVE_ENV = confi.str(
-        "ACTIVE_ENV", None, description="the environment id/key to use for the PDP"
-    )
+    ACTIVE_ENV = confi.str("ACTIVE_ENV", None, description="the environment id/key to use for the PDP")
 
     # access token to perform system control operations
     CONTAINER_CONTROL_KEY = confi.str("CONTAINER_CONTROL_KEY", MOCK_API_KEY)
@@ -164,9 +155,7 @@ class SidecarConfig(Confi):
     )
 
     # centralized logging
-    CENTRAL_LOG_DRAIN_URL = confi.str(
-        "CENTRAL_LOG_DRAIN_URL", "https://listener.logz.io:8071"
-    )
+    CENTRAL_LOG_DRAIN_URL = confi.str("CENTRAL_LOG_DRAIN_URL", "https://listener.logz.io:8071")
     CENTRAL_LOG_DRAIN_TIMEOUT = confi.int("CENTRAL_LOG_DRAIN_TIMEOUT", 5)
     CENTRAL_LOG_TOKEN = confi.str("CENTRAL_LOG_TOKEN", None)
     CENTRAL_LOG_ENABLED = confi.bool("CENTRAL_LOG_ENABLED", False)

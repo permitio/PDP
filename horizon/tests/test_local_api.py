@@ -30,11 +30,7 @@ class MockPermitPDP(PermitPDP):
 
 class MockFactDBPermitPDP(MockPermitPDP):
     def __init__(self):
-        super().__init__(
-            opal=FactDBClient(
-                shard_id=sidecar_config.SHARD_ID, data_topics=self._fix_data_topics()
-            )
-        )
+        super().__init__(opal=FactDBClient(shard_id=sidecar_config.SHARD_ID, data_topics=self._fix_data_topics()))
 
 
 sidecar = MockPermitPDP()

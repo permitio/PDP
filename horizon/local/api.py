@@ -62,9 +62,7 @@ def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
                     grants = await get_grants_for_role(role)
                     roles_grants[role] = grants
 
-                result.append(
-                    SyncedRole(id=role, tenant_id=tenant_name, permissions=grants)
-                )
+                result.append(SyncedRole(id=role, tenant_id=tenant_name, permissions=grants))
 
         return result
 
@@ -93,18 +91,15 @@ def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
     async def list_role_assignments(
         user: Optional[str] = Query(
             None,
-            description="optional user filter, "
-            "will only return role assignments granted to this user.",
+            description="optional user filter, " "will only return role assignments granted to this user.",
         ),
         role: Optional[str] = Query(
             None,
-            description="optional role filter, "
-            "will only return role assignments granting this role.",
+            description="optional role filter, " "will only return role assignments granting this role.",
         ),
         tenant: Optional[str] = Query(
             None,
-            description="optional tenant filter, "
-            "will only return role assignments granted in that tenant.",
+            description="optional tenant filter, " "will only return role assignments granted in that tenant.",
         ),
         resource: Optional[str] = Query(
             None,
@@ -152,9 +147,7 @@ def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
                 Response | Dict,
                 await policy_store.get_data_with_input(
                     "/permit/api/role_assignments/list_role_assignments",
-                    ListRoleAssignmentsPDPBody.construct(
-                        filters=filters, pagination=pagination
-                    ),
+                    ListRoleAssignmentsPDPBody.construct(filters=filters, pagination=pagination),
                 ),
             )
             if isinstance(result, Response):
@@ -176,9 +169,7 @@ def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
                     per_page=per_page,
                     filters=filters,
                 )
-                res_json = parse_obj_as(
-                    list[RoleAssignmentFactDBFact], await res.json()
-                )
+                res_json = parse_obj_as(list[RoleAssignmentFactDBFact], await res.json())
                 return [fact.into_role_assignment() for fact in res_json]
         else:
             return await legacy_list_role_assignments()

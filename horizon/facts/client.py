@@ -27,9 +27,7 @@ class FactsClient:
             )
         return self._client
 
-    async def build_forward_request(
-        self, request: FastApiRequest, path: str
-    ) -> HttpxRequest:
+    async def build_forward_request(self, request: FastApiRequest, path: str) -> HttpxRequest:
         """
         Build an HTTPX request from a FastAPI request to forward to the facts service.
         :param request: FastAPI request
@@ -37,9 +35,7 @@ class FactsClient:
         :return: HTTPX request
         """
         forward_headers = {
-            key: value
-            for key, value in request.headers.items()
-            if key.lower() in {"authorization", "content-type"}
+            key: value for key, value in request.headers.items() if key.lower() in {"authorization", "content-type"}
         }
         remote_config = get_remote_config()
         project_id = remote_config.context.get("project_id")
@@ -50,9 +46,7 @@ class FactsClient:
                 detail="PDP API Key for environment is required.",
             )
 
-        full_path = urljoin(
-            f"/v2/facts/{project_id}/{environment_id}/", path.removeprefix("/")
-        )
+        full_path = urljoin(f"/v2/facts/{project_id}/{environment_id}/", path.removeprefix("/"))
         return self.client.build_request(
             method=request.method,
             url=full_path,
@@ -61,15 +55,11 @@ class FactsClient:
             content=request.stream(),
         )
 
-    async def send(
-        self, request: HttpxRequest, *, stream: bool = False
-    ) -> HttpxResponse:
+    async def send(self, request: HttpxRequest, *, stream: bool = False) -> HttpxResponse:
         logger.info(f"Forwarding facts request: {request.method} {request.url}")
         return await self.client.send(request, stream=stream)
 
-    async def send_forward_request(
-        self, request: FastApiRequest, path: str
-    ) -> HttpxResponse:
+    async def send_forward_request(self, request: FastApiRequest, path: str) -> HttpxResponse:
         """
         Send a forward request to the facts service.
         :param request: FastAPI request
@@ -80,9 +70,7 @@ class FactsClient:
         return await self.send(forward_request)
 
     @staticmethod
-    def convert_response(
-        response: HttpxResponse, *, stream: bool = False
-    ) -> FastApiResponse:
+    def convert_response(response: HttpxResponse, *, stream: bool = False) -> FastApiResponse:
         """
         Convert an HTTPX response to a FastAPI response.
         :param response: HTTPX response
@@ -107,17 +95,14 @@ class FactsClient:
     def extract_body(response: HttpxResponse):
         if not response.is_success:
             logger.warning(
-                f"Response status code is not successful ( {response.status_code} ), "
-                f"skipping wait for update."
+                f"Response status code is not successful ( {response.status_code} ), " f"skipping wait for update."
             )
             return None
 
         try:
             body = response.json()
         except Exception:
-            logger.exception(
-                f"Failed to parse response body as JSON, skipping wait for update."
-            )
+            logger.exception(f"Failed to parse response body as JSON, skipping wait for update.")
             return None
         else:
             return body

@@ -37,9 +37,7 @@ class JSONPatchAction(BaseModel):
 
     op: str = Field(..., description="patch action to perform")
     path: str = Field(..., description="target location in modified json")
-    value: Optional[Dict[str, Any]] = Field(
-        None, description="json document, the operand of the action"
-    )
+    value: Optional[Dict[str, Any]] = Field(None, description="json document, the operand of the action")
 
 
 router = APIRouter()
@@ -69,9 +67,7 @@ async def patch_handler(response: Response) -> Response:
 
     del response_json["patch"]
     del response.headers["Content-Length"]
-    return JSONResponse(
-        response_json, status_code=response.status_code, headers=dict(response.headers)
-    )
+    return JSONResponse(response_json, status_code=response.status_code, headers=dict(response.headers))
 
 
 write_routes = {
@@ -93,8 +89,7 @@ async def cloud_proxy(request: Request, path: str):
     Proxies the request to the cloud API. Actual API docs are located here: https://api.permit.io/redoc
     """
     write_route = any(
-        request.method == route[0] and route[1].match(request.path_params["path"])
-        for route in write_routes
+        request.method == route[0] and route[1].match(request.path_params["path"]) for route in write_routes
     )
 
     headers = {}
@@ -201,44 +196,32 @@ async def proxy_request_to_cloud_service(
         headers["host"] = urlparse(cloud_service_url).netloc
     except Exception as e:
         # fallback
-        logger.error(
-            f"could not urlparse cloud service url: {cloud_service_url}, exception: {e}"
-        )
+        logger.error(f"could not urlparse cloud service url: {cloud_service_url}, exception: {e}")
 
     logger.info(f"Proxying request: {request.method} {path}")
 
     async with aiohttp.ClientSession() as session:
         if request.method == HTTP_GET:
-            async with session.get(
-                path, headers=headers, params=params
-            ) as backend_response:
+            async with session.get(path, headers=headers, params=params) as backend_response:
                 return await proxy_response(backend_response)
 
         if request.method == HTTP_DELETE:
-            async with session.delete(
-                path, headers=headers, params=params
-            ) as backend_response:
+            async with session.delete(path, headers=headers, params=params) as backend_response:
                 return await proxy_response(backend_response)
 
         # these methods has data payload
         data = await request.body()
 
         if request.method == HTTP_POST:
-            async with session.post(
-                path, headers=headers, data=data, params=params
-            ) as backend_response:
+            async with session.post(path, headers=headers, data=data, params=params) as backend_response:
                 return await proxy_response(backend_response)
 
         if request.method == HTTP_PUT:
-            async with session.put(
-                path, headers=headers, data=data, params=params
-            ) as backend_response:
+            async with session.put(path, headers=headers, data=data, params=params) as backend_response:
                 return await proxy_response(backend_response)
 
         if request.method == HTTP_PATCH:
-            async with session.patch(
-                path, headers=headers, data=data, params=params
-            ) as backend_response:
+            async with session.patch(path, headers=headers, data=data, params=params) as backend_response:
                 return await proxy_response(backend_response)
 
     raise HTTPException(

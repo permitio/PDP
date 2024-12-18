@@ -10,7 +10,6 @@ from horizon.system.consts import GUNICORN_EXIT_APP
 
 
 class EnvApiKeyFetcher:
-
     DEFAULT_RETRY_CONFIG = {
         "retry": retry_if_not_exception_type(NoRetryException),
         "wait": wait.wait_random_exponential(max=10),
@@ -38,9 +37,7 @@ class EnvApiKeyFetcher:
 
         if sidecar_config.PROJECT_API_KEY:
             if sidecar_config.ORG_API_KEY:
-                logger.warning(
-                    "PDP_PROJECT_API_KEY is set, but PDP_ORG_API_KEY is also set and will be ignored."
-                )
+                logger.warning("PDP_PROJECT_API_KEY is set, but PDP_ORG_API_KEY is also set and will be ignored.")
             if not sidecar_config.ACTIVE_ENV:
                 logger.error(
                     "PDP_PROJECT_API_KEY is set, but PDP_ACTIVE_ENV is not. Please set it with Environment ID or Key."
@@ -56,9 +53,7 @@ class EnvApiKeyFetcher:
                 raise
             return ApiKeyLevel.ORGANIZATION
 
-        logger.critical(
-            "No API key specified. Please specify one with the PDP_API_KEY environment variable."
-        )
+        logger.critical("No API key specified. Please specify one with the PDP_API_KEY environment variable.")
         raise
 
     def get_env_api_key_by_level(self) -> str:
@@ -79,18 +74,12 @@ class EnvApiKeyFetcher:
                 raise
         return self._fetch_env_key(api_key, active_project_id, active_env_id)
 
-    def _fetch_env_key(
-        self, api_key: str, active_project_key: str, active_env_key: str
-    ) -> str:
+    def _fetch_env_key(self, api_key: str, active_project_key: str, active_env_key: str) -> str:
         """
         fetches the active environment's API Key by identifying with the provided Project/Organization API Key.
         """
-        api_key_url = (
-            f"{self._backend_url}/v2/api-key/{active_project_key}/{active_env_key}"
-        )
-        logger.info(
-            "Fetching Environment API Key from control plane: {url}", url=api_key_url
-        )
+        api_key_url = f"{self._backend_url}/v2/api-key/{active_project_key}/{active_env_key}"
+        logger.info("Fetching Environment API Key from control plane: {url}", url=api_key_url)
         fetch_with_retry = retry(**self._retry_config)(
             lambda: BlockingRequest(
                 token=api_key,

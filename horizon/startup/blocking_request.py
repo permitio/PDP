@@ -6,13 +6,9 @@ from horizon.startup.exceptions import InvalidPDPTokenException
 
 
 class BlockingRequest:
-    def __init__(
-        self, token: Optional[str], extra_headers: dict[str, Any] | None = None
-    ):
+    def __init__(self, token: Optional[str], extra_headers: dict[str, Any] | None = None):
         self._token = token
-        self._extra_headers = {
-            k: v for k, v in (extra_headers or {}).items() if v is not None
-        }
+        self._extra_headers = {k: v for k, v in (extra_headers or {}).items() if v is not None}
 
     def _headers(self) -> Dict[str, str]:
         headers = {}
@@ -37,9 +33,7 @@ class BlockingRequest:
         """
         utility method to send a *blocking* HTTP POST request with a JSON payload and get the response back.
         """
-        response = requests.post(
-            url, json=payload, headers=self._headers(), params=params
-        )
+        response = requests.post(url, json=payload, headers=self._headers(), params=params)
 
         if response.status_code == 401:
             raise InvalidPDPTokenException()

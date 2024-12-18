@@ -69,15 +69,11 @@ class FactDBPolicyStoreClient(OpaClient):
             )
         except NotImplementedError as e:
             logger.warning(f"{e}, storing in OPA directly...")
-            return await super().set_policy_data(
-                policy_data=policy_data, path=path, transaction_id=transaction_id
-            )
+            return await super().set_policy_data(policy_data=policy_data, path=path, transaction_id=transaction_id)
 
         return await self._apply_data_update(update)
 
-    def _generate_operations(
-        self, parts: list[str], data: JsonableValue
-    ) -> Iterator[AnyOperation]:
+    def _generate_operations(self, parts: list[str], data: JsonableValue) -> Iterator[AnyOperation]:
         match parts:
             case ["relationships"]:
                 for obj, _data in data.items():
@@ -86,13 +82,9 @@ class FactDBPolicyStoreClient(OpaClient):
                 yield from _get_operations_for_update_relationship_tuple(obj, data)
             case ["role_assignments"]:
                 for full_user_key, _data in data.items():
-                    yield from _get_operations_for_update_role_assigment(
-                        full_user_key, _data
-                    )
+                    yield from _get_operations_for_update_role_assigment(full_user_key, _data)
             case ["role_assignments", full_user_key]:
-                yield from _get_operations_for_update_role_assigment(
-                    full_user_key, data
-                )
+                yield from _get_operations_for_update_role_assigment(full_user_key, data)
             case ["users"]:
                 for user_key, _data in data.items():
                     yield from _get_operations_for_update_user(user_key, _data)
@@ -100,19 +92,13 @@ class FactDBPolicyStoreClient(OpaClient):
                 yield from _get_operations_for_update_user(user_key, data)
             case ["resource_instances"]:
                 for instance_key, _data in data.items():
-                    yield from _get_operations_for_update_resource_instance(
-                        instance_key, _data
-                    )
+                    yield from _get_operations_for_update_resource_instance(instance_key, _data)
             case ["resource_instances", instance_key]:
-                yield from _get_operations_for_update_resource_instance(
-                    instance_key, data
-                )
+                yield from _get_operations_for_update_resource_instance(instance_key, data)
             case _:
                 raise NotImplementedError(f"Unsupported path for FactDB: {parts}")
 
-    async def _apply_data_update(
-        self, data_update: DataUpdate
-    ) -> aiohttp.ClientResponse:
+    async def _apply_data_update(self, data_update: DataUpdate) -> aiohttp.ClientResponse:
         start_time = time.perf_counter_ns()
         res = await self.client.post(
             "/v1/facts/applyUpdate",
@@ -125,9 +111,7 @@ class FactDBPolicyStoreClient(OpaClient):
                 await res.text(),
             )
         else:
-            logger.info(
-                f"Data update applied to FactDB: status={res.status} duration={elapsed_time_ms:.2f}ms"
-            )
+            logger.info(f"Data update applied to FactDB: status={res.status} duration={elapsed_time_ms:.2f}ms")
         return res
 
     async def list_facts_by_type(

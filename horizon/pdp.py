@@ -55,9 +55,7 @@ def apply_config(overrides_dict: dict, config_object: Confi):
                     config_object.entries[key].cast_from_json(value),
                 )
             except Exception:
-                logger.opt(exception=True).warning(
-                    f"Unable to set config key {prefixed_key} from overrides:"
-                )
+                logger.opt(exception=True).warning(f"Unable to set config key {prefixed_key} from overrides:")
                 continue
             logger.info(f"Overriden config key: {prefixed_key}")
             continue
@@ -93,9 +91,7 @@ class PermitPDP:
         try:
             remote_config = get_remote_config()
         except InvalidPDPTokenException:
-            logger.critical(
-                "An invalid API key was specified. Please verify the PDP_API_KEY environment variable."
-            )
+            logger.critical("An invalid API key was specified. Please verify the PDP_API_KEY environment variable.")
             raise SystemExit(GUNICORN_EXIT_APP)
 
         if not remote_config:
@@ -110,10 +106,7 @@ class PermitPDP:
 
         self._log_environment(remote_config.context)
 
-        if (
-            sidecar_config.OPA_BEARER_TOKEN_REQUIRED
-            or sidecar_config.OPA_DECISION_LOG_ENABLED
-        ):
+        if sidecar_config.OPA_BEARER_TOKEN_REQUIRED or sidecar_config.OPA_DECISION_LOG_ENABLED:
             # we need to pass to OPAL a custom inline OPA config to enable these features
             self._configure_inline_opa_config()
 
@@ -131,9 +124,7 @@ class PermitPDP:
         if sidecar_config.ENABLE_MONITORING:
             self._configure_monitoring()
 
-        self._opal = FactDBClient(
-            shard_id=sidecar_config.SHARD_ID, data_topics=self._fix_data_topics()
-        )
+        self._opal = FactDBClient(shard_id=sidecar_config.SHARD_ID, data_topics=self._fix_data_topics())
         self._configure_cloud_logging(remote_config.context)
 
         self._opal_relay = OpalRelayAPIClient(remote_config.context, self._opal)
@@ -171,14 +162,8 @@ class PermitPDP:
         )
 
     def _log_environment(self, pdp_context: dict[str, str]):
-        if (
-            not "org_id" in pdp_context
-            or not "project_id" in pdp_context
-            or not "env_id" in pdp_context
-        ):
-            logger.warning(
-                "Didn't get org_id, project_id, or env_id context from backend."
-            )
+        if not "org_id" in pdp_context or not "project_id" in pdp_context or not "env_id" in pdp_context:
+            logger.warning("Didn't get org_id, project_id, or env_id context from backend.")
             return
         logger.info("PDP started at: ")
         logger.info("  org_id:     {}", UUID(pdp_context["org_id"]))
@@ -201,13 +186,8 @@ class PermitPDP:
         if not sidecar_config.CENTRAL_LOG_ENABLED:
             return
 
-        if (
-            not sidecar_config.CENTRAL_LOG_TOKEN
-            or len(sidecar_config.CENTRAL_LOG_TOKEN) == 0
-        ):
-            logger.warning(
-                "Centralized log is enabled, but token is not valid. Disabling sink."
-            )
+        if not sidecar_config.CENTRAL_LOG_TOKEN or len(sidecar_config.CENTRAL_LOG_TOKEN) == 0:
+            logger.warning("Centralized log is enabled, but token is not valid. Disabling sink.")
             return
 
         logzio_handler = LogzioHandler(
@@ -311,9 +291,7 @@ class PermitPDP:
             return opal_client_config.DATA_TOPICS
 
         return [
-            topic.removesuffix(
-                f"/{opal_client_config.SCOPE_ID}"
-            )  # Only remove suffix if it's of the expected form
+            topic.removesuffix(f"/{opal_client_config.SCOPE_ID}")  # Only remove suffix if it's of the expected form
             for topic in opal_client_config.DATA_TOPICS
         ]
 
@@ -404,7 +382,5 @@ class PermitPDP:
 
     def _verify_config(self):
         if get_env_api_key() == MOCK_API_KEY:
-            logger.critical(
-                "No API key specified. Please specify one with the PDP_API_KEY environment variable."
-            )
+            logger.critical("No API key specified. Please specify one with the PDP_API_KEY environment variable.")
             raise SystemExit(GUNICORN_EXIT_APP)

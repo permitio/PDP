@@ -46,9 +46,7 @@ class FactDBRunner(PolicyEngineRunner):
     async def handle_log_line(self, line: bytes) -> None:
         try:
             log_line = json.loads(line)
-            level = logging.getLevelName(
-                logging_level_from_string(log_line.pop("level", "info"))
-            )
+            level = logging.getLevelName(logging_level_from_string(log_line.pop("level", "info")))
             msg = log_line.pop("msg", None)
             log_entire_dict(level, msg, log_line)
         except json.JSONDecodeError:

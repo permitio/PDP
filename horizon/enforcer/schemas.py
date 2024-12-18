@@ -76,9 +76,7 @@ class UserPermissionsQuery(BaseSchema):
     _offset: Optional[PositiveInt] = PrivateAttr(None)
     _limit: Optional[PositiveInt] = PrivateAttr(None)
 
-    def set_pagination(
-        self, page: Optional[PositiveInt], per_page: Optional[PositiveInt]
-    ) -> bool:
+    def set_pagination(self, page: Optional[PositiveInt], per_page: Optional[PositiveInt]) -> bool:
         if per_page:
             self._limit = per_page
             if page:
@@ -156,9 +154,7 @@ class MappingRuleData(BaseSchema):
 class AuthorizedUserAssignment(BaseSchema):
     user: str = Field(..., description="The user that is authorized")
     tenant: str = Field(..., description="The tenant that the user is authorized for")
-    resource: str = Field(
-        ..., description="The resource that the user is authorized for"
-    )
+    resource: str = Field(..., description="The resource that the user is authorized for")
     role: str = Field(..., description="The role that the user is assigned to")
 
 

@@ -27,23 +27,17 @@ def get_data_update_subscriber(
     return _data_update_subscriber
 
 
-DataUpdateSubscriberDependency = Annotated[
-    DataUpdateSubscriber, Depends(get_data_update_subscriber)
-]
+DataUpdateSubscriberDependency = Annotated[DataUpdateSubscriber, Depends(get_data_update_subscriber)]
 
 
 def get_wait_timeout(request: Request) -> float | None:
-    wait_timeout = request.headers.get(
-        "X-Wait-timeout", sidecar_config.LOCAL_FACTS_WAIT_TIMEOUT
-    )
+    wait_timeout = request.headers.get("X-Wait-timeout", sidecar_config.LOCAL_FACTS_WAIT_TIMEOUT)
     if not wait_timeout:
         return None
     try:
         wait_timeout = float(wait_timeout)
     except ValueError as e:
-        logger.error(
-            f"Invalid X-Wait-timeout header, expected float, got {wait_timeout!r}"
-        )
+        logger.error(f"Invalid X-Wait-timeout header, expected float, got {wait_timeout!r}")
         raise HTTPException(
             status_code=400,
             detail=f"Invalid X-Wait-timeout header, expected float, got {wait_timeout!r}",

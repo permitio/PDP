@@ -83,9 +83,7 @@ ALLOWED_ENDPOINTS = [
     (
         "/user-permissions",
         "permit/user_permissions",
-        UserPermissionsQuery(
-            user=User(key="user1"), resource_types=["resource1", "resource2"]
-        ),
+        UserPermissionsQuery(user=User(key="user1"), resource_types=["resource1", "resource2"]),
         {
             "result": {
                 "permissions": {
@@ -161,7 +159,7 @@ ALLOWED_ENDPOINTS = [
         ),
         {"result": [{"attributes": {}, "key": "tenant-1"}]},
         [{"attributes": {}, "key": "tenant-1"}],
-    )
+    ),
     # TODO: Add Kong
 ]
 
@@ -293,9 +291,7 @@ ALLOWED_ENDPOINTS_FACTDB = [
 
 @pytest.mark.parametrize(
     "endpoint, opa_endpoint, query, opa_response, expected_response",
-    list(
-        filter(lambda p: not isinstance(p[2], UrlAuthorizationQuery), ALLOWED_ENDPOINTS)
-    ),
+    list(filter(lambda p: not isinstance(p[2], UrlAuthorizationQuery), ALLOWED_ENDPOINTS)),
 )
 @pytest.mark.timeout(30)
 @pytest.mark.asyncio
@@ -312,9 +308,7 @@ async def test_enforce_endpoint_statistics(
             return client.post(
                 endpoint,
                 headers={"authorization": f"Bearer {sidecar_config.API_KEY}"},
-                json=query.dict()
-                if not isinstance(query, list)
-                else [q.dict() for q in query],
+                json=query.dict() if not isinstance(query, list) else [q.dict() for q in query],
             )
 
         with aioresponses() as m:
@@ -374,20 +368,14 @@ async def test_enforce_endpoint_statistics(
             await asyncio.sleep(2)
             current_rate = await stats_manager.current_rate()
             assert current_rate == (3.0 / 4.0)
-            assert (
-                client.get("/health").status_code == status.HTTP_503_SERVICE_UNAVAILABLE
-            )
+            assert client.get("/health").status_code == status.HTTP_503_SERVICE_UNAVAILABLE
             await stats_manager.reset_stats()
             current_rate = await stats_manager.current_rate()
             assert current_rate == 0
-            assert (
-                client.get("/health").status_code == status.HTTP_503_SERVICE_UNAVAILABLE
-            )
+            assert client.get("/health").status_code == status.HTTP_503_SERVICE_UNAVAILABLE
 
 
-@pytest.mark.parametrize(
-    "endpoint, opa_endpoint, query, opa_response, expected_response", ALLOWED_ENDPOINTS
-)
+@pytest.mark.parametrize("endpoint, opa_endpoint, query, opa_response, expected_response", ALLOWED_ENDPOINTS)
 def test_enforce_endpoint(
     endpoint,
     opa_endpoint,
@@ -401,9 +389,7 @@ def test_enforce_endpoint(
         return _client.post(
             endpoint,
             headers={"authorization": f"Bearer {sidecar_config.API_KEY}"},
-            json=query.dict()
-            if not isinstance(query, list)
-            else [q.dict() for q in query],
+            json=query.dict() if not isinstance(query, list) else [q.dict() for q in query],
         )
 
     with aioresponses() as m:
@@ -495,8 +481,7 @@ def test_enforce_endpoint_factdb(
     def post_endpoint():
         return _client.post(
             endpoint,
-            headers={"authorization": f"Bearer {sidecar_config.API_KEY}"}
-            | (headers or {}),
+            headers={"authorization": f"Bearer {sidecar_config.API_KEY}"} | (headers or {}),
             json=jsonable_encoder(query) if query else None,
         )
 
@@ -544,13 +529,9 @@ def test_enforce_endpoint_factdb(
         elif isinstance(expected_response, dict):
             for k, v in expected_response.items():
                 try:
-                    assert (
-                        response.json()[k] == v
-                    ), f"Expected {k} to be {v} but got {response.json()[k]}"
+                    assert response.json()[k] == v, f"Expected {k} to be {v} but got {response.json()[k]}"
                 except KeyError:
-                    pytest.fail(
-                        f"response missing key {k} from expected response:\n,{response.json()}"
-                    )
+                    pytest.fail(f"response missing key {k} from expected response:\n,{response.json()}")
         else:
             raise TypeError(
                 f"Unexpected expected response type, expected one of list, dict and got {type(expected_response)}"

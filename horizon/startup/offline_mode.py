@@ -52,9 +52,7 @@ class OfflineModeManager:
             with open(self._backup_path, "w") as f:
                 f.write(
                     RemoteConfigBackup(
-                        enc_remote_config=Fernet(enc_key).encrypt(
-                            remote_config.json(ensure_ascii=False).encode()
-                        ),
+                        enc_remote_config=Fernet(enc_key).encrypt(remote_config.json(ensure_ascii=False).encode()),
                         key_derivation_salt=salt,
                     ).json(ensure_ascii=False)
                 )
@@ -78,13 +76,9 @@ class OfflineModeManager:
             return None
 
         dec_key, _ = self._derive_backup_key(remote_config_backup.key_derivation_salt)
-        return RemoteConfig.parse_raw(
-            Fernet(dec_key).decrypt(remote_config_backup.enc_remote_config)
-        )
+        return RemoteConfig.parse_raw(Fernet(dec_key).decrypt(remote_config_backup.enc_remote_config))
 
-    def process_remote_config(
-        self, remote_config: Optional[RemoteConfig]
-    ) -> Optional[RemoteConfig]:
+    def process_remote_config(self, remote_config: Optional[RemoteConfig]) -> Optional[RemoteConfig]:
         if remote_config is None:
             # Cloud fetch failed, try to restore from backup
             remote_config = self.restore_config()

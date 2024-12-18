@@ -57,16 +57,12 @@ class PersistentStateHandler:
                 try:
                     data = json.load(f)
                 except json.JSONDecodeError:
-                    logger.warning(
-                        "Unable to load existing persistent state: Invalid JSON."
-                    )
+                    logger.warning("Unable to load existing persistent state: Invalid JSON.")
                     return False
             try:
                 self._state = PersistentState(**data)
             except ValidationError:
-                logger.warning(
-                    "Unable to load existing persistent state: Invalid schema."
-                )
+                logger.warning("Unable to load existing persistent state: Invalid schema.")
                 return False
             return True
         return False
@@ -143,18 +139,14 @@ class PersistentStateHandler:
 
     @classmethod
     def _get_opa_version_vars(cls) -> dict:
-        opa_proc = subprocess.run(
-            ["opa", "version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE
-        )
+        opa_proc = subprocess.run(["opa", "version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if opa_proc.returncode != 0:
             logger.warning(
                 "Unable to get OPA version: {}",
                 opa_proc.stderr.decode(),
             )
             return {}
-        return dict(
-            [line.split(": ", 1) for line in opa_proc.stdout.decode().splitlines()]
-        )
+        return dict([line.split(": ", 1) for line in opa_proc.stdout.decode().splitlines()])
 
     @classmethod
     def get_runtime_state(cls) -> dict:
@@ -183,9 +175,7 @@ class PersistentStateHandler:
             },
         }
 
-    async def reporter_user_data_handler(
-        self, report: DataUpdateReport
-    ) -> dict[str, Any]:
+    async def reporter_user_data_handler(self, report: DataUpdateReport) -> dict[str, Any]:
         return {
             "pdp_instance_id": self.get().pdp_instance_id,
         }
@@ -193,9 +183,7 @@ class PersistentStateHandler:
     @classmethod
     async def build_state_payload(cls, state: Optional[PersistentState] = None) -> dict:
         payload = cls._build_state_payload()
-        payload["state"].update(
-            await asyncio.get_event_loop().run_in_executor(None, cls.get_runtime_state)
-        )
+        payload["state"].update(await asyncio.get_event_loop().run_in_executor(None, cls.get_runtime_state))
         return payload
 
     @classmethod
@@ -205,9 +193,7 @@ class PersistentStateHandler:
         return payload
 
     async def _report(self, state: Optional[PersistentState] = None):
-        config_url = (
-            f"{sidecar_config.CONTROL_PLANE}{sidecar_config.REMOTE_STATE_ENDPOINT}"
-        )
+        config_url = f"{sidecar_config.CONTROL_PLANE}{sidecar_config.REMOTE_STATE_ENDPOINT}"
         async with aiohttp.ClientSession() as session:
             logger.info("Reporting status update to server...")
             response = await session.post(

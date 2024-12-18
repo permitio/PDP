@@ -6,9 +6,7 @@ from horizon.startup.api_keys import get_env_api_key
 
 def enforce_pdp_token(authorization=Header(None)):
     if authorization is None:
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED, detail="Missing Authorization header"
-        )
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Missing Authorization header")
     schema, token = authorization.split(" ")
 
     if schema.strip().lower() != "bearer" or token.strip() != get_env_api_key():
@@ -23,13 +21,8 @@ def enforce_pdp_control_key(authorization=Header(None)):
         )
 
     if authorization is None:
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED, detail="Missing Authorization header"
-        )
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Missing Authorization header")
     schema, token = authorization.split(" ")
 
-    if (
-        schema.strip().lower() != "bearer"
-        or token.strip() != sidecar_config.CONTAINER_CONTROL_KEY
-    ):
+    if schema.strip().lower() != "bearer" or token.strip() != sidecar_config.CONTAINER_CONTROL_KEY:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid PDP token")
