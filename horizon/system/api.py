@@ -33,6 +33,6 @@ def init_system_api_router():
             logger.info("Exiting due to system request.")
             os._exit(GUNICORN_EXIT_APP)
 
-        asyncio.ensure_future(do_exit())
+        await do_exit()
 
     return router
