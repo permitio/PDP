@@ -16,7 +16,7 @@ class User(BaseSchema):
     first_name: str | None = Field(None, alias="firstName")
     last_name: str | None = Field(None, alias="lastName")
     email: str | None = None
-    attributes: dict[str, Any] | None = {}
+    attributes: dict[str, Any] | None = Field(default_factory=dict)
 
 
 class Resource(BaseSchema):
@@ -58,13 +58,13 @@ class UrlAuthorizationQuery(BaseSchema):
     http_method: str
     url: AnyHttpUrl
     tenant: str
-    context: dict[str, Any] | None = {}
+    context: dict[str, Any] | None = Field(default_factory=dict)
     sdk: str | None
 
 
 class UserTenantsQuery(BaseSchema):
     user: User
-    context: dict[str, Any] | None = {}
+    context: dict[str, Any] | None = Field(default_factory=dict)
 
 
 class UserPermissionsQuery(BaseSchema):
@@ -72,7 +72,7 @@ class UserPermissionsQuery(BaseSchema):
     tenants: list[str] | None = None
     resources: list[str] | None = None
     resource_types: list[str] | None = None
-    context: dict[str, Any] | None = {}
+    context: dict[str, Any] | None = Field(default_factory=dict)
     _offset: PositiveInt | None = PrivateAttr(None)
     _limit: PositiveInt | None = PrivateAttr(None)
 
@@ -113,7 +113,7 @@ class BulkAuthorizationResult(BaseSchema):
 
 class _TenantDetails(BaseSchema):
     key: str
-    attributes: dict = {}
+    attributes: dict = Field(default_factory=dict)
 
 
 class _ResourceDetails(_TenantDetails):
@@ -233,7 +233,7 @@ class AuthorizedUsersAuthorizationQuery(BaseSchema):
 
     action: str
     resource: Resource
-    context: dict[str, Any] | None = {}
+    context: dict[str, Any] | None = Field(default_factory=dict)
     sdk: str | None
 
     def __repr__(self) -> str:
