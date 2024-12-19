@@ -1,4 +1,4 @@
-from typing import cast
+from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, Query
 from loguru import logger
@@ -21,6 +21,9 @@ from horizon.local.schemas import (
     WrappedResponse,
 )
 
+PageQuery = Annotated[int, Query(ge=1, description="The page number (starts from 1).")]
+PerPageQuery = Annotated[int, Query(ge=1, le=100, description="The number of results per page (max 100).")]
+
 
 def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
     policy_store = policy_store or DEFAULT_POLICY_STORE_GETTER()
@@ -31,39 +34,40 @@ def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
         response_model=list[RoleAssignment],
     )
     async def list_role_assignments(
-        user: str | None = Query(
-            None,
-            description="optional user filter, " "will only return role assignments granted to this user.",
-        ),
-        role: str | None = Query(
-            None,
-            description="optional role filter, " "will only return role assignments granting this role.",
-        ),
-        tenant: str | None = Query(
-            None,
-            description="optional tenant filter, " "will only return role assignments granted in that tenant.",
-        ),
-        resource: str | None = Query(
-            None,
-            description="optional resource **type** filter, "
-            "will only return role assignments granted on that resource type.",
-        ),
-        resource_instance: str | None = Query(
-            None,
-            description="optional resource instance filter, "
-            "will only return role assignments granted on that resource instance.",
-        ),
-        page: int = Query(
-            default=1,
-            ge=1,
-            description="Page number of the results to fetch, starting at 1.",
-        ),
-        per_page: int = Query(
-            default=30,
-            ge=1,
-            le=100,
-            description="The number of results per page (max 100).",
-        ),
+        user: Annotated[
+            str | None,
+            Query(
+                description="optional user filter, will only return role assignments granted to this user.",
+            ),
+        ] = None,
+        role: Annotated[
+            str | None,
+            Query(
+                description="optional role filter, will only return role assignments granting this role.",
+            ),
+        ] = None,
+        tenant: Annotated[
+            str | None,
+            Query(
+                description="optional tenant filter, will only return role assignments granted in that tenant.",
+            ),
+        ] = None,
+        resource: Annotated[
+            str | None,
+            Query(
+                description="optional resource **type** filter, "
+                "will only return role assignments granted on that resource type.",
+            ),
+        ] = None,
+        resource_instance: Annotated[
+            str | None,
+            Query(
+                description="optional resource instance filter, "
+                "will only return role assignments granted on that resource instance.",
+            ),
+        ] = None,
+        page: PageQuery = 1,
+        per_page: PerPageQuery = 30,
     ) -> list[RoleAssignment]:
         """
         Get all role assignments stored in the PDP.

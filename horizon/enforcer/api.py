@@ -3,7 +3,7 @@ import json
 import re
 from collections.abc import Callable
 from pathlib import Path
-from typing import cast
+from typing import Annotated, cast
 
 import aiohttp
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
@@ -405,7 +405,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
     async def is_allowed_url(
         request: Request,
         query: UrlAuthorizationQuery,
-        x_permit_sdk_language: str | None = Depends(notify_seen_sdk),
+        x_permit_sdk_language: Annotated[str | None, Depends(notify_seen_sdk)],
     ):
         data = await post_to_opa(request, "mapping_rules", None)
 
@@ -452,17 +452,18 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
         name="Get User Permissions",
         status_code=status.HTTP_200_OK,
         response_model_exclude_none=True,
-        dependencies=[Depends(enforce_pdp_token)],
+        dependencies=[Depends(enforce_pdp_token), Depends(notify_seen_sdk)],
     )
     async def user_permissions(
         request: Request,
         query: UserPermissionsQuery,
-        page: PositiveInt | None = Query(  # noqa: B008
-            None,
-            description="Page number for pagination, must be set together with per_page",
-        ),
-        per_page: PositiveInt | None = Query(None, description="Number of items per page for pagination"),  # noqa: B008
-        x_permit_sdk_language: str | None = Depends(notify_seen_sdk),  # noqa: ARG001
+        page: Annotated[
+            PositiveInt | None,
+            Query(
+                description="Page number for pagination, must be set together with per_page",
+            ),
+        ] = None,
+        per_page: Annotated[PositiveInt | None, Query(description="Number of items per page for pagination")] = None,
     ):
         paginated = query.set_pagination(page, per_page)
         if paginated:
@@ -520,12 +521,11 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
         name="Get User Tenants",
         status_code=status.HTTP_200_OK,
         response_model_exclude_none=True,
-        dependencies=[Depends(enforce_pdp_token)],
+        dependencies=[Depends(enforce_pdp_token), Depends(notify_seen_sdk)],
     )
     async def user_tenants(
         request: Request,
         query: UserTenantsQuery,
-        x_permit_sdk_language: str | None = Depends(notify_seen_sdk),  # noqa: ARG001
     ):
         raw_result = await conditional_is_allowed(
             query,
@@ -550,12 +550,11 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
         response_model=AllTenantsAuthorizationResult,
         status_code=status.HTTP_200_OK,
         response_model_exclude_none=True,
-        dependencies=[Depends(enforce_pdp_token)],
+        dependencies=[Depends(enforce_pdp_token), Depends(notify_seen_sdk)],
     )
     async def is_allowed_all_tenants(
         request: Request,
         query: AuthorizationQuery,
-        x_permit_sdk_language: str | None = Depends(notify_seen_sdk),  # noqa: ARG001
     ):
         if sidecar_config.FACTDB_ENABLED:
             response = await _is_allowed_factdb(query, request, path="/check/all-tenants")
@@ -580,12 +579,11 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
         response_model=BulkAuthorizationResult,
         status_code=status.HTTP_200_OK,
         response_model_exclude_none=True,
-        dependencies=[Depends(enforce_pdp_token)],
+        dependencies=[Depends(enforce_pdp_token), Depends(notify_seen_sdk)],
     )
     async def is_allowed_bulk(
         request: Request,
         queries: list[AuthorizationQuery],
-        x_permit_sdk_language: str | None = Depends(notify_seen_sdk),  # noqa: ARG001
     ):
         if sidecar_config.FACTDB_ENABLED:
             response = await _is_allowed_factdb(queries, request, path="/check/bulk")
@@ -611,12 +609,11 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
         response_model=AuthorizationResult,
         status_code=status.HTTP_200_OK,
         response_model_exclude_none=True,
-        dependencies=[Depends(enforce_pdp_token)],
+        dependencies=[Depends(enforce_pdp_token), Depends(notify_seen_sdk)],
     )
     async def is_allowed(
         request: Request,
         query: AuthorizationQuery | AuthorizationQueryV1,
-        x_permit_sdk_language: str | None = Depends(notify_seen_sdk),  # noqa: ARG001
     ):
         if isinstance(query, AuthorizationQueryV1):
             raise HTTPException(
@@ -650,10 +647,10 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
     )
     async def is_allowed_nginx(
         request: Request,
-        permit_user_key: str = Header(None),
-        permit_tenant_id: str = Header(None),
-        permit_action: str = Header(None),
-        permit_resource_type: str = Header(None),
+        permit_user_key: Annotated[str | None, Header()] = None,
+        permit_tenant_id: Annotated[str | None, Header()] = None,
+        permit_action: Annotated[str | None, Header()] = None,
+        permit_resource_type: Annotated[str | None, Header()] = None,
     ):
         query = AuthorizationQuery(
             user=User(key=permit_user_key),
