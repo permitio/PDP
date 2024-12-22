@@ -405,7 +405,6 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
     async def is_allowed_url(
         request: Request,
         query: UrlAuthorizationQuery,
-        x_permit_sdk_language: Annotated[str | None, Depends(notify_seen_sdk)],
     ):
         data = await post_to_opa(request, "mapping_rules", None)
 
@@ -444,7 +443,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
             context=query.context,
             sdk=query.sdk,
         )
-        return await is_allowed(request, allowed_query, x_permit_sdk_language)
+        return await is_allowed(request, allowed_query)
 
     @router.post(
         "/user-permissions",
