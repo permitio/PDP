@@ -25,13 +25,13 @@ pip install -r requirements-dev.txt
 
 ### Running locally (during development)
 ```
-uvicorn horizon.main:app --reload --port=7000
+PDP_API_KEY=<YOUR_API_KEY> uvicorn horizon.main:app --reload --port=7000
 ```
 
 You can pass environment variables to control the behavior of the PDP image.
 For example, running a local PDP against the Permit API:
 ```
-AUTHZ_SERVICE_URL=https://api.permit.io PDP_API_KEY=<YOUR_API_KEY> uvicorn horizon.main:app --reload --port=7000
+PDP_CONTROL_PLANE=https://api.permit.io PDP_API_KEY=<YOUR_API_KEY> uvicorn horizon.main:app --reload --port=7000
 ```
 
 ## Building a Custom PDP Docker image

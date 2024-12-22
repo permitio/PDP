@@ -3,11 +3,11 @@ import pathlib
 from setuptools import find_packages, setup
 
 
-def get_requirements(env=""):
+def get_requirements(env="") -> list[str]:
     if env:
         env = f"-{env}"
     with pathlib.Path(f"requirements{env}.txt").open() as fp:
-        return [x.strip() for x in fp.read().split("\n") if not x.startswith("#")]
+        return [x.strip() for x in fp.readlines() if not x.startswith("#")]
 
 
 def get_data_files(root_directory: str):
