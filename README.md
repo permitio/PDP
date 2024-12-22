@@ -20,7 +20,7 @@ You can deploy the PDP to production in multiple designs. See the [Permit.io doc
 1. Clone the repository
 2. Install the dependencies
 ```bash
-pip install -r requirements-dev.txt
+pip install ".[dev]"
 ```
 
 ### Running locally (during development)
