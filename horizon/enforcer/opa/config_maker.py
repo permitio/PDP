@@ -6,7 +6,7 @@ from opal_common.logger import logger
 from horizon.config import SidecarConfig
 from horizon.startup.api_keys import get_env_api_key
 
-TEMPLATES_PATH = Path(__file__).parent.parent / "static" / "templates"
+TEMPLATES_PATH = Path(__file__).parent.parent.parent / "static" / "templates"
 
 
 def get_jinja_environment() -> jinja2.Environment:
