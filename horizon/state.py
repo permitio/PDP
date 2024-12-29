@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 import aiohttp
 from fastapi import status
 from opal_common.logger import logger
+from opal_common.schemas.data import DataUpdateReport
 from pydantic import BaseModel, ValidationError
 
 from horizon.config import sidecar_config
@@ -177,7 +178,7 @@ class PersistentStateHandler:
             },
         }
 
-    async def reporter_user_data_handler(self) -> dict[str, Any]:
+    async def reporter_user_data_handler(self, report: DataUpdateReport) -> dict[str, Any]:  # noqa: ARG002
         return {
             "pdp_instance_id": self.get().pdp_instance_id,
         }
