@@ -31,7 +31,7 @@ jobs:
         mkdir custom
         build_root="$PWD"
         cd ./permit-opa
-        find * -name '*go*' -print0 | xargs -0 tar -czf "$build_root"/custom/custom_opa.tar.gz --exclude '.*'
+        find * \( -name '*go*' -o -name 'LICENSE.md' \) -print0 | xargs -0 tar -czf "$build_root"/custom/custom_opa.tar.gz --exclude '.*'
 
     - uses: robinraju/release-downloader@v1
       with:
@@ -155,7 +155,7 @@ jobs:
         mkdir custom
         build_root="$PWD"
         cd ./permit-opa
-        find * -name '*go*' -print0 | xargs -0 tar -czf "$build_root"/custom/custom_opa.tar.gz --exclude '.*'
+        find * \( -name '*go*' -o -name 'LICENSE.md' \) -print0 | xargs -0 tar -czf "$build_root"/custom/custom_opa.tar.gz --exclude '.*'
 
     - uses: robinraju/release-downloader@v1
       with:
