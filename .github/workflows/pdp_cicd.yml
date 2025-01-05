@@ -31,7 +31,7 @@ jobs:
         mkdir custom
         build_root="$PWD"
         cd ./permit-opa
-        find * -name '*go*' -print0 | xargs -0 tar -czf "$build_root"/custom/custom_opa.tar.gz --exclude '.*'
+        find * \( -name '*go*' -o -name 'LICENSE.md' \) -print0 | xargs -0 tar -czf "$build_root"/custom/custom_opa.tar.gz --exclude '.*'
 
     - name: Build and load image for PDP E2E tests
       uses: docker/build-push-action@v5
@@ -145,7 +145,7 @@ jobs:
         mkdir custom
         build_root="$PWD"
         cd ./permit-opa
-        find * -name '*go*' -print0 | xargs -0 tar -czf "$build_root"/custom/custom_opa.tar.gz --exclude '.*'
+        find * \( -name '*go*' -o -name 'LICENSE.md' \) -print0 | xargs -0 tar -czf "$build_root"/custom/custom_opa.tar.gz --exclude '.*'
 
     - name: Build and push PDP image - (pre-release)
       if: "github.event.release.prerelease"
