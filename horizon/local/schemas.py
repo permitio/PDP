@@ -97,8 +97,11 @@ class RoleAssignmentFactDBFact(FactDBFact):
         return self.attributes.get("tenant", "")
 
     @property
-    def resource_instance(self) -> str:
-        return self.attributes.get("resource", "")
+    def resource_instance(self) -> str | None:
+        resource = self.attributes.get("resource", "")
+        if not resource or resource.startswith("__tenant:"):
+            return None
+        return resource
 
     def into_role_assignment(self) -> RoleAssignment:
         return RoleAssignment(
