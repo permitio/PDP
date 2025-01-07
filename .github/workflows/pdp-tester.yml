@@ -62,6 +62,7 @@ jobs:
           repository: "permitio/pdp-tester"
           token: ${{ secrets.CLONE_REPO_TOKEN }}
           path: './pdp-tester'
+          ref: 'PER-11515-check-local-build'
 
       # Setup Python environment
       - name: Setup Python
