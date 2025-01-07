@@ -42,9 +42,6 @@ jobs:
           token: ${{ secrets.CLONE_REPO_TOKEN }}
           out-file-path: "factdb"
 
-      - name: Setup Docker
-        uses: docker/setup-docker-action@v4.1.0
-
       - name: Build and load PDP Docker image
         uses: docker/build-push-action@v5
         with:
@@ -54,7 +51,7 @@ jobs:
           build-args: |
             ALLOW_MISSING_FACTSTORE=false
           platforms: linux/amd64
-          tags: permitio/pdp-v2:test
+          tags: permitio/pdp-v2:next
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -84,7 +81,7 @@ jobs:
         env:
           TOKEN: ${{ secrets.PDP_API_TOKEN_PDP_TESTER_STAGING }}
           API_URL: https://permitio.api.stg.permit.io
-          INCLUDE_TAGS: '["test"]'
+          INCLUDE_TAGS: '["next"]'
           AUTO_REMOVE: "False"
           SKIP_GENERATE: "True"
           ENVIRONMENT: '{"PDP_ENABLE_FACTDB": true}'
