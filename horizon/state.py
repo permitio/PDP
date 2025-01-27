@@ -98,7 +98,6 @@ class PersistentStateHandler:
             prev_state = self._state
             try:
                 async with self._write_lock:
-                    await asyncio.gather(*self._tasks)
                     new_state = self._state.copy()
                     yield new_state
                 try:
@@ -196,13 +195,15 @@ class PersistentStateHandler:
         return payload
 
     async def _report(self, state: PersistentState | None = None):
+        if state is not None:
+            self._state = state.copy()
         config_url = f"{sidecar_config.CONTROL_PLANE}{sidecar_config.REMOTE_STATE_ENDPOINT}"
         async with aiohttp.ClientSession() as session:
             logger.info("Reporting status update to server...")
             response = await session.post(
                 url=config_url,
                 headers={"Authorization": f"Bearer {self._env_api_key}"},
-                json=await PersistentStateHandler.build_state_payload(state),
+                json=await PersistentStateHandler.build_state_payload(),
             )
             if response.status != status.HTTP_204_NO_CONTENT:
                 logger.warning(
@@ -213,9 +214,7 @@ class PersistentStateHandler:
 
     async def seen_sdk(self, sdk: str):
         if sdk not in self._state.seen_sdks:
-            # ensure_future is expensive, only call it if actually needed
-            async with self._write_lock:
-                self._tasks.append(asyncio.create_task(self._report_seen_sdk(sdk)))
+            await self._report_seen_sdk(sdk)
 
     async def _report_seen_sdk(self, sdk: str):
         async with self._seen_sdk_update_lock:
