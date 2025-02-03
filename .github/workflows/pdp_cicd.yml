@@ -4,6 +4,10 @@ on:
   release:
     types: [published]
 
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
   pdp-tests:
     runs-on: ubuntu-latest
@@ -190,3 +194,21 @@ jobs:
         tags: permitio/pdp-v2:${{ github.event.release.tag_name }},permitio/pdp-v2:latest
         cache-from: type=gha
         cache-to: type=gha,mode=max
+
+  update-pdp-api-ecs-service:
+    needs: build-and-push-pdp
+    runs-on: ubuntu-latest
+    if: "!github.event.release.prerelease"
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.PDP_CICD_AWS_ROLE }}
+          aws-region: us-east-1
+
+      - name: Redeploy ECS service - pdp-general-redoc-service
+        run: |
+          aws ecs update-service \
+            --cluster public-pdps-us-east-1 \
+            --service pdp-general-redoc-service-731a74c \
+            --force-new-deployment
