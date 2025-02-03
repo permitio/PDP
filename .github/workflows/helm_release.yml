@@ -31,3 +31,4 @@ jobs:
           CR_TOKEN: "${{ secrets.PAGES }}"
         with:
           skip_existing: true
+          mark_as_latest: false
