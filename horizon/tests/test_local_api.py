@@ -132,7 +132,7 @@ async def test_list_role_assignments_factdb(tmp_path: Path) -> None:
         logger.info("mocking FactDB url: {}", factdb_url)
         # Test valid response from OPA
         m.get(
-            factdb_url,
+            f"{sidecar_config.FACTDB_SERVICE_URL}{factdb_url}",
             status=200,
             repeat=True,
             payload=[
