@@ -7,14 +7,14 @@ on:
 
 jobs:
   pre-commit:
-    runs-on: ubuntu-latest-4-cores
+    runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
     - uses: actions/setup-python@v3
     - uses: pre-commit/action@v2.0.3
 
   pytests:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-4-cores
     steps:
     - name: Python setup
       uses: actions/setup-python@v5
