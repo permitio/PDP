@@ -81,9 +81,10 @@ jobs:
         env:
           TOKEN: ${{ secrets.PDP_API_TOKEN_PDP_TESTER_STAGING }}
           API_URL: https://permitio.api.stg.permit.io
-          INCLUDE_TAGS: '["next"]'
+          LOCAL_TAGS: '["next"]'
           AUTO_REMOVE: "False"
           SKIP_GENERATE: "True"
           ENVIRONMENT: '{"PDP_ENABLE_FACTDB": true}'
+          ENABLE_APM: "False"
         run: |
           python -m pdp_tester.main
