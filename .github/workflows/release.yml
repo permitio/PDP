@@ -11,7 +11,7 @@ permissions:
 jobs:
   pdp-tests:
     # Call the reusable tests workflow.
-    uses: ./.github/workflows/tests.yml@v2
+    uses: ./.github/workflows/tests.yml
     secrets: inherit
 
   build-and-push-pdp-vanilla:
