@@ -1,9 +1,15 @@
-name: PDP Sanity Tests
+name: PDP CI Tests
 
 on:
   pull_request:
   push:
     branches: [master, main, v*]
+  workflow_call:
+    secrets:
+      PDP_TESTER_API_KEY:
+        required: true
+      CLONE_REPO_TOKEN:
+        required: true
 
 jobs:
   pre-commit:
@@ -29,7 +35,6 @@ jobs:
         python -m pip install --upgrade pip
         pip install ".[dev]"
         pytest -s --cache-clear horizon/tests/
-
 
   pdp-tester:
     runs-on: ubuntu-latest
