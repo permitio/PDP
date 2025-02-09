@@ -88,3 +88,16 @@ jobs:
           ENABLE_APM: "False"
         run: |
           python -m pdp_tester.main
+
+      - name: Print Docker container logs
+        if: always()
+        run: |
+          echo "Fetching logs for all Docker containers..."
+          for container in $(docker ps -aq); do
+            echo "========================================"
+            echo "Logs for container: $container"
+            echo "----------------------------------------"
+            docker logs "$container" || true
+            echo "========================================"
+            echo ""
+          done
