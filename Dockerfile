@@ -113,7 +113,8 @@ USER root
 
 # Install python dependencies in one command to optimize layer size
 COPY ./requirements.txt ./requirements.txt
-RUN pip install -r requirements.txt && \
+RUN pip install --upgrade pip setuptools && \
+    pip install -r requirements.txt && \
     python -m pip uninstall -y pip setuptools && \
     rm -r /usr/local/lib/python3.10/ensurepip
 
