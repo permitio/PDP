@@ -462,7 +462,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             }
 
         # Extract attributes based on the mapping rule type
-        if matched_mapping_rule.type == "regex":
+        if matched_mapping_rule.url_type == "regex":
             # For regex patterns, use only named capture groups
             pattern = re.compile(matched_mapping_rule.url)
             match = pattern.match(query.url)
@@ -884,7 +884,7 @@ def _extract_url_attributes(matched_rule: MappingRuleData, url: str) -> dict:
     attributes = {}
     
     # Extract path attributes based on rule type
-    if matched_rule.type == "regex":
+    if matched_rule.url_type == "regex":
         attributes.update(_extract_regex_attributes(matched_rule.url, url))
     else:
         attributes.update(

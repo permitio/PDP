@@ -179,7 +179,7 @@ ALLOWED_ENDPOINTS = [
                         "http_method": "get",
                         "action": "read",
                         "resource": "users",
-                        "type": "regex"
+                        "url_type": "regex"
                     }
                 ]
             }
@@ -203,7 +203,7 @@ ALLOWED_ENDPOINTS = [
                         "http_method": "get",
                         "action": "read",
                         "resource": "users",
-                        "type": "regex"
+                        "url_type": "regex"
                     }
                 ]
             }
@@ -227,7 +227,7 @@ ALLOWED_ENDPOINTS = [
                         "http_method": "post",
                         "action": "update",
                         "resource": "user_settings",
-                        "type": "regex"
+                        "url_type": "regex"
                     }
                 ]
             }
@@ -251,7 +251,7 @@ ALLOWED_ENDPOINTS = [
                         "http_method": "get",
                         "action": "read",
                         "resource": "users",
-                        "type": "regex"
+                        "url_type": "regex"
                     }
                 ]
             }
@@ -275,7 +275,7 @@ ALLOWED_ENDPOINTS = [
                         "http_method": "get",
                         "action": "read",
                         "resource": "users",
-                        "type": "regex"
+                        "url_type": "regex"
                     }
                 ]
             }
@@ -299,7 +299,7 @@ ALLOWED_ENDPOINTS = [
                         "http_method": "get",
                         "action": "read",
                         "resource": "users",
-                        "type": "regex"
+                        "url_type": "regex"
                     }
                 ]
             }
@@ -323,7 +323,7 @@ ALLOWED_ENDPOINTS = [
                         "http_method": "get",
                         "action": "read",
                         "resource": "users",
-                        "type": "regex"
+                        "url_type": "regex"
                     }
                 ]
             }
@@ -347,7 +347,7 @@ ALLOWED_ENDPOINTS = [
                         "http_method": "get",
                         "action": "read",
                         "resource": "users",
-                        "type": "regex"
+                        "url_type": "regex"
                     }
                 ]
             }
@@ -371,7 +371,7 @@ ALLOWED_ENDPOINTS = [
                         "http_method": "get",
                         "action": "read",
                         "resource": "users",
-                        "type": "regex"
+                        "url_type": "regex"
                     }
                 ]
             }
@@ -395,7 +395,7 @@ ALLOWED_ENDPOINTS = [
                         "http_method": "get",
                         "action": "read",
                         "resource": "users",
-                        "type": "regex"
+                        "url_type": "regex"
                     }
                 ]
             }

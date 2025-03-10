@@ -147,7 +147,7 @@ class MappingRuleData(BaseModel):
     resource: str
     action: str
     priority: int | None = None
-    type: Optional[str] = None
+    url_type: Optional[str] = None
 
     @property
     def resource_action(self) -> str:

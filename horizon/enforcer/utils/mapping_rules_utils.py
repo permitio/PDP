@@ -162,13 +162,13 @@ class MappingRulesUtils:
         http_method = http_method.lower()  # Convert once instead of in each iteration
         
         for mapping_rule in mapping_rules:
-            is_regex = getattr(mapping_rule, 'type', None) == "regex"
+            is_regex = getattr(mapping_rule, 'url_type', None) == "regex"
             
             logger.debug(
                 "checking mapping rule",
                 rule_url=mapping_rule.url,
                 rule_method=mapping_rule.http_method,
-                rule_type=getattr(mapping_rule, 'type', None),
+                rule_type=getattr(mapping_rule, 'url_type', None),
                 request_url=url,
                 request_method=http_method,
                 is_regex=is_regex
