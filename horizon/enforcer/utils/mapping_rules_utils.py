@@ -162,7 +162,7 @@ class MappingRulesUtils:
         http_method = http_method.lower()  # Convert once instead of in each iteration
         
         for mapping_rule in mapping_rules:
-            is_regex = getattr(mapping_rule, 'url_type', None) == "regex"
+            is_regex = mapping_rule.url_type == "regex"
             
             logger.debug(
                 "checking mapping rule",
@@ -179,6 +179,7 @@ class MappingRulesUtils:
                 continue
                 
             if not cls._compare_urls(mapping_rule.url, url, is_regex=is_regex):
+                # if the urls doesn't match, we don't need to check the headers
                 continue
             
             logger.debug("found matching rule")

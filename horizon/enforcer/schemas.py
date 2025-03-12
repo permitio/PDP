@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, Optional, List
+from enum import StrEnum
 
 from pydantic import BaseModel, Field, AnyHttpUrl, PositiveInt, PrivateAttr
 
@@ -61,6 +62,10 @@ class UrlAuthorizationQuery(BaseSchema):
     context: Optional[Dict[str, Any]] = {}
     sdk: Optional[str]
 
+
+class UrlTypes(StrEnum):
+    """Enum for URL matching types"""
+    REGEX = "regex"
 
 class UserTenantsQuery(BaseSchema):
     user: User
@@ -147,7 +152,7 @@ class MappingRuleData(BaseModel):
     resource: str
     action: str
     priority: int | None = None
-    url_type: Optional[str] = None
+    url_type: Optional[UrlTypes] = None
 
     @property
     def resource_action(self) -> str:
