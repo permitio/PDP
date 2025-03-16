@@ -1,10 +1,9 @@
+import re2 as re
+from loguru import logger
 from pydantic import AnyHttpUrl
 from starlette.datastructures import QueryParams
-import re2 as re
-from typing import List, Optional
 
 from horizon.enforcer.schemas import MappingRuleData
-from opal_client.logger import logger
 
 
 class MappingRulesUtils:
@@ -14,38 +13,30 @@ class MappingRulesUtils:
             return False
         if mapping_rule_url.host != request_url.host:
             return False
-        if not MappingRulesUtils._compare_url_path(
-            mapping_rule_url.path, request_url.path
-        ):
+        if not MappingRulesUtils._compare_url_path(mapping_rule_url.path, request_url.path):
             return False
-        if not MappingRulesUtils._compare_query_params(
-            mapping_rule_url.query, request_url.query
-        ):
+        if not MappingRulesUtils._compare_query_params(mapping_rule_url.query, request_url.query):  # noqa: SIM103
             return False
         return True
 
     @staticmethod
-    def _compare_url_path(
-        mapping_rule_url: str | None, request_url: str | None
-    ) -> bool:
+    def _compare_url_path(mapping_rule_url: str | None, request_url: str | None) -> bool:
         if mapping_rule_url is None or request_url is None:
             return mapping_rule_url is None and request_url is None
 
         mapping_rule_url_parts = mapping_rule_url.split("/")
         request_url_parts = request_url.split("/")
-        
+
         if len(mapping_rule_url_parts) != len(request_url_parts):
             return False
-            
+
         return all(
-            part.startswith("{") and part.endswith("}") or part == req_part
-            for part, req_part in zip(mapping_rule_url_parts, request_url_parts)
+            (part.startswith("{") and part.endswith("}")) or part == req_part
+            for part, req_part in zip(mapping_rule_url_parts, request_url_parts, strict=False)
         )
 
     @staticmethod
-    def _compare_query_params(
-        mapping_rule_query_string: str | None, request_url_query_string: str | None
-    ) -> bool:
+    def _compare_query_params(mapping_rule_query_string: str | None, request_url_query_string: str | None) -> bool:
         if mapping_rule_query_string is None and request_url_query_string is None:
             # if both are None, they are equal
             return True
@@ -61,13 +52,11 @@ class MappingRulesUtils:
         mapping_rule_query_params = QueryParams(mapping_rule_query_string)
         request_query_params = QueryParams(request_url_query_string)
 
-        for key in mapping_rule_query_params.keys():
+        for key in mapping_rule_query_params:
             if key not in request_query_params:
                 return False
 
-            if mapping_rule_query_params[key].startswith(
-                "{"
-            ) and mapping_rule_query_params[key].endswith("}"):
+            if mapping_rule_query_params[key].startswith("{") and mapping_rule_query_params[key].endswith("}"):
                 # if the value is an attribute
                 # we just need to make sure the attribute is in the request query params
                 continue
@@ -80,13 +69,13 @@ class MappingRulesUtils:
     def extract_attributes_from_url(rule_url: str, request_url: str) -> dict:
         rule_url_parts = rule_url.split("/")
         request_url_parts = request_url.split("/")
-        
+
         if len(rule_url_parts) != len(request_url_parts):
             return {}
-            
+
         return {
             rule_part[1:-1]: req_part
-            for rule_part, req_part in zip(rule_url_parts, request_url_parts)
+            for rule_part, req_part in zip(rule_url_parts, request_url_parts, strict=False)
             if rule_part.startswith("{") and rule_part.endswith("}")
         }
 
@@ -97,20 +86,13 @@ class MappingRulesUtils:
         rule_query_params = QueryParams(rule_url.split("?")[1])
         request_query_params = QueryParams(request_url.split("?")[1])
         attributes = {}
-        for key in rule_query_params.keys():
-            if rule_query_params[key].startswith("{") and rule_query_params[
-                key
-            ].endswith("}"):
+        for key in rule_query_params:
+            if rule_query_params[key].startswith("{") and rule_query_params[key].endswith("}"):
                 attributes[rule_query_params[key][1:-1]] = request_query_params[key]
         return attributes
 
     @classmethod
-    def _compare_urls(
-        cls, 
-        mapping_rule_url: str, 
-        request_url: str, 
-        is_regex: bool = False
-    ) -> bool:
+    def _compare_urls(cls, mapping_rule_url: str, request_url: str, *, is_regex: bool = False) -> bool:
         """
         Compare a mapping rule URL against a request URL.
         """
@@ -119,70 +101,56 @@ class MappingRulesUtils:
             try:
                 pattern = re.compile(mapping_rule_url)
                 match_result = bool(pattern.match(request_url))
-                logger.debug(
-                    "regex url comparison",
-                    pattern=mapping_rule_url,
-                    url=request_url,
-                    matched=match_result
-                )
+                logger.debug("regex url comparison", pattern=mapping_rule_url, url=request_url, matched=match_result)
                 return match_result
             except re.error as e:
-                logger.warning(
-                    "regex pattern compilation failed",
-                    pattern=mapping_rule_url,
-                    error=str(e)
-                )
+                logger.warning("regex pattern compilation failed", pattern=mapping_rule_url, error=str(e))
                 return False
-        
+
         # For traditional URL matching
         try:
             # Compare paths
-            if not cls._compare_url_path(mapping_rule_url, request_url):
-                return False
-            
-            return True
-        except Exception as e:
+            return not cls._compare_url_path(mapping_rule_url, request_url)
+        except Exception as e:  # noqa: BLE001
             logger.warning(
                 "URL comparison failed - verify URL format and structure",
                 mapping_url=mapping_rule_url,
                 request_url=request_url,
                 error_message=str(e),
-                error_type=type(e).__name__
+                error_type=type(e).__name__,
             )
             return False
 
     @classmethod
     def extract_mapping_rule_by_request(
-        cls, 
-        mapping_rules: List[MappingRuleData], 
-        http_method: str, 
-        url: str
-    ) -> Optional[MappingRuleData]:
+        cls, mapping_rules: list[MappingRuleData], http_method: str, url: str
+    ) -> MappingRuleData | None:
         """Extract matching mapping rule for the given request"""
         http_method = http_method.lower()  # Convert once instead of in each iteration
-        
+
         for mapping_rule in mapping_rules:
             is_regex = mapping_rule.url_type == "regex"
-            
+
             logger.debug(
                 "checking mapping rule",
                 rule_url=mapping_rule.url,
                 rule_method=mapping_rule.http_method,
-                rule_type=getattr(mapping_rule, 'url_type', None),
+                rule_type=getattr(mapping_rule, "url_type", None),
                 request_url=url,
                 request_method=http_method,
-                is_regex=is_regex
+                is_regex=is_regex,
             )
-            
+
             # Check method first as it's cheaper than URL comparison
             if mapping_rule.http_method.lower() != http_method:
+                # if the method is not the same, we don't need to check the url
                 continue
-                
+
             if not cls._compare_urls(mapping_rule.url, url, is_regex=is_regex):
                 # if the urls doesn't match, we don't need to check the headers
                 continue
-            
+
             logger.debug("found matching rule")
             return mapping_rule
-        
+
         return None

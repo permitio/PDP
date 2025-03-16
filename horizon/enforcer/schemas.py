@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, List
 from enum import StrEnum
+from typing import Any
 
-from pydantic import BaseModel, Field, AnyHttpUrl, PositiveInt, PrivateAttr
+from pydantic import AnyHttpUrl, BaseModel, Field, PositiveInt, PrivateAttr
 
 
 class BaseSchema(BaseModel):
@@ -14,18 +14,18 @@ class BaseSchema(BaseModel):
 
 class User(BaseSchema):
     key: str
-    first_name: Optional[str] = Field(None, alias="firstName")
-    last_name: Optional[str] = Field(None, alias="lastName")
-    email: Optional[str] = None
-    attributes: Optional[Dict[str, Any]] = {}
+    first_name: str | None = Field(None, alias="firstName")
+    last_name: str | None = Field(None, alias="lastName")
+    email: str | None = None
+    attributes: dict[str, Any] | None = Field(default_factory=dict)
 
 
 class Resource(BaseSchema):
     type: str
-    key: Optional[str] = None
-    tenant: Optional[str] = None
-    attributes: Optional[Dict[str, Any]] = {}
-    context: Optional[Dict[str, Any]] = {}
+    key: str | None = None
+    tenant: str | None = None
+    attributes: dict[str, Any] | None = Field(default_factory=dict)
+    context: dict[str, Any] | None = Field(default_factory=dict)
 
 
 class AuthorizationQuery(BaseSchema):
@@ -36,15 +36,15 @@ class AuthorizationQuery(BaseSchema):
     user: User
     action: str
     resource: Resource
-    context: Optional[Dict[str, Any]] = {}
-    sdk: Optional[str]
+    context: dict[str, Any] | None = Field(default_factory=dict)
+    sdk: str | None = None
 
     def __repr__(self) -> str:
         return f"({self.user.key}, {self.action}, {self.resource.type})"
 
 
 class BulkAuthorizationQuery(BaseSchema):
-    checks: List[AuthorizationQuery]
+    checks: list[AuthorizationQuery]
 
     def __repr__(self) -> str:
         return " | ".join([repr(query) for query in self.checks])
@@ -59,31 +59,31 @@ class UrlAuthorizationQuery(BaseSchema):
     http_method: str
     url: AnyHttpUrl
     tenant: str
-    context: Optional[Dict[str, Any]] = {}
-    sdk: Optional[str]
+    context: dict[str, Any] | None = Field(default_factory=dict)
+    sdk: str | None
 
 
 class UrlTypes(StrEnum):
     """Enum for URL matching types"""
+
     REGEX = "regex"
+
 
 class UserTenantsQuery(BaseSchema):
     user: User
-    context: Optional[dict[str, Any]] = {}
+    context: dict[str, Any] | None = Field(default_factory=dict)
 
 
 class UserPermissionsQuery(BaseSchema):
     user: User
-    tenants: Optional[list[str]] = None
-    resources: Optional[list[str]] = None
-    resource_types: Optional[list[str]] = None
-    context: Optional[dict[str, Any]] = {}
-    _offset: Optional[PositiveInt] = PrivateAttr(None)
-    _limit: Optional[PositiveInt] = PrivateAttr(None)
+    tenants: list[str] | None = None
+    resources: list[str] | None = None
+    resource_types: list[str] | None = None
+    context: dict[str, Any] | None = Field(default_factory=dict)
+    _offset: PositiveInt | None = PrivateAttr(None)
+    _limit: PositiveInt | None = PrivateAttr(None)
 
-    def set_pagination(
-        self, page: Optional[PositiveInt], per_page: Optional[PositiveInt]
-    ) -> bool:
+    def set_pagination(self, page: PositiveInt | None, per_page: PositiveInt | None) -> bool:
         if per_page:
             self._limit = per_page
             if page:
@@ -91,7 +91,7 @@ class UserPermissionsQuery(BaseSchema):
             return True
         return False
 
-    def get_params(self) -> dict:
+    def get_params(self) -> dict[str, Any]:
         params = {}
         if self.tenants:
             params["tenants"] = self.tenants
@@ -100,27 +100,27 @@ class UserPermissionsQuery(BaseSchema):
         if self.resource_types:
             params["resource_types"] = self.resource_types
         if self._offset:
-            params["offset"] = self._offset
+            params["offset"] = str(self._offset)
         if self._limit:
-            params["limit"] = self._limit
+            params["limit"] = str(self._limit)
 
         return params
 
 
 class AuthorizationResult(BaseSchema):
     allow: bool = False
-    query: Optional[dict] = None
-    debug: Optional[dict]
+    query: dict | None = None
+    debug: dict | None
     result: bool = False  # fallback for older sdks (TODO: remove)
 
 
 class BulkAuthorizationResult(BaseSchema):
-    allow: List[AuthorizationResult] = []
+    allow: list[AuthorizationResult] = []
 
 
 class _TenantDetails(BaseSchema):
     key: str
-    attributes: dict = {}
+    attributes: dict = Field(default_factory=dict)
 
 
 class _ResourceDetails(_TenantDetails):
@@ -128,10 +128,10 @@ class _ResourceDetails(_TenantDetails):
 
 
 class _UserPermissionsResult(BaseSchema):
-    tenant: Optional[_TenantDetails]
-    resource: Optional[_ResourceDetails]
-    permissions: list[str] = Field(..., regex="^.+:.+$")
-    roles: Optional[list[str]] = None
+    tenant: _TenantDetails | None
+    resource: _ResourceDetails | None
+    permissions: list[str] = Field(default_factory=list, regex="^.+:.+$")
+    roles: list[str] | None = None
 
 
 UserPermissionsResult = dict[str, _UserPermissionsResult]
@@ -143,7 +143,7 @@ class _AllTenantsAuthorizationResult(AuthorizationResult):
 
 
 class AllTenantsAuthorizationResult(BaseSchema):
-    allowed_tenants: List[_AllTenantsAuthorizationResult] = []
+    allowed_tenants: list[_AllTenantsAuthorizationResult] = []
 
 
 class MappingRuleData(BaseModel):
@@ -152,7 +152,7 @@ class MappingRuleData(BaseModel):
     resource: str
     action: str
     priority: int | None = None
-    url_type: Optional[UrlTypes] = None
+    url_type: UrlTypes | None = None
 
     @property
     def resource_action(self) -> str:
@@ -162,9 +162,7 @@ class MappingRuleData(BaseModel):
 class AuthorizedUserAssignment(BaseSchema):
     user: str = Field(..., description="The user that is authorized")
     tenant: str = Field(..., description="The tenant that the user is authorized for")
-    resource: str = Field(
-        ..., description="The resource that the user is authorized for"
-    )
+    resource: str = Field(..., description="The resource that the user is authorized for")
     role: str = Field(..., description="The role that the user is assigned to")
 
 
@@ -188,10 +186,7 @@ class AuthorizedUsersResult(BaseSchema):
 
     @classmethod
     def empty(cls, resource: Resource) -> AuthorizedUsersResult:
-        if resource.key is None:
-            resource_key = "*"
-        else:
-            resource_key = resource.key
+        resource_key = "*" if resource.key is None else resource.key
         return cls(
             resource=f"{resource.type}:{resource_key}",
             tenant=resource.tenant or "default",
@@ -199,7 +194,7 @@ class AuthorizedUsersResult(BaseSchema):
         )
 
     class Config:
-        schema_extra = {
+        schema_extra = {  # noqa: RUF012
             "examples": [
                 {
                     "resource": "repo:*",
@@ -246,8 +241,8 @@ class AuthorizedUsersAuthorizationQuery(BaseSchema):
 
     action: str
     resource: Resource
-    context: Optional[Dict[str, Any]] = {}
-    sdk: Optional[str]
+    context: dict[str, Any] | None = Field(default_factory=dict)
+    sdk: str | None
 
     def __repr__(self) -> str:
         return f"({self.action}, {self.resource.type})"

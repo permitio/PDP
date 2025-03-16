@@ -1,15 +1,14 @@
 import asyncio
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Optional, Awaitable, Callable
 
 from fastapi import FastAPI
 from loguru import logger
 from opal_client import OpalClient
-from opal_client.callbacks.api import init_callbacks_api
-from opal_client.config import opal_client_config, EngineLogFormat
+from opal_client.config import EngineLogFormat, opal_client_config
 from opal_client.data.api import init_data_router
 from opal_client.data.updater import DataUpdater
-from opal_client.engine.options import OpaServerOptions, CedarServerOptions
+from opal_client.engine.options import CedarServerOptions, OpaServerOptions
 from opal_client.engine.runner import PolicyEngineRunner
 from opal_client.policy.api import init_policy_router
 from opal_client.policy.updater import PolicyUpdater
@@ -22,6 +21,7 @@ from opal_common.fetcher.providers.http_fetch_provider import (
     HttpFetcherConfig,
     HttpMethods,
 )
+from scalar_fastapi import get_scalar_api_reference
 from starlette import status
 from starlette.responses import JSONResponse
 
@@ -51,6 +51,13 @@ class ExtendedOpalClient(OpalClient):
     def _configure_api_routes(self, app: FastAPI):
         """mounts the api routes on the app object."""
 
+        @app.get("/scalar", include_in_schema=False)
+        async def scalar_html():
+            return get_scalar_api_reference(
+                openapi_url="/openapi.json",
+                title="Permit.io PDP API",
+            )
+
         authenticator = JWTAuthenticator(self.verifier)
 
         # Init api routers with required dependencies
@@ -75,9 +82,7 @@ class ExtendedOpalClient(OpalClient):
             server and applied to the policy store."""
             healthy = await self.check_healthy()
             if healthy:
-                return JSONResponse(
-                    status_code=status.HTTP_200_OK, content={"status": "ok"}
-                )
+                return JSONResponse(status_code=status.HTTP_200_OK, content={"status": "ok"})
             else:
                 return JSONResponse(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -89,9 +94,7 @@ class ExtendedOpalClient(OpalClient):
             """returns 200 if the policy store is ready to serve requests."""
             ready = await self.check_ready()
             if ready:
-                return JSONResponse(
-                    status_code=status.HTTP_200_OK, content={"status": "ok"}
-                )
+                return JSONResponse(status_code=status.HTTP_200_OK, content={"status": "ok"})
             else:
                 return JSONResponse(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -113,33 +116,30 @@ class ExtendedOpalClient(OpalClient):
             entry.key = entry.key or register.calc_hash(entry.url, entry.config)
 
             if register.get(entry.key):
-                raise RuntimeError(
-                    f"Callback with key '{entry.key}' already exists. Please specify a different key."
-                )
+                raise RuntimeError(f"Callback with key '{entry.key}' already exists. Please specify a different key.")
 
-            logger.info(
-                f"Registering data update callback to url '{entry.url}' with key '{entry.key}'"
-            )
+            logger.info(f"Registering data update callback to url '{entry.url}' with key '{entry.key}'")
             register.put(entry.url, entry.config, entry.key)
 
 
 class FactDBClient(ExtendedOpalClient):
     def __init__(
         self,
+        *,
         policy_store_type: PolicyStoreTypes = None,
         policy_store: BasePolicyStoreClient = None,
         data_updater: DataUpdater = None,
-        data_topics: list[str] = None,
+        data_topics: list[str] | None = None,
         policy_updater: PolicyUpdater = None,
-        inline_opa_enabled: bool = None,
+        inline_opa_enabled: bool | None = None,
         inline_opa_options: OpaServerOptions = None,
-        inline_cedar_enabled: bool = None,
+        inline_cedar_enabled: bool | None = None,
         inline_cedar_options: CedarServerOptions = None,
-        verifier: Optional[JWTVerifier] = None,
-        store_backup_path: Optional[str] = None,
-        store_backup_interval: Optional[int] = None,
+        verifier: JWTVerifier | None = None,
+        store_backup_path: str | None = None,
+        store_backup_interval: int | None = None,
         offline_mode_enabled: bool = False,
-        shard_id: Optional[str] = None,
+        shard_id: str | None = None,
     ):
         self._factdb_enabled = sidecar_config.FACTDB_ENABLED
         if self._factdb_enabled:
@@ -190,13 +190,11 @@ class FactDBClient(ExtendedOpalClient):
 
     @staticmethod
     async def _run_engine_runner(
-        callback: Optional[Callable[[], Awaitable]],
+        callback: Callable[[], Awaitable] | None,
         engine_runner: PolicyEngineRunner,
     ):
         # runs the callback after policy store is up
-        engine_runner.register_process_initial_start_callbacks(
-            [callback] if callback else []
-        )
+        engine_runner.register_process_initial_start_callbacks([callback] if callback else [])
         async with engine_runner:
             await engine_runner.wait_until_done()
 
@@ -214,7 +212,7 @@ class FactDBClient(ExtendedOpalClient):
                 return False
             if self._factdb_enabled:
                 return await self._factdb_runner.is_healthy()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.exception("Error checking health: {e}", e=e)
             return False
         else:
@@ -227,7 +225,7 @@ class FactDBClient(ExtendedOpalClient):
                 return False
             if self._factdb_enabled:
                 return await self._factdb_runner.is_ready()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.exception("Error checking ready: {e}", e=e)
             return False
         else:

@@ -8,22 +8,28 @@ from aioresponses import aioresponses
 from fastapi import FastAPI
 from fastapi.encoders import jsonable_encoder
 from fastapi.testclient import TestClient
-from opal_client.client import OpalClient
-from opal_client.config import opal_client_config
-from starlette import status
-
 from horizon.config import sidecar_config
 from horizon.enforcer.api import stats_manager
-from horizon.enforcer.schemas import *
+from horizon.enforcer.schemas import (
+    AuthorizationQuery,
+    Resource,
+    UrlAuthorizationQuery,
+    User,
+    UserPermissionsQuery,
+    UserTenantsQuery,
+)
 from horizon.pdp import PermitPDP
+from loguru import logger
+from opal_client.client import OpalClient
+from opal_client.config import opal_client_config
+from pydantic import BaseModel
+from starlette import status
 
 
 class MockPermitPDP(PermitPDP):
     def __init__(self):
         self._setup_temp_logger()
 
-        # sidecar_config.OPA_BEARER_TOKEN_REQUIRED = False
-        # self._configure_inline_opa_config()
         self._opal = OpalClient()
 
         sidecar_config.API_KEY = "mock_api_key"
@@ -83,9 +89,7 @@ ALLOWED_ENDPOINTS = [
     (
         "/user-permissions",
         "permit/user_permissions",
-        UserPermissionsQuery(
-            user=User(key="user1"), resource_types=["resource1", "resource2"]
-        ),
+        UserPermissionsQuery(user=User(key="user1"), resource_types=["resource1", "resource2"]),
         {
             "result": {
                 "permissions": {
@@ -179,7 +183,7 @@ ALLOWED_ENDPOINTS = [
                         "http_method": "get",
                         "action": "read",
                         "resource": "users",
-                        "url_type": "regex"
+                        "url_type": "regex",
                     }
                 ]
             }
@@ -203,7 +207,7 @@ ALLOWED_ENDPOINTS = [
                         "http_method": "get",
                         "action": "read",
                         "resource": "users",
-                        "url_type": "regex"
+                        "url_type": "regex",
                     }
                 ]
             }
@@ -227,7 +231,7 @@ ALLOWED_ENDPOINTS = [
                         "http_method": "post",
                         "action": "update",
                         "resource": "user_settings",
-                        "url_type": "regex"
+                        "url_type": "regex",
                     }
                 ]
             }
@@ -251,7 +255,7 @@ ALLOWED_ENDPOINTS = [
                         "http_method": "get",
                         "action": "read",
                         "resource": "users",
-                        "url_type": "regex"
+                        "url_type": "regex",
                     }
                 ]
             }
@@ -275,7 +279,7 @@ ALLOWED_ENDPOINTS = [
                         "http_method": "get",
                         "action": "read",
                         "resource": "users",
-                        "url_type": "regex"
+                        "url_type": "regex",
                     }
                 ]
             }
@@ -299,7 +303,7 @@ ALLOWED_ENDPOINTS = [
                         "http_method": "get",
                         "action": "read",
                         "resource": "users",
-                        "url_type": "regex"
+                        "url_type": "regex",
                     }
                 ]
             }
@@ -323,7 +327,7 @@ ALLOWED_ENDPOINTS = [
                         "http_method": "get",
                         "action": "read",
                         "resource": "users",
-                        "url_type": "regex"
+                        "url_type": "regex",
                     }
                 ]
             }
@@ -347,7 +351,7 @@ ALLOWED_ENDPOINTS = [
                         "http_method": "get",
                         "action": "read",
                         "resource": "users",
-                        "url_type": "regex"
+                        "url_type": "regex",
                     }
                 ]
             }
@@ -371,7 +375,7 @@ ALLOWED_ENDPOINTS = [
                         "http_method": "get",
                         "action": "read",
                         "resource": "users",
-                        "url_type": "regex"
+                        "url_type": "regex",
                     }
                 ]
             }
@@ -395,7 +399,7 @@ ALLOWED_ENDPOINTS = [
                         "http_method": "get",
                         "action": "read",
                         "resource": "users",
-                        "url_type": "regex"
+                        "url_type": "regex",
                     }
                 ]
             }
@@ -533,9 +537,7 @@ ALLOWED_ENDPOINTS_FACTDB = [
 
 @pytest.mark.parametrize(
     "endpoint, opa_endpoint, query, opa_response, expected_response",
-    list(
-        filter(lambda p: not isinstance(p[2], UrlAuthorizationQuery), ALLOWED_ENDPOINTS)
-    ),
+    list(filter(lambda p: not isinstance(p[2], UrlAuthorizationQuery), ALLOWED_ENDPOINTS)),
 )
 @pytest.mark.timeout(30)
 @pytest.mark.asyncio
@@ -552,9 +554,7 @@ async def test_enforce_endpoint_statistics(
             return client.post(
                 endpoint,
                 headers={"authorization": f"Bearer {sidecar_config.API_KEY}"},
-                json=query.dict()
-                if not isinstance(query, list)
-                else [q.dict() for q in query],
+                json=query.dict() if not isinstance(query, list) else [q.dict() for q in query],
             )
 
         with aioresponses() as m:
@@ -570,7 +570,7 @@ async def test_enforce_endpoint_statistics(
             response = post_endpoint()
 
             assert response.status_code == 200
-            print(response.json())
+            logger.info(response.json())
             if isinstance(expected_response, list):
                 assert response.json() == expected_response
             elif isinstance(expected_response, dict):
@@ -614,20 +614,14 @@ async def test_enforce_endpoint_statistics(
             await asyncio.sleep(2)
             current_rate = await stats_manager.current_rate()
             assert current_rate == (3.0 / 4.0)
-            assert (
-                client.get("/health").status_code == status.HTTP_503_SERVICE_UNAVAILABLE
-            )
+            assert client.get("/health").status_code == status.HTTP_503_SERVICE_UNAVAILABLE
             await stats_manager.reset_stats()
             current_rate = await stats_manager.current_rate()
             assert current_rate == 0
-            assert (
-                client.get("/health").status_code == status.HTTP_503_SERVICE_UNAVAILABLE
-            )
+            assert client.get("/health").status_code == status.HTTP_503_SERVICE_UNAVAILABLE
 
 
-@pytest.mark.parametrize(
-    "endpoint, opa_endpoint, query, opa_response, expected_response", ALLOWED_ENDPOINTS
-)
+@pytest.mark.parametrize("endpoint, opa_endpoint, query, opa_response, expected_response", ALLOWED_ENDPOINTS)
 def test_enforce_endpoint(
     endpoint,
     opa_endpoint,
@@ -641,9 +635,7 @@ def test_enforce_endpoint(
         return _client.post(
             endpoint,
             headers={"authorization": f"Bearer {sidecar_config.API_KEY}"},
-            json=query.dict()
-            if not isinstance(query, list)
-            else [q.dict() for q in query],
+            json=query.dict() if not isinstance(query, list) else [q.dict() for q in query],
         )
 
     with aioresponses() as m:
@@ -667,7 +659,7 @@ def test_enforce_endpoint(
 
         response = post_endpoint()
         assert response.status_code == 200
-        print(response.json())
+        logger.info(response.json())
         if isinstance(expected_response, list):
             assert response.json() == expected_response
         elif isinstance(expected_response, dict):
@@ -735,8 +727,7 @@ def test_enforce_endpoint_factdb(
     def post_endpoint():
         return _client.post(
             endpoint,
-            headers={"authorization": f"Bearer {sidecar_config.API_KEY}"}
-            | (headers or {}),
+            headers={"authorization": f"Bearer {sidecar_config.API_KEY}"} | (headers or {}),
             json=jsonable_encoder(query) if query else None,
         )
 
@@ -778,19 +769,15 @@ def test_enforce_endpoint_factdb(
 
         response = post_endpoint()
         assert response.status_code == 200
-        print(response.json())
+        logger.info(response.json())
         if isinstance(expected_response, list):
             assert response.json() == expected_response
         elif isinstance(expected_response, dict):
             for k, v in expected_response.items():
                 try:
-                    assert (
-                        response.json()[k] == v
-                    ), f"Expected {k} to be {v} but got {response.json()[k]}"
+                    assert response.json()[k] == v, f"Expected {k} to be {v} but got {response.json()[k]}"
                 except KeyError:
-                    pytest.fail(
-                        f"response missing key {k} from expected response:\n,{response.json()}"
-                    )
+                    pytest.fail(f"response missing key {k} from expected response:\n,{response.json()}")
         else:
             raise TypeError(
                 f"Unexpected expected response type, expected one of list, dict and got {type(expected_response)}"

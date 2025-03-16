@@ -1,19 +1,17 @@
 import json
-from typing import Iterator
+from collections.abc import Iterator
 
 from opal_common.schemas.data import JsonableValue
 
 from horizon.factdb.data_update import (
     AnyOperation,
-    InsertOperation,
-    Fact,
     DeleteOperation,
+    Fact,
+    InsertOperation,
 )
 
 
-def _get_operations_for_update_relationship_tuple(
-    obj: str, data: JsonableValue
-) -> Iterator[AnyOperation]:
+def _get_operations_for_update_relationship_tuple(obj: str, data: JsonableValue) -> Iterator[AnyOperation]:
     yield DeleteOperation(
         fact=Fact(
             type="relationship_tuples",
@@ -36,9 +34,7 @@ def _get_operations_for_update_relationship_tuple(
                 )
 
 
-def _get_operations_for_update_role_assigment(
-    full_user_key: str, data: JsonableValue
-) -> Iterator[AnyOperation]:
+def _get_operations_for_update_role_assigment(full_user_key: str, data: JsonableValue) -> Iterator[AnyOperation]:
     user_key = full_user_key.removeprefix("user:")
     yield DeleteOperation(
         fact=Fact(
@@ -75,9 +71,7 @@ def _get_operations_for_update_role_assigment(
                 )
 
 
-def _get_operations_for_update_user(
-    user_key: str, data: JsonableValue
-) -> Iterator[AnyOperation]:
+def _get_operations_for_update_user(user_key: str, data: JsonableValue) -> Iterator[AnyOperation]:
     attributes = data.get("attributes", {})
     if attributes:
         yield InsertOperation(
@@ -107,9 +101,7 @@ def _get_operations_for_update_user(
         )
 
 
-def _get_operations_for_update_resource_instance(
-    instance_key: str, data: JsonableValue
-) -> Iterator[AnyOperation]:
+def _get_operations_for_update_resource_instance(instance_key: str, data: JsonableValue) -> Iterator[AnyOperation]:
     attributes = data.get("attributes", {})
     if attributes:
         yield InsertOperation(

@@ -30,14 +30,14 @@ if [ "$PDP_VANILLA" != "true" ]; then
   mkdir custom
   build_root="$PWD"
   cd "../permit-opa"
-  find * -name '*go*' -print0 | xargs -0 tar -czf "$build_root"/custom/custom_opa.tar.gz --exclude '.*'
+  find * \( -name '*go*' -o -name 'LICENSE.md' \) -print0 | xargs -0 tar -czf "$build_root"/custom/custom_opa.tar.gz --exclude '.*'
   cd "$build_root"
   # factdb tarball creation section
   rm -rf factdb
   mkdir factdb
   build_root="$PWD"
   cd "../factdb"
-  find * -name '*go*' -print0 | xargs -0 tar -czf "$build_root"/factdb/factdb.tar.gz --exclude '.*'
+  find * \( -name '*go*' -o -name 'LICENSE.md' \) -print0 | xargs -0 tar -czf "$build_root"/factdb/factdb.tar.gz --exclude '.*'
   cd "$build_root"
 else
   echo "Skipping custom OPA tarball creation for pdp-vanilla environment."

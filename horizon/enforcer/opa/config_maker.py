@@ -1,4 +1,4 @@
-import os
+from pathlib import Path
 
 import jinja2
 from opal_common.logger import logger
@@ -6,23 +6,18 @@ from opal_common.logger import logger
 from horizon.config import SidecarConfig
 from horizon.startup.api_keys import get_env_api_key
 
+TEMPLATES_PATH = Path(__file__).parent.parent.parent / "static" / "templates"
+
 
 def get_jinja_environment() -> jinja2.Environment:
-    path = os.path.join(os.path.dirname(__file__), "../../static/templates")
-    return jinja2.Environment(loader=jinja2.FileSystemLoader(path))
+    return jinja2.Environment(loader=jinja2.FileSystemLoader(TEMPLATES_PATH))
 
 
 def persist_to_file(contents: str, path: str) -> str:
-    path = os.path.expanduser(path)
-
-    # make sure the directory exists
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-
-    # persist to file
-    with open(path, "w") as f:
-        f.write(contents)
-
-    return path
+    path_obj = Path(path).expanduser()
+    path_obj.parent.mkdir(parents=True, exist_ok=True)
+    path_obj.write_text(contents)
+    return str(path_obj)
 
 
 def get_opa_config_file_path(
@@ -40,8 +35,7 @@ def get_opa_config_file_path(
     env = get_jinja_environment()
     target_path = sidecar_config.OPA_CONFIG_FILE_PATH
     decision_logs_backend_tier = (
-        sidecar_config.OPA_DECISION_LOG_INGRESS_BACKEND_TIER_URL
-        or sidecar_config.CONTROL_PLANE
+        sidecar_config.OPA_DECISION_LOG_INGRESS_BACKEND_TIER_URL or sidecar_config.CONTROL_PLANE
     )
     logger.info(
         "Uploading decision logs to backend tier: {tier}",
