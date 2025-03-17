@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from enum import StrEnum
+from enum import Enum
 from typing import Any
 
 from pydantic import AnyHttpUrl, BaseModel, Field, PositiveInt, PrivateAttr
@@ -63,9 +63,9 @@ class UrlAuthorizationQuery(BaseSchema):
     sdk: str | None
 
 
-class UrlTypes(StrEnum):
+class UrlTypes(str, Enum):
     """Enum for URL matching types"""
-
+    DEFAULT = "default"
     REGEX = "regex"
 
 
@@ -152,7 +152,7 @@ class MappingRuleData(BaseModel):
     resource: str
     action: str
     priority: int | None = None
-    url_type: UrlTypes | None = None
+    url_type: UrlTypes = UrlTypes.DEFAULT
 
     @property
     def resource_action(self) -> str:

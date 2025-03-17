@@ -1,4 +1,4 @@
-import re2 as re
+import re2 as re  # use re2 instead of re for regex matching because it's simiplier and safer for user inputted regexes
 from loguru import logger
 from pydantic import AnyHttpUrl
 from starlette.datastructures import QueryParams
@@ -109,8 +109,23 @@ class MappingRulesUtils:
 
         # For traditional URL matching
         try:
+            # Split URL into path and query parts
+            mapping_rule_parts = mapping_rule_url.split("?", 1)
+            request_parts = request_url.split("?", 1)
+
             # Compare paths
-            return not cls._compare_url_path(mapping_rule_url, request_url)
+            if not cls._compare_url_path(mapping_rule_parts[0], request_parts[0]):
+                return False
+
+            # Compare query parameters if they exist
+            if len(mapping_rule_parts) > 1 and len(request_parts) > 1:
+                return cls._compare_query_params(mapping_rule_parts[1], request_parts[1])
+            # If mapping rule has query params but request doesn't, return False
+            elif len(mapping_rule_parts) > 1:
+                return False
+            # If request has query params but mapping rule doesn't, that's okay
+            return True
+
         except Exception as e:  # noqa: BLE001
             logger.warning(
                 "URL comparison failed - verify URL format and structure",
