@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from enum import Enum
 from typing import Any
 
-from pydantic import AnyHttpUrl, BaseModel, Field
+from pydantic import AnyHttpUrl, BaseModel, Field, PositiveInt, PrivateAttr
 
 
 class BaseSchema(BaseModel):
@@ -16,15 +17,15 @@ class User(BaseSchema):
     first_name: str | None = Field(None, alias="firstName")
     last_name: str | None = Field(None, alias="lastName")
     email: str | None = None
-    attributes: dict[str, Any] | None = {}
+    attributes: dict[str, Any] | None = Field(default_factory=dict)
 
 
 class Resource(BaseSchema):
     type: str
     key: str | None = None
     tenant: str | None = None
-    attributes: dict[str, Any] | None = {}
-    context: dict[str, Any] | None = {}
+    attributes: dict[str, Any] | None = Field(default_factory=dict)
+    context: dict[str, Any] | None = Field(default_factory=dict)
 
 
 class AuthorizationQuery(BaseSchema):
@@ -35,8 +36,8 @@ class AuthorizationQuery(BaseSchema):
     user: User
     action: str
     resource: Resource
-    context: dict[str, Any] | None = {}
-    sdk: str | None
+    context: dict[str, Any] | None = Field(default_factory=dict)
+    sdk: str | None = None
 
     def __repr__(self) -> str:
         return f"({self.user.key}, {self.action}, {self.resource.type})"
@@ -49,6 +50,12 @@ class BulkAuthorizationQuery(BaseSchema):
         return " | ".join([repr(query) for query in self.checks])
 
 
+class UrlTypes(str, Enum):
+    """Enum for URL matching types"""
+    DEFAULT = "default"
+    REGEX = "regex"
+
+
 class UrlAuthorizationQuery(BaseSchema):
     """
     the format of is_allowed_url() input
@@ -58,13 +65,13 @@ class UrlAuthorizationQuery(BaseSchema):
     http_method: str
     url: AnyHttpUrl
     tenant: str
-    context: dict[str, Any] | None = {}
+    context: dict[str, Any] | None = Field(default_factory=dict)
     sdk: str | None
 
 
 class UserTenantsQuery(BaseSchema):
     user: User
-    context: dict[str, Any] | None = {}
+    context: dict[str, Any] | None = Field(default_factory=dict)
 
 
 class UserPermissionsQuery(BaseSchema):
@@ -72,7 +79,33 @@ class UserPermissionsQuery(BaseSchema):
     tenants: list[str] | None = None
     resources: list[str] | None = None
     resource_types: list[str] | None = None
-    context: dict[str, Any] | None = {}
+    context: dict[str, Any] | None = Field(default_factory=dict)
+    _offset: PositiveInt | None = PrivateAttr(None)
+    _limit: PositiveInt | None = PrivateAttr(None)
+
+    def set_pagination(self, offset: PositiveInt | None = None, limit: PositiveInt | None = None) -> None:
+        self._offset = offset
+        self._limit = limit
+
+    def get_offset(self) -> PositiveInt | None:
+        return self._offset
+
+    def get_limit(self) -> PositiveInt | None:
+        return self._limit
+
+    def get_pagination_params(self) -> dict:
+        """
+        Get the parameters needed for the pagination of the request to be used with external data sources.
+        """
+        params = {}
+
+        if self._offset is not None:
+            params["offset"] = str(self._offset)
+
+        if self._limit is not None:
+            params["limit"] = str(self._limit)
+
+        return params
 
 
 class AuthorizationResult(BaseSchema):
@@ -98,7 +131,7 @@ class _ResourceDetails(_TenantDetails):
 class _UserPermissionsResult(BaseSchema):
     tenant: _TenantDetails | None
     resource: _ResourceDetails | None
-    permissions: list[str] = Field(..., regex="^.+:.+$")
+    permissions: list[str] = Field(default_factory=list, regex="^.+:.+$")
     roles: list[str] | None = None
 
 
@@ -120,6 +153,7 @@ class MappingRuleData(BaseSchema):
     resource: str
     action: str
     priority: int | None = None
+    url_type: UrlTypes = UrlTypes.DEFAULT
 
     @property
     def resource_action(self) -> str:
@@ -207,7 +241,7 @@ class AuthorizedUsersAuthorizationQuery(BaseSchema):
 
     action: str
     resource: Resource
-    context: dict[str, Any] | None = {}
+    context: dict[str, Any] | None = Field(default_factory=dict)
     sdk: str | None
 
     def __repr__(self) -> str:
