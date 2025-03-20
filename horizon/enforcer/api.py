@@ -456,7 +456,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
         response_model=AuthorizationResult,
         status_code=status.HTTP_200_OK,
         response_model_exclude_none=True,
-        dependencies=[Depends(enforce_pdp_token)],
+        dependencies=[Depends(enforce_pdp_token), Depends(notify_seen_sdk)],
     )
     async def is_allowed(
         request: Request,
