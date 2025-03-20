@@ -160,12 +160,14 @@ class OpalRelayAPIClient:
             if response.status != status.HTTP_202_ACCEPTED:
                 try:
                     text = await response.text()
-                except Exception as e:
-                    raise RelayAPIError(
-                        "relay-api",
-                        response.status,
-                        f"Server responded to token request with a bad status: {text}",
-                    ) from e
+                except Exception:  # noqa: BLE001
+                    text = None
+
+                raise RelayAPIError(
+                    "relay-api",
+                    response.status,
+                    f"Server responded to token request with a bad status: {text}",
+                )
         logger.debug("Sent ping.")
 
     async def _run(self):
