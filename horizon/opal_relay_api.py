@@ -121,15 +121,17 @@ class OpalRelayAPIClient:
                     )
                 try:
                     obj = RelayJWTResponse.parse_obj(await response.json())
-                except TypeError:
+                except TypeError as e:
                     try:
                         text = await response.text()
-                    except Exception as e:
-                        raise RelayAPIError(
-                            "relay-jwt-api",
-                            response.status,
-                            f"Server responded to token request with an invalid result: {text}",
-                        ) from e
+                    except Exception:  # noqa: BLE001
+                        text = None
+
+                    raise RelayAPIError(
+                        "relay-jwt-api",
+                        response.status,
+                        f"Server responded to token request with an invalid result: {text}",
+                    ) from e
             self._relay_token = obj.token
             self._relay_session = ClientSession(headers={"Authorization": f"Bearer {self._relay_token}"})
         return self._relay_session
