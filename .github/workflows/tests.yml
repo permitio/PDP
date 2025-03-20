@@ -1,0 +1,122 @@
+name: PDP CI Tests
+
+on:
+  pull_request:
+  push:
+    branches: [master, main, v*]
+  workflow_call:
+    secrets:
+      PDP_TESTER_API_KEY:
+        required: true
+      CLONE_REPO_TOKEN:
+        required: true
+
+jobs:
+  pre-commit:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - uses: actions/setup-python@v3
+    - uses: pre-commit/action@v2.0.3
+
+  pytests:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Python setup
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11.8'
+
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Run Pytests
+      run: |
+        python -m pip install --upgrade pip
+        pip install ".[dev]"
+        pytest -s --cache-clear horizon/tests/
+
+  pdp-tester:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: permitio/permit-opa
+          ref: main
+          path: './permit-opa'
+          token: ${{ secrets.CLONE_REPO_TOKEN }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Pre build PDP tests
+        run: |
+          echo "next" > permit_pdp_version
+          rm -rf custom
+          mkdir custom
+          build_root="$PWD"
+          cd ./permit-opa
+          find * \( -name '*go*' -o -name 'LICENSE.md' \) -print0 | xargs -0 tar -czf "$build_root"/custom/custom_opa.tar.gz --exclude '.*'
+
+      - name: Build and load PDP Docker image
+        uses: docker/build-push-action@v5
+        with:
+          push: false
+          load: true
+          context: .
+          platforms: linux/amd64
+          tags: permitio/pdp-v2:next
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Checkout the pdp-tester repository
+      - name: Checkout pdp-tester repository
+        uses: actions/checkout@v3
+        with:
+          repository: "permitio/pdp-tester"
+          token: ${{ secrets.CLONE_REPO_TOKEN }}
+          path: './pdp-tester'
+
+      # Setup Python environment
+      - name: Setup Python
+        uses: actions/setup-python@v3
+        with:
+          python-version: "3.12"
+
+      # Install dependencies for pdp-tester
+      - name: Install pdp-tester dependencies
+        working-directory: ./pdp-tester
+        run: |
+          pip install -r requirements.txt
+
+      # Run pdp-tester
+      - name: Run pdp-tester
+        working-directory: ./pdp-tester
+        env:
+          TOKEN: ${{ secrets.PDP_TESTER_API_KEY }}
+          LOCAL_TAGS: '["next"]'
+          INCLUDE_TAGS: '[]'
+          AUTO_REMOVE: "False"
+          SKIP_GENERATE: "True"
+          ENABLE_APM: "False"
+        run: |
+          python -m pdp_tester.main
+
+      - name: Print Docker container logs
+        if: always()
+        run: |
+          echo "Fetching logs for all Docker containers..."
+          for container in $(docker ps -aq); do
+            echo "========================================"
+            echo "Logs for container: $container"
+            echo "----------------------------------------"
+            docker logs "$container" || true
+            echo "========================================"
+            echo ""
+          done

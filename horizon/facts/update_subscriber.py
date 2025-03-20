@@ -7,8 +7,6 @@ from loguru import logger
 from opal_client.data.updater import DataUpdater
 from opal_common.schemas.data import DataUpdate, DataUpdateReport
 
-from horizon.config import sidecar_config
-
 
 class DataUpdateSubscriber:
     def __init__(self, updater: DataUpdater):
@@ -20,9 +18,7 @@ class DataUpdateSubscriber:
 
     def _inject_subscriber(self):
         reporter = self._updater.callbacks_reporter
-        reporter.report_update_results = self._reports_callback_decorator(
-            reporter.report_update_results
-        )
+        reporter.report_update_results = self._reports_callback_decorator(reporter.report_update_results)
 
     def _reports_callback_decorator(self, func):
         @wraps(func)
@@ -38,18 +34,12 @@ class DataUpdateSubscriber:
     def _resolve_listeners(self, update_id: str) -> None:
         event = self._update_listeners.get(update_id)
         if event is not None:
-            logger.debug(
-                f"Received acknowledgment for update ID {update_id!r}, resolving listener(s)"
-            )
+            logger.debug(f"Received acknowledgment for update ID {update_id!r}, resolving listener(s)")
             event.set()
         else:
-            logger.debug(
-                f"Received acknowledgment for update ID {update_id!r}, but no listener found"
-            )
+            logger.debug(f"Received acknowledgment for update ID {update_id!r}, but no listener found")
 
-    async def wait_for_message(
-        self, update_id: str, timeout: float | None = None
-    ) -> bool:
+    async def wait_for_message(self, update_id: str, timeout: float | None = None) -> bool:
         """
         Wait for a message with the given update ID to be received by the PubSub client.
         :param update_id: id of the update to wait for
@@ -74,18 +64,19 @@ class DataUpdateSubscriber:
         await asyncio.sleep(0)  # allow other wait task to run before publishing
         topics = [topic for entry in data_update.entries for topic in entry.topics]
         logger.debug(
-            f"Publishing data update with id={data_update.id!r} to topics {topics} as {self._notifier_id=}: {data_update}"
+            f"Publishing data update with id={data_update.id!r} to topics {topics} as {self._notifier_id=}: "
+            f"{data_update}"
         )
         return await self._updater._client.publish(
             topics=topics,
             data=data_update.dict(),
-            notifier_id=self._notifier_id,  # we fake a different notifier id to make the other side broadcast the message back to our main channel
-            sync=False,  # sync=False means we don't wait for the other side to acknowledge the message, as it causes a deadlock because we fake a different notifier id
+            notifier_id=self._notifier_id,  # we fake a different notifier id to make the other side broadcast
+            # the message back to our main channel
+            sync=False,  # sync=False means we don't wait for the other side to acknowledge the message,
+            # as it causes a deadlock because we fake a different notifier id
         )
 
-    async def publish_and_wait(
-        self, data_update: DataUpdate, timeout: float | None = None
-    ) -> bool:
+    async def publish_and_wait(self, data_update: DataUpdate, timeout: float | None = None) -> bool:
         """
         Publish a data update and wait for it to be received by the PubSub client.
         :param data_update: DataUpdate object to publish

@@ -13,6 +13,17 @@ spec:
     metadata:
       labels:
         app: permitio-pdp
+        {{- if .Values.labels }}
+        {{- range $key, $value := .Values.labels }}
+        {{ $key }}: {{ $value | quote }}
+        {{- end }}
+        {{- end }}
+      annotations:
+        {{- if .Values.annotations }}
+        {{- range $key, $value := .Values.annotations }}
+        {{ $key }}: {{ $value | quote }}
+        {{- end }}
+        {{- end }}
     spec:
       containers:
         - name: permitio-pdp
@@ -26,6 +37,12 @@ spec:
                 secretKeyRef:
                   name: permitio-pdp-secret
                   key: ApiKey
+            {{- if .Values.pdp.pdpEnvs }}
+            {{- range .Values.pdp.pdpEnvs }}
+            - name: {{ .name }}
+              value: {{ .value | quote }}
+            {{- end }}
+            {{- end }}
             {{- if .Values.pdp.logs_forwarder.enabled }}
             - name: PDP_OPA_DECISION_LOG_CONSOLE
               value: "true"
@@ -38,6 +55,32 @@ spec:
             - name: PDP_DEBUG
               value: "true"
             {{- end }}
+            {{- if hasKey .Values "dd_agent_envref_enabled" }}
+              {{- if .Values.dd_agent_envref_enabled }}
+            - name: DD_AGENT_HOST
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: DD_ENV
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['tags.datadoghq.com/env']
+            - name: DD_SERVICE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['tags.datadoghq.com/service']
+            - name: DD_VERSION
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['tags.datadoghq.com/version']
+              {{- end }}
+            {{- end }}
+          resources:
+            requests:
+              cpu: "{{ .Values.resources.requests.cpu }}"
+              memory: "{{ .Values.resources.requests.memory }}"
+            limits:
+              memory: "{{ .Values.resources.limits.memory }}"
           livenessProbe:
             httpGet:
               path: /health
@@ -55,7 +98,6 @@ spec:
             - name: logs
               mountPath: /tmp/
           {{- end }}
-          resources: {}
         {{- if .Values.pdp.logs_forwarder.enabled }}
         - name: fluentbit
           image: fluent/fluent-bit:3.1.4

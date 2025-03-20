@@ -1,0 +1,45 @@
+[tool.ruff]
+line-length = 120
+src = ["horizon"]
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E", # https://docs.astral.sh/ruff/rules/#error-e
+    "W", # https://docs.astral.sh/ruff/rules/#warning-w
+    "F", # https://docs.astral.sh/ruff/rules/#pyflakes-f
+    "N", # https://docs.astral.sh/ruff/rules/#pep8-naming-n
+    "I", # https://docs.astral.sh/ruff/rules/#isort-i
+    "BLE", # https://docs.astral.sh/ruff/rules/#flake8-blind-except-ble
+    "FBT", # https://docs.astral.sh/ruff/rules/#flake8-boolean-trap-fbt
+    "B", # https://docs.astral.sh/ruff/rules/#flake8-bugbear-b
+    "C4", # https://docs.astral.sh/ruff/rules/#flake8-comprehensions-c4
+    "PIE", # https://docs.astral.sh/ruff/rules/#flake8-pie-pie
+    "T20", # https://docs.astral.sh/ruff/rules/#flake8-print-t20
+    "SIM", # https://docs.astral.sh/ruff/rules/#flake8-simplify-sim
+    "ARG", # https://docs.astral.sh/ruff/rules/#flake8-unused-arguments-arg
+    "PTH", # https://docs.astral.sh/ruff/rules/#flake8-use-pathlib-pth
+    "ASYNC", # https://docs.astral.sh/ruff/rules/#flake8-async-async
+    "UP", # https://docs.astral.sh/ruff/rules/#pyupgrade-up
+    "ERA", # https://docs.astral.sh/ruff/rules/#eradicate-era
+    "C90", # https://docs.astral.sh/ruff/rules/#mccabe-c90
+    "RUF", # https://docs.astral.sh/ruff/rules/#ruff-specific-rules-ruf
+    "FAST", # https://docs.astral.sh/ruff/rules/#fastapi-fast
+]
+ignore = [
+    "FAST001", # https://docs.astral.sh/ruff/rules/fast-api-redundant-response-model/#fast-api-redundant-response-model-fast001
+]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.mypy]
+python_version = "3.10"
+packages = ["horizon"]
+plugins = ["pydantic.v1.mypy"]
+
+check_untyped_defs = true
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_unreachable = true

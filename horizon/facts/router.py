@@ -1,17 +1,19 @@
-from typing import Callable, Any, Iterable
+from collections.abc import Callable, Iterable
+from typing import Any
 
 from fastapi import (
     APIRouter,
     Depends,
-    Request as FastApiRequest,
-    status,
     Response,
+)
+from fastapi import (
+    Request as FastApiRequest,
 )
 from loguru import logger
 from opal_common.schemas.data import DataSourceEntry
 
 from horizon.authentication import enforce_pdp_token
-from horizon.facts.client import FactsClientDependency, FactsClient
+from horizon.facts.client import FactsClient, FactsClientDependency
 from horizon.facts.dependencies import (
     DataUpdateSubscriberDependency,
     WaitTimeoutDependency,
@@ -123,9 +125,7 @@ async def update_user(
     )
 
 
-def create_role_assignment_data_entries(
-    request: FastApiRequest, body: dict[str, Any]
-) -> Iterable[DataSourceEntry]:
+def create_role_assignment_data_entries(request: FastApiRequest, body: dict[str, Any]) -> Iterable[DataSourceEntry]:
     if not body.get("resource_instance"):
         yield create_data_source_entry(
             obj_type="role_assignments",
@@ -180,7 +180,7 @@ async def create_role_assignment(
         request,
         update_subscriber,
         wait_timeout,
-        path=f"/role_assignments",
+        path="/role_assignments",
         entries_callback=create_role_assignment_data_entries,
     )
 
@@ -265,9 +265,7 @@ async def forward_request_then_wait_for_update(
     wait_timeout: float | None,
     *,
     path: str,
-    entries_callback: Callable[
-        [FastApiRequest, dict[str, Any]], Iterable[DataSourceEntry]
-    ],
+    entries_callback: Callable[[FastApiRequest, dict[str, Any]], Iterable[DataSourceEntry]],
 ) -> Response:
     response = await client.send_forward_request(request, path)
     body = client.extract_body(response)
@@ -275,13 +273,9 @@ async def forward_request_then_wait_for_update(
         return client.convert_response(response)
 
     try:
-        data_update_entry = create_data_update_entry(
-            list(entries_callback(request, body))
-        )
+        data_update_entry = create_data_update_entry(list(entries_callback(request, body)))
     except KeyError as e:
-        logger.warning(
-            f"Missing required field {e.args[0]} in the response body, skipping wait for update."
-        )
+        logger.warning(f"Missing required field {e.args[0]} in the response body, skipping wait for update.")
         return client.convert_response(response)
 
     await update_subscriber.publish_and_wait(
@@ -296,9 +290,7 @@ async def forward_request_then_wait_for_update(
     methods=["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"],
     include_in_schema=False,
 )
-async def forward_remaining_requests(
-    request: FastApiRequest, client: FactsClientDependency, full_path: str
-):
+async def forward_remaining_requests(request: FastApiRequest, client: FactsClientDependency, full_path: str):
     forward_request = await client.build_forward_request(request, full_path)
     response = await client.send(forward_request, stream=True)
     return client.convert_response(response, stream=True)

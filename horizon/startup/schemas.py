@@ -1,11 +1,11 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class RemoteConfig(BaseModel):
-    opal_common: dict = {}
-    opal_client: dict = {}
-    pdp: dict = {}
-    context: dict = {}
+    opal_common: dict = Field(default_factory=dict)
+    opal_client: dict = Field(default_factory=dict)
+    pdp: dict = Field(default_factory=dict)
+    context: dict = Field(default_factory=dict)
 
 
 class RemoteConfigBackup(BaseModel):

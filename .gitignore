@@ -130,3 +130,11 @@ dmypy.json
 
 # editors
 .vscode/
+.idea/
+
+# PDP specific
+/opa
+/permit_pdp_version
+
+# MacOS specific
+.DS_Store

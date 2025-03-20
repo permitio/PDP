@@ -1,6 +1,5 @@
-from typing import Optional
+from pathlib import Path
 
-import os.path
 import requests
 from opal_common.logger import logger
 from pydantic import ValidationError
@@ -9,10 +8,17 @@ from tenacity import retry, retry_if_not_exception_type, stop, wait
 from horizon.config import sidecar_config
 from horizon.startup.api_keys import get_env_api_key
 from horizon.startup.blocking_request import BlockingRequest
-from horizon.startup.exceptions import NoRetryException
-from horizon.startup.schemas import RemoteConfig
+from horizon.startup.exceptions import NoRetryError
 from horizon.startup.offline_mode import OfflineModeManager
+from horizon.startup.schemas import RemoteConfig
 from horizon.state import PersistentStateHandler
+
+DEFAULT_RETRY_CONFIG = {
+    "retry": retry_if_not_exception_type(NoRetryError),
+    "wait": wait.wait_random_exponential(max=5),
+    "stop": stop.stop_after_attempt(sidecar_config.CONFIG_FETCH_MAX_RETRIES),
+    "reraise": True,
+}
 
 
 class RemoteConfigFetcher:
@@ -39,18 +45,11 @@ class RemoteConfigFetcher:
     organizations (which is not secure).
     """
 
-    DEFAULT_RETRY_CONFIG = {
-        "retry": retry_if_not_exception_type(NoRetryException),
-        "wait": wait.wait_random_exponential(max=5),
-        "stop": stop.stop_after_attempt(sidecar_config.CONFIG_FETCH_MAX_RETRIES),
-        "reraise": True,
-    }
-
     def __init__(
         self,
         backend_url: str = sidecar_config.CONTROL_PLANE,
         remote_config_route: str = sidecar_config.REMOTE_CONFIG_ENDPOINT,
-        shard_id: Optional[str] = sidecar_config.SHARD_ID,
+        shard_id: str | None = sidecar_config.SHARD_ID,
         retry_config=None,
     ):
         """
@@ -64,12 +63,10 @@ class RemoteConfigFetcher:
         self._url = f"{backend_url}{remote_config_route}"
         self._backend_url = backend_url
         self._token = get_env_api_key()
-        self._retry_config = (
-            retry_config if retry_config is not None else self.DEFAULT_RETRY_CONFIG
-        )
+        self._retry_config = retry_config if retry_config is not None else DEFAULT_RETRY_CONFIG
         self._shard_id = shard_id
 
-    def fetch_config(self) -> Optional[RemoteConfig]:
+    def fetch_config(self) -> RemoteConfig | None:
         """
         fetches the sidecar config by identifying with the sidecar access token.
         if failed to get config from backend, returns None.
@@ -94,24 +91,16 @@ class RemoteConfigFetcher:
         However, this is ok because the RemoteConfigFetcher runs *once* when the sidecar starts.
         """
         try:
-            response = BlockingRequest(
-                token=self._token, extra_headers={"X-Shard-ID": self._shard_id}
-            ).post(
+            response = BlockingRequest(token=self._token, extra_headers={"X-Shard-ID": self._shard_id}).post(
                 url=self._url, payload=PersistentStateHandler.build_state_payload_sync()
             )
 
             try:
                 sidecar_config = RemoteConfig(**response)
-                config_context = sidecar_config.dict(include={"context"}).get(
-                    "context", {}
-                )
-                logger.info(
-                    f"Received remote config with the following context: {config_context}"
-                )
+                config_context = sidecar_config.dict(include={"context"}).get("context", {})
+                logger.info(f"Received remote config with the following context: {config_context}")
             except ValidationError as exc:
-                logger.error(
-                    "Got invalid config contents: {exc}", exc=exc, response=response
-                )
+                logger.error("Got invalid config contents: {exc}", exc=exc, response=response)
                 raise
             return sidecar_config
         except requests.RequestException as exc:
@@ -119,7 +108,7 @@ class RemoteConfigFetcher:
             raise
 
 
-_remote_config: Optional[RemoteConfig] = None
+_remote_config: RemoteConfig | None = None
 
 
 def get_remote_config():
@@ -129,10 +118,7 @@ def get_remote_config():
 
     if sidecar_config.ENABLE_OFFLINE_MODE:
         offline_mode = OfflineModeManager(
-            os.path.join(
-                sidecar_config.OFFLINE_MODE_BACKUP_DIR,
-                sidecar_config.OFFLINE_MODE_BACKUP_FILENAME,
-            ),
+            Path(sidecar_config.OFFLINE_MODE_BACKUP_DIR) / sidecar_config.OFFLINE_MODE_BACKUP_FILENAME,
             get_env_api_key(),
         )
         _remote_config = offline_mode.process_remote_config(_remote_config)

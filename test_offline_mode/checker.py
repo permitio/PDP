@@ -2,7 +2,6 @@ import asyncio
 import logging.config
 import os
 
-import aiohttp
 from permit import Permit, PermitConfig
 
 logging.config.dictConfig(
@@ -12,8 +11,7 @@ logging.config.dictConfig(
         "formatters": {
             "color": {
                 "()": "colorlog.ColoredFormatter",
-                "format": "%(log_color)s[%(asctime)s.%(msecs)03d] %(levelname)s - "
-                "%(name)s:%(lineno)d | %(message)s",
+                "format": "%(log_color)s[%(asctime)s.%(msecs)03d] %(levelname)s - %(name)s:%(lineno)d | %(message)s",
                 "datefmt": "%H:%M:%S",
                 "log_colors": {
                     "DEBUG": "white",
