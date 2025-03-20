@@ -9,7 +9,7 @@ RUN if [ -f /custom/custom_opa.tar.gz ]; \
     then \
       cd /custom && \
       tar xzf custom_opa.tar.gz && \
-      go build -o /opa && \
+      go build -ldflags="-extldflags=-static" -o /opa && \
       rm -rf /custom ; \
     else \
       case $(uname -m) in \
