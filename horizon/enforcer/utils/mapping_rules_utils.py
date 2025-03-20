@@ -11,20 +11,14 @@ class MappingRulesUtils:
             return False
         if mapping_rule_url.host != request_url.host:
             return False
-        if not MappingRulesUtils._compare_url_path(
-            mapping_rule_url.path, request_url.path
-        ):
+        if not MappingRulesUtils._compare_url_path(mapping_rule_url.path, request_url.path):
             return False
-        if not MappingRulesUtils._compare_query_params(
-            mapping_rule_url.query, request_url.query
-        ):
+        if not MappingRulesUtils._compare_query_params(mapping_rule_url.query, request_url.query):  # noqa: SIM103
             return False
         return True
 
     @staticmethod
-    def _compare_url_path(
-        mapping_rule_url: str | None, request_url: str | None
-    ) -> bool:
+    def _compare_url_path(mapping_rule_url: str | None, request_url: str | None) -> bool:
         if mapping_rule_url is None and request_url is None:
             return True
         if not (mapping_rule_url is not None and request_url is not None):
@@ -34,18 +28,14 @@ class MappingRulesUtils:
         if len(mapping_rule_url_parts) != len(request_url_parts):
             return False
         for i in range(len(mapping_rule_url_parts)):
-            if mapping_rule_url_parts[i].startswith("{") and mapping_rule_url_parts[
-                i
-            ].endswith("}"):
+            if mapping_rule_url_parts[i].startswith("{") and mapping_rule_url_parts[i].endswith("}"):
                 continue
             if mapping_rule_url_parts[i] != request_url_parts[i]:
                 return False
         return True
 
     @staticmethod
-    def _compare_query_params(
-        mapping_rule_query_string: str | None, request_url_query_string: str | None
-    ) -> bool:
+    def _compare_query_params(mapping_rule_query_string: str | None, request_url_query_string: str | None) -> bool:
         if mapping_rule_query_string is None and request_url_query_string is None:
             # if both are None, they are equal
             return True
@@ -61,13 +51,11 @@ class MappingRulesUtils:
         mapping_rule_query_params = QueryParams(mapping_rule_query_string)
         request_query_params = QueryParams(request_url_query_string)
 
-        for key in mapping_rule_query_params.keys():
+        for key in mapping_rule_query_params:
             if key not in request_query_params:
                 return False
 
-            if mapping_rule_query_params[key].startswith(
-                "{"
-            ) and mapping_rule_query_params[key].endswith("}"):
+            if mapping_rule_query_params[key].startswith("{") and mapping_rule_query_params[key].endswith("}"):
                 # if the value is an attribute
                 # we just need to make sure the attribute is in the request query params
                 continue
@@ -95,10 +83,8 @@ class MappingRulesUtils:
         rule_query_params = QueryParams(rule_url.split("?")[1])
         request_query_params = QueryParams(request_url.split("?")[1])
         attributes = {}
-        for key in rule_query_params.keys():
-            if rule_query_params[key].startswith("{") and rule_query_params[
-                key
-            ].endswith("}"):
+        for key in rule_query_params:
+            if rule_query_params[key].startswith("{") and rule_query_params[key].endswith("}"):
                 attributes[rule_query_params[key][1:-1]] = request_query_params[key]
         return attributes
 
@@ -111,7 +97,7 @@ class MappingRulesUtils:
     ) -> MappingRuleData | None:
         matched_mapping_rules = []
         for mapping_rule in mapping_rules:
-            if not mapping_rule.http_method == http_method.lower():
+            if mapping_rule.http_method != http_method.lower():
                 # if the method is not the same, we don't need to check the url
                 continue
             if not cls._compare_urls(mapping_rule.url, url):

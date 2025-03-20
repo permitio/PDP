@@ -15,11 +15,11 @@ class ApiKeyLevel(str):
 
 
 class SidecarConfig(Confi):
-    def __new__(cls, prefix=None, is_model=True):
+    def __new__(cls, *, prefix=None, is_model=True):  # noqa: ARG004
         """creates a singleton object, if it is not created,
         or else returns the previous singleton object"""
         if not hasattr(cls, "instance"):
-            cls.instance = super(SidecarConfig, cls).__new__(cls)
+            cls.instance = super().__new__(cls)
         return cls.instance
 
     SHARD_ID = confi.str(
@@ -52,12 +52,8 @@ class SidecarConfig(Confi):
     )
 
     # backend api url, where proxy requests go
-    BACKEND_SERVICE_URL = confi.str(
-        "BACKEND_SERVICE_URL", confi.delay("{CONTROL_PLANE}/v1")
-    )
-    BACKEND_LEGACY_URL = confi.str(
-        "BACKEND_LEGACY_URL", confi.delay("{CONTROL_PLANE}/sdk")
-    )
+    BACKEND_SERVICE_URL = confi.str("BACKEND_SERVICE_URL", confi.delay("{CONTROL_PLANE}/v1"))
+    BACKEND_LEGACY_URL = confi.str("BACKEND_LEGACY_URL", confi.delay("{CONTROL_PLANE}/sdk"))
 
     # backend route to fetch policy data topics
     REMOTE_CONFIG_ENDPOINT = confi.str("REMOTE_CONFIG_ENDPOINT", "/v2/pdps/me/config")
@@ -76,25 +72,23 @@ class SidecarConfig(Confi):
     ORG_API_KEY = confi.str(
         "ORG_API_KEY",
         None,
-        description="set this to your organization's API key if you prefer to use the organization level API key. If not set, the PDP will use the project level API key",
+        description="set this to your organization's API key if you prefer to use the organization level API key. "
+        "By default, the PDP will use the project level API key",
     )
 
     # access token to your project
     PROJECT_API_KEY = confi.str(
         "PROJECT_API_KEY",
         None,
-        description="set this to your project's API key if you prefer to use the project level API key. If not set, the PDP will use the default project API key",
+        description="set this to your project's API key if you prefer to use the project level API key. "
+        "By default, the PDP will use the default project API key",
     )
 
     # chosen project id/key to use for the PDP
-    ACTIVE_PROJECT = confi.str(
-        "ACTIVE_PROJECT", None, description="the project id/key to use for the PDP"
-    )
+    ACTIVE_PROJECT = confi.str("ACTIVE_PROJECT", None, description="the project id/key to use for the PDP")
 
     # chosen environment id/key to use for the PDP
-    ACTIVE_ENV = confi.str(
-        "ACTIVE_ENV", None, description="the environment id/key to use for the PDP"
-    )
+    ACTIVE_ENV = confi.str("ACTIVE_ENV", None, description="the environment id/key to use for the PDP")
 
     # access token to perform system control operations
     CONTAINER_CONTROL_KEY = confi.str("CONTAINER_CONTROL_KEY", MOCK_API_KEY)
@@ -111,7 +105,8 @@ class SidecarConfig(Confi):
     ENABLE_OFFLINE_MODE = confi.bool(
         "ENABLE_OFFLINE_MODE",
         False,
-        description="if true, sidecar will use a file backup to restore configuration and policy data when cloud services are unavailable",
+        description="When true, sidecar will use a file backup to restore configuration and policy data when "
+        "cloud services are unavailable",
     )
 
     OFFLINE_MODE_BACKUP_DIR = confi.str(
@@ -137,9 +132,7 @@ class SidecarConfig(Confi):
     )
 
     # centralized logging
-    CENTRAL_LOG_DRAIN_URL = confi.str(
-        "CENTRAL_LOG_DRAIN_URL", "https://listener.logz.io:8071"
-    )
+    CENTRAL_LOG_DRAIN_URL = confi.str("CENTRAL_LOG_DRAIN_URL", "https://listener.logz.io:8071")
     CENTRAL_LOG_DRAIN_TIMEOUT = confi.int("CENTRAL_LOG_DRAIN_TIMEOUT", 5)
     CENTRAL_LOG_TOKEN = confi.str("CENTRAL_LOG_TOKEN", None)
     CENTRAL_LOG_ENABLED = confi.bool("CENTRAL_LOG_ENABLED", False)
@@ -189,7 +182,8 @@ class SidecarConfig(Confi):
     OPA_DECISION_LOG_CONSOLE = confi.bool(
         "OPA_DECISION_LOG_CONSOLE",
         False,
-        description="if true, OPA decision logs will also be printed to console (only relevant if `OPA_DECISION_LOG_ENABLED` is true)",
+        description="if true, OPA decision logs will also be printed to console "
+        "(only relevant if `OPA_DECISION_LOG_ENABLED` is true)",
     )
     OPA_DECISION_LOG_INGRESS_ROUTE = confi.str(
         "OPA_DECISION_LOG_INGRESS_ROUTE",
@@ -266,7 +260,7 @@ class SidecarConfig(Confi):
     # non configurable values -------------------------------------------------
 
     # redoc configuration (openapi schema)
-    OPENAPI_TAGS_METADATA = [
+    OPENAPI_TAGS_METADATA = [  # noqa: RUF012
         {
             "name": "Authorization API",
             "description": "Authorization queries to OPA. These queries are answered locally by OPA "
@@ -284,11 +278,14 @@ class SidecarConfig(Confi):
         },
         {
             "name": "Cloud API Proxy",
-            "description": "These endpoints proxy the Permit.io cloud api, and therefore **incur high-latency**. "
-            + "You should not use the cloud API in the standard request flow of users, i.e in places where the incurred "
-            + "added latency will affect your entire api. A good place to call the cloud API will be in one-time user events "
-            + "such as user registration (i.e: calling sync user, assigning initial user roles, etc.). "
-            + "The sidecar will proxy to the cloud every request prefixed with '/sdk'.",
+            "description": (
+                "These endpoints proxy the Permit.io cloud api, and therefore **incur high-latency**. "
+                "You should not use the cloud API in the standard request flow of users, i.e in places "
+                "where the incurred added latency will affect your entire api. "
+                "A good place to call the cloud API will be in one-time user events such as user registration "
+                "(i.e: calling sync user, assigning initial user roles, etc.). "
+                "The sidecar will proxy to the cloud every request prefixed with '/sdk'."
+            ),
             "externalDocs": {
                 "description": "The cloud api complete docs are located here:",
                 "url": "https://api.permit.io/redoc",

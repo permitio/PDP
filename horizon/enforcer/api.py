@@ -1,12 +1,11 @@
 import asyncio
 import json
 import re
-from typing import cast, Optional, Union, Dict, List
+from pathlib import Path
+from typing import Annotated, cast
 
 import aiohttp
-from fastapi import APIRouter, Depends, Header
-from fastapi import HTTPException
-from fastapi import Request, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from opal_client.config import opal_client_config
 from opal_client.logger import logger
 from opal_client.policy_store.base_policy_store_client import BasePolicyStoreClient
@@ -20,22 +19,22 @@ from starlette.responses import JSONResponse
 from horizon.authentication import enforce_pdp_token
 from horizon.config import sidecar_config
 from horizon.enforcer.schemas import (
+    AllTenantsAuthorizationResult,
     AuthorizationQuery,
     AuthorizationResult,
-    UrlAuthorizationQuery,
-    MappingRuleData,
-    Resource,
-    BulkAuthorizationResult,
-    AllTenantsAuthorizationResult,
+    AuthorizedUsersAuthorizationQuery,
+    AuthorizedUsersResult,
     BaseSchema,
     BulkAuthorizationQuery,
+    BulkAuthorizationResult,
+    MappingRuleData,
+    Resource,
+    UrlAuthorizationQuery,
+    User,
     UserPermissionsQuery,
     UserPermissionsResult,
     UserTenantsQuery,
     UserTenantsResult,
-    AuthorizedUsersResult,
-    AuthorizedUsersAuthorizationQuery,
-    User,
 )
 from horizon.enforcer.schemas_kong import (
     KongAuthorizationInput,
@@ -44,7 +43,6 @@ from horizon.enforcer.schemas_kong import (
     KongWrappedAuthorizationQuery,
 )
 from horizon.enforcer.schemas_v1 import AuthorizationQueryV1
-from horizon.enforcer.utils.headers_utils import get_case_insensitive
 from horizon.enforcer.utils.mapping_rules_utils import MappingRulesUtils
 from horizon.enforcer.utils.statistics_utils import StatisticsManager
 from horizon.state import PersistentStateHandler
@@ -92,8 +90,8 @@ def log_query_result(query: BaseSchema, response: Response):
     """
     params = repr(query)
     try:
-        result: Dict = json.loads(response.body).get("result", {})
-        allowed: bool | List[Dict] = result.get("allow", None)
+        result: dict = json.loads(response.body).get("result", {})
+        allowed: bool | list[dict] = result.get("allow")
         color = "<red>"
         allow_output = False
         if isinstance(allowed, bool):
@@ -101,16 +99,12 @@ def log_query_result(query: BaseSchema, response: Response):
             if allowed:
                 color = "<green>"
         elif isinstance(allowed, list):
-            allow_output = [a.get("allow", False) for a in allowed]
-            if any(allow_output):
+            if any(a.get("allow", False) for a in allowed):
                 color = "<green>"
 
         if allowed is None:
             allowed_tenants = result.get("allowed_tenants")
-            allow_output = [
-                f"({a.get('tenant', {}).get('key')}, {a.get('allow', False)})"
-                for a in allowed_tenants
-            ]
+            allow_output = [f"({a.get('tenant', {}).get('key')}, {a.get('allow', False)})" for a in allowed_tenants]
             if len(allow_output) > 0:
                 color = "<green>"
 
@@ -119,9 +113,7 @@ def log_query_result(query: BaseSchema, response: Response):
         format = color + "is allowed = {allowed} </>"
         format += " | <cyan>{api_params}</>"
         if sidecar_config.DECISION_LOG_DEBUG_INFO:
-            format += (
-                " | full_input=<fg #fff980>{input}</> | debug=<fg #f7e0c1>{debug}</>"
-            )
+            format += " | full_input=<fg #fff980>{input}</> | debug=<fg #f7e0c1>{debug}</>"
         logger.opt(colors=True).info(
             format,
             allowed=allow_output,
@@ -129,10 +121,10 @@ def log_query_result(query: BaseSchema, response: Response):
             input=query.dict(),
             debug=debug,
         )
-    except:
+    except Exception:  # noqa: BLE001
         try:
             body = str(response.body, "utf-8")
-        except:
+        except ValueError:
             body = None
         data = {} if body is None else {"response_body": body}
         logger.info(
@@ -148,9 +140,7 @@ def log_query_result_kong(input: KongAuthorizationInput, response: Response):
     """
     formats a nice log to default logger with the results of permit.check()
     """
-    params = "({}, {}, {})".format(
-        input.consumer.username, input.request.http.method, input.request.http.path
-    )
+    params = f"({input.consumer.username}, {input.request.http.method}, {input.request.http.path})"
     try:
         result: dict = json.loads(response.body).get("result", {})
         allowed = result.get("allow", False)
@@ -162,9 +152,7 @@ def log_query_result_kong(input: KongAuthorizationInput, response: Response):
         format = color + "is allowed = {allowed} </>"
         format += " | <cyan>{api_params}</>"
         if sidecar_config.DECISION_LOG_DEBUG_INFO:
-            format += (
-                " | full_input=<fg #fff980>{input}</> | debug=<fg #f7e0c1>{debug}</>"
-            )
+            format += " | full_input=<fg #fff980>{input}</> | debug=<fg #f7e0c1>{debug}</>"
         logger.opt(colors=True).info(
             format,
             allowed=allowed,
@@ -172,10 +160,10 @@ def log_query_result_kong(input: KongAuthorizationInput, response: Response):
             input=input.dict(),
             debug=debug,
         )
-    except:
+    except Exception:  # noqa: BLE001
         try:
             body = str(response.body, "utf-8")
-        except:
+        except ValueError:
             body = None
         data = {} if body is None else {"response_body": body}
         logger.info(
@@ -187,7 +175,7 @@ def log_query_result_kong(input: KongAuthorizationInput, response: Response):
         )
 
 
-def get_v1_processed_query(result: dict) -> Optional[dict]:
+def get_v1_processed_query(result: dict) -> dict | None:
     if "authorization_query" not in result:
         return None  # not a v1 query result
 
@@ -199,13 +187,13 @@ def get_v1_processed_query(result: dict) -> Optional[dict]:
     }
 
 
-def get_v2_processed_query(result: dict) -> Optional[dict]:
-    return result.get("debug", {}).get("input", None)
+def get_v2_processed_query(result: dict) -> dict | None:
+    return (result.get("debug") or {}).get("input", None)
 
 
 async def notify_seen_sdk(
-    x_permit_sdk_language: Optional[str] = Header(default=None),
-) -> Optional[str]:
+    x_permit_sdk_language: str | None = Header(default=None),
+) -> str | None:
     if x_permit_sdk_language is not None:
         await PersistentStateHandler.get_instance().seen_sdk(x_permit_sdk_language)
     return x_permit_sdk_language
@@ -218,7 +206,7 @@ async def post_to_opa(request: Request, path: str, data: dict | None):
     _set_use_debugger(data)
     try:
         logger.debug(f"calling OPA at '{url}' with input: {data}")
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession() as session:  # noqa: SIM117
             async with session.post(
                 url,
                 data=json.dumps(data) if data is not None else None,
@@ -232,36 +220,32 @@ async def post_to_opa(request: Request, path: str, data: dict | None):
         stats_manager.report_failure()
         exc = HTTPException(
             status.HTTP_504_GATEWAY_TIMEOUT,
-            detail="OPA request timed out (url: {url}, timeout: {timeout}s)".format(
-                url=url,
-                timeout=sidecar_config.OPA_CLIENT_QUERY_TIMEOUT,
-            ),
+            detail=f"OPA request timed out (url: {url}, timeout: {sidecar_config.OPA_CLIENT_QUERY_TIMEOUT}s)",
         )
     except aiohttp.ClientResponseError as e:
         stats_manager.report_failure()
         exc = HTTPException(
             status.HTTP_502_BAD_GATEWAY,  # 502 indicates server got an error from another server
-            detail="OPA request failed (url: {url}, status: {status}, message: {message})".format(
-                url=url, status=e.status, message=e.message
-            ),
+            detail=f"OPA request failed (url: {url}, status: {e.status}, message: {e.message})",
         )
     except aiohttp.ClientError as e:
         stats_manager.report_failure()
         exc = HTTPException(
             status.HTTP_502_BAD_GATEWAY,
-            detail="OPA request failed (url: {url}, error: {error}".format(
-                url=url, error=str(e)
-            ),
+            detail=f"OPA request failed (url: {url}, error: {e!s}",
         )
     logger.warning(exc.detail)
     raise exc
 
 
 def _set_use_debugger(data: dict | None) -> None:
-    if data is not None and data.get("input") is not None:
-        if "use_debugger" not in data["input"]:
-            if sidecar_config.IS_DEBUG_MODE is not None:
-                data["input"]["use_debugger"] = sidecar_config.IS_DEBUG_MODE
+    if (
+        data is not None
+        and data.get("input") is not None
+        and "use_debugger" not in data["input"]
+        and sidecar_config.IS_DEBUG_MODE is not None
+    ):
+        data["input"]["use_debugger"] = sidecar_config.IS_DEBUG_MODE
 
 
 async def _is_allowed(query: BaseSchema, request: Request, policy_package: str):
@@ -270,18 +254,14 @@ async def _is_allowed(query: BaseSchema, request: Request, policy_package: str):
     return await post_to_opa(request, path, opa_input)
 
 
-def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
+def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noqa: C901
     policy_store = policy_store or DEFAULT_POLICY_STORE_GETTER()
     router = APIRouter()
     if sidecar_config.KONG_INTEGRATION:
-        with open(KONG_ROUTES_TABLE_FILE, "r") as f:
+        with Path(KONG_ROUTES_TABLE_FILE).open() as f:
             kong_routes_table_raw = json.load(f)
-        kong_routes_table = [
-            (re.compile(regex), resource) for regex, resource in kong_routes_table_raw
-        ]
-        logger.info(
-            f"Kong integration: Loaded {len(kong_routes_table)} translation rules."
-        )
+        kong_routes_table = [(re.compile(regex), resource) for regex, resource in kong_routes_table_raw]
+        logger.info(f"Kong integration: Loaded {len(kong_routes_table)} translation rules.")
 
     @router.get("/health", status_code=status.HTTP_200_OK, include_in_schema=False)
     async def health():
@@ -300,9 +280,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         response_model_exclude_none=True,
         dependencies=[Depends(enforce_pdp_token)],
     )
-    async def authorized_users(
-        request: Request, query: AuthorizedUsersAuthorizationQuery
-    ):
+    async def authorized_users(request: Request, query: AuthorizedUsersAuthorizationQuery):
         response = await _is_allowed(query, request, AUTHORIZED_USERS_POLICY_PACKAGE)
         log_query_result(query, response)
         response_json = None
@@ -310,11 +288,11 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             response_json = json.loads(response.body)
             raw_result = response_json.get("result", {}).get("result", {})
             result = parse_obj_as(AuthorizedUsersResult, raw_result)
-        except:
+        except Exception as e:  # noqa: BLE001
             result = AuthorizedUsersResult.empty(query.resource)
-            logger.warning(
+            logger.opt(exception=True).warning(
                 "authorized users (fallback response), response: {res}",
-                reason="cannot decode opa response",
+                reason=f"cannot decode opa response: {e}",
                 res=response_json,
             )
         return result
@@ -329,16 +307,13 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
     async def is_allowed_url(
         request: Request,
         query: UrlAuthorizationQuery,
-        x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
+        x_permit_sdk_language: Annotated[str | None, Depends(notify_seen_sdk)],
     ):
         data = await post_to_opa(request, "mapping_rules", None)
 
         mapping_rules = []
         data_result = json.loads(data.body).get("result")
-        if data_result is None:
-            mapping_rules_json = []
-        else:
-            mapping_rules_json = data_result.get("all")
+        mapping_rules_json = data_result.get("all", []) if data_result is not None else []
 
         for mapping_rule in mapping_rules_json:
             mapping_rules.append(parse_obj_as(MappingRuleData, mapping_rule))
@@ -355,13 +330,9 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
                     "mapping_rules": mapping_rules_json,
                 },
             }
-        path_attributes = MappingRulesUtils.extract_attributes_from_url(
+        path_attributes = MappingRulesUtils.extract_attributes_from_url(matched_mapping_rule.url, query.url)
+        query_params_attributes = MappingRulesUtils.extract_attributes_from_query_params(
             matched_mapping_rule.url, query.url
-        )
-        query_params_attributes = (
-            MappingRulesUtils.extract_attributes_from_query_params(
-                matched_mapping_rule.url, query.url
-            )
         )
         attributes = {**path_attributes, **query_params_attributes}
         allowed_query = AuthorizationQuery(
@@ -383,32 +354,22 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         name="Get User Permissions",
         status_code=status.HTTP_200_OK,
         response_model_exclude_none=True,
-        dependencies=[Depends(enforce_pdp_token)],
+        dependencies=[Depends(enforce_pdp_token), Depends(notify_seen_sdk)],
     )
     async def user_permissions(
         request: Request,
         query: UserPermissionsQuery,
-        x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
     ):
         response = await _is_allowed(query, request, USER_PERMISSIONS_POLICY_PACKAGE)
         log_query_result(query, response)
         try:
             raw_result = json.loads(response.body).get("result", {})
-            processed_query = (
-                get_v1_processed_query(raw_result)
-                or get_v2_processed_query(raw_result)
-                or {}
+            return parse_obj_as(UserPermissionsResult, raw_result.get("permissions", {}))
+        except Exception as e:  # noqa: BLE001
+            logger.opt(exception=True).warning(
+                "is allowed (fallback response)", reason=f"cannot decode opa response: {e}"
             )
-
-            result = parse_obj_as(
-                UserPermissionsResult, raw_result.get("permissions", {})
-            )
-        except:
-            result = parse_obj_as(UserPermissionsResult, {})
-            logger.warning(
-                "is allowed (fallback response)", reason="cannot decode opa response"
-            )
-        return result
+            return parse_obj_as(UserPermissionsResult, {})
 
     @router.post(
         "/user-tenants",
@@ -416,12 +377,11 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         name="Get User Tenants",
         status_code=status.HTTP_200_OK,
         response_model_exclude_none=True,
-        dependencies=[Depends(enforce_pdp_token)],
+        dependencies=[Depends(enforce_pdp_token), Depends(notify_seen_sdk)],
     )
     async def user_tenants(
         request: Request,
         query: UserTenantsQuery,
-        x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
     ):
         response = await _is_allowed(query, request, USER_TENANTS_POLICY_PACKAGE)
         log_query_result(query, response)
@@ -432,95 +392,76 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
             elif isinstance(raw_result, list):
                 tenants = raw_result
             else:
-                raise TypeError(
-                    f"Expected raw result to be dict or list, got {type(raw_result)}"
-                )
-            result = parse_obj_as(UserTenantsResult, tenants)
-        except:
-            result = parse_obj_as(UserTenantsResult, [])
-            logger.warning(
+                raise TypeError(f"Expected raw result to be dict or list, got {type(raw_result)}")
+            return parse_obj_as(UserTenantsResult, tenants)
+        except Exception as e:  # noqa: BLE001
+            logger.opt(exception=True).warning(
                 "get user tenants (fallback response)",
-                reason="cannot decode opa response",
+                reason=f"cannot decode opa response: {e}",
             )
-        return result
+            return parse_obj_as(UserTenantsResult, [])
 
     @router.post(
         "/allowed/all-tenants",
         response_model=AllTenantsAuthorizationResult,
         status_code=status.HTTP_200_OK,
         response_model_exclude_none=True,
-        dependencies=[Depends(enforce_pdp_token)],
+        dependencies=[Depends(enforce_pdp_token), Depends(notify_seen_sdk)],
     )
     async def is_allowed_all_tenants(
         request: Request,
         query: AuthorizationQuery,
-        x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
     ):
         response = await _is_allowed(query, request, ALL_TENANTS_POLICY_PACKAGE)
         log_query_result(query, response)
         try:
             raw_result = json.loads(response.body).get("result", {})
-            processed_query = (
-                get_v1_processed_query(raw_result)
-                or get_v2_processed_query(raw_result)
-                or {}
-            )
-
-            result = AllTenantsAuthorizationResult(
+            return AllTenantsAuthorizationResult(
                 allowed_tenants=raw_result.get("allowed_tenants", []),
             )
-        except:
-            result = AllTenantsAuthorizationResult(allowed_tenants=[])
-            logger.warning(
-                "is allowed (fallback response)", reason="cannot decode opa response"
+        except Exception as e:  # noqa: BLE001
+            logger.opt(exception=True).warning(
+                "is allowed (fallback response)", reason=f"cannot decode opa response: {e}"
             )
-        return result
+            return AllTenantsAuthorizationResult(allowed_tenants=[])
 
     @router.post(
         "/allowed/bulk",
         response_model=BulkAuthorizationResult,
         status_code=status.HTTP_200_OK,
         response_model_exclude_none=True,
-        dependencies=[Depends(enforce_pdp_token)],
+        dependencies=[Depends(enforce_pdp_token), Depends(notify_seen_sdk)],
     )
     async def is_allowed_bulk(
         request: Request,
         queries: list[AuthorizationQuery],
-        x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
     ):
         bulk_query = BulkAuthorizationQuery(checks=queries)
         response = await _is_allowed(bulk_query, request, BULK_POLICY_PACKAGE)
         log_query_result(bulk_query, response)
         try:
             raw_result = json.loads(response.body).get("result", {})
-            processed_query = (
-                get_v1_processed_query(raw_result)
-                or get_v2_processed_query(raw_result)
-                or {}
-            )
-            result = BulkAuthorizationResult(
+            return BulkAuthorizationResult(
                 allow=raw_result.get("allow", []),
             )
-        except:
-            result = BulkAuthorizationResult(
+        except Exception as e:  # noqa: BLE001
+            logger.opt(exception=True).warning(
+                "is allowed (fallback response)", reason=f"cannot decode opa response: {e}"
+            )
+            return BulkAuthorizationResult(
                 allow=[],
             )
-            logger.warning(
-                "is allowed (fallback response)", reason="cannot decode opa response"
-            )
-        return result
 
     @router.post(
         "/allowed",
         response_model=AuthorizationResult,
         status_code=status.HTTP_200_OK,
         response_model_exclude_none=True,
-        dependencies=[Depends(enforce_pdp_token)],
+        dependencies=[Depends(enforce_pdp_token), Depends(notify_seen_sdk)],
     )
     async def is_allowed(
         request: Request,
-        query: Union[AuthorizationQuery, AuthorizationQueryV1],
-        x_permit_sdk_language: Optional[str] = Depends(notify_seen_sdk),
+        query: AuthorizationQuery | AuthorizationQueryV1,
     ):
         if isinstance(query, AuthorizationQueryV1):
             raise HTTPException(
@@ -535,25 +476,18 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         log_query_result(query, response)
         try:
             raw_result = json.loads(response.body).get("result", {})
-            processed_query = (
-                get_v1_processed_query(raw_result)
-                or get_v2_processed_query(raw_result)
-                or {}
-            )
-            result = {
+            processed_query = get_v1_processed_query(raw_result) or get_v2_processed_query(raw_result) or {}
+            return {
                 "allow": raw_result.get("allow", False),
-                "result": raw_result.get(
-                    "allow", False
-                ),  # fallback for older sdks (TODO: remove)
+                "result": raw_result.get("allow", False),  # fallback for older sdks (TODO: remove)
                 "query": processed_query,
                 "debug": raw_result.get("debug", {}),
             }
-        except:
-            result = dict(allow=False, result=False)
-            logger.warning(
-                "is allowed (fallback response)", reason="cannot decode opa response"
+        except Exception as e:  # noqa: BLE001
+            logger.opt(exception=True).warning(
+                "is allowed (fallback response)", reason=f"cannot decode opa response: {e}"
             )
-        return result
+            return {"allow": False, "result": False}
 
     @router.post(
         "/nginx_allowed",
@@ -564,12 +498,11 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
     )
     async def is_allowed_nginx(
         request: Request,
-        permit_user_key: str = Header(None),
-        permit_tenant_id: str = Header(None),
-        permit_action: str = Header(None),
-        permit_resource_type: str = Header(None),
+        permit_user_key: Annotated[str | None, Header()] = None,
+        permit_tenant_id: Annotated[str | None, Header()] = None,
+        permit_action: Annotated[str | None, Header()] = None,
+        permit_resource_type: Annotated[str | None, Header()] = None,
     ):
-
         query = AuthorizationQuery(
             user=User(key=permit_user_key),
             action=permit_action,
@@ -580,25 +513,18 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         log_query_result(query, response)
         try:
             raw_result = json.loads(response.body).get("result", {})
-            processed_query = (
-                get_v1_processed_query(raw_result)
-                or get_v2_processed_query(raw_result)
-                or {}
-            )
-            result = {
+            processed_query = get_v1_processed_query(raw_result) or get_v2_processed_query(raw_result) or {}
+            return {
                 "allow": raw_result.get("allow", False),
-                "result": raw_result.get(
-                    "allow", False
-                ),  # fallback for older sdks (TODO: remove)
+                "result": raw_result.get("allow", False),  # fallback for older sdks (TODO: remove)
                 "query": processed_query,
                 "debug": raw_result.get("debug", {}),
             }
-        except:
-            result = dict(allow=False, result=False)
-            logger.warning(
-                "is allowed (fallback response)", reason="cannot decode opa response"
+        except Exception as e:  # noqa: BLE001
+            logger.opt(exception=True).warning(
+                "is allowed (fallback response)", reason=f"cannot decode opa response: {e}"
             )
-        return result
+            return {"allow": False, "result": False}
 
     @router.post(
         "/kong",
@@ -623,7 +549,9 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
 
         if query.input.consumer is None:
             logger.warning(
-                "Got request from Kong with no consumer (perhaps you forgot to check 'Config.include Consumer In Opa Input' in the Kong OPA plugin config?), returning allowed=False"
+                "Got request from Kong with no consumer "
+                "(perhaps you forgot to check 'Config.include Consumer In Opa Input' in the Kong OPA plugin config?), "
+                "returning allowed=False"
             )
             return {
                 "result": False,
@@ -665,15 +593,14 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):
         log_query_result_kong(query.input, response)
         try:
             raw_result = json.loads(response.body).get("result", {})
-            result = {
+            return {
                 "result": raw_result.get("allow", False),
             }
-        except:
-            result = dict(allow=False, result=False)
-            logger.warning(
+        except Exception as e:  # noqa: BLE001
+            logger.opt(exception=True).warning(
                 "is allowed (fallback response)",
-                reason="cannot decode opa response",
+                reason=f"cannot decode opa response: {e}",
             )
-        return result
+            return {"allow": False, "result": False}
 
     return router

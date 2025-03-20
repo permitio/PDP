@@ -1,8 +1,7 @@
 import logging
-import os
 import sys
-from typing import List
-from uuid import uuid4, UUID
+from pathlib import Path
+from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, status
 from fastapi.responses import RedirectResponse
@@ -10,11 +9,11 @@ from loguru import logger
 from logzio.handler import LogzioHandler
 from opal_client.client import OpalClient
 from opal_client.config import (
+    ConnRetryOptions,
     EngineLogFormat,
+    PolicyStoreAuth,
     opal_client_config,
     opal_common_config,
-    PolicyStoreAuth,
-    ConnRetryOptions,
 )
 from opal_client.engine.options import OpaServerOptions
 from opal_common.confi import Confi
@@ -25,7 +24,6 @@ from opal_common.fetcher.providers.http_fetch_provider import (
 from opal_common.logging_utils.formatter import Formatter
 from scalar_fastapi import get_scalar_api_reference
 
-from horizon.facts.router import facts_router
 from horizon.authentication import enforce_pdp_token
 from horizon.config import MOCK_API_KEY, sidecar_config
 from horizon.enforcer.api import init_enforcer_api_router, stats_manager
@@ -33,12 +31,13 @@ from horizon.enforcer.opa.config_maker import (
     get_opa_authz_policy_file_path,
     get_opa_config_file_path,
 )
+from horizon.facts.router import facts_router
 from horizon.local.api import init_local_cache_api_router
 from horizon.opal_relay_api import OpalRelayAPIClient
 from horizon.proxy.api import router as proxy_router
-from horizon.startup.remote_config import get_remote_config
-from horizon.startup.exceptions import InvalidPDPTokenException
 from horizon.startup.api_keys import get_env_api_key
+from horizon.startup.exceptions import InvalidPDPTokenError
+from horizon.startup.remote_config import get_remote_config
 from horizon.state import PersistentStateHandler
 from horizon.system.api import init_system_api_router
 from horizon.system.consts import GUNICORN_EXIT_APP
@@ -59,10 +58,8 @@ def apply_config(overrides_dict: dict, config_object: Confi):
                     key,
                     config_object.entries[key].cast_from_json(value),
                 )
-            except Exception:
-                logger.opt(exception=True).warning(
-                    f"Unable to set config key {prefixed_key} from overrides:"
-                )
+            except Exception:  # noqa BLE001
+                logger.opt(exception=True).warning(f"Unable to set config key {prefixed_key} from overrides:")
                 continue
             logger.info(f"Overriden config key: {prefixed_key}")
             continue
@@ -97,11 +94,9 @@ class PermitPDP:
         # fetch and apply config override from cloud control plane
         try:
             remote_config = get_remote_config()
-        except InvalidPDPTokenException:
-            logger.critical(
-                "An invalid API key was specified. Please verify the PDP_API_KEY environment variable."
-            )
-            raise SystemExit(GUNICORN_EXIT_APP)
+        except InvalidPDPTokenError as e:
+            logger.critical("An invalid API key was specified. Please verify the PDP_API_KEY environment variable.")
+            raise SystemExit(GUNICORN_EXIT_APP) from e
 
         if not remote_config:
             logger.critical("No cloud configuration found. Exiting.")
@@ -115,10 +110,7 @@ class PermitPDP:
 
         self._log_environment(remote_config.context)
 
-        if (
-            sidecar_config.OPA_BEARER_TOKEN_REQUIRED
-            or sidecar_config.OPA_DECISION_LOG_ENABLED
-        ):
+        if sidecar_config.OPA_BEARER_TOKEN_REQUIRED or sidecar_config.OPA_DECISION_LOG_ENABLED:
             # we need to pass to OPAL a custom inline OPA config to enable these features
             self._configure_inline_opa_config()
 
@@ -127,7 +119,10 @@ class PermitPDP:
 
         if sidecar_config.PRINT_CONFIG_ON_STARTUP:
             logger.info(
-                "sidecar is loading with the following config:\n\n{sidecar_config}\n\n{opal_client_config}\n\n{opal_common_config}",
+                "sidecar is loading with the following config:\n\n"
+                "{sidecar_config}\n\n"
+                "{opal_client_config}\n\n"
+                "{opal_common_config}",
                 sidecar_config=sidecar_config.debug_repr(),
                 opal_client_config=opal_client_config.debug_repr(),
                 opal_common_config=opal_common_config.debug_repr(),
@@ -136,9 +131,7 @@ class PermitPDP:
         if sidecar_config.ENABLE_MONITORING:
             self._configure_monitoring()
 
-        self._opal = OpalClient(
-            shard_id=sidecar_config.SHARD_ID, data_topics=self._fix_data_topics()
-        )
+        self._opal = OpalClient(shard_id=sidecar_config.SHARD_ID, data_topics=self._fix_data_topics())
         self._inject_extra_callbacks()
         self._configure_cloud_logging(remote_config.context)
 
@@ -184,14 +177,8 @@ class PermitPDP:
         )
 
     def _log_environment(self, pdp_context: dict[str, str]):
-        if (
-            not "org_id" in pdp_context
-            or not "project_id" in pdp_context
-            or not "env_id" in pdp_context
-        ):
-            logger.warning(
-                "Didn't get org_id, project_id, or env_id context from backend."
-            )
+        if "org_id" not in pdp_context or "project_id" not in pdp_context or "env_id" not in pdp_context:
+            logger.warning("Didn't get org_id, project_id, or env_id context from backend.")
             return
         logger.info("PDP started at: ")
         logger.info("  org_id:     {}", UUID(pdp_context["org_id"]))
@@ -210,17 +197,12 @@ class PermitPDP:
         config.fastapi["service_name"] = "permit-pdp"
         config.fastapi["request_span_name"] = "permit-pdp"
 
-    def _configure_cloud_logging(self, remote_context: dict = {}):
+    def _configure_cloud_logging(self, remote_context: dict | None = None):
         if not sidecar_config.CENTRAL_LOG_ENABLED:
             return
 
-        if (
-            not sidecar_config.CENTRAL_LOG_TOKEN
-            or len(sidecar_config.CENTRAL_LOG_TOKEN) == 0
-        ):
-            logger.warning(
-                "Centralized log is enabled, but token is not valid. Disabling sink."
-            )
+        if not sidecar_config.CENTRAL_LOG_TOKEN or len(sidecar_config.CENTRAL_LOG_TOKEN) == 0:
+            logger.warning("Centralized log is enabled, but token is not valid. Disabling sink.")
             return
 
         logzio_handler = LogzioHandler(
@@ -233,7 +215,7 @@ class PermitPDP:
         # adds extra context to all loggers, helps identify between different sidecars.
         extra_context = {}
         extra_context["run_id"] = uuid4().hex
-        extra_context.update(remote_context)
+        extra_context.update(remote_context or {})
 
         logger.info(f"Adding the following context to all loggers: {extra_context}")
 
@@ -284,13 +266,14 @@ class PermitPDP:
         # override OPAL client default config to show OPA logs
         if sidecar_config.OPA_DECISION_LOG_CONSOLE:
             opal_client_config.INLINE_OPA_LOG_FORMAT = EngineLogFormat.FULL
-            exclude_list: List[str] = opal_common_config.LOG_MODULE_EXCLUDE_LIST.copy()
+            exclude_list: list[str] = opal_common_config.LOG_MODULE_EXCLUDE_LIST.copy()
             if OPA_LOGGER_MODULE in exclude_list:
                 exclude_list.remove(OPA_LOGGER_MODULE)
                 opal_common_config.LOG_MODULE_EXCLUDE_LIST = exclude_list
 
     def _configure_opal_data_updater(self):
-        # Retry 10 times with (random) exponential backoff (wait times up to 1, 2, 4, 6, 8, 16, 32, 64, 128, 256 secs), and overall timeout of 64 seconds
+        # Retry 10 times with (random) exponential backoff (wait times up to 1, 2, 4, 6, 8, 16, 32, 64, 128, 256 secs),
+        # and overall timeout of 64 seconds
         opal_client_config.DATA_UPDATER_CONN_RETRY = ConnRetryOptions(
             wait_strategy="random_exponential",
             attempts=14,
@@ -302,40 +285,42 @@ class PermitPDP:
         configure opal to use offline mode when enabled
         """
         opal_client_config.OFFLINE_MODE_ENABLED = sidecar_config.ENABLE_OFFLINE_MODE
-        opal_client_config.STORE_BACKUP_PATH = os.path.join(
-            sidecar_config.OFFLINE_MODE_BACKUP_DIR,
-            sidecar_config.OFFLINE_MODE_POLICY_BACKUP_FILENAME,
+        opal_client_config.STORE_BACKUP_PATH = (
+            Path(sidecar_config.OFFLINE_MODE_BACKUP_DIR) / sidecar_config.OFFLINE_MODE_POLICY_BACKUP_FILENAME
         )
 
-    def _fix_data_topics(self) -> List[str]:
+    def _fix_data_topics(self) -> list[str]:
         """
         This is a worksaround for the following issue:
-        Permit backend services use the the topic 'policy_data/{client_id}' to configure PDPs and to publish data updates.
-        However, opal-server is configured to return DataSourceConfig with the topic 'policy_data' (without the client_id suffix) from `/scope/{client_id}/data` endpoint.
-        In the new OPAL client, this is an issue since data updater validates DataSourceConfig's topics against its configured data topics.
+        Permit backend services use the topic 'policy_data/{client_id}' to configure PDPs and to publish data updates.
+        However, opal-server is configured to return DataSourceConfig with the topic 'policy_data'
+         (without the client_id suffix) from `/scope/{client_id}/data` endpoint.
+        In the new OPAL client, this is an issue since data updater validates DataSourceConfig's topics
+        against its configured data topics.
 
-        Simply fixing the backend to use the shorter topic everywhere is problematic since it would require a breaking change / migration for all clients.
-        The shorter version logically includes the longer version so it's fine having OPAL listen to the shorter version when updates are still published to the longer one.
+        Simply fixing the backend to use the shorter topic everywhere is problematic since it would require a breaking
+        change / migration for all clients.
+        The shorter version logically includes the longer version so it's fine having OPAL listen to the
+        shorter version when updates are still published to the longer one.
 
-        We don't edit `opal_client_config.DATA_TOPICS` directly because relay's ping reports it - and reported subscribed topics are expected to match the topics used in publish.
+        We don't edit `opal_client_config.DATA_TOPICS` directly because relay's ping reports it -
+        and reported subscribed topics are expected to match the topics used in publish.
             (relay ignores the hierarchical structure of topics - this could be fixed in the future)
         """
         if opal_client_config.SCOPE_ID == "default":
             return opal_client_config.DATA_TOPICS
 
         return [
-            topic.removesuffix(
-                f"/{opal_client_config.SCOPE_ID}"
-            )  # Only remove suffix if it's of the expected form
+            topic.removesuffix(f"/{opal_client_config.SCOPE_ID}")  # Only remove suffix if it's of the expected form
             for topic in opal_client_config.DATA_TOPICS
         ]
 
     def _override_app_metadata(self, app: FastAPI):
         app.title = "Permit.io PDP"
         app.description = (
-            "The PDP (Policy decision point) container wraps Open Policy Agent (OPA) with a higher-level API intended for fine grained "
-            + "application-level authorization. The PDP automatically handles pulling policy updates in real-time "
-            + "from a centrally managed cloud-service (api.permit.io)."
+            "The PDP (Policy decision point) container wraps Open Policy Agent (OPA) with a higher-level API intended "
+            "for fine grained application-level authorization. The PDP automatically handles pulling policy updates in "
+            "real-time from a centrally managed cloud-service (api.permit.io)."
         )
         app.version = "0.2.0"
         app.openapi_tags = sidecar_config.OPENAPI_TAGS_METADATA
@@ -417,9 +402,7 @@ class PermitPDP:
 
     def _verify_config(self):
         if get_env_api_key() == MOCK_API_KEY:
-            logger.critical(
-                "No API key specified. Please specify one with the PDP_API_KEY environment variable."
-            )
+            logger.critical("No API key specified. Please specify one with the PDP_API_KEY environment variable.")
             raise SystemExit(GUNICORN_EXIT_APP)
 
     def _inject_extra_callbacks(self) -> None:
@@ -435,11 +418,7 @@ class PermitPDP:
             entry.key = entry.key or register.calc_hash(entry.url, entry.config)
 
             if register.get(entry.key):
-                raise RuntimeError(
-                    f"Callback with key '{entry.key}' already exists. Please specify a different key."
-                )
+                raise RuntimeError(f"Callback with key '{entry.key}' already exists. Please specify a different key.")
 
-            logger.info(
-                f"Registering data update callback to url '{entry.url}' with key '{entry.key}'"
-            )
+            logger.info(f"Registering data update callback to url '{entry.url}' with key '{entry.key}'")
             register.put(entry.url, entry.config, entry.key)
