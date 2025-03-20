@@ -311,8 +311,8 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
         data = await post_to_opa(request, "mapping_rules", None)
 
         mapping_rules = []
-        data_result = json.loads(data.body).get("result")
-        mapping_rules_json = data_result.get("all", []) if data_result is not None else []
+        data_result = json.loads(data.body).get("result") or {}
+        mapping_rules_json = data_result.get("all") or []
 
         for mapping_rule in mapping_rules_json:
             mapping_rules.append(parse_obj_as(MappingRuleData, mapping_rule))
