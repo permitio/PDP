@@ -23,6 +23,7 @@ from opal_common.fetcher.providers.http_fetch_provider import (
     HttpMethods,
 )
 from opal_common.logging_utils.formatter import Formatter
+from scalar_fastapi import get_scalar_api_reference
 
 from horizon.facts.router import facts_router
 from horizon.authentication import enforce_pdp_token
@@ -157,6 +158,13 @@ class PermitPDP:
         @app.on_event("startup")
         async def _initialize_opal_relay():
             await self._opal_relay.initialize()
+
+        @app.get("/scalar", include_in_schema=False)
+        async def scalar_html():
+            return get_scalar_api_reference(
+                openapi_url="/openapi.json",
+                title="Permit.io PDP API",
+            )
 
     def _setup_temp_logger(self):
         """
