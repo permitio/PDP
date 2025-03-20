@@ -18,6 +18,10 @@ from opal_client.config import (
 )
 from opal_client.engine.options import OpaServerOptions
 from opal_common.confi import Confi
+from opal_common.fetcher.providers.http_fetch_provider import (
+    HttpFetcherConfig,
+    HttpMethods,
+)
 from opal_common.logging_utils.formatter import Formatter
 
 from horizon.facts.router import facts_router
@@ -134,6 +138,7 @@ class PermitPDP:
         self._opal = OpalClient(
             shard_id=sidecar_config.SHARD_ID, data_topics=self._fix_data_topics()
         )
+        self._inject_extra_callbacks()
         self._configure_cloud_logging(remote_config.context)
 
         self._opal_relay = OpalRelayAPIClient(remote_config.context, self._opal)
@@ -408,3 +413,25 @@ class PermitPDP:
                 "No API key specified. Please specify one with the PDP_API_KEY environment variable."
             )
             raise SystemExit(GUNICORN_EXIT_APP)
+
+    def _inject_extra_callbacks(self) -> None:
+        register = self._opal._callbacks_register  # type: ignore
+        default_config = HttpFetcherConfig(
+            method=HttpMethods.POST,
+            headers={"content-type": "application/json"},
+            process_data=False,
+            fetcher=None,
+        )
+        for entry in sidecar_config.DATA_UPDATE_CALLBACKS:
+            entry.config = entry.config or default_config
+            entry.key = entry.key or register.calc_hash(entry.url, entry.config)
+
+            if register.get(entry.key):
+                raise RuntimeError(
+                    f"Callback with key '{entry.key}' already exists. Please specify a different key."
+                )
+
+            logger.info(
+                f"Registering data update callback to url '{entry.url}' with key '{entry.key}'"
+            )
+            register.put(entry.url, entry.config, entry.key)
