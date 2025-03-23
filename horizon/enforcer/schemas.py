@@ -52,6 +52,7 @@ class BulkAuthorizationQuery(BaseSchema):
 
 class UrlTypes(str, Enum):
     """Enum for URL matching types"""
+
     DEFAULT = "default"
     REGEX = "regex"
 

@@ -169,9 +169,9 @@ class MappingRulesUtils:
             elif not cls._compare_urls(mapping_rule.url, url):
                 # if the urls doesn't match, we don't need to check the headers
                 continue
-                
+
             matched_mapping_rules.append(mapping_rule)
-            
+
         # most priority first
         matched_mapping_rules.sort(key=lambda rule: rule.priority or 0, reverse=True)
         if len(matched_mapping_rules) > 0:
