@@ -1,4 +1,7 @@
-import re2 as re  # use re2 instead of re for regex matching because it's simiplier and safer for user inputted regexes
+# TODO: change to use re2 in the future, currently not supported in alpine due to c++ library issues
+# import re2 as re  # use re2 instead of re for regex matching because it's simiplier and safer for user inputted regexes  # noqa: ERA001,E501
+import re
+
 from loguru import logger
 from pydantic import AnyHttpUrl
 from starlette.datastructures import QueryParams
