@@ -164,6 +164,541 @@ ALLOWED_ENDPOINTS = [
         {"result": [{"attributes": {}, "key": "tenant-1"}]},
         [{"attributes": {}, "key": "tenant-1"}],
     ),
+    (
+        "/allowed_url",
+        "mapping_rules",
+        UrlAuthorizationQuery(
+            user=User(key="user1"),
+            http_method="GET",
+            url="https://api.example.com/api/v1/users/123/profile",
+            tenant="default",
+        ),
+        {
+            "result": {
+                "all": [
+                    {
+                        "url": "^https://api\\.example\\.com/api/v1/users/(?P<user_id>[0-9]+)/profile$",
+                        "http_method": "get",
+                        "action": "read",
+                        "resource": "users",
+                        "url_type": "regex",
+                    }
+                ]
+            }
+        },
+        {"allow": True},
+    ),
+    (
+        "/allowed_url",
+        "mapping_rules",
+        UrlAuthorizationQuery(
+            user=User(key="user1"),
+            http_method="GET",
+            url="https://api.example.com/api/v1/users/abc/profile",
+            tenant="default",
+        ),
+        {
+            "result": {
+                "all": [
+                    {
+                        "url": "^https://api\\.example\\.com/api/v1/users/(?P<user_id>[0-9]+)/profile$",
+                        "http_method": "get",
+                        "action": "read",
+                        "resource": "users",
+                        "url_type": "regex",
+                    }
+                ]
+            }
+        },
+        {"allow": False},
+    ),
+    (
+        "/allowed_url",
+        "mapping_rules",
+        UrlAuthorizationQuery(
+            user=User(key="user1"),
+            http_method="POST",
+            url="https://api.example.com/v2/organizations/org123/users/456/settings",
+            tenant="default",
+        ),
+        {
+            "result": {
+                "all": [
+                    {
+                        "url": "^https://api\\.example\\.com/v2/organizations/(?P<org_id>[\\w-]+)/users/(?P<user_id>[0-9]+)/settings$",
+                        "http_method": "post",
+                        "action": "update",
+                        "resource": "user_settings",
+                        "url_type": "regex",
+                    }
+                ]
+            }
+        },
+        {"allow": True},
+    ),
+    (
+        "/allowed_url",
+        "mapping_rules",
+        UrlAuthorizationQuery(
+            user=User(key="user1"),
+            http_method="GET",
+            url="https://api.example.com/api/users",
+            tenant="default",
+        ),
+        {
+            "result": {
+                "all": [
+                    {
+                        "url": "^https://api\\.example\\.com/api/users(?:/(?P<user_id>[0-9]+))?$",
+                        "http_method": "get",
+                        "action": "read",
+                        "resource": "users",
+                        "url_type": "regex",
+                    }
+                ]
+            }
+        },
+        {"allow": True},
+    ),
+    (
+        "/allowed_url",
+        "mapping_rules",
+        UrlAuthorizationQuery(
+            user=User(key="user1"),
+            http_method="GET",
+            url="https://api.example.com/api/v1/users/123/profile?include=details",
+            tenant="default",
+        ),
+        {
+            "result": {
+                "all": [
+                    {
+                        "url": "^https://api\\.example\\.com/api/v1/users/(?P<user_id>[0-9]+)/profile(?:\\?(?P<query>.*))?$",
+                        "http_method": "get",
+                        "action": "read",
+                        "resource": "users",
+                        "url_type": "regex",
+                    }
+                ]
+            }
+        },
+        {"allow": True},
+    ),
+    (
+        "/allowed_url",
+        "mapping_rules",
+        UrlAuthorizationQuery(
+            user=User(key="user1"),
+            http_method="GET",
+            url="http://api.example.com/api/v1/users/123",
+            tenant="default",
+        ),
+        {
+            "result": {
+                "all": [
+                    {
+                        "url": "^https?://api\\.example\\.com/api/v1/users/(?P<user_id>[0-9]+)$",
+                        "http_method": "get",
+                        "action": "read",
+                        "resource": "users",
+                        "url_type": "regex",
+                    }
+                ]
+            }
+        },
+        {"allow": True},
+    ),
+    (
+        "/allowed_url",
+        "mapping_rules",
+        UrlAuthorizationQuery(
+            user=User(key="user1"),
+            http_method="GET",
+            url="https://subdomain.example.com/api/v1/users/123",
+            tenant="default",
+        ),
+        {
+            "result": {
+                "all": [
+                    {
+                        "url": "^https://[\\w-]+\\.example\\.com/api/v1/users/(?P<user_id>[0-9]+)$",
+                        "http_method": "get",
+                        "action": "read",
+                        "resource": "users",
+                        "url_type": "regex",
+                    }
+                ]
+            }
+        },
+        {"allow": True},
+    ),
+    (
+        "/allowed_url",
+        "mapping_rules",
+        UrlAuthorizationQuery(
+            user=User(key="user1"),
+            http_method="GET",
+            url="https://api.example.com/api/v1/users/123/profile/../../../sensitive",
+            tenant="default",
+        ),
+        {
+            "result": {
+                "all": [
+                    {
+                        "url": "^https://api\\.example\\.com/api/v1/users/(?P<user_id>[0-9]+)/profile$",
+                        "http_method": "get",
+                        "action": "read",
+                        "resource": "users",
+                        "url_type": "regex",
+                    }
+                ]
+            }
+        },
+        {"allow": False},
+    ),
+    (
+        "/allowed_url",
+        "mapping_rules",
+        UrlAuthorizationQuery(
+            user=User(key="user1"),
+            http_method="GET",
+            url="https://api.example.com/api/v1/users/123/profile",
+            tenant="default",
+        ),
+        {
+            "result": {
+                "all": [
+                    {
+                        "url": "[invalid regex",
+                        "http_method": "get",
+                        "action": "read",
+                        "resource": "users",
+                        "url_type": "regex",
+                    }
+                ]
+            }
+        },
+        {"allow": False},
+    ),
+    (
+        "/allowed_url",
+        "mapping_rules",
+        UrlAuthorizationQuery(
+            user=User(key="user1"),
+            http_method="GET",
+            url="https://api.example.com/api/v1/users/123/profile!@#$%",
+            tenant="default",
+        ),
+        {
+            "result": {
+                "all": [
+                    {
+                        "url": "^https://api\\.example\\.com/api/v1/users/(?P<user_id>[0-9]+)/profile[!@#$%]+$",
+                        "http_method": "get",
+                        "action": "read",
+                        "resource": "users",
+                        "url_type": "regex",
+                    }
+                ]
+            }
+        },
+        {"allow": True},
+    ),
+    # Non-regex URL pattern test cases
+    (
+        "/allowed_url",
+        "mapping_rules",
+        UrlAuthorizationQuery(
+            user=User(key="user1"),
+            http_method="GET",
+            url="https://api.example.com/users/123/profile",
+            tenant="default",
+        ),
+        {
+            "result": {
+                "all": [
+                    {
+                        "url": "https://api.example.com/users/{user_id}/profile",
+                        "http_method": "get",
+                        "action": "read",
+                        "resource": "users",
+                        "url_type": "default",
+                    }
+                ]
+            }
+        },
+        {"allow": True},
+    ),
+    (
+        "/allowed_url",
+        "mapping_rules",
+        UrlAuthorizationQuery(
+            user=User(key="user1"),
+            http_method="GET",
+            url="https://api.example.com/orgs/org123/repos/repo456",
+            tenant="default",
+        ),
+        {
+            "result": {
+                "all": [
+                    {
+                        "url": "https://api.example.com/orgs/{org_id}/repos/{repo_id}",
+                        "http_method": "get",
+                        "action": "read",
+                        "resource": "repositories",
+                        "url_type": "default",
+                    }
+                ]
+            }
+        },
+        {"allow": True},
+    ),
+    (
+        "/allowed_url",
+        "mapping_rules",
+        UrlAuthorizationQuery(
+            user=User(key="user1"),
+            http_method="GET",
+            url="https://api.example.com/search?q=test&page=1",
+            tenant="default",
+        ),
+        {
+            "result": {
+                "all": [
+                    {
+                        "url": "https://api.example.com/search?q={query}&page={page_num}",
+                        "http_method": "get",
+                        "action": "read",
+                        "resource": "search",
+                        "url_type": "default",
+                    }
+                ]
+            }
+        },
+        {"allow": True},
+    ),
+    (
+        "/allowed_url",
+        "mapping_rules",
+        UrlAuthorizationQuery(
+            user=User(key="user1"),
+            http_method="GET",
+            url="https://api.example.com/users/123/settings/notifications",
+            tenant="default",
+        ),
+        {
+            "result": {
+                "all": [
+                    {
+                        "url": "https://api.example.com/users/{user_id}/settings/{setting_type}",
+                        "http_method": "get",
+                        "action": "read",
+                        "resource": "user_settings",
+                        "url_type": "default",
+                    }
+                ]
+            }
+        },
+        {"allow": True},
+    ),
+    (
+        "/allowed_url",
+        "mapping_rules",
+        UrlAuthorizationQuery(
+            user=User(key="user1"),
+            http_method="GET",
+            url="https://api.example.com/users/invalid/profile",
+            tenant="default",
+        ),
+        {
+            "result": {
+                "all": [
+                    {
+                        "url": "https://api.example.com/users/{user_id}/profile",
+                        "http_method": "get",
+                        "action": "read",
+                        "resource": "users",
+                        "url_type": "default",
+                    }
+                ]
+            }
+        },
+        {"allow": True},  # Should allow since {user_id} matches any string
+    ),
+    # URL Encoding/Decoding Tests
+    (
+        "/allowed_url",
+        "mapping_rules",
+        UrlAuthorizationQuery(
+            user=User(key="user1"),
+            http_method="GET",
+            url="https://api.example.com/users/123/profile%20space",
+            tenant="default",
+        ),
+        {
+            "result": {
+                "all": [
+                    {
+                        "url": "^https://api\\.example\\.com/users/(?P<user_id>[0-9]+)/profile%20space$",
+                        "http_method": "get",
+                        "action": "read",
+                        "resource": "users",
+                        "url_type": "regex",
+                    }
+                ]
+            }
+        },
+        {"allow": True},
+    ),
+    (
+        "/allowed_url",
+        "mapping_rules",
+        UrlAuthorizationQuery(
+            user=User(key="user1"),
+            http_method="GET",
+            url="https://api.example.com/users/123/profile%E2%98%BA",
+            tenant="default",
+        ),
+        {
+            "result": {
+                "all": [
+                    {
+                        "url": "^https://api\\.example\\.com/users/(?P<user_id>[0-9]+)/profile%E2%98%BA$",
+                        "http_method": "get",
+                        "action": "read",
+                        "resource": "users",
+                        "url_type": "regex",
+                    }
+                ]
+            }
+        },
+        {"allow": True},
+    ),
+    # Complex URL Pattern Tests
+    (
+        "/allowed_url",
+        "mapping_rules",
+        UrlAuthorizationQuery(
+            user=User(key="user1"),
+            http_method="GET",
+            url="https://api.example.com/search?q=test&page=1&sort=desc",
+            tenant="default",
+        ),
+        {
+            "result": {
+                "all": [
+                    {
+                        "url": "^https://api\\.example\\.com/search\\?(?=.*q=(?P<query>[^&]+))(?=.*page=(?P<page>[0-9]+))(?=.*sort=(?P<sort>asc|desc)).*$",
+                        "http_method": "get",
+                        "action": "read",
+                        "resource": "search",
+                        "url_type": "regex",
+                    }
+                ]
+            }
+        },
+        {
+            "allow": True
+            # TODO: change to False when we switch to re2 regex engine
+        },  # RE2 regex engine doesn't support lookaheads, system correctly denies access for invalid patterns
+    ),
+    (
+        "/allowed_url",
+        "mapping_rules",
+        UrlAuthorizationQuery(
+            user=User(key="user1"),
+            http_method="GET",
+            url="https://api.example.com/filter?ids=[1,2,3]",
+            tenant="default",
+        ),
+        {
+            "result": {
+                "all": [
+                    {
+                        "url": "^https://api\\.example\\.com/filter\\?ids=\\[(?P<ids>[0-9,]+)\\]$",
+                        "http_method": "get",
+                        "action": "read",
+                        "resource": "filter",
+                        "url_type": "regex",
+                    }
+                ]
+            }
+        },
+        {"allow": True},
+    ),
+    # Edge Cases
+    (
+        "/allowed_url",
+        "mapping_rules",
+        UrlAuthorizationQuery(
+            user=User(key="user1"),
+            http_method="GET",
+            url="https://api.example.com/users//profile",
+            tenant="default",
+        ),
+        {
+            "result": {
+                "all": [
+                    {
+                        "url": "^https://api\\.example\\.com/users/(?P<user_id>[0-9]*)/profile$",
+                        "http_method": "get",
+                        "action": "read",
+                        "resource": "users",
+                        "url_type": "regex",
+                    }
+                ]
+            }
+        },
+        {"allow": True},
+    ),
+    (
+        "/allowed_url",
+        "mapping_rules",
+        UrlAuthorizationQuery(
+            user=User(key="user1"),
+            http_method="GET",
+            url="https://api.example.com/users/123/profile/",
+            tenant="default",
+        ),
+        {
+            "result": {
+                "all": [
+                    {
+                        "url": "^https://api\\.example\\.com/users/(?P<user_id>[0-9]+)/profile/?$",
+                        "http_method": "get",
+                        "action": "read",
+                        "resource": "users",
+                        "url_type": "regex",
+                    }
+                ]
+            }
+        },
+        {"allow": True},
+    ),
+    (
+        "/allowed_url",
+        "mapping_rules",
+        UrlAuthorizationQuery(
+            user=User(key="user1"),
+            http_method="GET",
+            url="https://api.example.com/users/123/profile/",
+            tenant="default",
+        ),
+        {
+            "result": {
+                "all": [
+                    {
+                        "url": "^https://api\\.example\\.com/users/(?P<user_id>[0-9]+)/profile/?$",
+                        "http_method": "get",
+                        "action": "read",
+                        "resource": "users",
+                        "url_type": "regex",
+                    }
+                ]
+            }
+        },
+        {"allow": True},
+    ),
     # TODO: Add Kong
 ]
 
