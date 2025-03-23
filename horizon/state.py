@@ -1,12 +1,12 @@
 import asyncio
-import json
-import os
 import platform
 import subprocess
 import time
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from functools import cache
-from typing import Any, AsyncGenerator, List, Optional
+from pathlib import Path
+from typing import Any, Optional
 from uuid import UUID, uuid4
 
 import aiohttp
@@ -24,10 +24,10 @@ MAX_STATE_UPDATE_INTERVAL_SECONDS = 60
 
 class PersistentState(BaseModel):
     pdp_instance_id: UUID
-    seen_sdks: Optional[List[Optional[str]]] = None
+    seen_sdks: list[str | None] | None = None
 
 
-class StateUpdateThrottled(Exception):
+class StateUpdateThrottledError(Exception):
     def __init__(self, next_allowed_update: float):
         super().__init__()
         self.next_allowed_update = next_allowed_update
@@ -38,10 +38,13 @@ class PersistentStateHandler:
 
     def __init__(self, filename: str, env_api_key: str):
         self._filename = filename
+        self._path = Path(filename)
         self._prev_state_update_attempt = 0.0
         self._seen_sdk_update_lock = asyncio.Lock()
         self._state_update_lock = asyncio.Lock()
         self._env_api_key = env_api_key
+        self._tasks: list[asyncio.Task] = []
+        self._write_lock = asyncio.Lock()
         if not self._load():
             self._new()
 
@@ -52,32 +55,20 @@ class PersistentStateHandler:
         )
 
     def _load(self) -> bool:
-        if os.path.exists(self._filename):
-            with open(self._filename, "r") as f:
-                try:
-                    data = json.load(f)
-                except json.JSONDecodeError:
-                    logger.warning(
-                        "Unable to load existing persistent state: Invalid JSON."
-                    )
-                    return False
-            try:
-                self._state = PersistentState(**data)
-            except ValidationError:
-                logger.warning(
-                    "Unable to load existing persistent state: Invalid schema."
-                )
-                return False
+        if not self._path.exists():
+            return False
+
+        try:
+            self._state = PersistentState.parse_file(self._path)
+        except ValidationError:
+            logger.warning("Unable to load existing persistent state: Invalid schema.")
+            return False
+        else:
             return True
-        return False
 
     def _save(self):
-        new_filename = self._filename + ".new"
-        with open(new_filename, "w") as f:
-            f.write(self._state.json())
-            f.flush()
-            os.fsync(f.fileno())
-        os.rename(new_filename, self._filename)
+        content = self._state.json()
+        self._path.write_text(content)
 
     @classmethod
     def initialize(cls, env_api_key: str):
@@ -97,36 +88,37 @@ class PersistentStateHandler:
     @asynccontextmanager
     async def update_state(self) -> AsyncGenerator[PersistentState, None]:
         async with self._state_update_lock:
-            next_allowed_update = MAX_STATE_UPDATE_INTERVAL_SECONDS - (
-                time.monotonic() - self._prev_state_update_attempt
-            )
+            next_allowed_update = MAX_STATE_UPDATE_INTERVAL_SECONDS - (time.time() - self._prev_state_update_attempt)
             # Since state updated are (for now) opportunistic and happen
             # regularly, we simply refuse to send them if they're too fast.
             # TODO: When we actually report information that doesn't repeat,
             # queue updates instead and retry if failing to report immediately
             if next_allowed_update > 0:
-                raise StateUpdateThrottled(next_allowed_update)
+                raise StateUpdateThrottledError(next_allowed_update)
             prev_state = self._state
             try:
-                new_state = self._state.copy()
-                yield new_state
+                async with self._write_lock:
+                    new_state = self._state.copy()
+                    yield new_state
                 try:
                     await self._report(new_state)
                 finally:
                     # Throttle even if the report failed
-                    self._prev_state_update_attempt = time.monotonic()
+                    self._prev_state_update_attempt = time.time()
                 self._state = new_state.copy()
                 self._save()
-            except:
+            except Exception as e:  # noqa: BLE001
+                logger.exception("Failed to update state: {}, reverting...", e)
                 self._state = prev_state
 
     @classmethod
     @cache
-    def _get_pdp_version(cls) -> Optional[str]:
-        if os.path.exists(sidecar_config.VERSION_FILE_PATH):
-            with open(sidecar_config.VERSION_FILE_PATH) as f:
-                return f.read().strip()
-        return None
+    def _get_pdp_version(cls) -> str | None:
+        path = Path(sidecar_config.VERSION_FILE_PATH)
+        if not path.exists():
+            return None
+
+        return path.read_text().strip()
 
     @classmethod
     def _get_pdp_runtime(cls) -> dict:
@@ -143,18 +135,20 @@ class PersistentStateHandler:
 
     @classmethod
     def _get_opa_version_vars(cls) -> dict:
-        opa_proc = subprocess.run(
-            ["opa", "version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE
-        )
+        opa_proc = subprocess.run(["opa", "version"], capture_output=True)
         if opa_proc.returncode != 0:
             logger.warning(
                 "Unable to get OPA version: {}",
                 opa_proc.stderr.decode(),
             )
             return {}
-        return dict(
-            [line.split(": ", 1) for line in opa_proc.stdout.decode().splitlines()]
-        )
+
+        result = {}
+        for line in opa_proc.stdout.decode().splitlines():
+            key, value = line.split(": ", 1)
+            result[key] = value
+
+        return result
 
     @classmethod
     def get_runtime_state(cls) -> dict:
@@ -172,7 +166,7 @@ class PersistentStateHandler:
         return result
 
     @classmethod
-    def _build_state_payload(cls, state: Optional[PersistentState] = None) -> dict:
+    def _build_state_payload(cls, state: PersistentState | None = None) -> dict:
         if state is None:
             state = cls.get()
         return {
@@ -183,37 +177,33 @@ class PersistentStateHandler:
             },
         }
 
-    async def reporter_user_data_handler(
-        self, report: DataUpdateReport
-    ) -> dict[str, Any]:
+    async def reporter_user_data_handler(self, report: DataUpdateReport) -> dict[str, Any]:  # noqa: ARG002
         return {
             "pdp_instance_id": self.get().pdp_instance_id,
         }
 
     @classmethod
-    async def build_state_payload(cls, state: Optional[PersistentState] = None) -> dict:
+    async def build_state_payload(cls) -> dict:
         payload = cls._build_state_payload()
-        payload["state"].update(
-            await asyncio.get_event_loop().run_in_executor(None, cls.get_runtime_state)
-        )
+        payload["state"].update(await asyncio.get_event_loop().run_in_executor(None, cls.get_runtime_state))
         return payload
 
     @classmethod
-    def build_state_payload_sync(cls, state: Optional[PersistentState] = None) -> dict:
+    def build_state_payload_sync(cls) -> dict:
         payload = cls._build_state_payload()
         payload["state"].update(cls.get_runtime_state())
         return payload
 
-    async def _report(self, state: Optional[PersistentState] = None):
-        config_url = (
-            f"{sidecar_config.CONTROL_PLANE}{sidecar_config.REMOTE_STATE_ENDPOINT}"
-        )
+    async def _report(self, state: PersistentState | None = None):
+        if state is not None:
+            self._state = state.copy()
+        config_url = f"{sidecar_config.CONTROL_PLANE}{sidecar_config.REMOTE_STATE_ENDPOINT}"
         async with aiohttp.ClientSession() as session:
             logger.info("Reporting status update to server...")
             response = await session.post(
                 url=config_url,
                 headers={"Authorization": f"Bearer {self._env_api_key}"},
-                json=await PersistentStateHandler.build_state_payload(state),
+                json=await PersistentStateHandler.build_state_payload(),
             )
             if response.status != status.HTTP_204_NO_CONTENT:
                 logger.warning(
@@ -223,20 +213,19 @@ class PersistentStateHandler:
                 raise RuntimeError("Unable to post PDP state update to server.")
 
     async def seen_sdk(self, sdk: str):
-        if not sdk in self._state.seen_sdks:
-            # ensure_future is expensive, only call it if actually needed
-            asyncio.ensure_future(self._report_seen_sdk(sdk))
+        if sdk not in self._state.seen_sdks:
+            await self._report_seen_sdk(sdk)
 
     async def _report_seen_sdk(self, sdk: str):
         async with self._seen_sdk_update_lock:
             # We check this again because we might have waited because of the lock
-            if not sdk in self._state.seen_sdks:
+            if sdk not in self._state.seen_sdks:
                 try:
                     async with self.update_state() as new_state:
                         if new_state.seen_sdks is None:
                             new_state.seen_sdks = []
                         new_state.seen_sdks.append(sdk)
-                except StateUpdateThrottled as e:
+                except StateUpdateThrottledError as e:
                     logger.debug(
                         "State updated throttled, next update {} seconds from now.",
                         e.next_allowed_update,

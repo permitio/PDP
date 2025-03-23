@@ -1,4 +1,3 @@
-from typing import Dict, List, Optional
 from uuid import UUID
 
 from .schemas import BaseSchema
@@ -11,8 +10,8 @@ class KongAuthorizationInputRequestHttp(BaseSchema):
     method: str
     scheme: str
     path: str
-    querystring: Dict[str, str]
-    headers: Dict[str, str]
+    querystring: dict[str, str]
+    headers: dict[str, str]
 
 
 class KongAuthorizationInputRequest(BaseSchema):
@@ -40,8 +39,8 @@ class KongAuthorizationInputRouteService(BaseSchema):
 
 class KongAuthorizationInputRoute(BaseSchema):
     id: UUID
-    paths: List[str]
-    protocols: List[str]
+    paths: list[str]
+    protocols: list[str]
     strip_path: bool
     created_at: int
     ws_id: UUID
@@ -62,10 +61,10 @@ class KongAuthorizationInputConsumer(BaseSchema):
 
 class KongAuthorizationInput(BaseSchema):
     request: KongAuthorizationInputRequest
-    client_ip: Optional[str]
-    service: Optional[KongAuthorizationInputService]
-    route: Optional[KongAuthorizationInputRoute]
-    consumer: Optional[KongAuthorizationInputConsumer]
+    client_ip: str | None
+    service: KongAuthorizationInputService | None
+    route: KongAuthorizationInputRoute | None
+    consumer: KongAuthorizationInputConsumer | None
 
 
 class KongAuthorizationQuery(BaseSchema):
@@ -77,8 +76,8 @@ class KongAuthorizationQuery(BaseSchema):
 
 
 class KongWrappedAuthorizationQuery(BaseSchema):
-    user: Dict
-    resource: Dict
+    user: dict
+    resource: dict
     action: str
 
 
