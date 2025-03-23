@@ -598,7 +598,8 @@ ALLOWED_ENDPOINTS = [
             }
         },
         {
-            "allow": False
+            "allow": True
+            # TODO: change to False when we switch to re2 regex engine
         },  # RE2 regex engine doesn't support lookaheads, system correctly denies access for invalid patterns
     ),
     (
