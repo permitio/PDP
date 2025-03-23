@@ -38,16 +38,6 @@ RUN mkdir -p /app/backup && chmod -R 777 /app/backup
 RUN apk update && \
     apk add --no-cache bash build-base libffi-dev libressl-dev musl-dev zlib-dev gcompat re2
 
-# Install abseil-cpp needed for google-re2
-RUN git clone https://github.com/abseil/abseil-cpp.git /tmp/abseil-cpp && \
-    cd /tmp/abseil-cpp && \
-    mkdir build && \
-    cd build && \
-    cmake -DCMAKE_CXX_STANDARD=17 -DCMAKE_POSITION_INDEPENDENT_CODE=ON .. && \
-    make && \
-    make install && \
-    rm -rf /tmp/abseil-cpp
-
 # Copy OPA binary from the build stage
 COPY --from=opa_build --chmod=755 /opa /app/bin/opa
 
