@@ -8,14 +8,16 @@ from horizon.enforcer.schemas import MappingRuleData, UrlTypes
 
 class MappingRulesUtils:
     @staticmethod
-    def _compare_httpurls(mapping_rule_url: AnyHttpUrl, request_url: AnyHttpUrl) -> bool:
-        if mapping_rule_url.scheme != request_url.scheme:
+    def _compare_httpurls(mapping_rule_url: str, request_url: str) -> bool:
+        # Split URL into path and query parts
+        mapping_rule_parts = mapping_rule_url.split("?", 1)
+        request_parts = request_url.split("?", 1)
+        if not MappingRulesUtils._compare_url_path(mapping_rule_parts[0], request_parts[0]):
             return False
-        if mapping_rule_url.host != request_url.host:
-            return False
-        if not MappingRulesUtils._compare_url_path(mapping_rule_url.path, request_url.path):
-            return False
-        if not MappingRulesUtils._compare_query_params(mapping_rule_url.query, request_url.query):  # noqa: SIM103
+        # Compare query parameters if they exist
+        if len(mapping_rule_parts) > 1 and len(request_parts) > 1:
+            return MappingRulesUtils._compare_query_params(mapping_rule_parts[1], request_parts[1])
+        elif len(mapping_rule_parts) > 1:
             return False
         return True
 
@@ -49,8 +51,8 @@ class MappingRulesUtils:
             # then the request matches the query string rules it has additional data to the rule
             return True
 
-        mapping_rule_query_params = QueryParams(mapping_rule_query_string or "")
-        request_query_params = QueryParams(request_url_query_string or "")
+        mapping_rule_query_params = QueryParams(mapping_rule_query_string)
+        request_query_params = QueryParams(request_url_query_string)
 
         for key in mapping_rule_query_params:
             if key not in request_query_params:
@@ -107,23 +109,7 @@ class MappingRulesUtils:
 
         # For traditional URL matching
         try:
-            # Split URL into path and query parts
-            mapping_rule_parts = mapping_rule_url.split("?", 1)
-            request_parts = request_url.split("?", 1)
-
-            # Compare paths
-            if not cls._compare_url_path(mapping_rule_parts[0], request_parts[0]):
-                return False
-
-            # Compare query parameters if they exist
-            if len(mapping_rule_parts) > 1 and len(request_parts) > 1:
-                return cls._compare_query_params(mapping_rule_parts[1], request_parts[1])
-            # If mapping rule has query params but request doesn't, return False
-            elif len(mapping_rule_parts) > 1:
-                return False
-            # If request has query params but mapping rule doesn't, that's okay
-            return True
-
+            return cls._compare_httpurls(mapping_rule_url, request_url)
         except Exception as e:  # noqa: BLE001
             logger.warning(
                 "URL comparison failed - verify URL format and structure",
