@@ -148,11 +148,12 @@ class MappingRulesUtils:
             is_regex = mapping_rule.url_type == UrlTypes.REGEX
 
             logger.debug(
-                "Checking mapping rule",
-                rule_method=mapping_rule.http_method,
-                request_method=http_method,
+                "checking mapping rule",
                 rule_url=mapping_rule.url,
-                request_url=str(url),
+                rule_method=mapping_rule.http_method,
+                rule_type=getattr(mapping_rule, "url_type", None),
+                request_url=url,
+                request_method=http_method,
                 is_regex=is_regex,
             )
 
@@ -161,17 +162,11 @@ class MappingRulesUtils:
                 # if the method is not the same, we don't need to check the url
                 continue
 
-            # For regex rules, we pass the string URLs directly
-            if is_regex:
-                if not cls._compare_urls(mapping_rule.url, str(url), is_regex=True):
-                    continue
-            # For traditional URL comparison
-            elif not cls._compare_httpurls(mapping_rule.url, url):
-                # if the urls doesn't match, we don't need to check the headers
+            if not cls._compare_urls(mapping_rule.url, url, is_regex=is_regex):
                 continue
-                
+
             matched_mapping_rules.append(mapping_rule)
-            
+
         # most priority first
         matched_mapping_rules.sort(key=lambda rule: rule.priority or 0, reverse=True)
         if len(matched_mapping_rules) > 0:

@@ -149,7 +149,7 @@ class AllTenantsAuthorizationResult(BaseSchema):
 
 
 class MappingRuleData(BaseSchema):
-    url: AnyHttpUrl
+    url: str
     http_method: str
     resource: str
     action: str
