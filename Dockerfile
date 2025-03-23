@@ -36,7 +36,17 @@ RUN mkdir -p /app/backup && chmod -R 777 /app/backup
 
 # Install necessary libraries in a single RUN command
 RUN apk update && \
-    apk add --no-cache bash build-base libffi-dev libressl-dev musl-dev zlib-dev gcompat
+    apk add --no-cache bash build-base libffi-dev libressl-dev musl-dev zlib-dev gcompat re2
+
+# Install abseil-cpp needed for google-re2
+RUN git clone https://github.com/abseil/abseil-cpp.git /tmp/abseil-cpp && \
+    cd /tmp/abseil-cpp && \
+    mkdir build && \
+    cd build && \
+    cmake -DCMAKE_CXX_STANDARD=17 -DCMAKE_POSITION_INDEPENDENT_CODE=ON .. && \
+    make && \
+    make install && \
+    rm -rf /tmp/abseil-cpp
 
 # Copy OPA binary from the build stage
 COPY --from=opa_build --chmod=755 /opa /app/bin/opa
@@ -67,7 +77,7 @@ USER root
 # Install python dependencies in one command to optimize layer size
 COPY ./requirements.txt ./requirements.txt
 RUN pip install --upgrade pip setuptools && \
-    pip install -r requirements.txt && \
+    CFLAGS="-I/usr/local/include" LDFLAGS="-L/usr/local/lib" pip install -r requirements.txt && \
     python -m pip uninstall -y pip setuptools && \
     rm -r /usr/local/lib/python3.10/ensurepip
 
