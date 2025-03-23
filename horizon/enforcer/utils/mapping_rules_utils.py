@@ -8,7 +8,7 @@ from horizon.enforcer.schemas import MappingRuleData, UrlTypes
 
 class MappingRulesUtils:
     @staticmethod
-    def _compare_urls(mapping_rule_url: AnyHttpUrl, request_url: AnyHttpUrl) -> bool:
+    def _compare_httpurls(mapping_rule_url: AnyHttpUrl, request_url: AnyHttpUrl) -> bool:
         if mapping_rule_url.scheme != request_url.scheme:
             return False
         if mapping_rule_url.host != request_url.host:
@@ -49,8 +49,8 @@ class MappingRulesUtils:
             # then the request matches the query string rules it has additional data to the rule
             return True
 
-        mapping_rule_query_params = QueryParams(mapping_rule_query_string)
-        request_query_params = QueryParams(request_url_query_string)
+        mapping_rule_query_params = QueryParams(mapping_rule_query_string or "")
+        request_query_params = QueryParams(request_url_query_string or "")
 
         for key in mapping_rule_query_params:
             if key not in request_query_params:
@@ -166,12 +166,12 @@ class MappingRulesUtils:
                 if not cls._compare_urls(mapping_rule.url, str(url), is_regex=True):
                     continue
             # For traditional URL comparison
-            elif not cls._compare_urls(mapping_rule.url, url):
+            elif not cls._compare_httpurls(mapping_rule.url, url):
                 # if the urls doesn't match, we don't need to check the headers
                 continue
-
+                
             matched_mapping_rules.append(mapping_rule)
-
+            
         # most priority first
         matched_mapping_rules.sort(key=lambda rule: rule.priority or 0, reverse=True)
         if len(matched_mapping_rules) > 0:
