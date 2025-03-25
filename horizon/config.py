@@ -258,14 +258,14 @@ class SidecarConfig(Confi):
     )
 
     # Cache configuration
-    PDP_CACHE_ENABLED = confi.bool(
-        "PDP_CACHE_ENABLED",
+    CACHE_ENABLED = confi.bool(
+        "CACHE_ENABLED",
         False,
         description="If true, enables caching for specific PDP endpoints",
     )
 
     PDP_CACHE_TTL_SEC = confi.int(
-        "PDP_CACHE_TTL_SEC",
+        "CACHE_TTL_SEC",
         3600,  # 1 hour default
         description="TTL for cached PDP responses in seconds",
     )
