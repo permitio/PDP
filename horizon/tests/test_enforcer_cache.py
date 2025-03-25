@@ -15,7 +15,9 @@ def sidecar_with_cache():
     # Enable caching for this test
     sidecar_config.PDP_CACHE_ENABLED = True
     sidecar_config.PDP_CACHE_TTL_SEC = 3600
-    yield MockPermitPDP()
+    _mock_pdp = MockPermitPDP()
+    _mock_pdp._init_cache_if_enabled()
+    yield _mock_pdp
     # Restore the original config
     sidecar_config.PDP_CACHE_ENABLED = orig_config
     sidecar_config.PDP_CACHE_TTL_SEC = orig_ttl
@@ -360,6 +362,7 @@ async def test_user_permissions_cache_no_store(mocked_api: aioresponses, client_
 @pytest.mark.asyncio
 async def test_user_permissions_cache_no_cache(mocked_api: aioresponses, client_with_cache: TestClient):
     """Test that Cache-Control: no-cache header forces revalidation"""
+    await FastAPICache.clear()
     client = client_with_cache
 
     query = UserPermissionsQuery(user=User(key="test_user"), resource_types=["resource1"])

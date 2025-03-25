@@ -328,7 +328,7 @@ class PermitPDP:
         app.openapi_tags = sidecar_config.OPENAPI_TAGS_METADATA
         return app
 
-    async def _init_cache_if_enabled(self):
+    def _init_cache_if_enabled(self):
         if sidecar_config.PDP_CACHE_ENABLED:
             FastAPICache.init(InMemoryBackend(), prefix="pdp")
             logger.info(f"Initialized Cache with TTL: {sidecar_config.PDP_CACHE_TTL_SEC} seconds")
