@@ -359,7 +359,6 @@ async def test_user_permissions_cache_no_store(mocked_api: aioresponses, client_
 
 @pytest.mark.asyncio
 async def test_user_permissions_cache_no_cache(mocked_api: aioresponses, client_with_cache: TestClient):
-    await FastAPICache.clear()
     """Test that Cache-Control: no-cache header forces revalidation"""
     client = client_with_cache
 
