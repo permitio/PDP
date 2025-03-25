@@ -3,8 +3,8 @@ from aioresponses import aioresponses
 from fastapi.testclient import TestClient
 from horizon.config import sidecar_config
 from horizon.enforcer.schemas import User, UserPermissionsQuery
-from horizon.tests.test_enforcer_api import MockPermitPDP
 from opal_client.config import opal_client_config
+from test_enforcer_api import MockPermitPDP
 
 
 @pytest.fixture
