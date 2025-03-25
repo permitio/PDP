@@ -26,7 +26,9 @@ def sidecar_without_cache():
     orig_config = sidecar_config.PDP_CACHE_ENABLED
     # Disable caching for this test
     sidecar_config.PDP_CACHE_ENABLED = False
-    yield MockPermitPDP()
+    _mock_pdp = MockPermitPDP()
+    _mock_pdp._init_cache_if_enabled()
+    yield _mock_pdp
     # Restore the original config
     sidecar_config.PDP_CACHE_ENABLED = orig_config
 
@@ -39,14 +41,12 @@ def mocked_api():
 
 @pytest.fixture
 def client_with_cache(sidecar_with_cache: MockPermitPDP):
-    with TestClient(sidecar_with_cache.app) as c:
-        yield c
+    return TestClient(sidecar_with_cache.app)
 
 
 @pytest.fixture
 def client_without_cache(sidecar_without_cache: MockPermitPDP):
-    with TestClient(sidecar_without_cache.app) as c:
-        yield c
+    return TestClient(sidecar_without_cache.app)
 
 
 @pytest.mark.asyncio
