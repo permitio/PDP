@@ -1,11 +1,20 @@
 import asyncio
+import functools
+import hashlib
 import json
 import re
+from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated, cast
+from typing import Annotated, Any, cast
 
 import aiohttp
+import fastapi_cache
+import fastapi_cache.decorator
+import orjson
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
+from fastapi_cache import FastAPICache, default_key_builder
+from fastapi_cache.backends.inmemory import InMemoryBackend
+from fastapi_cache.decorator import cache
 from opal_client.config import opal_client_config
 from opal_client.logger import logger
 from opal_client.policy_store.base_policy_store_client import BasePolicyStoreClient
@@ -62,201 +71,67 @@ stats_manager = StatisticsManager(
 )
 
 
-def extract_pdp_api_key(request: Request) -> str:
-    authorization: str = request.headers.get(AUTHZ_HEADER, "")
-    parts = authorization.split(" ")
-    if len(parts) != 2:
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED,
-            detail=f"bad authz header: {authorization}",
-        )
-    schema, token = parts
-    if schema.strip().lower() != "bearer":
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid PDP token")
-    return token
+def _patched_uncacheable(request: Request | None) -> bool:
+    """Determine if this request should not be cached
 
+    Returns true if:
+    - Caching has been disabled globally
+    - This is not a GET request
+    - The request has a Cache-Control header with a value of "no-store"
 
-def transform_headers(request: Request) -> dict:
-    token = extract_pdp_api_key(request)
-    return {
-        AUTHZ_HEADER: f"Bearer {token}",
-        "Content-Type": "application/json",
-    }
-
-
-def log_query_result(query: BaseSchema, response: Response):
     """
-    formats a nice log to default logger with the results of permit.check()
-    """
-    params = repr(query)
-    try:
-        result: dict = json.loads(response.body).get("result", {})
-        allowed: bool | list[dict] = result.get("allow")
-        color = "<red>"
-        allow_output = False
-        if isinstance(allowed, bool):
-            allow_output = allowed
-            if allowed:
-                color = "<green>"
-        elif isinstance(allowed, list):
-            if any(a.get("allow", False) for a in allowed):
-                color = "<green>"
+    if not FastAPICache.get_enable():
+        return True
+    if request is None:
+        return False
+    return request.headers.get("Cache-Control") == "no-store"
 
-        if allowed is None:
-            allowed_tenants = result.get("allowed_tenants")
-            allow_output = [f"({a.get('tenant', {}).get('key')}, {a.get('allow', False)})" for a in allowed_tenants]
-            if len(allow_output) > 0:
-                color = "<green>"
 
-        debug = result.get("debug", {})
+fastapi_cache.decorator._uncacheable = _patched_uncacheable
 
-        format = color + "is allowed = {allowed} </>"
-        format += " | <cyan>{api_params}</>"
-        if sidecar_config.DECISION_LOG_DEBUG_INFO:
-            format += " | full_input=<fg #fff980>{input}</> | debug=<fg #f7e0c1>{debug}</>"
-        logger.opt(colors=True).info(
-            format,
-            allowed=allow_output,
-            api_params=params,
-            input=query.dict(),
-            debug=debug,
+
+async def user_permissions_key_builder(
+    func: Callable[..., Any],
+    namespace: str = "",
+    *,
+    request: Request | None = None,
+    response: Response | None = None,
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+) -> str:
+    if request is None:
+        return default_key_builder(
+            func,
+            namespace,
+            request=request,
+            response=response,
+            args=args,
+            kwargs=kwargs,
         )
-    except Exception:  # noqa: BLE001
-        try:
-            body = str(response.body, "utf-8")
-        except ValueError:
-            body = None
-        data = {} if body is None else {"response_body": body}
-        logger.info(
-            "is allowed",
-            params=params,
-            query=query.dict(),
-            response_status=response.status_code,
-            **data,
-        )
-
-
-def log_query_result_kong(input: KongAuthorizationInput, response: Response):
-    """
-    formats a nice log to default logger with the results of permit.check()
-    """
-    params = f"({input.consumer.username}, {input.request.http.method}, {input.request.http.path})"
-    try:
-        result: dict = json.loads(response.body).get("result", {})
-        allowed = result.get("allow", False)
-        debug = result.get("debug", {})
-
-        color = "<green>"
-        if not allowed:
-            color = "<red>"
-        format = color + "is allowed = {allowed} </>"
-        format += " | <cyan>{api_params}</>"
-        if sidecar_config.DECISION_LOG_DEBUG_INFO:
-            format += " | full_input=<fg #fff980>{input}</> | debug=<fg #f7e0c1>{debug}</>"
-        logger.opt(colors=True).info(
-            format,
-            allowed=allowed,
-            api_params=params,
-            input=input.dict(),
-            debug=debug,
-        )
-    except Exception:  # noqa: BLE001
-        try:
-            body = str(response.body, "utf-8")
-        except ValueError:
-            body = None
-        data = {} if body is None else {"response_body": body}
-        logger.info(
-            "is allowed",
-            params=params,
-            query=input.dict(),
-            response_status=response.status_code,
-            **data,
-        )
-
-
-def get_v1_processed_query(result: dict) -> dict | None:
-    if "authorization_query" not in result:
-        return None  # not a v1 query result
-
-    processed_input = result.get("authorization_query", {})
-    return {
-        "user": processed_input.get("user", {}),
-        "action": processed_input.get("action", ""),
-        "resource": processed_input.get("resource", {}),
-    }
-
-
-def get_v2_processed_query(result: dict) -> dict | None:
-    return (result.get("debug") or {}).get("input", None)
-
-
-async def notify_seen_sdk(
-    x_permit_sdk_language: str | None = Header(default=None),
-) -> str | None:
-    if x_permit_sdk_language is not None:
-        await PersistentStateHandler.get_instance().seen_sdk(x_permit_sdk_language)
-    return x_permit_sdk_language
-
-
-async def post_to_opa(request: Request, path: str, data: dict | None):
-    headers = transform_headers(request)
-    url = f"{opal_client_config.POLICY_STORE_URL}/v1/data/{path}"
-    exc = None
-    _set_use_debugger(data)
-    try:
-        logger.debug(f"calling OPA at '{url}' with input: {data}")
-        async with aiohttp.ClientSession() as session:  # noqa: SIM117
-            async with session.post(
-                url,
-                data=json.dumps(data) if data is not None else None,
-                headers=headers,
-                timeout=sidecar_config.OPA_CLIENT_QUERY_TIMEOUT,
-                raise_for_status=True,
-            ) as opa_response:
-                stats_manager.report_success()
-                return await proxy_response(opa_response)
-    except asyncio.exceptions.TimeoutError:
-        stats_manager.report_failure()
-        exc = HTTPException(
-            status.HTTP_504_GATEWAY_TIMEOUT,
-            detail=f"OPA request timed out (url: {url}, timeout: {sidecar_config.OPA_CLIENT_QUERY_TIMEOUT}s)",
-        )
-    except aiohttp.ClientResponseError as e:
-        stats_manager.report_failure()
-        exc = HTTPException(
-            status.HTTP_502_BAD_GATEWAY,  # 502 indicates server got an error from another server
-            detail=f"OPA request failed (url: {url}, status: {e.status}, message: {e.message})",
-        )
-    except aiohttp.ClientError as e:
-        stats_manager.report_failure()
-        exc = HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            detail=f"OPA request failed (url: {url}, error: {e!s}",
-        )
-    logger.warning(exc.detail)
-    raise exc
-
-
-def _set_use_debugger(data: dict | None) -> None:
-    if (
-        data is not None
-        and data.get("input") is not None
-        and "use_debugger" not in data["input"]
-        and sidecar_config.IS_DEBUG_MODE is not None
-    ):
-        data["input"]["use_debugger"] = sidecar_config.IS_DEBUG_MODE
-
-
-async def _is_allowed(query: BaseSchema, request: Request, policy_package: str):
-    opa_input = {"input": query.dict()}
-    path = policy_package.replace(".", "/")
-    return await post_to_opa(request, path, opa_input)
+    _user_permissions_body = await request.json()
+    cache_key = hashlib.md5(orjson.dumps(_user_permissions_body, option=orjson.OPT_SORT_KEYS)).hexdigest()
+    return f"{namespace}:{cache_key}"
 
 
 def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noqa: C901
     policy_store = policy_store or DEFAULT_POLICY_STORE_GETTER()
     router = APIRouter()
+
+    def conditional_cache(*args, **kwargs):  # noqa: ARG001
+        def decorator(func):
+            return func
+
+        return decorator
+
+    # Initialize FastAPI Cache
+    if sidecar_config.PDP_CACHE_ENABLED:
+        FastAPICache.init(InMemoryBackend(), prefix="pdp")
+        logger.info(f"Initialized FastAPI Cache with TTL: {sidecar_config.PDP_CACHE_TTL_SEC} seconds")
+        conditional_cache = functools.partial(
+            cache,
+            expire=sidecar_config.PDP_CACHE_TTL_SEC,
+        )
+
     if sidecar_config.KONG_INTEGRATION:
         with Path(KONG_ROUTES_TABLE_FILE).open() as f:
             kong_routes_table_raw = json.load(f)
@@ -365,6 +240,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
         response_model_exclude_none=True,
         dependencies=[Depends(enforce_pdp_token), Depends(notify_seen_sdk)],
     )
+    @conditional_cache(namespace="user_permissions", key_builder=user_permissions_key_builder)
     async def user_permissions(
         request: Request,
         query: UserPermissionsQuery,
@@ -613,6 +489,198 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
             return {"allow": False, "result": False}
 
     return router
+
+
+def extract_pdp_api_key(request: Request) -> str:
+    authorization: str = request.headers.get(AUTHZ_HEADER, "")
+    parts = authorization.split(" ")
+    if len(parts) != 2:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            detail=f"bad authz header: {authorization}",
+        )
+    schema, token = parts
+    if schema.strip().lower() != "bearer":
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid PDP token")
+    return token
+
+
+def transform_headers(request: Request) -> dict:
+    token = extract_pdp_api_key(request)
+    return {
+        AUTHZ_HEADER: f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+
+
+def log_query_result(query: BaseSchema, response: Response):
+    """
+    formats a nice log to default logger with the results of permit.check()
+    """
+    params = repr(query)
+    try:
+        result: dict = json.loads(response.body).get("result", {})
+        allowed: bool | list[dict] = result.get("allow")
+        color = "<red>"
+        allow_output = False
+        if isinstance(allowed, bool):
+            allow_output = allowed
+            if allowed:
+                color = "<green>"
+        elif isinstance(allowed, list):
+            if any(a.get("allow", False) for a in allowed):
+                color = "<green>"
+
+        if allowed is None:
+            allowed_tenants = result.get("allowed_tenants")
+            allow_output = [f"({a.get('tenant', {}).get('key')}, {a.get('allow', False)})" for a in allowed_tenants]
+            if len(allow_output) > 0:
+                color = "<green>"
+
+        debug = result.get("debug", {})
+
+        format = color + "is allowed = {allowed} </>"
+        format += " | <cyan>{api_params}</>"
+        if sidecar_config.DECISION_LOG_DEBUG_INFO:
+            format += " | full_input=<fg #fff980>{input}</> | debug=<fg #f7e0c1>{debug}</>"
+        logger.opt(colors=True).info(
+            format,
+            allowed=allow_output,
+            api_params=params,
+            input=query.dict(),
+            debug=debug,
+        )
+    except Exception:  # noqa: BLE001
+        try:
+            body = str(response.body, "utf-8")
+        except ValueError:
+            body = None
+        data = {} if body is None else {"response_body": body}
+        logger.info(
+            "is allowed",
+            params=params,
+            query=query.dict(),
+            response_status=response.status_code,
+            **data,
+        )
+
+
+def log_query_result_kong(input: KongAuthorizationInput, response: Response):
+    """
+    formats a nice log to default logger with the results of permit.check()
+    """
+    params = f"({input.consumer.username}, {input.request.http.method}, {input.request.http.path})"
+    try:
+        result: dict = json.loads(response.body).get("result", {})
+        allowed = result.get("allow", False)
+        debug = result.get("debug", {})
+
+        color = "<green>"
+        if not allowed:
+            color = "<red>"
+        format = color + "is allowed = {allowed} </>"
+        format += " | <cyan>{api_params}</>"
+        if sidecar_config.DECISION_LOG_DEBUG_INFO:
+            format += " | full_input=<fg #fff980>{input}</> | debug=<fg #f7e0c1>{debug}</>"
+        logger.opt(colors=True).info(
+            format,
+            allowed=allowed,
+            api_params=params,
+            input=input.dict(),
+            debug=debug,
+        )
+    except Exception:  # noqa: BLE001
+        try:
+            body = str(response.body, "utf-8")
+        except ValueError:
+            body = None
+        data = {} if body is None else {"response_body": body}
+        logger.info(
+            "is allowed",
+            params=params,
+            query=input.dict(),
+            response_status=response.status_code,
+            **data,
+        )
+
+
+def get_v1_processed_query(result: dict) -> dict | None:
+    if "authorization_query" not in result:
+        return None  # not a v1 query result
+
+    processed_input = result.get("authorization_query", {})
+    return {
+        "user": processed_input.get("user", {}),
+        "action": processed_input.get("action", ""),
+        "resource": processed_input.get("resource", {}),
+    }
+
+
+def get_v2_processed_query(result: dict) -> dict | None:
+    return (result.get("debug") or {}).get("input", None)
+
+
+async def notify_seen_sdk(
+    x_permit_sdk_language: str | None = Header(default=None),
+) -> str | None:
+    if x_permit_sdk_language is not None:
+        await PersistentStateHandler.get_instance().seen_sdk(x_permit_sdk_language)
+    return x_permit_sdk_language
+
+
+async def post_to_opa(request: Request, path: str, data: dict | None):
+    headers = transform_headers(request)
+    url = f"{opal_client_config.POLICY_STORE_URL}/v1/data/{path}"
+    exc = None
+    _set_use_debugger(data)
+    try:
+        logger.debug(f"calling OPA at '{url}' with input: {data}")
+        async with aiohttp.ClientSession() as session:  # noqa: SIM117
+            async with session.post(
+                url,
+                data=json.dumps(data) if data is not None else None,
+                headers=headers,
+                timeout=sidecar_config.OPA_CLIENT_QUERY_TIMEOUT,
+                raise_for_status=True,
+            ) as opa_response:
+                stats_manager.report_success()
+                return await proxy_response(opa_response)
+    except asyncio.exceptions.TimeoutError:
+        stats_manager.report_failure()
+        exc = HTTPException(
+            status.HTTP_504_GATEWAY_TIMEOUT,
+            detail=f"OPA request timed out (url: {url}, timeout: {sidecar_config.OPA_CLIENT_QUERY_TIMEOUT}s)",
+        )
+    except aiohttp.ClientResponseError as e:
+        stats_manager.report_failure()
+        exc = HTTPException(
+            status.HTTP_502_BAD_GATEWAY,  # 502 indicates server got an error from another server
+            detail=f"OPA request failed (url: {url}, status: {e.status}, message: {e.message})",
+        )
+    except aiohttp.ClientError as e:
+        stats_manager.report_failure()
+        exc = HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            detail=f"OPA request failed (url: {url}, error: {e!s}",
+        )
+    logger.warning(exc.detail)
+    raise exc
+
+
+def _set_use_debugger(data: dict | None) -> None:
+    if (
+        data is not None
+        and data.get("input") is not None
+        and "use_debugger" not in data["input"]
+        and sidecar_config.IS_DEBUG_MODE is not None
+    ):
+        data["input"]["use_debugger"] = sidecar_config.IS_DEBUG_MODE
+
+
+async def _is_allowed(query: BaseSchema, request: Request, policy_package: str):
+    opa_input = {"input": query.dict()}
+    path = policy_package.replace(".", "/")
+    return await post_to_opa(request, path, opa_input)
 
 
 def _extract_regex_attributes(pattern: str, url: str) -> dict:
