@@ -5,6 +5,8 @@ from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, status
 from fastapi.responses import RedirectResponse
+from fastapi_cache import FastAPICache
+from fastapi_cache.backends.inmemory import InMemoryBackend
 from loguru import logger
 from logzio.handler import LogzioHandler
 from opal_client.client import OpalClient
@@ -326,6 +328,11 @@ class PermitPDP:
         app.openapi_tags = sidecar_config.OPENAPI_TAGS_METADATA
         return app
 
+    async def _init_cache_if_enabled(self):
+        if sidecar_config.PDP_CACHE_ENABLED:
+            FastAPICache.init(InMemoryBackend(), prefix="pdp")
+            logger.info(f"Initialized Cache with TTL: {sidecar_config.PDP_CACHE_TTL_SEC} seconds")
+
     def _configure_api_routes(self, app: FastAPI):
         """
         mounts the api routes on the app object
@@ -334,6 +341,8 @@ class PermitPDP:
         # Init api routers with required dependencies
         app.on_event("startup")(stats_manager.run)
         app.on_event("shutdown")(stats_manager.stop_tasks)
+
+        app.on_event("startup")(self._init_cache_if_enabled)
 
         enforcer_router = init_enforcer_api_router(policy_store=self._opal.policy_store)
         local_router = init_local_cache_api_router(policy_store=self._opal.policy_store)

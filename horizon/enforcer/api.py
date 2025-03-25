@@ -13,7 +13,6 @@ import fastapi_cache.decorator
 import orjson
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from fastapi_cache import FastAPICache, default_key_builder
-from fastapi_cache.backends.inmemory import InMemoryBackend
 from fastapi_cache.decorator import cache
 from opal_client.config import opal_client_config
 from opal_client.logger import logger
@@ -125,8 +124,6 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
 
     # Initialize FastAPI Cache
     if sidecar_config.PDP_CACHE_ENABLED:
-        FastAPICache.init(InMemoryBackend(), prefix="pdp")
-        logger.info(f"Initialized FastAPI Cache with TTL: {sidecar_config.PDP_CACHE_TTL_SEC} seconds")
         conditional_cache = functools.partial(
             cache,
             expire=sidecar_config.PDP_CACHE_TTL_SEC,
