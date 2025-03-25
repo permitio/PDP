@@ -280,3 +280,156 @@ async def test_user_permissions_cache_different_users(mocked_api: aioresponses, 
         assert response.json() == expected_response2
         assert len(mocked_api.requests) == 1
         assert len(next(iter(mocked_api.requests.values()))) == 2
+
+
+@pytest.mark.asyncio
+async def test_user_permissions_cache_no_store(mocked_api: aioresponses, client_with_cache: TestClient):
+    """Test that Cache-Control: no-store header prevents caching"""
+    client = client_with_cache
+
+    query = UserPermissionsQuery(user=User(key="test_user"), resource_types=["resource1"])
+
+    opa_response = {
+        "result": {
+            "permissions": {
+                "test_user": {
+                    "resource": {
+                        "key": "resource_x",
+                        "attributes": {},
+                        "type": "resource1",
+                    },
+                    "permissions": ["read:read"],
+                }
+            }
+        }
+    }
+
+    expected_response = {
+        "test_user": {
+            "resource": {
+                "key": "resource_x",
+                "attributes": {},
+                "type": "resource1",
+            },
+            "permissions": ["read:read"],
+        }
+    }
+
+    with mocked_api:
+        # Mock the OPA response
+        mocked_api.post(
+            f"{opal_client_config.POLICY_STORE_URL}/v1/data/permit/user_permissions",
+            status=200,
+            payload=opa_response,
+            repeat=True,  # Need to repeat since cache should be bypassed
+        )
+
+        # First request with no-store header
+        response = client.post(
+            "/user-permissions",
+            json=query.dict(),
+            headers={"Authorization": f"Bearer {sidecar_config.API_KEY}", "Cache-Control": "no-store"},
+        )
+        assert response.status_code == 200
+        assert response.json() == expected_response
+
+        # Second request with no-store header should also hit the API
+        response = client.post(
+            "/user-permissions",
+            json=query.dict(),
+            headers={
+                "Authorization": f"Bearer {sidecar_config.API_KEY}",
+            },
+        )
+        assert response.status_code == 200
+        assert response.json() == expected_response
+
+        # Verify that both requests hit the API
+        assert len(mocked_api.requests) == 1
+        assert len(next(iter(mocked_api.requests.values()))) == 2
+
+
+@pytest.mark.asyncio
+async def test_user_permissions_cache_no_cache(mocked_api: aioresponses, client_with_cache: TestClient):
+    """Test that Cache-Control: no-cache header forces revalidation"""
+    client = client_with_cache
+
+    query = UserPermissionsQuery(user=User(key="test_user"), resource_types=["resource1"])
+
+    opa_response = {
+        "result": {
+            "permissions": {
+                "test_user": {
+                    "resource": {
+                        "key": "resource_x",
+                        "attributes": {},
+                        "type": "resource1",
+                    },
+                    "permissions": ["read:read"],
+                }
+            }
+        }
+    }
+
+    expected_response = {
+        "test_user": {
+            "resource": {
+                "key": "resource_x",
+                "attributes": {},
+                "type": "resource1",
+            },
+            "permissions": ["read:read"],
+        }
+    }
+
+    with mocked_api:
+        # Mock the OPA response
+        mocked_api.post(
+            f"{opal_client_config.POLICY_STORE_URL}/v1/data/permit/user_permissions",
+            status=200,
+            payload=opa_response,
+            repeat=True,  # Need to repeat since cache should be revalidated
+        )
+
+        # First request with no-cache header
+        response = client.post(
+            "/user-permissions",
+            json=query.dict(),
+            headers={
+                "Authorization": f"Bearer {sidecar_config.API_KEY}",
+            },
+        )
+        assert response.status_code == 200
+        assert response.json() == expected_response
+
+        # Verify that both requests hit the API
+        assert len(mocked_api.requests) == 1
+        assert len(next(iter(mocked_api.requests.values()))) == 1
+
+        # First request with no-cache header
+        response = client.post(
+            "/user-permissions",
+            json=query.dict(),
+            headers={
+                "Authorization": f"Bearer {sidecar_config.API_KEY}",
+            },
+        )
+        assert response.status_code == 200
+        assert response.json() == expected_response
+
+        # Verify that both requests hit the API
+        assert len(mocked_api.requests) == 1
+        assert len(next(iter(mocked_api.requests.values()))) == 1
+
+        # Second request with no-cache header should revalidate
+        response = client.post(
+            "/user-permissions",
+            json=query.dict(),
+            headers={"Authorization": f"Bearer {sidecar_config.API_KEY}", "Cache-Control": "no-cache"},
+        )
+        assert response.status_code == 200
+        assert response.json() == expected_response
+
+        # Verify that both requests hit the API
+        assert len(mocked_api.requests) == 1
+        assert len(next(iter(mocked_api.requests.values()))) == 2
