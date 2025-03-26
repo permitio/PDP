@@ -123,10 +123,10 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
         return decorator
 
     # Initialize FastAPI Cache
-    if sidecar_config.PDP_CACHE_ENABLED:
+    if sidecar_config.CACHE_ENABLED:
         conditional_cache = functools.partial(
             cache,
-            expire=sidecar_config.PDP_CACHE_TTL_SEC,
+            expire=sidecar_config.CACHE_TTL_SEC,
         )
 
     if sidecar_config.KONG_INTEGRATION:

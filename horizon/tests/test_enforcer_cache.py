@@ -10,29 +10,29 @@ from test_enforcer_api import MockPermitPDP
 
 @pytest.fixture
 def sidecar_with_cache():
-    orig_config = sidecar_config.PDP_CACHE_ENABLED
-    orig_ttl = sidecar_config.PDP_CACHE_TTL_SEC
+    orig_config = sidecar_config.CACHE_ENABLED
+    orig_ttl = sidecar_config.CACHE_TTL_SEC
     # Enable caching for this test
-    sidecar_config.PDP_CACHE_ENABLED = True
-    sidecar_config.PDP_CACHE_TTL_SEC = 3600
+    sidecar_config.CACHE_ENABLED = True
+    sidecar_config.CACHE_TTL_SEC = 3600
     _mock_pdp = MockPermitPDP()
     _mock_pdp._init_cache_if_enabled()
     yield _mock_pdp
     # Restore the original config
-    sidecar_config.PDP_CACHE_ENABLED = orig_config
-    sidecar_config.PDP_CACHE_TTL_SEC = orig_ttl
+    sidecar_config.CACHE_ENABLED = orig_config
+    sidecar_config.CACHE_TTL_SEC = orig_ttl
 
 
 @pytest.fixture
 def sidecar_without_cache():
-    orig_config = sidecar_config.PDP_CACHE_ENABLED
+    orig_config = sidecar_config.CACHE_ENABLED
     # Disable caching for this test
-    sidecar_config.PDP_CACHE_ENABLED = False
+    sidecar_config.CACHE_ENABLED = False
     _mock_pdp = MockPermitPDP()
     _mock_pdp._init_cache_if_enabled()
     yield _mock_pdp
     # Restore the original config
-    sidecar_config.PDP_CACHE_ENABLED = orig_config
+    sidecar_config.CACHE_ENABLED = orig_config
 
 
 @pytest.fixture

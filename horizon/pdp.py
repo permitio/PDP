@@ -329,9 +329,9 @@ class PermitPDP:
         return app
 
     def _init_cache_if_enabled(self):
-        if sidecar_config.PDP_CACHE_ENABLED:
+        if sidecar_config.CACHE_ENABLED:
             FastAPICache.init(InMemoryBackend(), prefix="pdp")
-            logger.info(f"Initialized Cache with TTL: {sidecar_config.PDP_CACHE_TTL_SEC} seconds")
+            logger.info(f"Initialized Cache with TTL: {sidecar_config.CACHE_TTL_SEC} seconds")
 
     def _configure_api_routes(self, app: FastAPI):
         """
