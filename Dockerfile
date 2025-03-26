@@ -68,6 +68,10 @@ USER root
 COPY ./requirements.txt ./requirements.txt
 RUN pip install --upgrade pip setuptools && \
     pip install -r requirements.txt && \
+    # this is needed because there is a major bug in pendulum 3.0.0 that causes segfault in alpine linux
+    # and fastapi-cache2 depends on it, we couldn't write it in requirements.txt because
+    # it would cause a conflict with fastapi-cache that requres pendulum^3.0.0
+    pip install "pendulum<3.0.0" && \
     python -m pip uninstall -y pip setuptools && \
     rm -r /usr/local/lib/python3.10/ensurepip
 
