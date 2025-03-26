@@ -53,7 +53,7 @@ WaitTimeoutDependency = Annotated[float | None, Depends(get_wait_timeout)]
 
 
 def get_timeout_policy(request: Request) -> TimeoutPolicy:
-    policy_str = request.headers.get("X-Timeout-Policy", TimeoutPolicy.IGNORE.value)
+    policy_str = request.headers.get("X-Timeout-Policy", sidecar_config.LOCAL_FACTS_TIMEOUT_POLICY)
     try:
         return TimeoutPolicy(policy_str.lower())
     except ValueError as e:

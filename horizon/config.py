@@ -236,6 +236,11 @@ class SidecarConfig(Confi):
         10,
         description="The amount of time in seconds to wait for the local facts to be synced before timing out",
     )
+    LOCAL_FACTS_TIMEOUT_POLICY = confi.str(
+        "LOCAL_FACTS_TIMEOUT_POLICY",
+        "ignore",
+        description="The policy to use when the local facts wait timeout is reached. ",
+    )
     VERSION_FILE_PATH = confi.str(
         "VERSION_FILE_PATH",
         "/permit_pdp_version",
