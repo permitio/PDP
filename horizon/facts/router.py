@@ -4,7 +4,9 @@ from typing import Any
 from fastapi import (
     APIRouter,
     Depends,
+    HTTPException,
     Response,
+    status,
 )
 from fastapi import (
     Request as FastApiRequest,
@@ -16,12 +18,14 @@ from horizon.authentication import enforce_pdp_token
 from horizon.facts.client import FactsClient, FactsClientDependency
 from horizon.facts.dependencies import (
     DataUpdateSubscriberDependency,
+    TimeoutPolicyDependency,
     WaitTimeoutDependency,
 )
 from horizon.facts.opal_forwarder import (
     create_data_source_entry,
     create_data_update_entry,
 )
+from horizon.facts.timeout_policy import TimeoutPolicy
 from horizon.facts.update_subscriber import DataUpdateSubscriber
 
 facts_router = APIRouter(dependencies=[Depends(enforce_pdp_token)])
@@ -33,6 +37,7 @@ async def create_user(
     client: FactsClientDependency,
     update_subscriber: DataUpdateSubscriberDependency,
     wait_timeout: WaitTimeoutDependency,
+    timeout_policy: TimeoutPolicyDependency,
 ):
     return await forward_request_then_wait_for_update(
         client,
@@ -48,6 +53,7 @@ async def create_user(
                 authorization_header=r.headers.get("Authorization"),
             )
         ],
+        timeout_policy=timeout_policy,
     )
 
 
@@ -57,6 +63,7 @@ async def create_tenant(
     client: FactsClientDependency,
     update_subscriber: DataUpdateSubscriberDependency,
     wait_timeout: WaitTimeoutDependency,
+    timeout_policy: TimeoutPolicyDependency,
 ):
     return await forward_request_then_wait_for_update(
         client,
@@ -72,6 +79,7 @@ async def create_tenant(
                 authorization_header=r.headers.get("Authorization"),
             )
         ],
+        timeout_policy=timeout_policy,
     )
 
 
@@ -81,6 +89,7 @@ async def sync_user(
     client: FactsClientDependency,
     update_subscriber: DataUpdateSubscriberDependency,
     wait_timeout: WaitTimeoutDependency,
+    timeout_policy: TimeoutPolicyDependency,
     user_id: str,
 ):
     return await forward_request_then_wait_for_update(
@@ -97,6 +106,7 @@ async def sync_user(
                 authorization_header=r.headers.get("Authorization"),
             )
         ],
+        timeout_policy=timeout_policy,
     )
 
 
@@ -106,6 +116,7 @@ async def update_user(
     client: FactsClientDependency,
     update_subscriber: DataUpdateSubscriberDependency,
     wait_timeout: WaitTimeoutDependency,
+    timeout_policy: TimeoutPolicyDependency,
     user_id: str,
 ):
     return await forward_request_then_wait_for_update(
@@ -122,6 +133,7 @@ async def update_user(
                 authorization_header=r.headers.get("Authorization"),
             )
         ],
+        timeout_policy=timeout_policy,
     )
 
 
@@ -156,6 +168,7 @@ async def assign_user_role(
     client: FactsClientDependency,
     update_subscriber: DataUpdateSubscriberDependency,
     wait_timeout: WaitTimeoutDependency,
+    timeout_policy: TimeoutPolicyDependency,
     user_id: str,
 ):
     return await forward_request_then_wait_for_update(
@@ -165,6 +178,7 @@ async def assign_user_role(
         wait_timeout,
         path=f"/users/{user_id}/roles",
         entries_callback=create_role_assignment_data_entries,
+        timeout_policy=timeout_policy,
     )
 
 
@@ -174,6 +188,7 @@ async def create_role_assignment(
     client: FactsClientDependency,
     update_subscriber: DataUpdateSubscriberDependency,
     wait_timeout: WaitTimeoutDependency,
+    timeout_policy: TimeoutPolicyDependency,
 ):
     return await forward_request_then_wait_for_update(
         client,
@@ -182,6 +197,7 @@ async def create_role_assignment(
         wait_timeout,
         path="/role_assignments",
         entries_callback=create_role_assignment_data_entries,
+        timeout_policy=timeout_policy,
     )
 
 
@@ -191,6 +207,7 @@ async def create_resource_instance(
     client: FactsClientDependency,
     update_subscriber: DataUpdateSubscriberDependency,
     wait_timeout: WaitTimeoutDependency,
+    timeout_policy: TimeoutPolicyDependency,
 ):
     return await forward_request_then_wait_for_update(
         client,
@@ -206,6 +223,7 @@ async def create_resource_instance(
                 authorization_header=r.headers.get("Authorization"),
             ),
         ],
+        timeout_policy=timeout_policy,
     )
 
 
@@ -215,6 +233,7 @@ async def update_resource_instance(
     client: FactsClientDependency,
     update_subscriber: DataUpdateSubscriberDependency,
     wait_timeout: WaitTimeoutDependency,
+    timeout_policy: TimeoutPolicyDependency,
     instance_id: str,
 ):
     return await forward_request_then_wait_for_update(
@@ -231,6 +250,7 @@ async def update_resource_instance(
                 authorization_header=r.headers.get("Authorization"),
             ),
         ],
+        timeout_policy=timeout_policy,
     )
 
 
@@ -240,6 +260,7 @@ async def create_relationship_tuple(
     client: FactsClientDependency,
     update_subscriber: DataUpdateSubscriberDependency,
     wait_timeout: WaitTimeoutDependency,
+    timeout_policy: TimeoutPolicyDependency,
 ):
     return await forward_request_then_wait_for_update(
         client,
@@ -255,6 +276,7 @@ async def create_relationship_tuple(
                 authorization_header=r.headers.get("Authorization"),
             ),
         ],
+        timeout_policy=timeout_policy,
     )
 
 
@@ -266,6 +288,7 @@ async def forward_request_then_wait_for_update(
     *,
     path: str,
     entries_callback: Callable[[FastApiRequest, dict[str, Any]], Iterable[DataSourceEntry]],
+    timeout_policy: TimeoutPolicy = TimeoutPolicy.IGNORE,
 ) -> Response:
     response = await client.send_forward_request(request, path)
     body = client.extract_body(response)
@@ -278,11 +301,20 @@ async def forward_request_then_wait_for_update(
         logger.warning(f"Missing required field {e.args[0]} in the response body, skipping wait for update.")
         return client.convert_response(response)
 
-    await update_subscriber.publish_and_wait(
+    wait_result = await update_subscriber.publish_and_wait(
         data_update_entry,
         timeout=wait_timeout,
     )
-    return client.convert_response(response)
+    if wait_result:
+        return client.convert_response(response)
+    elif timeout_policy == TimeoutPolicy.FAIL:
+        logger.error("Timeout waiting for update and policy is set to fail")
+        raise HTTPException(
+            status_code=status.HTTP_424_FAILED_DEPENDENCY,
+            detail="Timeout waiting for update to be received",
+        )
+    else:
+        logger.warning("Timeout waiting for update and policy is set to ignore")
 
 
 @facts_router.api_route(
