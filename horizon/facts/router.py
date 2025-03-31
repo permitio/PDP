@@ -157,7 +157,7 @@ def create_role_assignment_data_entries(request: FastApiRequest, body: dict[str,
         yield create_data_source_entry(
             obj_type="role_assignments",
             obj_id=body["user_id"],
-            obj_key=body["user"],
+            obj_key=f"user:{body['user']}",
             authorization_header=request.headers.get("Authorization"),
         )
 
