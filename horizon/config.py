@@ -279,8 +279,8 @@ class SidecarConfig(Confi):
         cast=parse_callbacks,
         cast_from_json=parse_callbacks,
     )
-    IGNORE_DATA_UPDATE_CALLBACKS_URLS: list[str] = confi.str(
-        "IGNORE_DATA_UPDATE_CALLBACKS_URLS",
+    IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS: list[str] = confi.str(
+        "IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS",
         [],
         description="List of callbacks urls to be ignored even if they are registered in the control plane",
     )
