@@ -52,6 +52,7 @@ def get_opa_config_file_path(
             max_delay_seconds=sidecar_config.OPA_DECISION_LOG_MAX_DELAY,
             upload_size_limit_bytes=sidecar_config.OPA_DECISION_LOG_UPLOAD_SIZE_LIMIT,
             log_to_console=sidecar_config.OPA_DECISION_LOG_CONSOLE,
+            plugins=sidecar_config.OPA_PLUGINS,
         )
     except jinja2.TemplateNotFound:
         logger.error(f"could not find the template: {template_path}")

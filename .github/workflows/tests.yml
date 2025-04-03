@@ -45,7 +45,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: permitio/permit-opa
-          ref: main
+          ref: 0.0.13
           path: './permit-opa'
           token: ${{ secrets.CLONE_REPO_TOKEN }}
 
