@@ -1,3 +1,4 @@
+ARG OPA_BUILD=permit
 # OPA BUILD STAGE -----------------------------------
 # Build OPA from source or download precompiled binary
 # ---------------------------------------------------
@@ -23,7 +24,7 @@ RUN if [ -f /custom/custom_opa.tar.gz ]; \
 # MAIN IMAGE ----------------------------------------
 # Main image setup (optimized)
 # ---------------------------------------------------
-FROM python:3.10-alpine
+FROM python:3.10-alpine AS main
 
 WORKDIR /app
 
@@ -107,9 +108,25 @@ ENV PDP_VERSION_FILE_PATH="/app/permit_pdp_version"
 # and it is here as a safety measure on purpose.
 ENV OPAL_AUTH_PUBLIC_KEY="ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDe2iQ+/E01P2W5/EZwD5NpRiSQ8/r/k18pFnym+vWCSNMWpd9UVpgOUWfA9CAX4oEo5G6RfVVId/epPH/qVSL87uh5PakkLZ3E+PWVnYtbzuFPs/lHZ9HhSqNtOQ3WcPDTcY/ST2jyib2z0sURYDMInSc1jnYKqPQ6YuREdoaNdPHwaTFN1tEKhQ1GyyhL5EDK97qU1ejvcYjpGm+EeE2sjauHYn2iVXa2UA9fC+FAKUwKqNcwRTf3VBLQTE6EHGWbxVzXv1Feo8lPZgL7Yu/UPgp7ivCZhZCROGDdagAfK9sveYjkKiWCLNUSpado/E5Vb+/1EVdAYj6fCzk45AdQzA9vwZefP0sVg7EuZ8VQvlz7cU9m+XYIeWqduN4Qodu87rtBYtSEAsru/8YDCXBDWlLJfuZb0p/klbte3TayKnQNSWD+tNYSJHrtA/3ZewP+tGDmtgLeB38NLy1xEsgd31v6ISOSCTHNS8ku9yWQXttv0/xRnuITr8a3TCLuqtUrNOhCx+nKLmYF2cyjYeQjOWWpn/Z6VkZvOa35jhG1ETI8IwE+t5zXqrf2s505mh18LwA1DhC8L/wHk8ZG7bnUe56QwxEo32myUBN8nHdu7XmPCVP8MWQNLh406QRAysishWhXVs/+0PbgfBJ/FxKP8BXW9zqzeIG+7b/yk8tRHQ=="
 
+
+
+
+# We ignore this callback because we are sunsetting this feature in favor of the new inline OPA data updater
+ENV PDP_IGNORE_DATA_UPDATE_CALLBACKS_URLS='["http://localhost:8181/v1/data/permit/rebac/cache_rebuild"]'
+# if we are using the custom OPA binary, we need to load the permit plugin,
+# if we don't then we MUST not add a non existing plugin
+FROM main AS main-vanilla
+# if we are using the vanilla OPA binary, we don't need to load the permit plugin
+ENV PDP_OPA_PLUGINS='{}'
+
+FROM main AS main-permit
+# if we are using the custom OPA binary, we need to load the permit plugin,
+ENV PDP_OPA_PLUGINS='{"permit_graph":{}}'
+
+FROM main-${OPA_BUILD} AS application
+
 # 7000 sidecar port
 # 8181 opa port
 EXPOSE 7000 8181
-
 # Run the application using the startup script
 CMD ["/app/scripts/start.sh"]

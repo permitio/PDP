@@ -133,6 +133,7 @@ class PermitPDP:
 
         self._opal = OpalClient(shard_id=sidecar_config.SHARD_ID, data_topics=self._fix_data_topics())
         self._inject_extra_callbacks()
+        self._remove_ignored_callbacks_urls()
         self._configure_cloud_logging(remote_config.context)
 
         self._opal_relay = OpalRelayAPIClient(remote_config.context, self._opal)
@@ -422,3 +423,13 @@ class PermitPDP:
 
             logger.info(f"Registering data update callback to url '{entry.url}' with key '{entry.key}'")
             register.put(entry.url, entry.config, entry.key)
+
+    def _remove_ignored_callbacks_urls(self) -> None:
+        register = self._opal._callbacks_register  # type: ignore
+        if not sidecar_config.IGNORE_DATA_UPDATE_CALLBACKS_URLS:
+            return
+        # we convert the generator to a list because we are modifying the register while iterating over it
+        for callback in list(register.all()):
+            if callback.url in sidecar_config.IGNORE_DATA_UPDATE_CALLBACKS_URLS:
+                logger.info(f"Removing callback '{callback.url}' from the register")
+                register.remove(callback.key)

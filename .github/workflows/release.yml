@@ -46,6 +46,8 @@ jobs:
         tags: permitio/pdp-v2-vanilla:${{ github.event.release.tag_name }}, permitio/pdp-v2-vanilla:latest
         cache-from: type=gha
         cache-to: type=gha,mode=max
+        build-args: |
+          OPA_BUILD=vanilla
 
     - name: Build and push PDP-Vanilla image - (pre-release)
       if: "github.event.release.prerelease"
@@ -57,6 +59,8 @@ jobs:
         tags: permitio/pdp-v2-vanilla:${{ github.event.release.tag_name }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
+        build-args: |
+          OPA_BUILD=vanilla
 
   build-and-push-pdp:
     needs: pdp-tests
