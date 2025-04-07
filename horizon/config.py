@@ -285,6 +285,19 @@ class SidecarConfig(Confi):
         description="List of callbacks urls to be ignored even if they are registered in the control plane",
     )
 
+    # Cache configuration
+    CACHE_ENABLED = confi.bool(
+        "CACHE_ENABLED",
+        False,
+        description="If true, enables caching for specific PDP endpoints",
+    )
+
+    CACHE_TTL_SEC = confi.int(
+        "CACHE_TTL_SEC",
+        3600,  # 1 hour default
+        description="TTL for cached PDP responses in seconds",
+    )
+
     # non configurable values -------------------------------------------------
 
     # redoc configuration (openapi schema)
