@@ -211,6 +211,24 @@ class SidecarConfig(Confi):
         description="log upload size limit in bytes. OPA will chunk uploads to cap message body to this limit",
     )
 
+    @staticmethod
+    def parse_plugins(value: Any) -> dict[str, dict[str, int | bool | str]]:
+        if isinstance(value, str):
+            return parse_raw_as(dict[str, dict[str, int | bool | str]], value)
+        else:
+            return parse_obj_as(dict[str, dict[str, int | bool | str]], value)
+
+    OPA_PLUGINS: dict[str, dict[str, int | bool | str]] = confi.str(
+        "OPA_PLUGINS",
+        {},
+        description="List of plugins to be loaded into OPA, "
+        "the key is the plugin name, the value is the plugin config. "
+        "notice that the plugin MUST be registered in OPA for it to work, "
+        "if it is not registered, OPA will fail to start",
+        cast=parse_plugins,
+        cast_from_json=parse_plugins,
+    )
+
     # allow access to metrics endpoint without auth
     ALLOW_METRICS_UNAUTHENTICATED = confi.bool(
         "ALLOW_METRICS_UNAUTHENTICATED",
@@ -260,6 +278,11 @@ class SidecarConfig(Confi):
         description="List of callbacks to be triggered when data is updated",
         cast=parse_callbacks,
         cast_from_json=parse_callbacks,
+    )
+    IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS: list[str] = confi.str(
+        "IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS",
+        [],
+        description="List of callbacks urls to be ignored even if they are registered in the control plane",
     )
 
     # non configurable values -------------------------------------------------

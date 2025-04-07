@@ -17,3 +17,13 @@ decision_logs:
     min_delay_seconds: {{ min_delay_seconds }}
     max_delay_seconds: {{ max_delay_seconds }}
     upload_size_limit_bytes: {{ upload_size_limit_bytes }}
+
+{% if plugins %}
+plugins:
+{% for plugin_id, plugin_config in plugins.items() %}
+  {{ plugin_id }}:
+    {% for config_key, config_value in plugin_config.items() %}
+    {{ config_key }}: {{ config_value }}
+    {% endfor %}
+{% endfor %}
+{% endif %}
