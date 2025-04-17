@@ -17,7 +17,7 @@ repos:
         args: [ --fix=lf ]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.1
+    rev: v0.11.6
     hooks:
       - id: ruff
         args: [--fix]
@@ -37,3 +37,9 @@ repos:
 #          - types-requests
 #        files: \.py$
 #        types: [ file ]
+
+  - repo: https://github.com/doublify/pre-commit-rust
+    rev: v1.0
+    hooks:
+      - id: fmt
+      - id: cargo-check
