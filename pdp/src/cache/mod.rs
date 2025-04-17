@@ -18,13 +18,13 @@ pub use redis::RedisCache;
 #[derive(Debug, Error)]
 pub enum CacheError {
     #[error("Failed to serialize value: {0}")]
-    SerializationError(#[from] serde_json::Error),
+    Serialization(#[from] serde_json::Error),
     #[error("Failed to parse value: {0}")]
-    DeserializationError(String),
+    Deserialization(String),
     #[error("Redis error: {0}")]
-    RedisError(String),
+    Redis(String),
     #[error("Configuration error: {0}")]
-    ConfigError(String),
+    Config(String),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -153,19 +153,19 @@ pub async fn create_cache(config: &crate::config::Settings) -> Result<Cache, Cac
                 config.cache.ttl_secs as u64,
                 config.cache.in_memory.capacity_mib,
             )
-            .map_err(|e| CacheError::ConfigError(e))?;
+            .map_err(CacheError::Config)?;
             Ok(Cache::InMemory(cache))
         }
         crate::config::CacheStore::Redis => {
             if config.cache.redis.url.is_empty() {
-                return Err(CacheError::ConfigError(
+                return Err(CacheError::Config(
                     "Redis URL is required for Redis cache".to_string(),
                 ));
             }
             let cache =
                 redis::RedisCache::new(&config.cache.redis.url, config.cache.ttl_secs as u64)
                     .await
-                    .map_err(|e| CacheError::ConfigError(e))?;
+                    .map_err(CacheError::Config)?;
             Ok(Cache::Redis(cache))
         }
         crate::config::CacheStore::None => {

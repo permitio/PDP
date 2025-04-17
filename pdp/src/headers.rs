@@ -4,7 +4,7 @@ use http::header::{CACHE_CONTROL, EXPIRES, PRAGMA};
 use log::warn;
 
 /// Cache-Control directives
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CacheControl {
     pub no_cache: bool,
     pub no_store: bool,
@@ -15,20 +15,6 @@ pub struct CacheControl {
     pub s_maxage: Option<u32>,
 }
 
-impl Default for CacheControl {
-    fn default() -> Self {
-        Self {
-            no_cache: false,
-            no_store: false,
-            must_revalidate: false,
-            public: false,
-            private: false,
-            max_age: None,
-            s_maxage: None,
-        }
-    }
-}
-
 impl CacheControl {
     /// Create a new CacheControl instance
     pub fn new() -> Self {
@@ -36,24 +22,28 @@ impl CacheControl {
     }
 
     /// Set no-cache directive
+    #[allow(dead_code)]
     pub fn no_cache(mut self) -> Self {
         self.no_cache = true;
         self
     }
 
     /// Set no-store directive
+    #[allow(dead_code)]
     pub fn no_store(mut self) -> Self {
         self.no_store = true;
         self
     }
 
     /// Set must-revalidate directive
+    #[allow(dead_code)]
     pub fn must_revalidate(mut self) -> Self {
         self.must_revalidate = true;
         self
     }
 
     /// Set public directive
+    #[allow(dead_code)]
     pub fn public(mut self) -> Self {
         self.public = true;
         self.private = false;
@@ -74,6 +64,7 @@ impl CacheControl {
     }
 
     /// Set s-maxage directive
+    #[allow(dead_code)]
     pub fn s_maxage(mut self, seconds: u32) -> Self {
         self.s_maxage = Some(seconds);
         self
@@ -110,19 +101,10 @@ impl CacheControl {
 }
 
 /// Helper struct for setting cache-related headers
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CacheHeaders {
     cache_control: CacheControl,
     expires: Option<DateTime<Utc>>,
-}
-
-impl Default for CacheHeaders {
-    fn default() -> Self {
-        Self {
-            cache_control: CacheControl::default(),
-            expires: None,
-        }
-    }
 }
 
 impl CacheHeaders {
@@ -176,6 +158,7 @@ pub mod presets {
     use chrono::Duration;
 
     /// No caching allowed
+    #[allow(dead_code)]
     pub fn no_cache() -> CacheHeaders {
         CacheHeaders::new()
             .cache_control(CacheControl::new().no_cache().no_store().must_revalidate())
@@ -183,6 +166,7 @@ pub mod presets {
     }
 
     /// Public caching with max age
+    #[allow(dead_code)]
     pub fn public_cache(max_age_seconds: u32) -> CacheHeaders {
         CacheHeaders::new()
             .cache_control(CacheControl::new().public().max_age(max_age_seconds))

@@ -1,19 +1,14 @@
 use config::{Config, ConfigError};
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Deserialize, Clone, PartialEq, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum CacheStore {
     InMemory,
     Redis,
     #[serde(other)]
+    #[default]
     None,
-}
-
-impl Default for CacheStore {
-    fn default() -> Self {
-        CacheStore::None
-    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -31,17 +26,11 @@ impl Default for InMemoryCacheConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Default)]
 pub struct RedisCacheConfig {
     /// Redis connection string
     #[serde(default)]
     pub url: String,
-}
-
-impl Default for RedisCacheConfig {
-    fn default() -> Self {
-        Self { url: String::new() }
-    }
 }
 
 #[derive(Debug, Deserialize, Clone)]

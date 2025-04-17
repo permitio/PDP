@@ -52,7 +52,7 @@ impl CacheBackend for InMemoryCache {
     ) -> Result<Option<T>, CacheError> {
         if let Some(value) = self.cache.get(key).await {
             serde_json::from_str(&value)
-                .map_err(|e| CacheError::DeserializationError(e.to_string()))
+                .map_err(|e| CacheError::Deserialization(e.to_string()))
                 .map(Some)
         } else {
             Ok(None)

@@ -24,6 +24,7 @@ impl ApiError {
     }
 
     /// Create new Bad Request Error (400) with a detail message
+    #[allow(dead_code)]
     pub fn bad_request<S: ToString>(detail: S) -> Self {
         Self::new(detail, StatusCode::BAD_REQUEST)
     }

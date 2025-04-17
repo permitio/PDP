@@ -1,8 +1,7 @@
 use crate::errors::ApiError;
 use crate::state::AppState;
-use axum::http::{HeaderMap, StatusCode};
-use http::header::{InvalidHeaderValue, AUTHORIZATION, CONTENT_TYPE};
-use http::HeaderValue;
+use axum::http::StatusCode;
+use http::header::InvalidHeaderValue;
 use log::debug;
 use reqwest;
 use serde::de::DeserializeOwned;

@@ -1,8 +1,8 @@
 use crate::models::*;
 use utoipa::OpenApi;
 
-pub(crate) const HEALTH_TAG: &'static str = "Health API";
-pub(crate) const AUTHZ_TAG: &'static str = "Authorization API";
+pub(crate) const HEALTH_TAG: &str = "Health API";
+pub(crate) const AUTHZ_TAG: &str = "Authorization API";
 
 #[derive(OpenApi)]
 #[openapi(

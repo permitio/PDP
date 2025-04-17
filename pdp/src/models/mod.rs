@@ -2,36 +2,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use utoipa::ToSchema;
 
-/// A generic wrapper for OPA (Open Policy Agent) requests.
-/// The type parameter T represents the type of the input data.
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub struct OpaRequest<T> {
-    /// The input data for the OPA request.
-    /// This field contains the actual payload that will be evaluated by OPA policies.
-    pub input: T,
-}
-
-impl<T> OpaRequest<T> {
-    pub fn new(input: T) -> Self {
-        Self { input }
-    }
-}
-
-/// A generic wrapper for OPA (Open Policy Agent) responses.
-/// The type parameter T represents the type of the result data.
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub struct OpaResponse<T> {
-    /// The result data from the OPA evaluation.
-    /// This field contains the actual response payload from OPA policies.
-    pub result: T,
-}
-
-impl<T> OpaResponse<T> {
-    pub fn new(result: T) -> Self {
-        Self { result }
-    }
-}
-
 #[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
 pub struct User {
     /// Unique identifier for the user
@@ -180,6 +150,7 @@ pub struct AuthorizationQuery {
 }
 
 // For backward compatibility - rename to better reflect API endpoint
+#[allow(dead_code)]
 pub type AllowedQuery = AuthorizationQuery;
 
 #[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
@@ -198,6 +169,7 @@ pub struct AuthorizationResult {
 }
 
 // For backward compatibility - rename to better reflect API endpoint
+#[allow(dead_code)]
 pub type AllowedResponse = AuthorizationResult;
 
 // Models for bulk authorization
@@ -244,6 +216,7 @@ pub struct AuthorizedUsersAuthorizationQuery {
 }
 
 // For backward compatibility
+#[allow(dead_code)]
 pub type AuthorizedUsersQuery = AuthorizedUsersAuthorizationQuery;
 
 #[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
@@ -269,6 +242,7 @@ pub struct AuthorizedUsersResult {
 }
 
 // For backward compatibility
+#[allow(dead_code)]
 pub type AuthorizedUsersResponse = AuthorizedUsersResult;
 
 // Models for user tenants
@@ -281,4 +255,5 @@ pub struct UserTenantsQuery {
     pub context: HashMap<String, serde_json::Value>,
 }
 
+#[allow(dead_code)]
 pub type UserTenantsResult = Vec<TenantDetails>;

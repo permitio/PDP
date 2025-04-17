@@ -95,7 +95,7 @@ impl CacheBackend for RedisCache {
                 // Mark as unhealthy on error
                 self.healthy.store(false, Ordering::Relaxed);
                 error!("Redis error while setting key {}: {}", key, err);
-                Err(CacheError::RedisError(err.to_string()))
+                Err(CacheError::Redis(err.to_string()))
             }
         }
     }
@@ -116,13 +116,13 @@ impl CacheBackend for RedisCache {
                 // Mark as unhealthy on error
                 self.healthy.store(false, Ordering::Relaxed);
                 error!("Redis error while getting key {}: {}", key, err);
-                return Err(CacheError::RedisError(err.to_string()));
+                return Err(CacheError::Redis(err.to_string()));
             }
         };
 
         if let Some(value) = result {
             serde_json::from_str(&value)
-                .map_err(|e| CacheError::DeserializationError(e.to_string()))
+                .map_err(|e| CacheError::Deserialization(e.to_string()))
                 .map(Some)
         } else {
             Ok(None)
@@ -161,7 +161,7 @@ impl CacheBackend for RedisCache {
                 // Mark as unhealthy on error
                 self.healthy.store(false, Ordering::Relaxed);
                 error!("Redis error while deleting key {}: {}", key, err);
-                Err(CacheError::RedisError(err.to_string()))
+                Err(CacheError::Redis(err.to_string()))
             }
         }
     }
