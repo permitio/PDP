@@ -118,6 +118,7 @@ pub(super) async fn fallback_to_horizon(
 mod tests {
     use super::*;
     use crate::api;
+    use crate::api::authn_middleware::authentication_middleware;
     use crate::config::{CacheStore, Settings};
     use axum::http::Method;
     use axum::response::IntoResponse;
@@ -126,7 +127,6 @@ mod tests {
     use tokio::net::TcpListener;
     use wiremock::matchers::{any, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
-
     // TODO refactor this to use a common test setup
 
     pub async fn create_test_app(settings: Settings) -> (Router, AppState) {
@@ -136,49 +136,16 @@ mod tests {
         // Create health routes
         let health_routes = api::health::router();
 
-        // Clone state for auth middleware
-        let auth_state = state.clone();
-
-        // API key authentication middleware
-        let auth_middleware = move |req: axum::http::Request<axum::body::Body>,
-                                    next: axum::middleware::Next| {
-            let state = auth_state.clone();
-            async move {
-                // Token validation logic from lib.rs
-                let auth_header = req
-                    .headers()
-                    .get(axum::http::header::AUTHORIZATION)
-                    .and_then(|header| header.to_str().ok())
-                    .and_then(|auth_value| {
-                        if auth_value.starts_with("Bearer ") {
-                            Some(auth_value[7..].to_string())
-                        } else {
-                            None
-                        }
-                    });
-
-                let token = match auth_header {
-                    Some(token) => token,
-                    None => {
-                        return Err(crate::auth::AuthError::MissingToken);
-                    }
-                };
-
-                if token != state.settings.api_key {
-                    return Err(crate::auth::AuthError::InvalidToken);
-                }
-
-                Ok(next.run(req).await)
-            }
-        };
-
         // Protected routes
         let protected_routes = Router::new()
             .merge(api::authz::router())
             .fallback(axum::routing::any(fallback_to_horizon))
-            .route_layer(axum::middleware::from_fn(auth_middleware));
+            .layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                authentication_middleware,
+            ));
 
-        // Create base router with routes
+        // Create the base router with routes
         let app = Router::new()
             .merge(health_routes)
             .merge(protected_routes)
