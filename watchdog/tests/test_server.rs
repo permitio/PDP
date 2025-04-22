@@ -2,8 +2,9 @@ use log::info;
 use reqwest::Client;
 use serde::Deserialize;
 use std::net::{SocketAddr, TcpListener};
-use std::process::Stdio;
+use std::time::Duration;
 use tokio::process::Command;
+use watchdog::HttpHealthChecker;
 
 #[derive(Debug, Clone)]
 pub struct TestServer {
@@ -49,6 +50,15 @@ impl TestServer {
 
         info!("Creating test server on port {}", self.port);
         command
+    }
+
+    /// Create a health checker for the test server
+    pub fn get_health_checker(&self) -> HttpHealthChecker {
+        HttpHealthChecker::with_options(
+            format!("{}/health", self.base_url),
+            200,
+            Duration::from_millis(100),
+        )
     }
 
     /// Send a ping request to the server
@@ -119,6 +129,7 @@ impl TestServer {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct ServerStatus {
     pub pid: u32,
     pub uptime: f64,

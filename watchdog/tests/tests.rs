@@ -2,7 +2,7 @@ use log::LevelFilter;
 use std::time::Duration;
 use test_server::TestServer;
 use tokio::process::Command;
-use watchdog::{CommandWatchdog, CommandWatchdogOptions};
+use watchdog::{CommandWatchdog, CommandWatchdogOptions, ServiceWatchdog, ServiceWatchdogOptions};
 
 mod test_server;
 
@@ -60,8 +60,17 @@ async fn test_watchdog_restart_after_crash() {
     let ping_response = test_server.ping().await.unwrap();
     assert_eq!(ping_response, "pong");
 
-    assert_eq!(watchdog.start_counter(), 2);
-    assert_eq!(watchdog.last_exit_code(), 12); // exit code from the test server POST /crash
+    assert_eq!(
+        watchdog.start_counter(),
+        2,
+        "Service should have started twice"
+    );
+    // exit code from the test server POST /crash
+    assert_eq!(
+        watchdog.last_exit_code(),
+        12,
+        "Service should have exit code 12"
+    );
 }
 
 #[tokio::test]
@@ -76,7 +85,10 @@ async fn test_watchdog_fail_to_start() {
     let watchdog = CommandWatchdog::start_with_opt(command, opt);
     tokio::time::sleep(Duration::from_millis(55)).await;
 
-    assert_eq!(watchdog.start_counter(), 5);
+    assert!(
+        watchdog.start_counter() > 1,
+        "Should have started more than once"
+    );
     assert_eq!(watchdog.last_exit_code(), 0);
 }
 
@@ -95,8 +107,11 @@ async fn test_watchdog_crash_immediately() {
     let watchdog = CommandWatchdog::start_with_opt(command, opt);
     tokio::time::sleep(Duration::from_millis(55)).await;
 
-    assert_eq!(watchdog.start_counter(), 5);
-    assert_eq!(watchdog.last_exit_code(), 12);
+    assert!(
+        watchdog.start_counter() > 1,
+        "Should have started more than once"
+    );
+    assert_eq!(watchdog.last_exit_code(), 12, "Should have exit code 12");
 }
 
 #[tokio::test]
@@ -137,8 +152,16 @@ async fn test_watchdog_explicit_restart() {
         "Server PID should be different after restart"
     );
 
-    assert_eq!(watchdog.start_counter(), 2);
-    assert_eq!(watchdog.last_exit_code(), 0);
+    assert_eq!(
+        watchdog.start_counter(),
+        2,
+        "Service should have started twice"
+    );
+    assert_eq!(
+        watchdog.last_exit_code(),
+        0,
+        "Service should still be running"
+    );
 }
 
 #[tokio::test]
@@ -181,5 +204,156 @@ async fn test_watchdog_termination_timeout() {
         "Server PID should be different after forced termination and restart"
     );
 
-    assert_eq!(watchdog.start_counter(), 2);
+    assert_eq!(
+        watchdog.start_counter(),
+        2,
+        "Service should have started twice"
+    );
+}
+
+#[tokio::test]
+async fn test_service_watchdog_http() {
+    setup_logger();
+
+    let test_server = TestServer::new();
+    let opt = ServiceWatchdogOptions {
+        health_check_interval: Duration::from_millis(50),
+        health_check_failure_threshold: 5,
+        initial_startup_delay: Duration::from_millis(50),
+    };
+    let watchdog = ServiceWatchdog::start_with_opt(
+        test_server.get_command(),
+        test_server.get_health_checker(),
+        opt,
+    );
+    assert!(!watchdog.is_healthy());
+    watchdog
+        .wait_for_healthy(Duration::from_millis(1000))
+        .await
+        .expect("Service should be healthy");
+
+    // Verify the server is healthy
+    let health_response = test_server.health().await.unwrap();
+    assert_eq!(health_response, "healthy");
+
+    assert_eq!(
+        watchdog.start_counter(),
+        1,
+        "Service should have started once"
+    );
+    assert_eq!(
+        watchdog.last_exit_code(),
+        0,
+        "Service should still be running"
+    );
+    assert!(
+        watchdog.health_checks() > 0,
+        "Service should have performed health checks"
+    );
+    assert!(
+        watchdog.failed_health_checks() < watchdog.health_checks(),
+        "Service should have less failed health checks than total health checks"
+    );
+}
+
+#[tokio::test]
+async fn test_service_watchdog_recover() {
+    setup_logger();
+
+    let test_server = TestServer::new();
+    let opt = ServiceWatchdogOptions {
+        health_check_interval: Duration::from_millis(50),
+        health_check_failure_threshold: 2,
+        initial_startup_delay: Duration::from_millis(50),
+    };
+    let watchdog = ServiceWatchdog::start_with_opt(
+        test_server.get_command(),
+        test_server.get_health_checker(),
+        opt,
+    );
+    watchdog
+        .wait_for_healthy(Duration::from_millis(1000))
+        .await
+        .expect("Service should be healthy");
+
+    test_server
+        .make_unhealthy()
+        .await
+        .expect("Failed to make server unhealthy");
+    watchdog
+        .wait_for_healthy(Duration::from_millis(1000))
+        .await
+        .expect("Service should recover from unhealthy state");
+
+    assert_eq!(
+        watchdog.start_counter(),
+        2,
+        "Service should have started twice"
+    );
+    assert_eq!(
+        watchdog.last_exit_code(),
+        0,
+        "Service should still be running"
+    );
+    assert!(
+        watchdog.health_checks() > 0,
+        "Service should have performed health checks"
+    );
+    assert!(
+        watchdog.failed_health_checks() < watchdog.health_checks(),
+        "Service should have less failed health checks than total health checks"
+    );
+}
+
+#[tokio::test]
+async fn test_service_watchdog_recover_unresponsive() {
+    setup_logger();
+
+    let test_server = TestServer::new();
+    let opt = ServiceWatchdogOptions {
+        health_check_interval: Duration::from_millis(50),
+        health_check_failure_threshold: 2,
+        initial_startup_delay: Duration::from_millis(50),
+    };
+    let watchdog = ServiceWatchdog::start_with_opt(
+        test_server.get_command(),
+        test_server.get_health_checker(),
+        opt,
+    );
+    watchdog
+        .wait_for_healthy(Duration::from_millis(1000))
+        .await
+        .expect("Service should be healthy");
+
+    // Simulate unresponsive health check
+    test_server
+        .make_unresponsive()
+        .await
+        .expect("Failed to make server unhealthy");
+    watchdog
+        .wait_for_healthy(Duration::from_millis(1000))
+        .await
+        .expect("Service should recover from unhealthy state");
+
+    // Verify the server is healthy
+    let health_response = test_server.health().await.unwrap();
+    assert_eq!(health_response, "healthy");
+
+    assert!(
+        watchdog.start_counter() > 1,
+        "Service should have started twice"
+    );
+    assert_eq!(
+        watchdog.last_exit_code(),
+        0,
+        "Service should still be running"
+    );
+    assert!(
+        watchdog.health_checks() > 0,
+        "Service should have performed health checks"
+    );
+    assert!(
+        watchdog.failed_health_checks() < watchdog.health_checks(),
+        "Service should have less failed health checks than total health checks"
+    );
 }

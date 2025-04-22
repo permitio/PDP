@@ -2,31 +2,40 @@
 //!
 //! When the subprocess terminates, the watchdog starts a new instance of the subprocess.
 //! The watchdog gracefully shuts down the subprocess when it is dropped.
+//!
+//! `ServiceWatchdog` builds on top of `CommandWatchdog` to add health checking capabilities
+//! to restart services that become unhealthy or unresponsive.
 
 use log::{debug, error, info};
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
-use stats::WatchdogStats;
+use stats::CommandWatchdogStats;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::process::Command;
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio_util::sync::CancellationToken;
 
+mod health;
+mod service;
 mod stats;
 
-#[derive(Debug)]
+// Re-export health checkers and service watchdog
+pub use health::{HealthCheck, HttpHealthChecker};
+pub use service::{ServiceWatchdog, ServiceWatchdogOptions};
+
+#[derive(Debug, Clone)]
 pub struct CommandWatchdog {
     /// A cancellation token to signal shutdown.
     shutdown_token: CancellationToken,
     /// A channel sender to signal restart.
     restart_tx: Sender<()>,
     /// The program name of the subprocess (for logging).
-    program_name: String,
+    pub(crate) program_name: String,
     /// The command line string of the subprocess (for logging).
-    cmd_line: String,
+    pub(crate) cmd_line: String,
     /// Statistics about the subprocess
-    stats: Arc<WatchdogStats>,
+    stats: Arc<CommandWatchdogStats>,
 }
 
 #[derive(Debug, Clone)]
@@ -82,7 +91,7 @@ impl CommandWatchdog {
             restart_tx,
             program_name,
             cmd_line,
-            stats: Arc::new(WatchdogStats::new()),
+            stats: Arc::new(CommandWatchdogStats::default()),
         };
 
         // Spawn the watchdog process
@@ -158,7 +167,7 @@ impl CommandWatchdog {
                         info!("Watchdog received restart signal, restarting process '{}'", cmd_line);
                         match terminate_process_with_timeout(&mut child, &program_name, termination_timeout).await {
                             Ok(_) => {
-                                info!("Process '{}' terminated for restart", program_name);
+                                debug!("Process '{}' terminated for restart", program_name);
                             }
                             Err(e) => {
                                 error!("Failed to terminate process '{}' for restart: {}", program_name, e);
