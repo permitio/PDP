@@ -9,11 +9,14 @@ This server listens on a configurable port and responds to various commands:
 - POST /crash: Terminates the server to simulate a crash
 - POST /unhealthy: Makes /health return a non-200 status code
 - POST /unresponsive: Makes /health halt and not respond
+- POST /ignore_sigterm: Makes the server ignore SIGTERM signals for shutdown testing
 """
 
 import argparse
 import json
 import os
+import signal
+import sys
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -21,6 +24,17 @@ start_time = time.time()
 request_count = 0
 is_healthy = True
 is_responsive = True
+ignore_sigterm = False
+
+
+def sigterm_handler(signum, frame):  # noqa: ARG001
+    """Custom SIGTERM handler that can be configured to ignore signals."""
+    global ignore_sigterm
+    if ignore_sigterm:
+        print(f"Ignoring SIGTERM signal (pid: {os.getpid()})")
+    else:
+        print(f"Received SIGTERM, shutting down (pid: {os.getpid()})")
+        sys.exit(0)
 
 
 class TestHandler(BaseHTTPRequestHandler):
@@ -57,6 +71,7 @@ class TestHandler(BaseHTTPRequestHandler):
                 "request_count": request_count,
                 "is_healthy": is_healthy,
                 "is_responsive": is_responsive,
+                "ignore_sigterm": ignore_sigterm,
             }
             self.wfile.write(json.dumps(status).encode())
 
@@ -66,7 +81,7 @@ class TestHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"Not found")
 
     def do_POST(self):
-        global request_count, is_healthy, is_responsive
+        global request_count, is_healthy, is_responsive, ignore_sigterm
         request_count += 1
 
         if self.path == "/crash":
@@ -92,7 +107,16 @@ class TestHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"Not found")
 
 
-def run_server(port):
+def run_server(port, *, ignore_term_signals: bool = False):
+    global ignore_sigterm
+
+    # Set up signal handling
+    ignore_sigterm = ignore_term_signals
+    signal.signal(signal.SIGTERM, sigterm_handler)
+
+    if ignore_term_signals:
+        print(f"Starting server with SIGTERM ignored (pid: {os.getpid()})")
+
     server_address = ("", port)
     httpd = HTTPServer(server_address, TestHandler)
     print(f"Starting test server on port {port}")
@@ -107,6 +131,9 @@ def run_server(port):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Test HTTP server")
     parser.add_argument("--port", type=int, default=8080, help="Port to run the server on")
+    parser.add_argument(
+        "--ignore-sigterm", action="store_true", help="Ignore SIGTERM signals for testing the watchdog timeout"
+    )
     args = parser.parse_args()
 
-    run_server(args.port)
+    run_server(args.port, ignore_term_signals=args.ignore_sigterm)

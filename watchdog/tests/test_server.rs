@@ -1,7 +1,8 @@
+use log::info;
 use reqwest::Client;
 use serde::Deserialize;
 use std::net::{SocketAddr, TcpListener};
-use std::time::Duration;
+use std::process::Stdio;
 use tokio::process::Command;
 
 #[derive(Debug, Clone)]
@@ -9,10 +10,15 @@ pub struct TestServer {
     port: u16,
     pub base_url: String,
     pub client: Client,
+    ignore_sigterm: bool,
 }
 
 impl TestServer {
     pub fn new() -> Self {
+        Self::new_with_options(false)
+    }
+
+    pub fn new_with_options(ignore_sigterm: bool) -> Self {
         let port = Self::find_available_port();
         let base_url = format!("http://localhost:{}", port);
         let client = Client::new();
@@ -20,6 +26,7 @@ impl TestServer {
             port,
             base_url,
             client,
+            ignore_sigterm,
         }
     }
 
@@ -35,6 +42,12 @@ impl TestServer {
         command.arg("tests/test_server.py");
         command.arg("--port");
         command.arg(self.port.to_string());
+
+        if self.ignore_sigterm {
+            command.arg("--ignore-sigterm");
+        }
+
+        info!("Creating test server on port {}", self.port);
         command
     }
 
@@ -61,7 +74,7 @@ impl TestServer {
     }
 
     /// Retrieve the server status
-    pub async fn status(&self) -> reqwest::Result<StatusResult> {
+    pub async fn status(&self) -> reqwest::Result<ServerStatus> {
         let resp = self
             .client
             .get(format!("{}/status", self.base_url))
@@ -106,8 +119,11 @@ impl TestServer {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct StatusResult {
+pub struct ServerStatus {
     pub pid: u32,
-    pub uptime: f32,
-    pub request_count: u32,
+    pub uptime: f64,
+    pub request_count: usize,
+    pub is_healthy: bool,
+    pub is_responsive: bool,
+    pub ignore_sigterm: bool,
 }

@@ -3,7 +3,9 @@
 //! When the subprocess terminates, the watchdog starts a new instance of the subprocess.
 //! The watchdog gracefully shuts down the subprocess when it is dropped.
 
-use log::{error, info};
+use log::{debug, error, info};
+use nix::sys::signal::{self, Signal};
+use nix::unistd::Pid;
 use stats::WatchdogStats;
 use std::sync::Arc;
 use std::time::Duration;
@@ -31,12 +33,15 @@ pub struct CommandWatchdog {
 pub struct CommandWatchdogOptions {
     /// Maximum duration between restarts from exits or failed boot (default: 1 s)
     pub restart_interval: Duration,
+    /// Maximum time to wait for a process to terminate after kill signal (default: 60 s)
+    pub termination_timeout: Duration,
 }
 
 impl Default for CommandWatchdogOptions {
     fn default() -> Self {
         Self {
             restart_interval: Duration::from_secs(1),
+            termination_timeout: Duration::from_secs(60),
         }
     }
 }
@@ -112,6 +117,7 @@ impl CommandWatchdog {
         let program_name = self.program_name.clone();
         let cmd_line = self.cmd_line.clone();
         let stats = self.stats.clone();
+        let termination_timeout = opt.termination_timeout;
 
         // Spawn a new task to monitor the process
         tokio::spawn(async move {
@@ -121,7 +127,7 @@ impl CommandWatchdog {
             loop {
                 let count = stats.increment_start_counter();
                 info!(
-                    "Starting process '{}' with command line {} (start count: {})",
+                    "Starting process '{}' with command line '{}' (start count: {})",
                     program_name,
                     cmd_line,
                     count + 1
@@ -137,8 +143,8 @@ impl CommandWatchdog {
                 };
                 tokio::select! {
                     _ = shutdown_token.cancelled() => {
-                        info!("Watchdog received shutdown signal, terminating process {}", cmd_line);
-                        match child.kill().await {
+                        info!("Watchdog received shutdown signal, terminating process '{}'", cmd_line);
+                        match terminate_process_with_timeout(&mut child, &program_name, termination_timeout).await {
                             Ok(_) => {
                                 info!("Process '{}' terminated successfully", program_name);
                             }
@@ -149,8 +155,8 @@ impl CommandWatchdog {
                         break;
                     }
                     _ = restart_rx.recv() => {
-                        info!("Watchdog received restart signal, restarting process {}", cmd_line);
-                        match child.kill().await {
+                        info!("Watchdog received restart signal, restarting process '{}'", cmd_line);
+                        match terminate_process_with_timeout(&mut child, &program_name, termination_timeout).await {
                             Ok(_) => {
                                 info!("Process '{}' terminated for restart", program_name);
                             }
@@ -192,7 +198,6 @@ impl CommandWatchdog {
 
 impl Drop for CommandWatchdog {
     fn drop(&mut self) {
-        info!("Watchdog is dropping, terminating process");
         self.shutdown_token.cancel();
     }
 }
@@ -206,4 +211,72 @@ fn get_command_line(command: &Command) -> String {
         command_line.push_str(&arg.to_string_lossy());
     }
     command_line
+}
+
+/// Reusable function to kill a child process with timeout
+async fn terminate_process_with_timeout(
+    child: &mut tokio::process::Child,
+    program_name: &str,
+    timeout: Duration,
+) -> Result<(), std::io::Error> {
+    // Try to terminate the process gracefully first
+    if let Some(id) = child.id() {
+        #[cfg(unix)]
+        {
+            // On Unix systems, use SIGTERM via nix
+            match signal::kill(Pid::from_raw(id as i32), Signal::SIGTERM) {
+                Ok(_) => debug!("Sent SIGTERM to process '{}' (pid: {})", program_name, id),
+                Err(e) => {
+                    error!(
+                        "Failed to send SIGTERM to process '{}': {}",
+                        program_name, e
+                    );
+                    // If SIGTERM fails, attempt SIGKILL immediately
+                    return child.kill().await;
+                }
+            }
+        }
+
+        #[cfg(not(unix))]
+        {
+            // On non-Unix platforms, we use the kill() method directly
+            // which usually maps to TerminateProcess on Windows
+            return child.kill().await;
+        }
+    } else {
+        // If we can't get the process ID, fall back to SIGKILL/TerminateProcess
+        return child.kill().await;
+    }
+
+    // Wait for the process to exit with timeout
+    match tokio::time::timeout(timeout, child.wait()).await {
+        Ok(result) => match result {
+            Ok(status) => {
+                info!(
+                    "Process '{}' terminated with status: {}",
+                    program_name, status
+                );
+                Ok(())
+            }
+            Err(e) => {
+                error!(
+                    "Error waiting for process '{}' termination: {}",
+                    program_name, e
+                );
+                Err(e)
+            }
+        },
+        Err(_) => {
+            error!(
+                "Process '{}' did not terminate gracefully within timeout, using SIGKILL",
+                program_name
+            );
+            // Process didn't exit within timeout, use SIGKILL/TerminateProcess
+            child.kill().await?;
+
+            // Note: We don't wait again after SIGKILL as this is expected to be immediate
+            // If it's not, there's not much else we can do
+            Ok(())
+        }
+    }
 }
