@@ -1,10 +1,10 @@
 use crate::{
-    cache::{create_cache, Cache, CacheBackend},
-    config::{default_legacy_fallback_host, default_legacy_fallback_port, Settings},
+    cache::{Cache, CacheBackend, create_cache},
+    config::{Settings, default_legacy_fallback_host, default_legacy_fallback_port},
 };
 use http::header::{AUTHORIZATION, CONTENT_TYPE};
 use http::{HeaderMap, HeaderValue};
-use pdp_engine::{args::Arg, builder::PDPEngineBuilder, EngineType, MockEngine, PDPEngine};
+use pdp_engine::{Arg, EngineType, MockEngine, PDPEngine, PDPEngineBuilder};
 use reqwest::Client;
 use std::sync::Arc;
 use std::time::Duration;

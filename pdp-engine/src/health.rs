@@ -192,9 +192,9 @@ pub async fn try_recover_unhealthy_pdp(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::PDPEngine;
     use crate::args::Arg;
     use crate::builder::PDPEngineBuilder;
-    use crate::PDPEngine;
     use log::LevelFilter;
 
     /// Test the health check and monitoring functionality

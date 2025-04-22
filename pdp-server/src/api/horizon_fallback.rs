@@ -1,11 +1,11 @@
 use axum::{
-    body::{to_bytes, Body},
+    body::{Body, to_bytes},
     extract::State,
     http::{Method, Request, Response, StatusCode},
     response::IntoResponse,
 };
 use http::header::HeaderName;
-use pdp_engine::error::PDPError;
+use pdp_engine::PDPError;
 use reqwest::header::HeaderValue;
 
 use crate::state::AppState;
@@ -79,7 +79,7 @@ pub(super) async fn fallback_to_horizon(
                 Ok(bytes) => bytes,
                 Err(_) => {
                     return (StatusCode::BAD_GATEWAY, "Failed to read response body")
-                        .into_response()
+                        .into_response();
                 }
             };
 
@@ -122,7 +122,7 @@ mod tests {
     use crate::config::{CacheStore, Settings};
     use axum::http::Method;
     use axum::response::IntoResponse;
-    use axum::{serve, Router};
+    use axum::{Router, serve};
     use std::net::SocketAddr;
     use tokio::net::TcpListener;
     use wiremock::matchers::{any, header, method, path};

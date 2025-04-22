@@ -1,7 +1,7 @@
-use crate::args::Arg;
 use crate::PDPError;
+use crate::args::Arg;
 use log::{debug, error, info, warn};
-use nix::sys::signal::{kill, Signal};
+use nix::sys::signal::{Signal, kill};
 use nix::unistd::Pid;
 use once_cell::sync::Lazy;
 use signal_hook::{consts::signal::*, iterator::Signals};
@@ -282,7 +282,10 @@ impl PDPRunner {
                                     ) {
                                         Ok(nix::sys::wait::WaitStatus::StillAlive) => {
                                             // Process still running, wait a bit before checking again
-                                            info!("Process {} still running after signal {}, waiting a bit before checking again to allow graceful shutdown", pid, signal);
+                                            info!(
+                                                "Process {} still running after signal {}, waiting a bit before checking again to allow graceful shutdown",
+                                                pid, signal
+                                            );
                                             std::thread::sleep(std::time::Duration::from_millis(
                                                 100,
                                             ));
@@ -312,7 +315,10 @@ impl PDPRunner {
                                 }
 
                                 if start.elapsed() >= timeout {
-                                    warn!("Timeout waiting for process {} to exit after signal {}, force killing it", pid, signal);
+                                    warn!(
+                                        "Timeout waiting for process {} to exit after signal {}, force killing it",
+                                        pid, signal
+                                    );
                                     // force kill the process
                                     if let Err(e) = kill(Pid::from_raw(pid_i32), Signal::SIGKILL) {
                                         error!("Failed to force kill process {}: {}", pid, e);
@@ -652,7 +658,7 @@ impl Drop for PDPRunner {
 mod tests {
     use super::*;
     use log::LevelFilter;
-    use nix::sys::signal::{kill, Signal};
+    use nix::sys::signal::{Signal, kill};
     use nix::unistd::Pid;
     use std::collections::HashMap;
     use std::time::Duration;

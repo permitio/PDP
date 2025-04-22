@@ -93,7 +93,3 @@ You can disable health monitoring by setting the health check interval to zero:
 ```rust
 builder.with_health_check_interval(Duration::from_secs(0))
 ```
-
-## License
-
-This project is licensed under the MIT License.
