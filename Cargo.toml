@@ -1,3 +1,3 @@
 [workspace]
 resolver = "2"
-members = ["pdp-server", "pdp-engine"]
+members = ["pdp-server", "pdp-engine", "watchdog"]

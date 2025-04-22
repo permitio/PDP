@@ -1,5 +1,5 @@
 use axum::{
-    body::{Body, to_bytes},
+    body::{to_bytes, Body},
     extract::State,
     http::{Method, Request, Response, StatusCode},
     response::IntoResponse,
@@ -122,7 +122,7 @@ mod tests {
     use crate::config::{CacheStore, Settings};
     use axum::http::Method;
     use axum::response::IntoResponse;
-    use axum::{Router, serve};
+    use axum::{serve, Router};
     use std::net::SocketAddr;
     use tokio::net::TcpListener;
     use wiremock::matchers::{any, header, method, path};

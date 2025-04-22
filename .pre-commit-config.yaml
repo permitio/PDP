@@ -20,26 +20,31 @@ repos:
     rev: v0.11.6
     hooks:
       - id: ruff
-        args: [--fix]
+        args: [ --fix ]
         files: \.py$
         types: [ file ]
       - id: ruff-format
         files: \.py$
         types: [ file ]
 
-#  - repo: https://github.com/pre-commit/mirrors-mypy
-#    rev: v1.13.0
-#    hooks:
-#      - id: mypy
-#        pass_filenames: false
-#        additional_dependencies:
-#          - pydantic
-#          - types-requests
-#        files: \.py$
-#        types: [ file ]
+  #  - repo: https://github.com/pre-commit/mirrors-mypy
+  #    rev: v1.13.0
+  #    hooks:
+  #      - id: mypy
+  #        pass_filenames: false
+  #        additional_dependencies:
+  #          - pydantic
+  #          - types-requests
+  #        files: \.py$
+  #        types: [ file ]
 
   - repo: https://github.com/doublify/pre-commit-rust
     rev: v1.0
     hooks:
-      - id: fmt
       - id: cargo-check
+        args: [ --all-targets ]
+        files: \.rs$
+      - id: fmt
+        files: \.(rs|toml)$
+        args: [ '--verbose' ]
+        pass_filenames: false
