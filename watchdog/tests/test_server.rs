@@ -1,6 +1,7 @@
 use reqwest::Client;
 use serde::Deserialize;
 use std::net::{SocketAddr, TcpListener};
+use std::time::Duration;
 use tokio::process::Command;
 
 #[derive(Debug, Clone)]
@@ -106,7 +107,7 @@ impl TestServer {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct StatusResult {
-    pid: u32,
-    uptime: u64,
-    request_count: u32,
+    pub pid: u32,
+    pub uptime: f32,
+    pub request_count: u32,
 }

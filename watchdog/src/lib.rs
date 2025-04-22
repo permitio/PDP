@@ -8,6 +8,7 @@ use stats::WatchdogStats;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::process::Command;
+use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio_util::sync::CancellationToken;
 
 mod stats;
@@ -16,6 +17,8 @@ mod stats;
 pub struct CommandWatchdog {
     /// A cancellation token to signal shutdown.
     shutdown_token: CancellationToken,
+    /// A channel sender to signal restart.
+    restart_tx: Sender<()>,
     /// The program name of the subprocess (for logging).
     program_name: String,
     /// The command line string of the subprocess (for logging).
@@ -66,15 +69,19 @@ impl CommandWatchdog {
         let program_name = command.as_std().get_program().to_string_lossy().to_string();
         let cmd_line = get_command_line(&command);
 
+        // Create a channel for restart signals
+        let (restart_tx, restart_rx) = mpsc::channel(1);
+
         let mut handle = Self {
             shutdown_token,
+            restart_tx,
             program_name,
             cmd_line,
             stats: Arc::new(WatchdogStats::new()),
         };
 
         // Spawn the watchdog process
-        handle.spawn(command, opt);
+        handle.spawn(command, restart_rx, opt);
         handle
     }
 
@@ -88,8 +95,19 @@ impl CommandWatchdog {
         self.stats.last_exit_code()
     }
 
+    /// Requests a restart of the process
+    pub async fn restart(&self) -> Result<(), mpsc::error::SendError<()>> {
+        info!("Restart requested for process '{}'", self.program_name);
+        self.restart_tx.send(()).await
+    }
+
     /// Starts the watchdog process.
-    fn spawn(&mut self, mut command: Command, opt: CommandWatchdogOptions) {
+    fn spawn(
+        &mut self,
+        mut command: Command,
+        restart_rx: Receiver<()>,
+        opt: CommandWatchdogOptions,
+    ) {
         let shutdown_token = self.shutdown_token.clone();
         let program_name = self.program_name.clone();
         let cmd_line = self.cmd_line.clone();
@@ -98,6 +116,8 @@ impl CommandWatchdog {
         // Spawn a new task to monitor the process
         tokio::spawn(async move {
             let mut last_start_time;
+            let mut restart_rx = restart_rx;
+
             loop {
                 let count = stats.increment_start_counter();
                 info!(
@@ -127,6 +147,19 @@ impl CommandWatchdog {
                             }
                         };
                         break;
+                    }
+                    _ = restart_rx.recv() => {
+                        info!("Watchdog received restart signal, restarting process {}", cmd_line);
+                        match child.kill().await {
+                            Ok(_) => {
+                                info!("Process '{}' terminated for restart", program_name);
+                            }
+                            Err(e) => {
+                                error!("Failed to terminate process '{}' for restart: {}", program_name, e);
+                            }
+                        };
+                        // Continue immediately without delay to restart
+                        continue;
                     }
                     result = child.wait() => {
                         match result {

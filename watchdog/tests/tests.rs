@@ -98,3 +98,45 @@ async fn test_watchdog_crash_immediately() {
     assert_eq!(watchdog.start_counter(), 5);
     assert_eq!(watchdog.last_exit_code(), 12);
 }
+
+#[tokio::test]
+async fn test_watchdog_explicit_restart() {
+    setup_logger();
+
+    let test_server = TestServer::new();
+
+    // Start the test server
+    let opt = CommandWatchdogOptions {
+        restart_interval: Duration::from_millis(100),
+        ..Default::default()
+    };
+    let watchdog = CommandWatchdog::start_with_opt(test_server.get_command(), opt);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Check if the server is running
+    let ping_response = test_server.ping().await.unwrap();
+    assert_eq!(ping_response, "pong");
+
+    // Get server status to capture the PID
+    let initial_status = test_server.status().await.unwrap();
+    let initial_pid = initial_status.pid;
+
+    // Request restart
+    watchdog.restart().await.unwrap();
+
+    // Wait for the server to restart
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Check if the server is running again with a different PID
+    let ping_response = test_server.ping().await.unwrap();
+    assert_eq!(ping_response, "pong");
+
+    let new_status = test_server.status().await.unwrap();
+    assert_ne!(
+        initial_pid, new_status.pid,
+        "Server PID should be different after restart"
+    );
+
+    assert_eq!(watchdog.start_counter(), 2);
+    assert_eq!(watchdog.last_exit_code(), 0);
+}
