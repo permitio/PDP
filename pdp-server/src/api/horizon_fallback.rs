@@ -14,8 +14,12 @@ pub(super) async fn fallback_to_horizon(
     State(state): State<AppState>,
     req: Request<Body>,
 ) -> impl IntoResponse {
-    // Get path for forwarding
-    let path = req.uri().path_and_query().map(|x| x.as_str()).unwrap_or("");
+    // Get the path for forwarding
+    let path = req.uri().path_and_query();
+    let path = match path {
+        Some(path) => path.to_string(),
+        None => "".to_string(),
+    };
 
     // Convert method to reqwest method
     let method = match *req.method() {
@@ -94,7 +98,7 @@ pub(super) async fn fallback_to_horizon(
                     StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
                 (status_code, "Error response from fallback server").into_response()
             } else {
-                log::error!("Failed to send request: {}", e);
+                log::error!("Failed to send request: {} ({:?})", e, e.status());
                 (
                     StatusCode::BAD_GATEWAY,
                     format!("Failed to send request: {}", e),
@@ -236,6 +240,30 @@ mod tests {
 
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         assert_eq!(&body[..], b"test body");
+    }
+
+    #[tokio::test]
+    async fn test_forward_unmatched_not_found() {
+        let (state, mock_server, _settings) = setup_test_server(CacheStore::None).await;
+
+        // Setup mock to return 404
+        Mock::given(any())
+            .respond_with(ResponseTemplate::new(404))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        // Create test request
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/not-found")
+            .body(Body::empty())
+            .unwrap();
+
+        // Forward request
+        let response = fallback_to_horizon(State(state), req).await;
+        let response = response.into_response();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
