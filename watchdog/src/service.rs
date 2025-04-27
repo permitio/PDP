@@ -33,19 +33,6 @@ impl Default for ServiceWatchdogOptions {
     }
 }
 
-#[derive(Debug, Clone)]
-struct MyStruct {
-    something: String,
-}
-
-impl Default for MyStruct {
-    fn default() -> Self {
-        Self {
-            ..Default::default()
-        }
-    }
-}
-
 /// Service watchdog that monitors the health of a service and restarts it when necessary
 #[derive(Debug)]
 pub struct ServiceWatchdog {
