@@ -1,6 +1,6 @@
-use crate::CommandWatchdog;
 use crate::health::HealthCheck;
 use crate::stats::ServiceWatchdogStats;
+use crate::{CommandWatchdog, CommandWatchdogOptions};
 use log::{debug, error, info, warn};
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,6 +18,8 @@ pub struct ServiceWatchdogOptions {
     pub health_check_failure_threshold: u32,
     /// How long to wait before starting health checks after a restart
     pub initial_startup_delay: Duration,
+    /// Options for the command watchdog
+    pub command_options: CommandWatchdogOptions,
 }
 
 impl Default for ServiceWatchdogOptions {
@@ -26,6 +28,20 @@ impl Default for ServiceWatchdogOptions {
             health_check_interval: Duration::from_secs(10),
             health_check_failure_threshold: 3,
             initial_startup_delay: Duration::from_secs(5),
+            command_options: CommandWatchdogOptions::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct MyStruct {
+    something: String,
+}
+
+impl Default for MyStruct {
+    fn default() -> Self {
+        Self {
+            ..Default::default()
         }
     }
 }
@@ -68,7 +84,8 @@ impl ServiceWatchdog {
         health_checker: H,
         opt: ServiceWatchdogOptions,
     ) -> Self {
-        let command_watchdog = CommandWatchdog::start(command);
+        let command_watchdog =
+            CommandWatchdog::start_with_opt(command, opt.command_options.clone());
         let stats = Arc::new(ServiceWatchdogStats::default());
         let shutdown_token = CancellationToken::new();
         let (health_status, health_receiver) = watch::channel(false);

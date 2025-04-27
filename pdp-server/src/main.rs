@@ -39,7 +39,7 @@ async fn main() {
     };
 
     // Initialize application state
-    let state: AppState = AppState::new_python_based(settings.clone(), cache)
+    let state: AppState = AppState::with_existing_cache(&settings, cache)
         .await
         .expect("Failed to initialize application state");
 
@@ -71,9 +71,8 @@ async fn main() {
             error!("Server error: {}", err);
         });
 
-    // Stop the PDPEngine
-    let exit_code = state.stop_engine().await;
-    info!("PDPEngine exited with code {}", exit_code);
+    // Drop state to ensure clean shutdown of watchdog
+    drop(state);
     info!("Server shutdown complete");
 }
 
@@ -126,7 +125,6 @@ pub(crate) mod test {
     use crate::create_app;
     use axum::body::Body;
 
-    pub(crate) use crate::state::tests::create_test_state;
     use crate::state::AppState;
     use axum::Router;
     use http::{Method, Request, StatusCode};
@@ -149,7 +147,7 @@ pub(crate) mod test {
     /// Set up a test server
     pub(crate) async fn setup_test_app() -> Router {
         let settings = setup_test_settings().await;
-        let state = create_test_state(settings);
+        let state = AppState::for_testing(&settings);
         setup_test_app_with_state(state).await
     }
 

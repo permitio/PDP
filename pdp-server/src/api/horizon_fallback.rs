@@ -5,11 +5,9 @@ use axum::{
     response::IntoResponse,
 };
 use http::header::HeaderName;
-use pdp_engine::PDPError;
 use reqwest::header::HeaderValue;
 
 use crate::state::AppState;
-use pdp_engine::PDPEngine;
 
 /// Forward unmatched requests to the legacy Horizon PDP service (Python-based PDP)
 pub(super) async fn fallback_to_horizon(
@@ -21,13 +19,13 @@ pub(super) async fn fallback_to_horizon(
 
     // Convert method to reqwest method
     let method = match *req.method() {
-        Method::GET => Method::GET,
-        Method::POST => Method::POST,
-        Method::PUT => Method::PUT,
-        Method::DELETE => Method::DELETE,
-        Method::PATCH => Method::PATCH,
-        Method::HEAD => Method::HEAD,
-        Method::OPTIONS => Method::OPTIONS,
+        Method::GET => reqwest::Method::GET,
+        Method::POST => reqwest::Method::POST,
+        Method::PUT => reqwest::Method::PUT,
+        Method::DELETE => reqwest::Method::DELETE,
+        Method::PATCH => reqwest::Method::PATCH,
+        Method::HEAD => reqwest::Method::HEAD,
+        Method::OPTIONS => reqwest::Method::OPTIONS,
         _ => {
             log::error!("Unsupported HTTP method: {}", req.method());
             return (
@@ -39,17 +37,13 @@ pub(super) async fn fallback_to_horizon(
     };
 
     // Prepare request builder
-    let req_builder = match state.engine.request(method, path) {
-        Ok(builder) => builder,
-        Err(e) => {
-            log::error!("Failed to create request: {}", e);
-            return (
-                StatusCode::BAD_GATEWAY,
-                format!("Failed to create request: {}", e),
-            )
-                .into_response();
-        }
+    let url = if path.starts_with("/") {
+        format!("{}{}", state.settings.legacy_fallback_url, path)
+    } else {
+        format!("{}/{}", state.settings.legacy_fallback_url, path)
     };
+
+    let req_builder = state.horizon_client.request(method, &url);
 
     // Forward headers
     let mut req_builder = req_builder;
@@ -69,8 +63,8 @@ pub(super) async fn fallback_to_horizon(
         req_builder = req_builder.body(body_bytes);
     }
 
-    // Send request using PDPEngine's low-level send_raw method
-    match state.engine.send_raw(req_builder).await {
+    // Send request using horizon_client's send method
+    match req_builder.send().await {
         Ok(response) => {
             // Get response details
             let status = response.status();
@@ -98,18 +92,20 @@ pub(super) async fn fallback_to_horizon(
 
             resp
         }
-        Err(PDPError::ResponseError(status, _)) => {
-            // For status errors, we want to forward the status code
-            let status_code = StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY);
-            (status_code, "Error response from fallback server").into_response()
-        }
         Err(e) => {
-            log::error!("Failed to send request: {}", e);
-            (
-                StatusCode::BAD_GATEWAY,
-                format!("Failed to send request: {}", e),
-            )
-                .into_response()
+            if let Some(status) = e.status() {
+                // For status errors, we want to forward the status code
+                let status_code =
+                    StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+                (status_code, "Error response from fallback server").into_response()
+            } else {
+                log::error!("Failed to send request: {}", e);
+                (
+                    StatusCode::BAD_GATEWAY,
+                    format!("Failed to send request: {}", e),
+                )
+                    .into_response()
+            }
         }
     }
 }
@@ -130,8 +126,8 @@ mod tests {
     // TODO refactor this to use a common test setup
 
     pub async fn create_test_app(settings: Settings) -> (Router, AppState) {
-        // Initialize application state
-        let state = AppState::new(settings).await.unwrap();
+        // Initialize application state - use test state that doesn't start a real watchdog
+        let state = AppState::for_testing(&settings);
 
         // Create health routes
         let health_routes = api::health::router();

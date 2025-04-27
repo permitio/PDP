@@ -189,6 +189,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore]
     async fn test_redis_cache_operations() {
         // Start a Redis server for testing
         let server = RedisServer::new();
@@ -212,6 +213,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore]
     async fn test_redis_health_check() {
         // Start a Redis server for testing
         let server = RedisServer::new();

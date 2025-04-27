@@ -73,7 +73,7 @@ pub(super) async fn authentication_middleware(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::{create_test_state, setup_test_settings};
+    use crate::test::setup_test_settings;
     use axum::routing::get;
     use axum::Router;
     use http_body_util::BodyExt;
@@ -85,7 +85,7 @@ mod tests {
     async fn setup_authn_mock_app(api_key: &str) -> Router {
         let mut settings = setup_test_settings().await;
         settings.api_key = api_key.to_string();
-        let state = create_test_state(settings);
+        let state = AppState::for_testing(&settings);
 
         Router::new()
             .route(TEST_ROUTE, get(async || (StatusCode::OK, "Authenticated")))

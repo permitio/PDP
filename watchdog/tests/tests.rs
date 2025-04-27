@@ -220,6 +220,7 @@ async fn test_service_watchdog_http() {
         health_check_interval: Duration::from_millis(50),
         health_check_failure_threshold: 5,
         initial_startup_delay: Duration::from_millis(50),
+        ..Default::default()
     };
     let watchdog = ServiceWatchdog::start_with_opt(
         test_server.get_command(),
@@ -265,6 +266,7 @@ async fn test_service_watchdog_recover() {
         health_check_interval: Duration::from_millis(50),
         health_check_failure_threshold: 2,
         initial_startup_delay: Duration::from_millis(50),
+        ..Default::default()
     };
     let watchdog = ServiceWatchdog::start_with_opt(
         test_server.get_command(),
@@ -314,6 +316,7 @@ async fn test_service_watchdog_recover_unresponsive() {
         health_check_interval: Duration::from_millis(50),
         health_check_failure_threshold: 2,
         initial_startup_delay: Duration::from_millis(50),
+        ..Default::default()
     };
     let watchdog = ServiceWatchdog::start_with_opt(
         test_server.get_command(),

@@ -1,191 +1,170 @@
 use crate::{
     cache::{create_cache, Cache, CacheBackend},
-    config::{default_legacy_fallback_host, default_legacy_fallback_port, Settings},
+    config::Settings,
 };
 use http::header::{AUTHORIZATION, CONTENT_TYPE};
 use http::{HeaderMap, HeaderValue};
-use pdp_engine::{Arg, EngineType, MockEngine, PDPEngine, PDPEngineBuilder};
 use reqwest::Client;
 use std::sync::Arc;
 use std::time::Duration;
-use url::Url;
+use tokio::process::Command;
+use watchdog::{
+    CommandWatchdogOptions, HttpHealthChecker, ServiceWatchdog, ServiceWatchdogOptions,
+};
 
+/// Represents the application state containing shared resources and configurations
 #[derive(Clone)]
 pub struct AppState {
     pub settings: Arc<Settings>,
     pub cache: Arc<Cache>,
-    pub engine: Arc<EngineType>,
+    pub watchdog: Option<Arc<ServiceWatchdog>>,
     pub opa_client: Arc<Client>,
+    pub horizon_client: Arc<Client>,
 }
 
 impl AppState {
-    fn create_opa_client(token: String, timeout: u64) -> reqwest::Client {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            AUTHORIZATION,
-            format!("Bearer {}", token)
-                .parse()
-                .expect("Failed to parse API token"),
-        );
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    /// Create a new application state with all components initialized
+    pub async fn new(settings: &Settings) -> Result<Self, std::io::Error> {
+        let watchdog = Self::setup_horizon_watchdog(settings).await;
+        let cache = Arc::new(create_cache(settings).await.map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to create cache: {}", e),
+            )
+        })?);
 
-        // Create a specialized client for OPA with appropriate configurations
-        Client::builder()
-            // Set reasonable timeouts
-            .timeout(Duration::from_secs(timeout)) // 5 seconds timeout for requests
-            .connect_timeout(Duration::from_secs(2)) // 2 seconds timeout for connections
-            .default_headers(headers)
-            // Configure connection pool
-            .pool_max_idle_per_host(10) // Keep up to 10 idle connections per host
-            .pool_idle_timeout(Some(Duration::from_secs(90))) // Keep idle connections for 90 seconds
-            // Build the client
-            .build()
-            .expect("Failed to create OPA client")
-    }
-
-    pub async fn new(settings: Settings) -> Result<Self, std::io::Error> {
-        let state = Self {
+        Ok(Self {
             settings: Arc::new(settings.clone()),
-            cache: Arc::new(create_cache(&settings).await.map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Failed to create cache: {}", e),
-                )
-            })?),
-            engine: Arc::new(EngineType::Mock(MockEngine::new(
-                Url::parse(&settings.legacy_fallback_url).unwrap(),
+            cache,
+            watchdog: Some(Arc::new(watchdog)),
+            opa_client: Arc::new(create_http_client(
                 settings.api_key.clone(),
-            ))),
-            opa_client: Arc::new(AppState::create_opa_client(
-                settings.api_key,
                 settings.opa_client_query_timeout,
             )),
-        };
-        Ok(state)
+            horizon_client: Arc::new(create_http_client(
+                settings.api_key.clone(),
+                settings.opa_client_query_timeout,
+            )),
+        })
     }
 
-    pub async fn new_python_based(
-        settings: Settings,
+    /// Create a new application state with a pre-initialized cache
+    pub async fn with_existing_cache(
+        settings: &Settings,
         cache: Cache,
     ) -> Result<Self, std::io::Error> {
-        let state = Self {
+        let watchdog = Self::setup_horizon_watchdog(settings).await;
+
+        Ok(Self {
             settings: Arc::new(settings.clone()),
             cache: Arc::new(cache),
-            engine: Arc::new(AppState::init_python_engine(settings.clone()).await?),
-            opa_client: Arc::new(AppState::create_opa_client(
-                settings.api_key,
+            watchdog: Some(Arc::new(watchdog)),
+            opa_client: Arc::new(create_http_client(
+                settings.api_key.clone(),
                 settings.opa_client_query_timeout,
             )),
-        };
-        Ok(state)
+            horizon_client: Arc::new(create_http_client(
+                settings.api_key.clone(),
+                settings.opa_client_query_timeout,
+            )),
+        })
     }
 
-    /// Initialize the PDPEngine
-    async fn init_python_engine(settings: Settings) -> Result<EngineType, std::io::Error> {
-        // Parse legacy server URL for host and port
-        let legacy_url = Url::parse(&settings.legacy_fallback_url).map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                format!("Invalid legacy fallback URL: {}", e),
-            )
-        })?;
-
-        let legacy_host = legacy_url
-            .host_str()
-            .unwrap_or(&default_legacy_fallback_host())
-            .to_string();
-        let legacy_port = legacy_url
-            .port()
-            .unwrap_or_else(default_legacy_fallback_port);
-
-        // Create PDP Engine builder
-        let builder = PDPEngineBuilder::new()
-            // Set Python path to use the system python
-            .with_located_python()
-            .map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Failed to set Python path: {}", e),
-                )
-            })?
-            // Set PDP directory to the current directory
-            .with_cwd_as_pdp_dir()
-            .map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Failed to set PDP directory: {}", e),
-                )
-            })?
-            .with_base_url(&settings.legacy_fallback_url)
-            .with_args(vec![
-                Arg::Module("uvicorn".to_string()),
-                Arg::App("horizon.main:app".to_string()),
-                Arg::Host(legacy_host),
-                Arg::Port(legacy_port),
-            ])
-            .with_health_timeout(Duration::from_secs(120));
-
-        // Start the PDP engine
-        match builder.start().await {
-            Ok(engine) => Ok(EngineType::Python(engine)),
-            Err(e) => {
-                log::error!("Failed to start PDPEngine: {}", e);
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Failed to start PDPEngine: {}", e),
-                ))
-            }
-        }
-    }
-
-    /// Stop the PDPEngine
-    pub async fn stop_engine(&self) -> i32 {
-        // Clone the Arc first, then get a reference to the inner value
-        let engine = Arc::clone(&self.engine);
-        match (*engine).clone().stop().await {
-            Ok(()) => 0,
-            Err(e) => {
-                log::error!("Failed to stop PDPEngine: {}", e);
-                1
-            }
+    /// Create a minimal state for testing without watchdogs or real services
+    #[cfg(test)]
+    pub fn for_testing(settings: &Settings) -> Self {
+        Self {
+            settings: Arc::new(settings.clone()),
+            cache: Arc::new(Cache::Null(crate::cache::null::NullCache::new())),
+            watchdog: None,
+            opa_client: Arc::new(create_http_client(
+                settings.api_key.clone(),
+                settings.opa_client_query_timeout,
+            )),
+            horizon_client: Arc::new(create_http_client(
+                settings.api_key.clone(),
+                settings.opa_client_query_timeout,
+            )),
         }
     }
 
     /// Check if all components are healthy
     pub async fn health_check(&self) -> bool {
         let is_cache_healthy = self.cache.health_check();
-        let is_engine_healthy = self.engine.health().await;
-        is_cache_healthy && is_engine_healthy
+        let is_watchdog_healthy = match &self.watchdog {
+            Some(watchdog) => watchdog.is_healthy(),
+            None => true, // If no watchdog is running (e.g. in tests), consider it healthy
+        };
+        is_cache_healthy && is_watchdog_healthy
+    }
+
+    /// Set up and initialize the Horizon service watchdog
+    async fn setup_horizon_watchdog(settings: &Settings) -> ServiceWatchdog {
+        let mut command = Command::new("python3");
+        command.current_dir("../horizon");
+        command.arg("-m");
+        command.arg("uvicorn");
+        command.arg("horizon.main:app");
+        command.arg("--host");
+        command.arg(&settings.legacy_fallback_url);
+        command.arg("--port");
+        command.arg(settings.port.to_string());
+
+        let health_endpoint = format!(
+            "http://{}:{}/healthy",
+            settings.legacy_fallback_url, settings.port
+        );
+        let health_checker = HttpHealthChecker::with_options(
+            health_endpoint,
+            200,
+            Duration::from_secs(1), // TODO: Expose via settings
+        );
+
+        let options = ServiceWatchdogOptions {
+            health_check_interval: Duration::from_secs(1), // TODO: Expose via settings
+            health_check_failure_threshold: 5,             // TODO: Expose via settings
+            initial_startup_delay: Duration::from_secs(5), // TODO: Expose via settings
+            command_options: CommandWatchdogOptions {
+                restart_interval: Duration::from_secs(1), // TODO: Expose via settings
+                termination_timeout: Duration::from_secs(30), // TODO: Expose via settings
+            },
+        };
+
+        ServiceWatchdog::start_with_opt(command, health_checker, options)
     }
 }
 
+/// Creates a configured HTTP client with default headers and timeouts
+fn create_http_client(token: String, timeout_secs: u64) -> Client {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        AUTHORIZATION,
+        format!("Bearer {}", token)
+            .parse()
+            .expect("Failed to parse API token"),
+    );
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+
+    // Create a client with appropriate configurations
+    Client::builder()
+        .timeout(Duration::from_secs(timeout_secs))
+        .connect_timeout(Duration::from_secs(2))
+        .default_headers(headers)
+        .pool_max_idle_per_host(10)
+        .pool_idle_timeout(Some(Duration::from_secs(90)))
+        .build()
+        .expect("Failed to create HTTP client")
+}
+
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
-    use crate::cache::null::NullCache;
     use crate::config::{CacheConfig, CacheStore, InMemoryCacheConfig, RedisCacheConfig};
-    use pdp_engine::MockEngine;
     use std::sync::Arc as StdArc;
     use tokio::sync::Mutex;
 
-    pub(crate) fn create_test_state(settings: Settings) -> AppState {
-        AppState {
-            settings: Arc::new(settings.clone()),
-            cache: Arc::new(Cache::Null(NullCache::new())),
-            engine: Arc::new(EngineType::Mock(MockEngine::new(
-                Url::parse(&settings.legacy_fallback_url).unwrap(),
-                settings.api_key.clone(),
-            ))),
-            opa_client: Arc::new(AppState::create_opa_client(
-                settings.api_key,
-                settings.opa_client_query_timeout,
-            )),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_app_state_new() {
-        let settings = Settings {
+    fn create_test_settings() -> Settings {
+        Settings {
             legacy_fallback_url: "http://test".to_string(),
             opa_url: "http://localhost:8181".to_string(),
             port: 3000,
@@ -199,9 +178,13 @@ pub(crate) mod tests {
             api_key: "test-api-key".to_string(),
             debug: None,
             use_new_authorized_users: false,
-        };
+        }
+    }
 
-        let state = create_test_state(settings.clone());
+    #[tokio::test]
+    async fn test_app_state_creation() {
+        let settings = create_test_settings();
+        let state = AppState::for_testing(&settings);
 
         assert_eq!(
             state.settings.legacy_fallback_url,
@@ -213,23 +196,8 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn test_app_state_thread_safety() {
-        let settings = Settings {
-            legacy_fallback_url: "http://test".to_string(),
-            opa_url: "http://localhost:8181".to_string(),
-            port: 3000,
-            opa_client_query_timeout: 5,
-            cache: CacheConfig {
-                ttl_secs: 60,
-                store: CacheStore::InMemory,
-                in_memory: InMemoryCacheConfig { capacity_mib: 128 },
-                redis: RedisCacheConfig::default(),
-            },
-            api_key: "test-api-key".to_string(),
-            debug: None,
-            use_new_authorized_users: false,
-        };
-
-        let state = create_test_state(settings);
+        let settings = create_test_settings();
+        let state = AppState::for_testing(&settings);
         let state = StdArc::new(Mutex::new(state));
 
         let mut handles = vec![];
@@ -251,23 +219,8 @@ pub(crate) mod tests {
 
     #[test]
     fn test_app_state_clone() {
-        let settings = Settings {
-            legacy_fallback_url: "http://test".to_string(),
-            opa_url: "http://localhost:8181".to_string(),
-            port: 3000,
-            opa_client_query_timeout: 5,
-            cache: CacheConfig {
-                ttl_secs: 60,
-                store: CacheStore::InMemory,
-                in_memory: InMemoryCacheConfig { capacity_mib: 128 },
-                redis: RedisCacheConfig::default(),
-            },
-            api_key: "test-api-key".to_string(),
-            debug: None,
-            use_new_authorized_users: false,
-        };
-
-        let state = create_test_state(settings);
+        let settings = create_test_settings();
+        let state = AppState::for_testing(&settings);
         let state2 = state.clone();
 
         // After cloning, both instances should point to the same data
