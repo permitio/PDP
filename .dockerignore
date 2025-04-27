@@ -2,3 +2,16 @@
 helm/
 .venv/
 .github/
+target/
+**/*.rs.bk
+**/*.pdb
+Cargo.lock
+.cargo/
+.dockerignore
+.gitignore
+README.md
+docs/
+**/tests/
+**/__pycache__/
+**/*.pyc
+**/.DS_Store

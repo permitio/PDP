@@ -3,7 +3,7 @@ name: PDP CI Tests
 on:
   pull_request:
   push:
-    branches: [master, main, v*]
+    branches: [ master, main, v* ]
   workflow_call:
     secrets:
       PDP_TESTER_API_KEY:
@@ -15,26 +15,25 @@ jobs:
   pre-commit:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
-    - uses: actions/setup-python@v3
-    - uses: pre-commit/action@v3.0.1
-
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+      - uses: pre-commit/action@v3.0.1
   pytests:
     runs-on: ubuntu-latest
     steps:
-    - name: Python setup
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11.8'
+      - name: Python setup
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11.8'
 
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Run Pytests
-      run: |
-        python -m pip install --upgrade pip
-        pip install ".[dev]"
-        pytest -s --cache-clear horizon/tests/
+      - name: Run Pytests
+        run: |
+          python -m pip install --upgrade pip
+          pip install ".[dev]"
+          pytest -s --cache-clear horizon/tests/
 
   pdp-tester:
     runs-on: ubuntu-latest
@@ -77,7 +76,7 @@ jobs:
 
       # Checkout the pdp-tester repository
       - name: Checkout pdp-tester repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           repository: "permitio/pdp-tester"
           token: ${{ secrets.CLONE_REPO_TOKEN }}
@@ -85,7 +84,7 @@ jobs:
 
       # Setup Python environment
       - name: Setup Python
-        uses: actions/setup-python@v3
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
@@ -120,3 +119,33 @@ jobs:
             echo "========================================"
             echo ""
           done
+
+  rust-ci:
+    name: Rust CI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          shared-key: "rust-cache"
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run cargo check
+        run: cargo check --all --verbose
+
+      - name: Run clippy
+        run: cargo clippy --all -- -D warnings
+
+      - name: Run tests
+        run: cargo test --all --verbose
