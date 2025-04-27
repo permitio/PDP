@@ -5,6 +5,7 @@ use crate::{
 use http::header::{AUTHORIZATION, CONTENT_TYPE};
 use http::{HeaderMap, HeaderValue};
 use reqwest::Client;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::process::Command;
@@ -100,19 +101,27 @@ impl AppState {
 
     /// Set up and initialize the Horizon service watchdog
     async fn setup_horizon_watchdog(settings: &Settings) -> ServiceWatchdog {
-        let mut command = Command::new("python3");
-        command.current_dir("../horizon");
+        let mut command = Command::new(&settings.python_path);
+
+        // First, check if /app/horizon exists (Docker container case)
+        if Path::new("/app/horizon").exists() {
+            command.current_dir("/app");
+        } else {
+            // Use the original relative path for development
+            command.current_dir("../horizon");
+        }
+
         command.arg("-m");
         command.arg("uvicorn");
         command.arg("horizon.main:app");
         command.arg("--host");
-        command.arg(&settings.legacy_fallback_url);
+        command.arg(&settings.horizon_host);
         command.arg("--port");
-        command.arg(settings.port.to_string());
+        command.arg(settings.horizon_port.to_string());
 
         let health_endpoint = format!(
             "http://{}:{}/healthy",
-            settings.legacy_fallback_url, settings.port
+            settings.horizon_host, settings.horizon_port,
         );
         let health_checker = HttpHealthChecker::with_options(
             health_endpoint,
@@ -165,7 +174,9 @@ mod tests {
 
     fn create_test_settings() -> Settings {
         Settings {
-            legacy_fallback_url: "http://test".to_string(),
+            horizon_host: "localhost".to_string(),
+            horizon_port: 3000,
+            python_path: "python3".to_string(),
             opa_url: "http://localhost:8181".to_string(),
             port: 3000,
             opa_client_query_timeout: 5,
@@ -186,10 +197,8 @@ mod tests {
         let settings = create_test_settings();
         let state = AppState::for_testing(&settings);
 
-        assert_eq!(
-            state.settings.legacy_fallback_url,
-            settings.legacy_fallback_url
-        );
+        assert_eq!(state.settings.horizon_host, settings.horizon_host);
+        assert_eq!(state.settings.horizon_port, settings.horizon_port);
         assert_eq!(state.settings.cache.ttl_secs, settings.cache.ttl_secs);
         assert_eq!(state.settings.port, settings.port);
     }

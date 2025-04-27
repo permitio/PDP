@@ -163,7 +163,8 @@ pub(crate) mod test {
                 ..CacheConfig::default()
             },
             api_key: "test_api_key".to_string(),
-            legacy_fallback_url: mock_server.uri(),
+            horizon_host: mock_server.address().ip().to_string(),
+            horizon_port: mock_server.address().port(),
             opa_url: mock_server.uri(),
             ..Settings::default()
         }

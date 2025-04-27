@@ -69,9 +69,17 @@ pub struct Settings {
     #[serde(default = "default_port")]
     pub port: u16,
 
-    /// The URL of the fallback service
-    #[serde(default = "default_legacy_fallback_url")]
-    pub legacy_fallback_url: String,
+    /// Horizon fallback host
+    #[serde(default = "default_horizon_host")]
+    pub horizon_host: String,
+
+    /// Horizon fallback port
+    #[serde(default = "default_horizon_port")]
+    pub horizon_port: u16,
+
+    /// Python interpreter path for running Horizon
+    #[serde(default = "default_python_path")]
+    pub python_path: String,
 
     /// The URL of the OPA service
     #[serde(default = "default_opa_url")]
@@ -97,7 +105,7 @@ pub struct Settings {
 }
 
 fn default_port() -> u16 {
-    8383
+    7766
 }
 
 pub fn default_cache_ttl() -> u32 {
@@ -112,31 +120,29 @@ fn default_opa_client_query_timeout() -> u64 {
     1
 }
 
-pub fn default_legacy_fallback_host() -> String {
+pub fn default_horizon_host() -> String {
     "0.0.0.0".to_string()
 }
 
-pub fn default_legacy_fallback_port() -> u16 {
-    7000
-}
-
-fn default_legacy_fallback_url() -> String {
-    format!(
-        "http://{}:{}",
-        default_legacy_fallback_host(),
-        default_legacy_fallback_port()
-    )
+pub fn default_horizon_port() -> u16 {
+    7001
 }
 
 fn default_opa_url() -> String {
     "http://localhost:8181".to_string()
 }
 
+fn default_python_path() -> String {
+    "python3".to_string()
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
             port: default_port(),
-            legacy_fallback_url: default_legacy_fallback_url(),
+            horizon_host: default_horizon_host(),
+            horizon_port: default_horizon_port(),
+            python_path: default_python_path(),
             opa_url: default_opa_url(),
             opa_client_query_timeout: default_opa_client_query_timeout(),
             cache: CacheConfig::default(),
@@ -161,6 +167,18 @@ impl Settings {
             .try_deserialize()
             .map_err(|e| e.to_string())
     }
+
+    pub fn get_horizon_url<S: Into<String>>(&self, path: S) -> String {
+        let path = path.into();
+        if path.starts_with("/") {
+            format!("http://{}:{}{}", self.horizon_host, self.horizon_port, path,)
+        } else {
+            format!(
+                "http://{}:{}/{}",
+                self.horizon_host, self.horizon_port, path,
+            )
+        }
+    }
 }
 
 #[cfg(test)]
@@ -174,15 +192,18 @@ mod tests {
         std::env::remove_var("PDP_CACHE__TTL_SECS");
         std::env::remove_var("PDP_LEGACY_FALLBACK_URL");
         std::env::remove_var("PDP_OPA_URL");
+        std::env::remove_var("PDP_PYTHON_PATH");
         std::env::remove_var("PDP_CACHE__STORE");
         std::env::remove_var("PDP_CACHE__REDIS__URL");
         std::env::remove_var("PDP_CACHE__IN_MEMORY__CAPACITY_MIB");
         std::env::set_var("PDP_API_KEY", "test-api-key");
 
         let settings = Settings::new().unwrap();
-        assert_eq!(settings.port, 8383); // Default value
+        assert_eq!(settings.port, 7766); // Default value
         assert_eq!(settings.cache.ttl_secs, 3600); // Default value
-        assert_eq!(settings.legacy_fallback_url, "http://0.0.0.0:7000"); // Default value
+        assert_eq!(settings.horizon_host, "0.0.0.0"); // Default value
+        assert_eq!(settings.horizon_port, 7001); // Default value
+        assert_eq!(settings.python_path, "python3"); // Default value
         assert_eq!(settings.opa_url, "http://localhost:8181"); // Default value
         assert_eq!(settings.cache.store, CacheStore::None); // Default value
         assert_eq!(settings.cache.in_memory.capacity_mib, 128); // Default value

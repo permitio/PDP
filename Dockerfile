@@ -1,4 +1,46 @@
 ARG OPA_BUILD=permit
+ARG TARGETPLATFORM
+ARG TARGETARCH
+
+# RUST BUILD STAGE -----------------------------------
+# Build the Rust PDP binary for all targets
+# ----------------------------------------------------
+# BIG thanks to
+# - https://medium.com/@vladkens/fast-multi-arch-docker-build-for-rust-projects-a7db42f3adde
+# - https://stackoverflow.com/questions/70561544/rust-openssl-could-not-find-directory-of-openssl-installation
+# couldn't get this to work without the help of those two sources
+# (1) this stage will be run always on current arch
+# zigbuild & Cargo targets added
+FROM --platform=$BUILDPLATFORM rust:1.85-alpine AS rust_chef
+WORKDIR /app
+ENV PKGCONFIG_SYSROOTDIR=/
+RUN apk add --no-cache musl-dev openssl-dev zig pkgconf perl make
+
+RUN cargo install --locked cargo-zigbuild cargo-chef
+RUN rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
+
+# (2) nothing changed
+FROM rust_chef AS rust_planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+# (3) building project deps: need to specify all targets; zigbuild used
+FROM rust_chef AS rust_builder
+COPY --from=rust_planner /app/recipe.json recipe.json
+ENV OPENSSL_DIR=/usr
+RUN cargo chef cook --recipe-path recipe.json --release --zigbuild \
+  --target x86_64-unknown-linux-musl --target aarch64-unknown-linux-musl
+
+# (4) actuall project build for all targets
+# binary renamed to easier copy in runtime stage
+COPY . .
+RUN cargo zigbuild -r --target x86_64-unknown-linux-musl --target aarch64-unknown-linux-musl && \
+  mkdir -p /app/linux/arm64/ && \
+  mkdir -p /app/linux/amd64/ && \
+  cp target/aarch64-unknown-linux-musl/release/pdp-server /app/linux/arm64/pdp && \
+  cp target/x86_64-unknown-linux-musl/release/pdp-server /app/linux/amd64/pdp
+
+
 # OPA BUILD STAGE -----------------------------------
 # Build OPA from source or download precompiled binary
 # ---------------------------------------------------
@@ -37,21 +79,20 @@ RUN mkdir -p /app/backup && chmod -R 777 /app/backup
 
 # Install necessary libraries in a single RUN command
 RUN apk update && \
-    apk add --no-cache bash build-base libffi-dev libressl-dev musl-dev zlib-dev gcompat
+    apk add --no-cache bash build-base libffi-dev libressl-dev musl-dev zlib-dev gcompat wget
 
 # Copy OPA binary from the build stage
 COPY --from=opa_build --chmod=755 /opa /app/bin/opa
 
+# Copy the Rust PDP binary from the builder stage
+ARG TARGETPLATFORM
+COPY --from=rust_builder --chmod=755 /app/${TARGETPLATFORM}/pdp /app/pdp
+
 # Environment variables for OPA
 ENV OPAL_INLINE_OPA_EXEC_PATH="/app/bin/opa"
 
-# Copy required scripts
-COPY scripts /app/scripts
-
 # Set permissions and ownership for the application
 RUN mkdir -p /config && chown -R permit:permit /config
-RUN chmod +x /app/scripts/wait-for-it.sh && \
-    chmod +x /app/scripts/start.sh
 
 # Ensure the `permit` user has the correct permissions for home directory and binaries
 RUN chown -R permit:permit /home/permit /app /usr/local/bin
@@ -61,7 +102,6 @@ USER permit
 
 # Copy Kong routes and Gunicorn config
 COPY kong_routes.json /config/kong_routes.json
-COPY ./scripts/gunicorn_conf.py ./gunicorn_conf.py
 
 USER root
 
@@ -77,16 +117,13 @@ USER permit
 # Copy the application code
 COPY ./horizon /app/horizon
 
+USER permit
+
 # Version file for the application
 COPY ./permit_pdp_version /app/permit_pdp_version
 
 # Set the PATH to ensure the local binary paths are used
 ENV PATH="/app/bin:/home/permit/.local/bin:$PATH"
-
-# Uvicorn configuration
-ENV UVICORN_NUM_WORKERS=1
-ENV UVICORN_ASGI_APP="horizon.main:app"
-ENV UVICORN_PORT=7000
 
 # opal configuration --------------------------------
 ENV OPAL_SERVER_URL="https://opal.permit.io"
@@ -108,11 +145,9 @@ ENV PDP_VERSION_FILE_PATH="/app/permit_pdp_version"
 # and it is here as a safety measure on purpose.
 ENV OPAL_AUTH_PUBLIC_KEY="ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDe2iQ+/E01P2W5/EZwD5NpRiSQ8/r/k18pFnym+vWCSNMWpd9UVpgOUWfA9CAX4oEo5G6RfVVId/epPH/qVSL87uh5PakkLZ3E+PWVnYtbzuFPs/lHZ9HhSqNtOQ3WcPDTcY/ST2jyib2z0sURYDMInSc1jnYKqPQ6YuREdoaNdPHwaTFN1tEKhQ1GyyhL5EDK97qU1ejvcYjpGm+EeE2sjauHYn2iVXa2UA9fC+FAKUwKqNcwRTf3VBLQTE6EHGWbxVzXv1Feo8lPZgL7Yu/UPgp7ivCZhZCROGDdagAfK9sveYjkKiWCLNUSpado/E5Vb+/1EVdAYj6fCzk45AdQzA9vwZefP0sVg7EuZ8VQvlz7cU9m+XYIeWqduN4Qodu87rtBYtSEAsru/8YDCXBDWlLJfuZb0p/klbte3TayKnQNSWD+tNYSJHrtA/3ZewP+tGDmtgLeB38NLy1xEsgd31v6ISOSCTHNS8ku9yWQXttv0/xRnuITr8a3TCLuqtUrNOhCx+nKLmYF2cyjYeQjOWWpn/Z6VkZvOa35jhG1ETI8IwE+t5zXqrf2s505mh18LwA1DhC8L/wHk8ZG7bnUe56QwxEo32myUBN8nHdu7XmPCVP8MWQNLh406QRAysishWhXVs/+0PbgfBJ/FxKP8BXW9zqzeIG+7b/yk8tRHQ=="
 
-
-
-
 # We ignore this callback because we are sunsetting this feature in favor of the new inline OPA data updater
 ENV PDP_IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS='["http://localhost:8181/v1/data/permit/rebac/cache_rebuild"]'
+
 # if we are using the custom OPA binary, we need to load the permit plugin,
 # if we don't then we MUST not add a non existing plugin
 FROM main AS main-vanilla
@@ -125,8 +160,16 @@ ENV PDP_OPA_PLUGINS='{"permit_graph":{}}'
 
 FROM main-${OPA_BUILD} AS application
 
-# 7000 sidecar port
+# Environment variables with defaults
+ENV PDP_HORIZON_HOST=0.0.0.0
+ENV PDP_HORIZON_PORT=7001
+ENV PDP_PORT=7000
+ENV PDP_PYTHON_PATH=python3
+
+# 7000 pdp port
+# 7001 horizon port
 # 8181 opa port
-EXPOSE 7000 8181
+EXPOSE 7000 7001 8181
+
 # Run the application using the startup script
-CMD ["/app/scripts/start.sh"]
+CMD ["/app/pdp"]

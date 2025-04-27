@@ -37,12 +37,7 @@ pub(super) async fn fallback_to_horizon(
     };
 
     // Prepare request builder
-    let url = if path.starts_with("/") {
-        format!("{}{}", state.settings.legacy_fallback_url, path)
-    } else {
-        format!("{}/{}", state.settings.legacy_fallback_url, path)
-    };
-
+    let url = state.settings.get_horizon_url(path);
     let req_builder = state.horizon_client.request(method, &url);
 
     // Forward headers
@@ -157,7 +152,8 @@ mod tests {
         settings.cache.ttl_secs = 60;
         settings.api_key = "test_api_key".to_string();
         settings.cache.store = cache_store;
-        settings.legacy_fallback_url = mock_server.uri(); // Set mock server URL as fallback
+        settings.horizon_host = mock_server.address().ip().to_string(); // Set mock server URL as fallback
+        settings.horizon_port = mock_server.address().port(); // Set mock server URL as fallback
 
         // Create the app with temporary cache directory
         let (app, state) = create_test_app(settings.clone()).await;
