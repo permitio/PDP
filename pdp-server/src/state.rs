@@ -130,8 +130,8 @@ impl AppState {
         );
 
         let options = ServiceWatchdogOptions {
-            health_check_interval: Duration::from_secs(1), // TODO: Expose via settings
-            health_check_failure_threshold: 5,             // TODO: Expose via settings
+            health_check_interval: Duration::from_secs(5), // TODO: Expose via settings
+            health_check_failure_threshold: 12,            // TODO: Expose via settings
             initial_startup_delay: Duration::from_secs(5), // TODO: Expose via settings
             command_options: CommandWatchdogOptions {
                 restart_interval: Duration::from_secs(1), // TODO: Expose via settings

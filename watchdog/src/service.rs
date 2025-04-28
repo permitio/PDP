@@ -147,8 +147,11 @@ impl ServiceWatchdog {
                         consecutive_failures += 1;
 
                         warn!(
-                            "Service '{}' health check failed: {} (consecutive failures: {})",
-                            command_watchdog.program_name, e, consecutive_failures
+                            "Service '{}' health check failed: {} (consecutive failures: {}/{})",
+                            command_watchdog.program_name,
+                            e,
+                            consecutive_failures,
+                            opt.health_check_failure_threshold
                         );
                     }
                 }
