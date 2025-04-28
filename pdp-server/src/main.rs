@@ -44,18 +44,14 @@ async fn main() {
         .expect("Failed to initialize application state");
 
     // Create application & Initialize PDPEngine
-    let app = create_app(state.clone()).await;
+    let app = create_app(state).await;
 
     // Build server address
     let addr = SocketAddr::from(([0, 0, 0, 0], settings.port));
-    info!("Starting server on {}", addr);
 
     // Start server
     let server = match tokio::net::TcpListener::bind(&addr).await {
-        Ok(listener) => {
-            info!("Listening on {}", addr);
-            listener
-        }
+        Ok(listener) => listener,
         Err(e) => {
             error!("Failed to bind to {}: {}", addr, e);
             std::process::exit(1);
@@ -63,16 +59,17 @@ async fn main() {
     };
 
     // Start the server and wait for it to finish
-    info!("Server running, press Ctrl+C to stop");
-    axum::serve(server, app)
+    info!("Server running on {}, press Ctrl+C to stop", addr);
+    let serve = axum::serve(server, app)
         .with_graceful_shutdown(shutdown_signal())
-        .await
-        .unwrap_or_else(|err| {
-            error!("Server error: {}", err);
-        });
+        .await;
+    if let Err(e) = serve {
+        error!("Server error: {}", e);
+        std::process::exit(1);
+    }
 
     // Drop state to ensure clean shutdown of watchdog
-    drop(state);
+    drop(serve);
     info!("Server shutdown complete");
 }
 
