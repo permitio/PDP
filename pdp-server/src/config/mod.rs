@@ -180,19 +180,31 @@ impl Settings {
             )
         }
     }
+
+    #[cfg(test)]
+    pub fn for_test_with_mocks(
+        horizon_mock: &wiremock::MockServer,
+        opa_mock: &wiremock::MockServer,
+    ) -> Self {
+        Self {
+            port: 0, // Let the OS choose a port
+            horizon_host: horizon_mock.address().ip().to_string(),
+            horizon_port: horizon_mock.address().port(),
+            opa_url: opa_mock.uri(),
+            api_key: "test_api_key".to_string(),
+            cache: CacheConfig {
+                ttl_secs: 60,
+                store: CacheStore::None,
+                ..CacheConfig::default()
+            },
+            ..Default::default()
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn create_test_settings() -> Settings {
-        Settings {
-            api_key: "test-api-key".to_string(),
-            port: 0, // Let the OS choose a port
-            ..Default::default()
-        }
-    }
 
     #[test]
     fn test_default_settings() {

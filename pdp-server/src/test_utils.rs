@@ -1,10 +1,12 @@
-use crate::config::{CacheConfig, CacheStore, Settings};
+use crate::config::Settings;
 use crate::create_app;
 use crate::state::AppState;
 use axum::body::Body;
 use axum::Router;
+use env_logger;
 use http::{Method, Request, StatusCode};
 use http_body_util::BodyExt;
+use log::LevelFilter;
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
 use tower::ServiceExt;
@@ -80,24 +82,18 @@ impl TestFixture {
     /// }
     /// ```
     pub async fn new() -> Self {
+        // Initialize test logger
+        let _ = env_logger::builder()
+            .filter_level(LevelFilter::Debug)
+            .is_test(true)
+            .try_init();
+
         // Create mock servers
         let opa_mock = MockServer::start().await;
         let horizon_mock = MockServer::start().await;
 
         // Create settings configured with mocks
-        let settings = Settings {
-            port: 0, // Let the OS choose a port
-            horizon_host: horizon_mock.address().ip().to_string(),
-            horizon_port: horizon_mock.address().port(),
-            opa_url: opa_mock.uri(),
-            api_key: "test_api_key".to_string(),
-            cache: CacheConfig {
-                store: CacheStore::None,
-                ttl_secs: 60,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
+        let settings = Settings::for_test_with_mocks(&horizon_mock, &opa_mock);
 
         // Create app state
         let state = AppState::for_testing(&settings);
@@ -109,6 +105,36 @@ impl TestFixture {
             opa_mock,
             horizon_mock,
         }
+    }
+
+    /// Initializes the test logger with customized settings.
+    ///
+    /// This method can be called to configure custom log levels for tests.
+    /// Note that this is automatically called by TestFixture::new() with default settings.
+    /// Only use this method if you need specific logger configuration.
+    ///
+    /// # Parameters
+    ///
+    /// - `level`: The log level filter to apply
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// #[tokio::test]
+    /// async fn test_with_custom_logger() {
+    ///     // Set up trace-level logging for this test
+    ///     TestFixture::setup_logger(log::LevelFilter::Trace);
+    ///
+    ///     // Create the fixture and run tests
+    ///     let fixture = TestFixture::new().await;
+    ///     // ...
+    /// }
+    /// ```
+    pub fn setup_logger(level: LevelFilter) {
+        let _ = env_logger::builder()
+            .filter_level(level)
+            .is_test(true)
+            .try_init();
     }
 
     /// Creates a request builder with pre-configured headers.

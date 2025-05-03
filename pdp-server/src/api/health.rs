@@ -128,15 +128,21 @@ pub fn router() -> Router<AppState> {
 
 #[cfg(test)]
 mod test {
-    use crate::test::{get_request, setup_test_app};
+    use crate::test_utils::TestFixture;
+    use log::LevelFilter;
     use serde_json::json;
 
     #[tokio::test]
     async fn test_health_endpoint() {
-        let app = setup_test_app().await;
-        let resp = get_request(&app, "/health").await;
+        // Set custom log level for this test
+        TestFixture::setup_logger(LevelFilter::Info);
+
+        let fixture = TestFixture::new().await;
+        let response = fixture.get("/health").await;
+
+        response.assert_ok();
         assert_eq!(
-            resp,
+            response.json,
             json!({
                 "status": "ok",
             })
@@ -145,10 +151,12 @@ mod test {
 
     #[tokio::test]
     async fn test_ready_endpoint() {
-        let app = setup_test_app().await;
-        let resp = get_request(&app, "/ready").await;
+        let fixture = TestFixture::new().await;
+        let response = fixture.get("/ready").await;
+
+        response.assert_ok();
         assert_eq!(
-            resp,
+            response.json,
             json!({
                 "cache_status": "healthy",
                 "engine_status": "healthy",
@@ -159,10 +167,12 @@ mod test {
 
     #[tokio::test]
     async fn test_startup_endpoint() {
-        let app = setup_test_app().await;
-        let resp = get_request(&app, "/startup").await;
+        let fixture = TestFixture::new().await;
+        let response = fixture.get("/startup").await;
+
+        response.assert_ok();
         assert_eq!(
-            resp,
+            response.json,
             json!({
                 "initialized": true,
                 "status": "ok",
