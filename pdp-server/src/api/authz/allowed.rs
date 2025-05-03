@@ -45,33 +45,33 @@ pub(super) async fn allowed_handler(
 #[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
 pub(crate) struct AllowedQuery {
     /// User making the request
-    user: User,
+    pub user: User,
     /// The action the user wants to perform
-    action: String,
+    pub action: String,
     /// The resource the user wants to access
-    resource: Resource,
+    pub resource: Resource,
     /// Additional context for permission evaluation
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    context: HashMap<String, serde_json::Value>,
+    pub context: HashMap<String, serde_json::Value>,
     /// SDK identifier
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    sdk: Option<String>,
+    pub sdk: Option<String>,
 }
 
 /// Response type for the allowed endpoint
 #[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
-struct AllowedResult {
+pub(crate) struct AllowedResult {
     /// Whether the action is allowed
-    allow: bool,
+    pub allow: bool,
     /// Query details for debugging
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    query: Option<HashMap<String, serde_json::Value>>,
+    pub query: Option<HashMap<String, serde_json::Value>>,
     /// Debug information
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    debug: Option<HashMap<String, serde_json::Value>>,
+    pub debug: Option<HashMap<String, serde_json::Value>>,
     /// Result (deprecated field for backward compatibility)
     #[serde(default)]
-    result: bool,
+    pub result: bool,
 }
 
 #[cfg(test)]

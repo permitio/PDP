@@ -1,4 +1,5 @@
 pub mod allowed;
+pub mod allowed_bulk;
 pub mod authorized_users;
 pub mod forward_to_opa;
 pub mod user_permissions;
@@ -11,6 +12,7 @@ use axum::Router;
 pub(super) fn router() -> Router<AppState> {
     Router::new()
         .route("/allowed", post(allowed::allowed_handler))
+        .route("/allowed/bulk", post(allowed_bulk::allowed_bulk_handler))
         .route(
             "/authorized_users",
             post(authorized_users::authorized_users_handler),
