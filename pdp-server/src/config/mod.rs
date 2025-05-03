@@ -99,6 +99,7 @@ pub struct Settings {
     /// Debug mode
     #[serde(default)]
     pub debug: Option<bool>,
+
     /// Use new authorized users flag (controlled by Permit via environment settings)
     #[serde(default)]
     pub use_new_authorized_users: bool,
@@ -184,6 +185,14 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn create_test_settings() -> Settings {
+        Settings {
+            api_key: "test-api-key".to_string(),
+            port: 0, // Let the OS choose a port
+            ..Default::default()
+        }
+    }
 
     #[test]
     fn test_default_settings() {

@@ -112,85 +112,27 @@ pub(super) async fn fallback_to_horizon(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api;
-    use crate::api::authn_middleware::authentication_middleware;
-    use crate::config::{CacheStore, Settings};
-    use axum::http::Method;
+    use crate::test_utils::TestFixture;
     use axum::response::IntoResponse;
-    use axum::{serve, Router};
-    use std::net::SocketAddr;
-    use tokio::net::TcpListener;
-    use wiremock::matchers::{any, header, method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
-    // TODO refactor this to use a common test setup
-
-    pub async fn create_test_app(settings: Settings) -> (Router, AppState) {
-        // Initialize application state - use test state that doesn't start a real watchdog
-        let state = AppState::for_testing(&settings);
-
-        // Create health routes
-        let health_routes = api::health::router();
-
-        // Protected routes
-        let protected_routes = Router::new()
-            .merge(api::authz::router())
-            .fallback(axum::routing::any(fallback_to_horizon))
-            .layer(axum::middleware::from_fn_with_state(
-                state.clone(),
-                authentication_middleware,
-            ));
-
-        // Create the base router with routes
-        let app = Router::new()
-            .merge(health_routes)
-            .merge(protected_routes)
-            .with_state(state.clone());
-        (app, state)
-    }
-
-    pub async fn setup_test_server(cache_store: CacheStore) -> (AppState, MockServer, Settings) {
-        let mock_server = MockServer::start().await;
-        // Create test settings
-        let mut settings = Settings::default();
-        settings.port = 0; // Let the OS choose a port
-        settings.cache.ttl_secs = 60;
-        settings.api_key = "test_api_key".to_string();
-        settings.cache.store = cache_store;
-        settings.horizon_host = mock_server.address().ip().to_string(); // Set mock server URL as fallback
-        settings.horizon_port = mock_server.address().port(); // Set mock server URL as fallback
-
-        // Create the app with temporary cache directory
-        let (app, state) = create_test_app(settings.clone()).await;
-
-        // Create test server
-        let addr = SocketAddr::from(([127, 0, 0, 1], 0));
-        let listener = TcpListener::bind(addr)
-            .await
-            .expect("Failed to bind to address");
-        let _server_addr = listener.local_addr().expect("Failed to get local address");
-
-        // Spawn the server
-        tokio::spawn(async move {
-            serve(listener, app).await.expect("Server error");
-        });
-
-        (state, mock_server, settings)
-    }
+    use http::{Method, StatusCode};
+    use wiremock::{matchers, Mock, ResponseTemplate};
 
     #[tokio::test]
     async fn test_forward_unmatched_basic() {
-        let (state, mock_server, _settings) = setup_test_server(CacheStore::None).await;
-        // Setup mock response
-        Mock::given(method("GET"))
-            .and(path("/test"))
-            .and(header("X-Test", "value"))
+        // Setup test fixture
+        let fixture = TestFixture::new().await;
+
+        // Setup mock response on horizon_mock instead of a separate mock server
+        Mock::given(matchers::method("GET"))
+            .and(matchers::path("/test"))
+            .and(matchers::header("X-Test", "value"))
             .respond_with(
                 ResponseTemplate::new(200)
                     .set_body_string("test response")
                     .insert_header("X-Response", "test"),
             )
             .expect(1)
-            .mount(&mock_server)
+            .mount(&fixture.horizon_mock)
             .await;
 
         // Create test request
@@ -201,8 +143,9 @@ mod tests {
             .body(Body::empty())
             .unwrap();
 
-        // Forward request
-        let response = fallback_to_horizon(State(state), req).await;
+        // Forward request using the state from the fixture
+        let response =
+            fallback_to_horizon(State(AppState::for_testing(&fixture.settings)), req).await;
         let response = response.into_response();
 
         assert_eq!(response.status(), StatusCode::OK);
@@ -210,20 +153,24 @@ mod tests {
 
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         assert_eq!(&body[..], b"test response");
+
+        // Verify mock expectations
+        fixture.horizon_mock.verify().await;
     }
 
     #[tokio::test]
     async fn test_forward_unmatched_with_body() {
-        let (state, mock_server, _settings) = setup_test_server(CacheStore::None).await;
+        // Setup test fixture
+        let fixture = TestFixture::new().await;
 
         // Setup mock to echo request body
-        Mock::given(method("POST"))
-            .and(path("/echo"))
+        Mock::given(matchers::method("POST"))
+            .and(matchers::path("/echo"))
             .respond_with(|req: &wiremock::Request| {
                 ResponseTemplate::new(200).set_body_bytes(req.body.clone())
             })
             .expect(1)
-            .mount(&mock_server)
+            .mount(&fixture.horizon_mock)
             .await;
 
         // Create test request with body
@@ -233,24 +180,29 @@ mod tests {
             .body(Body::from("test body"))
             .unwrap();
 
-        // Forward request
-        let response = fallback_to_horizon(State(state), req).await;
+        // Forward request using the state from the fixture
+        let response =
+            fallback_to_horizon(State(AppState::for_testing(&fixture.settings)), req).await;
         let response = response.into_response();
         assert_eq!(response.status(), StatusCode::OK);
 
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         assert_eq!(&body[..], b"test body");
+
+        // Verify mock expectations
+        fixture.horizon_mock.verify().await;
     }
 
     #[tokio::test]
     async fn test_forward_unmatched_not_found() {
-        let (state, mock_server, _settings) = setup_test_server(CacheStore::None).await;
+        // Setup test fixture
+        let fixture = TestFixture::new().await;
 
         // Setup mock to return 404
-        Mock::given(any())
+        Mock::given(matchers::any())
             .respond_with(ResponseTemplate::new(404))
             .expect(1)
-            .mount(&mock_server)
+            .mount(&fixture.horizon_mock)
             .await;
 
         // Create test request
@@ -260,21 +212,26 @@ mod tests {
             .body(Body::empty())
             .unwrap();
 
-        // Forward request
-        let response = fallback_to_horizon(State(state), req).await;
+        // Forward request using the state from the fixture
+        let response =
+            fallback_to_horizon(State(AppState::for_testing(&fixture.settings)), req).await;
         let response = response.into_response();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        // Verify mock expectations
+        fixture.horizon_mock.verify().await;
     }
 
     #[tokio::test]
     async fn test_forward_unmatched_error() {
-        let (state, mock_server, _settings) = setup_test_server(CacheStore::None).await;
+        // Setup test fixture
+        let fixture = TestFixture::new().await;
 
         // Setup mock to return error
-        Mock::given(any())
+        Mock::given(matchers::any())
             .respond_with(ResponseTemplate::new(503))
             .expect(1)
-            .mount(&mock_server)
+            .mount(&fixture.horizon_mock)
             .await;
 
         // Create test request
@@ -284,9 +241,13 @@ mod tests {
             .body(Body::empty())
             .unwrap();
 
-        // Forward request
-        let response = fallback_to_horizon(State(state), req).await;
+        // Forward request using the state from the fixture
+        let response =
+            fallback_to_horizon(State(AppState::for_testing(&fixture.settings)), req).await;
         let response = response.into_response();
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+        // Verify mock expectations
+        fixture.horizon_mock.verify().await;
     }
 }

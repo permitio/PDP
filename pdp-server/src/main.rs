@@ -6,6 +6,8 @@ mod headers;
 mod models;
 mod openapi;
 mod state;
+#[cfg(test)]
+mod test_utils;
 
 use crate::state::AppState;
 use axum::Router;
