@@ -8,7 +8,6 @@ use http::{Method, Request, StatusCode};
 use http_body_util::BodyExt;
 use log::LevelFilter;
 use serde::{de::DeserializeOwned, Serialize};
-use serde_json::Value;
 use tower::ServiceExt;
 use wiremock::matchers;
 use wiremock::Mock;
@@ -340,21 +339,20 @@ impl TestFixture {
             .expect("Failed to send request");
 
         let status = response.status();
+        let headers = response.headers().clone();
         let body = response
             .into_body()
             .collect()
             .await
             .expect("Failed to read response body")
-            .to_bytes();
+            .to_bytes()
+            .to_vec();
 
-        // Try to parse as JSON, defaulting to empty object if parsing fails or empty body
-        let json = if !body.is_empty() {
-            serde_json::from_slice(&body).unwrap_or_else(|_| serde_json::json!({}))
-        } else {
-            serde_json::json!({})
-        };
-
-        TestResponse { status, json }
+        TestResponse {
+            status,
+            headers,
+            body,
+        }
     }
 
     /// Adds a mock OPA route with the given method, path, and response.
@@ -409,8 +407,10 @@ impl TestFixture {
 pub struct TestResponse {
     /// HTTP status code
     pub status: StatusCode,
-    /// Response body as JSON (if present and valid JSON)
-    pub json: Value,
+    /// Response headers
+    pub headers: http::HeaderMap,
+    /// Raw response body
+    pub body: Vec<u8>,
 }
 
 impl TestResponse {
@@ -466,7 +466,7 @@ impl TestResponse {
             "Expected status {} but got {} with body: {}",
             expected,
             self.status,
-            serde_json::to_string_pretty(&self.json).unwrap_or_default()
+            String::from_utf8_lossy(&self.body)
         );
         self
     }
@@ -496,6 +496,30 @@ impl TestResponse {
         self.assert_status(StatusCode::OK)
     }
 
+    /// Get the response body as a JSON value.
+    ///
+    /// # Returns
+    ///
+    /// The response body parsed as JSON. If the body is not valid JSON and not empty,
+    /// it will be returned as a JSON string. If empty, returns an empty JSON object.
+    ///
+    /// # Panics
+    ///
+    /// This function does not panic, but returns a default value if parsing fails.
+    pub fn json(&self) -> serde_json::Value {
+        if self.body.is_empty() {
+            return serde_json::json!({});
+        }
+
+        serde_json::from_slice(&self.body).unwrap_or_else(|_| {
+            // Try to convert to UTF-8 string and use as a JSON string value
+            match std::str::from_utf8(&self.body) {
+                Ok(s) => serde_json::Value::String(s.to_string()),
+                Err(_) => serde_json::json!({}), // If not valid UTF-8, default to empty object
+            }
+        })
+    }
+
     /// Converts the response body to the specified type.
     ///
     /// # Type Parameters
@@ -523,6 +547,72 @@ impl TestResponse {
     ///
     /// Panics if deserialization fails.
     pub fn json_as<T: DeserializeOwned>(&self) -> T {
-        serde_json::from_value(self.json.clone()).expect("Failed to deserialize response JSON")
+        serde_json::from_slice(&self.body).expect("Failed to deserialize response JSON")
+    }
+
+    /// Asserts that the response has a header with the expected value.
+    ///
+    /// # Parameters
+    ///
+    /// - `name`: The header name
+    /// - `expected_value`: The expected header value
+    ///
+    /// # Returns
+    ///
+    /// A reference to self for method chaining.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the header is missing or doesn't match the expected value.
+    pub fn assert_header(&self, name: &str, expected_value: &str) -> &Self {
+        let header = self
+            .headers
+            .get(name)
+            .expect(&format!("Header '{}' not found", name));
+        assert_eq!(
+            header.to_str().unwrap(),
+            expected_value,
+            "Expected header '{}' to have value '{}' but got '{}'",
+            name,
+            expected_value,
+            header.to_str().unwrap_or_default()
+        );
+        self
+    }
+
+    /// Gets the response headers.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the response headers.
+    pub fn headers(&self) -> &http::HeaderMap {
+        &self.headers
+    }
+
+    /// Converts the response into its body.
+    ///
+    /// # Returns
+    ///
+    /// The response body.
+    pub fn into_body(self) -> Body {
+        Body::from(self.body)
+    }
+
+    /// Get the response body as a UTF-8 string.
+    ///
+    /// # Returns
+    ///
+    /// The response body converted to a string. If the body is not valid UTF-8,
+    /// returns an empty string.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// let response = fixture.get("/some-text-endpoint").await;
+    /// let text = response.text();
+    /// assert!(text.contains("Expected message"));
+    /// ```
+    pub fn text(&self) -> String {
+        String::from_utf8_lossy(&self.body).to_string()
     }
 }

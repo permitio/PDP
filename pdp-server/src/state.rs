@@ -44,7 +44,7 @@ impl AppState {
             )),
             horizon_client: Arc::new(create_http_client(
                 settings.api_key.clone(),
-                settings.opa_client_query_timeout,
+                settings.horizon_client_timeout,
             )),
         })
     }
@@ -66,7 +66,7 @@ impl AppState {
             )),
             horizon_client: Arc::new(create_http_client(
                 settings.api_key.clone(),
-                settings.opa_client_query_timeout,
+                settings.horizon_client_timeout,
             )),
         })
     }
@@ -84,7 +84,7 @@ impl AppState {
             )),
             horizon_client: Arc::new(create_http_client(
                 settings.api_key.clone(),
-                settings.opa_client_query_timeout,
+                settings.horizon_client_timeout,
             )),
         }
     }
@@ -157,7 +157,7 @@ fn create_http_client(token: String, timeout_secs: u64) -> Client {
     // Create a client with appropriate configurations
     Client::builder()
         .timeout(Duration::from_secs(timeout_secs))
-        .connect_timeout(Duration::from_secs(2))
+        .connect_timeout(Duration::from_secs(5))
         .default_headers(headers)
         .pool_max_idle_per_host(10)
         .pool_idle_timeout(Some(Duration::from_secs(90)))
@@ -180,6 +180,7 @@ mod tests {
             opa_url: "http://localhost:8181".to_string(),
             port: 3000,
             opa_client_query_timeout: 5,
+            horizon_client_timeout: 60,
             cache: CacheConfig {
                 ttl_secs: 60,
                 store: CacheStore::InMemory,

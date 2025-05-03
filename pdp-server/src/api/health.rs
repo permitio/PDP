@@ -142,7 +142,7 @@ mod test {
 
         response.assert_ok();
         assert_eq!(
-            response.json,
+            response.json(),
             json!({
                 "status": "ok",
             })
@@ -156,7 +156,7 @@ mod test {
 
         response.assert_ok();
         assert_eq!(
-            response.json,
+            response.json(),
             json!({
                 "cache_status": "healthy",
                 "engine_status": "healthy",
@@ -172,7 +172,7 @@ mod test {
 
         response.assert_ok();
         assert_eq!(
-            response.json,
+            response.json(),
             json!({
                 "initialized": true,
                 "status": "ok",

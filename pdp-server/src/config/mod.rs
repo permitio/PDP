@@ -89,6 +89,10 @@ pub struct Settings {
     #[serde(default = "default_opa_client_query_timeout")]
     pub opa_client_query_timeout: u64,
 
+    /// The timeout for Horizon client queries (in seconds)
+    #[serde(default = "default_horizon_client_timeout")]
+    pub horizon_client_timeout: u64,
+
     /// Cache configuration
     #[serde(default)]
     pub cache: CacheConfig,
@@ -137,6 +141,10 @@ fn default_python_path() -> String {
     "python3".to_string()
 }
 
+fn default_horizon_client_timeout() -> u64 {
+    60
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -146,6 +154,7 @@ impl Default for Settings {
             python_path: default_python_path(),
             opa_url: default_opa_url(),
             opa_client_query_timeout: default_opa_client_query_timeout(),
+            horizon_client_timeout: default_horizon_client_timeout(),
             cache: CacheConfig::default(),
             api_key: String::new(),
             debug: None,
@@ -217,6 +226,7 @@ mod tests {
         std::env::remove_var("PDP_CACHE__STORE");
         std::env::remove_var("PDP_CACHE__REDIS__URL");
         std::env::remove_var("PDP_CACHE__IN_MEMORY__CAPACITY_MIB");
+        std::env::remove_var("PDP_HORIZON_CLIENT_TIMEOUT");
         std::env::set_var("PDP_API_KEY", "test-api-key");
 
         let settings = Settings::new().unwrap();
@@ -226,6 +236,8 @@ mod tests {
         assert_eq!(settings.horizon_port, 7001); // Default value
         assert_eq!(settings.python_path, "python3"); // Default value
         assert_eq!(settings.opa_url, "http://localhost:8181"); // Default value
+        assert_eq!(settings.opa_client_query_timeout, 1); // Default value
+        assert_eq!(settings.horizon_client_timeout, 60); // Default value
         assert_eq!(settings.cache.store, CacheStore::None); // Default value
         assert_eq!(settings.cache.in_memory.capacity_mib, 128); // Default value
         assert_eq!(settings.cache.redis.url, ""); // Default value
