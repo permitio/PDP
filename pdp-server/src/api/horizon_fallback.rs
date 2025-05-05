@@ -468,6 +468,12 @@ mod tests {
                 port: 1, // Use port 1 which should be unavailable
                 python_path: "python3".to_string(),
                 client_timeout: 1, // 1 second timeout for speed
+                health_check_timeout: 1,
+                health_check_interval: 5,
+                health_check_failure_threshold: 12,
+                startup_delay: 5,
+                restart_interval: 1,
+                termination_timeout: 30,
             },
             opa: fixture.config.opa.clone(),
             cache: fixture.config.cache.clone(),
@@ -526,6 +532,12 @@ mod tests {
                 port: horizon_mock.address().port(),
                 python_path: "python3".to_string(),
                 client_timeout: 1, // 1 second timeout (mock delays 3s)
+                health_check_timeout: 1,
+                health_check_interval: 5,
+                health_check_failure_threshold: 12,
+                startup_delay: 5,
+                restart_interval: 1,
+                termination_timeout: 30,
             },
             opa: crate::config::opa::OpaConfig {
                 url: "http://localhost:8181".to_string(),

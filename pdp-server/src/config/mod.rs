@@ -86,6 +86,12 @@ impl PDPConfig {
                 port: horizon_mock.address().port(),
                 python_path: "python3".to_string(),
                 client_timeout: 60,
+                health_check_timeout: 1,
+                health_check_interval: 5,
+                health_check_failure_threshold: 12,
+                startup_delay: 5,
+                restart_interval: 1,
+                termination_timeout: 30,
             },
             opa: OpaConfig {
                 url: opa_mock.uri(),

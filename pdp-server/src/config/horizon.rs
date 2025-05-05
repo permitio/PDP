@@ -18,6 +18,30 @@ pub struct HorizonConfig {
     /// Python interpreter path for running Horizon (default: python3)
     #[serde(default)]
     pub python_path: String,
+
+    /// Health check endpoint timeout in seconds (default: 1)
+    #[serde(default)]
+    pub health_check_timeout: u64,
+
+    /// Interval between health checks in seconds (default: 5)
+    #[serde(default)]
+    pub health_check_interval: u64,
+
+    /// Number of consecutive health check failures before restarting (default: 12)
+    #[serde(default)]
+    pub health_check_failure_threshold: u32,
+
+    /// Initial delay before starting health checks in seconds (default: 5)
+    #[serde(default)]
+    pub startup_delay: u64,
+
+    /// Interval between service restart attempts in seconds (default: 1)
+    #[serde(default)]
+    pub restart_interval: u64,
+
+    /// Service termination timeout in seconds (default: 30)
+    #[serde(default)]
+    pub termination_timeout: u64,
 }
 
 impl Default for HorizonConfig {
@@ -27,6 +51,12 @@ impl Default for HorizonConfig {
             port: 7001,
             client_timeout: 60,
             python_path: "python3".to_string(),
+            health_check_timeout: 1,
+            health_check_interval: 5,
+            health_check_failure_threshold: 12,
+            startup_delay: 5,
+            restart_interval: 1,
+            termination_timeout: 30,
         }
     }
 }

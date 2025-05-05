@@ -126,16 +126,16 @@ impl AppState {
         let health_checker = HttpHealthChecker::with_options(
             health_endpoint,
             200,
-            Duration::from_secs(1), // TODO: Expose via config
+            Duration::from_secs(config.horizon.health_check_timeout),
         );
 
         let options = ServiceWatchdogOptions {
-            health_check_interval: Duration::from_secs(5), // TODO: Expose via config
-            health_check_failure_threshold: 12,            // TODO: Expose via config
-            initial_startup_delay: Duration::from_secs(5), // TODO: Expose via config
+            health_check_interval: Duration::from_secs(config.horizon.health_check_interval),
+            health_check_failure_threshold: config.horizon.health_check_failure_threshold,
+            initial_startup_delay: Duration::from_secs(config.horizon.startup_delay),
             command_options: CommandWatchdogOptions {
-                restart_interval: Duration::from_secs(1), // TODO: Expose via config
-                termination_timeout: Duration::from_secs(30), // TODO: Expose via config
+                restart_interval: Duration::from_secs(config.horizon.restart_interval),
+                termination_timeout: Duration::from_secs(config.horizon.termination_timeout),
             },
         };
 
@@ -182,6 +182,12 @@ mod tests {
                 port: 3000,
                 python_path: "python3".to_string(),
                 client_timeout: 60,
+                health_check_timeout: 1,
+                health_check_interval: 5,
+                health_check_failure_threshold: 12,
+                startup_delay: 5,
+                restart_interval: 1,
+                termination_timeout: 30,
             },
             opa: crate::config::opa::OpaConfig {
                 url: "http://localhost:8181".to_string(),
