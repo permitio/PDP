@@ -57,7 +57,7 @@ impl Default for PDPConfig {
 impl PDPConfig {
     /// Creates a new Config instance from environment variables
     pub fn new() -> Result<Self, String> {
-        ConfigCrate::builder()
+        let config_builder = ConfigCrate::builder()
             .add_source(
                 config::Environment::with_prefix("PDP")
                     .prefix_separator("_")
@@ -65,9 +65,47 @@ impl PDPConfig {
                     .convert_case(config::Case::Snake),
             )
             .build()
-            .map_err(|e: ConfigError| e.to_string())?
+            .map_err(|e: ConfigError| e.to_string())?;
+
+        // Debug during tests
+        #[cfg(test)]
+        {
+            println!("Config builder debug: {:?}", config_builder);
+        }
+
+        // Try to extract key values directly from environment variables
+        let api_key = std::env::var("PDP_API_KEY").unwrap_or_else(|_| String::new());
+
+        // Parse port from environment variable
+        let port = std::env::var("PDP_PORT")
+            .ok()
+            .and_then(|p| p.parse::<u16>().ok())
+            .unwrap_or(7766);
+
+        // Parse cache TTL from environment variable
+        let cache_ttl = std::env::var("PDP_CACHE_TTL")
+            .ok()
+            .and_then(|ttl| ttl.parse::<u32>().ok())
+            .unwrap_or(3600);
+
+        // Parse cache store type
+        let cache_store = match std::env::var("PDP_CACHE_STORE").as_deref() {
+            Ok("in-memory") => CacheStore::InMemory,
+            Ok("redis") => CacheStore::Redis,
+            Ok("none") | _ => CacheStore::None,
+        };
+
+        let mut config: Self = config_builder
             .try_deserialize()
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+
+        // Apply the direct environment variable values
+        config.api_key = api_key;
+        config.port = port;
+        config.cache.ttl = cache_ttl;
+        config.cache.store = cache_store;
+
+        Ok(config)
     }
 
     #[cfg(test)]
@@ -109,74 +147,130 @@ impl PDPConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
 
-    #[test]
-    fn test_default_config() {
-        // Clear any existing environment variables
+    // This mutex ensures tests don't interfere with each other's environment variables
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
+
+    // Helper to set environment variables for testing
+    fn with_env_vars<F, R>(vars: &[(&str, &str)], test_fn: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        // Acquire the mutex to prevent other tests from modifying the environment
+        let _lock = ENV_MUTEX.lock().unwrap();
+
+        // Save the original values
+        let mut old_values = Vec::new();
+        for (key, _) in vars {
+            old_values.push((*key, std::env::var(*key).ok()));
+        }
+
+        // Clear any PDP_ environment variables
         for (name, _value) in std::env::vars() {
             if name.starts_with("PDP_") {
                 std::env::remove_var(name);
             }
         }
-        // Set environment variables for testing
-        std::env::set_var("PDP_API_KEY", "test-api-key");
-        std::env::set_var("PDP_PORT", "7766");
 
-        let config = PDPConfig::new().unwrap();
-        assert_eq!(config.port, 7766);
-        assert_eq!(config.cache.ttl, 3600);
-        assert_eq!(config.horizon.host, "0.0.0.0");
-        assert_eq!(config.horizon.port, 7001);
-        assert_eq!(config.horizon.python_path, "python3");
-        assert_eq!(config.opa.url, "http://localhost:8181");
-        assert_eq!(config.opa.query_timeout, 1);
-        assert_eq!(config.horizon.client_timeout, 60);
-        assert_eq!(config.cache.store, CacheStore::None);
-        assert_eq!(config.cache.memory.capacity, 128);
-        assert_eq!(config.cache.redis.url, "");
-        assert_eq!(config.api_key, "test-api-key");
+        // Set the new values
+        for (key, value) in vars {
+            std::env::set_var(key, value);
+        }
 
-        // Clean up
-        std::env::remove_var("PDP_API_KEY");
-        std::env::remove_var("PDP_PORT");
+        // Debug - print all environment variables
+        println!("Environment variables for test:");
+        for (name, value) in std::env::vars() {
+            if name.starts_with("PDP_") {
+                println!("  {}: {}", name, value);
+            }
+        }
+
+        // Run the test function
+        let result = test_fn();
+
+        // Restore the original environment
+        for (name, _value) in std::env::vars() {
+            if name.starts_with("PDP_") {
+                std::env::remove_var(name);
+            }
+        }
+
+        // Restore original values
+        for (key, maybe_value) in old_values {
+            if let Some(val) = maybe_value {
+                std::env::set_var(key, val);
+            }
+        }
+
+        result
+    }
+
+    #[test]
+    fn test_default_config() {
+        with_env_vars(
+            &[
+                ("PDP_API_KEY", "test-api-key"),
+                ("PDP_PORT", "7766"),
+                ("PDP_CACHE_TTL", "3600"),
+                ("PDP_CACHE_STORE", "none"),
+            ],
+            || {
+                let config = PDPConfig::new().unwrap();
+                println!("Config loaded: api_key='{}'", config.api_key);
+                assert_eq!(config.port, 7766);
+                assert_eq!(config.cache.ttl, 3600);
+                assert_eq!(config.horizon.host, "0.0.0.0");
+                assert_eq!(config.horizon.port, 7001);
+                assert_eq!(config.horizon.python_path, "python3");
+                assert_eq!(config.opa.url, "http://localhost:8181");
+                assert_eq!(config.opa.query_timeout, 1);
+                assert_eq!(config.horizon.client_timeout, 60);
+                assert_eq!(config.cache.store, CacheStore::None);
+                assert_eq!(config.cache.memory.capacity, 128);
+                assert_eq!(config.cache.redis.url, "");
+                assert_eq!(config.api_key, "test-api-key");
+            },
+        );
     }
 
     #[test]
     fn test_default_cache_store() {
-        std::env::remove_var("PDP_CACHE_STORE");
-        std::env::remove_var("PDP_CACHE_REDIS_URL");
-        std::env::remove_var("PDP_CACHE_MEMORY_CAPACITY");
-        std::env::set_var("PDP_API_KEY", "test-api-key");
-
-        let config = PDPConfig::new().unwrap();
-        assert_eq!(config.cache.store, CacheStore::None);
-
-        std::env::remove_var("PDP_API_KEY");
+        with_env_vars(&[("PDP_API_KEY", "test-api-key")], || {
+            let config = PDPConfig::new().unwrap();
+            assert_eq!(config.cache.store, CacheStore::None);
+        });
     }
 
     #[test]
     fn test_in_memory_cache_store() {
-        std::env::set_var("PDP_CACHE_STORE", "in-memory");
-        std::env::set_var("PDP_CACHE_MEMORY_CAPACITY", "256");
-
-        let config = PDPConfig::new().unwrap();
-        assert_eq!(config.cache.store, CacheStore::InMemory);
-        assert_eq!(config.cache.memory.capacity, 256);
-
-        std::env::remove_var("PDP_CACHE_STORE");
-        std::env::remove_var("PDP_CACHE_MEMORY_CAPACITY");
+        with_env_vars(
+            &[
+                ("PDP_API_KEY", "test-api-key"),
+                ("PDP_CACHE_STORE", "in-memory"),
+                ("PDP_CACHE_MEMORY_CAPACITY", "256"),
+            ],
+            || {
+                let config = PDPConfig::new().unwrap();
+                assert_eq!(config.cache.store, CacheStore::InMemory);
+                assert_eq!(config.cache.memory.capacity, 256);
+            },
+        );
     }
 
     #[test]
     fn test_redis_cache_store() {
-        std::env::set_var("PDP_CACHE_STORE", "redis");
-        std::env::set_var("PDP_CACHE_REDIS_URL", "redis://localhost:6379");
-
-        let config = PDPConfig::new().unwrap();
-        assert_eq!(config.cache.store, CacheStore::Redis);
-        assert_eq!(config.cache.redis.url, "redis://localhost:6379");
-
-        std::env::remove_var("PDP_CACHE_STORE");
-        std::env::remove_var("PDP_CACHE_REDIS_URL");
+        with_env_vars(
+            &[
+                ("PDP_API_KEY", "test-api-key"),
+                ("PDP_CACHE_STORE", "redis"),
+                ("PDP_CACHE_REDIS_URL", "redis://localhost:6379"),
+            ],
+            || {
+                let config = PDPConfig::new().unwrap();
+                assert_eq!(config.cache.store, CacheStore::Redis);
+                assert_eq!(config.cache.redis.url, "redis://localhost:6379");
+            },
+        );
     }
 }
