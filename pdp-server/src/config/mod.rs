@@ -92,7 +92,8 @@ impl PDPConfig {
         let cache_store = match std::env::var("PDP_CACHE_STORE").as_deref() {
             Ok("in-memory") => CacheStore::InMemory,
             Ok("redis") => CacheStore::Redis,
-            Ok("none") | _ => CacheStore::None,
+            Ok("none") => CacheStore::None,
+            _ => CacheStore::None,
         };
 
         let mut config: Self = config_builder
@@ -167,7 +168,7 @@ mod tests {
         }
 
         // Clear any PDP_ environment variables
-        for (name, _value) in std::env::vars() {
+        for (name, _) in std::env::vars() {
             if name.starts_with("PDP_") {
                 std::env::remove_var(name);
             }
@@ -190,7 +191,7 @@ mod tests {
         let result = test_fn();
 
         // Restore the original environment
-        for (name, _value) in std::env::vars() {
+        for (name, _) in std::env::vars() {
             if name.starts_with("PDP_") {
                 std::env::remove_var(name);
             }
