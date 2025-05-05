@@ -70,20 +70,6 @@ impl PDPConfig {
             .map_err(|e| e.to_string())
     }
 
-    /// Provides backward compatibility with old code
-    /// In a later change, this method can be deprecated and code updated to use config.services.horizon directly
-    pub fn get_horizon_url<S: Into<String>>(&self, path: S) -> String {
-        let path = path.into();
-        if path.starts_with("/") {
-            format!("http://{}:{}{}", self.horizon.host, self.horizon.port, path,)
-        } else {
-            format!(
-                "http://{}:{}/{}",
-                self.horizon.host, self.horizon.port, path,
-            )
-        }
-    }
-
     #[cfg(test)]
     pub fn for_test_with_mocks(
         horizon_mock: &wiremock::MockServer,

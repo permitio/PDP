@@ -42,7 +42,7 @@ pub(super) async fn fallback_to_horizon(
     };
 
     // Prepare request builder
-    let url = state.config.get_horizon_url(path);
+    let url = state.config.horizon.get_url(path);
     log::debug!("Forwarding request to Horizon: {} {}", req.method(), url);
     let req_builder = state.horizon_client.request(method, &url);
 

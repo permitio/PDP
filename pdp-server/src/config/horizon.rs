@@ -30,3 +30,15 @@ impl Default for HorizonConfig {
         }
     }
 }
+
+impl HorizonConfig {
+    /// Returns a properly formatted URL to the Horizon service with the given path
+    pub fn get_url<S: Into<String>>(&self, path: S) -> String {
+        let path = path.into();
+        if path.starts_with("/") {
+            format!("http://{}:{}{}", self.host, self.port, path)
+        } else {
+            format!("http://{}:{}/{}", self.host, self.port, path)
+        }
+    }
+}
