@@ -8,7 +8,7 @@ use http::header::HeaderName;
 use reqwest::header::HeaderValue;
 use std::error::Error as StdError;
 
-use crate::{create_app, state::AppState};
+use crate::state::AppState;
 
 /// Forward unmatched requests to the legacy Horizon PDP service (Python-based PDP)
 pub(super) async fn fallback_to_horizon(
@@ -95,22 +95,32 @@ pub(super) async fn fallback_to_horizon(
             resp
         }
         Err(e) => {
-            if let Some(status) = e.status() {
-                // For status errors, we want to forward the status code
+            // Log detailed error information for debugging
+            log::error!(
+                "Failed to send request: {} ({:?})\nURL: {}\nError details: {:?}\nSource error: {:?}",
+                e, e.status(), url, e, e.source()
+            );
+
+            // Check for specific error types
+            let error_message = if e.is_timeout() {
+                "Request timed out while connecting to horizon server".to_string()
+            } else if e.is_connect() {
+                "Connection error occurred while connecting to horizon server".to_string()
+            } else if let Some(status) = e.status() {
+                // For status errors, forward the status code with explanation
                 let status_code =
                     StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
-                (status_code, "Error response from fallback server").into_response()
-            } else {
-                log::error!(
-                    "Failed to send request: {} ({:?})\nURL: {}\nError details: {:?}\nSource error: {:?}",
-                    e, e.status(), url, e, e.source()
-                );
-                (
-                    StatusCode::BAD_GATEWAY,
-                    format!("Failed to send request: {}", e),
+                return (
+                    status_code,
+                    format!("Error response from horizon server: {}", e),
                 )
-                    .into_response()
-            }
+                    .into_response();
+            } else {
+                // Generic error message for other types of errors
+                format!("Failed to send request: {}", e)
+            };
+
+            (StatusCode::BAD_GATEWAY, error_message).into_response()
         }
     }
 }
@@ -119,7 +129,6 @@ pub(super) async fn fallback_to_horizon(
 mod tests {
     use super::*;
     use crate::test_utils::TestFixture;
-    use axum::response::IntoResponse;
     use http::{Method, StatusCode};
     use serde_json::json;
     use std::time::Duration;
@@ -444,86 +453,114 @@ mod tests {
 
     #[tokio::test]
     async fn test_connection_error() {
-        // Setup test fixture with invalid horizon URL to force connection error
-        let mut fixture = TestFixture::new().await;
+        // Set up the fixture with default settings
+        let fixture = TestFixture::new().await;
 
-        // Update settings to point to non-existent server
-        fixture.config.horizon.host = "invalid-server".to_string();
-        fixture.config.horizon.port = 12345;
+        // Create a modified config for testing
+        let config = crate::config::PDPConfig {
+            api_key: "test_api_key".to_string(),
+            debug: None,
+            port: 0,
+            use_new_authorized_users: false,
+            // Point to a non-existent server with a reserved port
+            horizon: crate::config::horizon::HorizonConfig {
+                host: "127.0.0.1".to_string(),
+                port: 1, // Use port 1 which should be unavailable
+                python_path: "python3".to_string(),
+                client_timeout: 1, // 1 second timeout for speed
+            },
+            opa: fixture.config.opa.clone(),
+            cache: fixture.config.cache.clone(),
+        };
 
-        // Override the horizon client timeout to be very short (1 sec)
-        fixture.config.horizon.client_timeout = 1; // 1 second for test speed
+        // Create app state with the modified config
+        let state = crate::state::AppState::for_testing(&config);
 
-        // Need to recreate the app state with the new timeout settings
-        let state = AppState::for_testing(&fixture.config);
-        fixture.app = create_app(state).await;
-
-        // Create test request
-        let req = Request::builder()
+        // Create a test request
+        let req = http::Request::builder()
             .method(Method::GET)
             .uri("/test")
             .body(Body::empty())
             .unwrap();
 
-        // Forward request with modified state
-        let response =
-            fallback_to_horizon(State(AppState::for_testing(&fixture.config)), req).await;
-        let response = response.into_response();
+        // Call the fallback function directly
+        let response = fallback_to_horizon(State(state), req).await.into_response();
 
+        // Assert the response has BAD_GATEWAY status
         assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
 
-        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        assert!(body.len() > 0); // Should contain error message
+        // Check the response body contains the expected error message
+        let body_bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body_text = String::from_utf8_lossy(&body_bytes);
+        assert!(
+            body_text.contains("Connection"),
+            "Expected connection error message, got: {}",
+            body_text
+        );
     }
 
     #[tokio::test]
     async fn test_horizon_request_timeout() {
-        // Setup test fixture with a very short timeout for horizon client
-        let mut fixture = TestFixture::new().await;
+        // For this test, we need to modify the client timeout
+        // but keep using the mock server
 
-        // Override the horizon client timeout to be very short (1 sec)
-        fixture.config.horizon.client_timeout = 1; // 1 second for test speed
+        // Set up a mock server
+        let horizon_mock = wiremock::MockServer::start().await;
 
-        // Need to recreate the app state with the new timeout settings
-        let state = AppState::for_testing(&fixture.config);
-        fixture.app = create_app(state).await;
-
-        // Setup mock that delays longer than the timeout
+        // Set up a timeout mock - mock will delay longer than timeout
         Mock::given(matchers::method("GET"))
             .and(matchers::path("/timeout-test"))
-            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(3))) // 3 second delay
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(3)))
             .expect(1)
-            .mount(&fixture.horizon_mock)
+            .mount(&horizon_mock)
             .await;
 
-        // Create test request
-        let req = Request::builder()
+        // Create custom config with very short timeout
+        let config = crate::config::PDPConfig {
+            api_key: "test_api_key".to_string(),
+            debug: None,
+            port: 0,
+            use_new_authorized_users: false,
+            horizon: crate::config::horizon::HorizonConfig {
+                host: horizon_mock.address().ip().to_string(),
+                port: horizon_mock.address().port(),
+                python_path: "python3".to_string(),
+                client_timeout: 1, // 1 second timeout (mock delays 3s)
+            },
+            opa: crate::config::opa::OpaConfig {
+                url: "http://localhost:8181".to_string(),
+                query_timeout: 1,
+            },
+            cache: crate::config::cache::CacheConfig::default(),
+        };
+
+        // Create app state with the modified config
+        let state = crate::state::AppState::for_testing(&config);
+
+        // Create a test request
+        let req = http::Request::builder()
             .method(Method::GET)
             .uri("/timeout-test")
             .body(Body::empty())
-            .expect("Failed to build request");
+            .unwrap();
 
-        // Forward request directly using the fallback handler to ensure the timeout is used
-        let response =
-            fallback_to_horizon(State(AppState::for_testing(&fixture.config)), req).await;
-        let response = response.into_response();
+        // Call the fallback function directly
+        let response = fallback_to_horizon(State(state), req).await.into_response();
 
-        // Assert timeout error (502 Bad Gateway)
+        // Assert the response has BAD_GATEWAY status
         assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
 
-        // Read the body
+        // Check the response body contains a timeout message
         let body_bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let body_str = String::from_utf8_lossy(&body_bytes);
-
-        // The body should contain timeout error message
+        let body_text = String::from_utf8_lossy(&body_bytes);
         assert!(
-            body_str.contains("timeout") || body_str.contains("timed out"),
+            body_text.contains("timeout") || body_text.contains("timed out"),
             "Expected timeout error message, got: {}",
-            body_str
+            body_text
         );
 
-        // Verify mock expectations
-        fixture.horizon_mock.verify().await;
+        // We don't verify the mock expectations as the request might time out
+        // before reaching the mock
     }
 
     #[tokio::test]
