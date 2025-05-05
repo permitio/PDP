@@ -1,4 +1,4 @@
-use crate::config::Settings;
+use crate::config::PDPConfig;
 use crate::create_app;
 use crate::state::AppState;
 use axum::body::Body;
@@ -54,7 +54,7 @@ pub struct TestFixture {
     /// The application router
     pub app: Router,
     /// Configuration settings
-    pub settings: Settings,
+    pub config: PDPConfig,
     /// Mock server for OPA
     pub opa_mock: MockServer,
     /// Mock server for Horizon
@@ -92,15 +92,15 @@ impl TestFixture {
         let horizon_mock = MockServer::start().await;
 
         // Create settings configured with mocks
-        let settings = Settings::for_test_with_mocks(&horizon_mock, &opa_mock);
+        let config = PDPConfig::for_test_with_mocks(&horizon_mock, &opa_mock);
 
         // Create app state
-        let state = AppState::for_testing(&settings);
+        let state = AppState::for_testing(&config);
         let app = create_app(state).await;
 
         Self {
             app,
-            settings,
+            config,
             opa_mock,
             horizon_mock,
         }
@@ -166,7 +166,7 @@ impl TestFixture {
         let mut builder = Request::builder().method(method).uri(uri.as_ref());
 
         // Add default headers
-        builder = builder.header("Authorization", format!("Bearer {}", self.settings.api_key));
+        builder = builder.header("Authorization", format!("Bearer {}", self.config.api_key));
         builder = builder.header("Content-Type", "application/json");
 
         builder

@@ -15,7 +15,7 @@ pub(crate) async fn send_request_to_opa<R: DeserializeOwned, B: Serialize>(
     body: &B,
 ) -> Result<R, ForwardingError> {
     // Create a new OPA request
-    let request = create_opa_request(body, state.settings.debug)?;
+    let request = create_opa_request(body, state.config.debug)?;
 
     // Send the request to OPA
     let response: OpaResponse<R> = send_raw_request_to_opa(state, endpoint, &request).await?;
@@ -30,7 +30,7 @@ async fn send_raw_request_to_opa<B: Serialize, R: DeserializeOwned>(
 ) -> Result<OpaResponse<R>, ForwardingError> {
     // Build the OPA URL from the settings
     let endpoint = endpoint.strip_prefix("/").unwrap_or(endpoint);
-    let opa_url = format!("{}/{}", state.settings.opa_url, endpoint);
+    let opa_url = format!("{}/{}", state.config.opa.url, endpoint);
     debug!("Forwarding request to OPA at: {}", opa_url);
 
     // Send request to OPA using the specialized OPA client

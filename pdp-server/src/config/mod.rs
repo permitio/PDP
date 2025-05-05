@@ -1,175 +1,67 @@
-use config::{Config, ConfigError};
+pub(crate) use crate::config::cache::{CacheConfig, CacheStore};
+use crate::config::horizon::HorizonConfig;
+use crate::config::opa::OpaConfig;
+use config::{Config as ConfigCrate, ConfigError};
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize, Clone, PartialEq, Default)]
-#[serde(rename_all = "kebab-case")]
-pub enum CacheStore {
-    InMemory,
-    Redis,
-    #[serde(other)]
-    #[default]
-    None,
-}
+pub mod cache;
+pub mod horizon;
+pub mod opa;
 
+/// Main configuration structure for the PDP server
 #[derive(Debug, Deserialize, Clone)]
-pub struct InMemoryCacheConfig {
-    /// Maximum capacity in MiB (default: 128)
-    #[serde(default = "default_in_memory_capacity")]
-    pub capacity_mib: usize,
-}
-
-impl Default for InMemoryCacheConfig {
-    fn default() -> Self {
-        Self {
-            capacity_mib: default_in_memory_capacity(),
-        }
-    }
-}
-
-#[derive(Debug, Deserialize, Clone, Default)]
-pub struct RedisCacheConfig {
-    /// Redis connection string
+pub struct PDPConfig {
+    /// API Key for authentication - mandatory for all API calls
     #[serde(default)]
-    pub url: String,
-}
+    pub api_key: String,
 
-#[derive(Debug, Deserialize, Clone)]
-pub struct CacheConfig {
-    /// Cache TTL in seconds
-    #[serde(default = "default_cache_ttl")]
-    pub ttl_secs: u32,
-
-    /// Cache store type: "in-memory", "redis", or null (default)
+    /// Debug mode (injects debug attributes to OPA requests)
     #[serde(default)]
-    pub store: CacheStore,
+    pub debug: Option<bool>,
 
-    /// In-memory cache specific configuration
+    /// The port the PDP server will listen to (default: 7766)
     #[serde(default)]
-    pub in_memory: InMemoryCacheConfig,
-
-    /// Redis cache specific configuration
-    #[serde(default)]
-    pub redis: RedisCacheConfig,
-}
-
-impl Default for CacheConfig {
-    fn default() -> Self {
-        Self {
-            ttl_secs: default_cache_ttl(),
-            store: CacheStore::None,
-            in_memory: InMemoryCacheConfig::default(),
-            redis: RedisCacheConfig::default(),
-        }
-    }
-}
-
-#[derive(Debug, Deserialize, Clone)]
-pub struct Settings {
-    /// The port the server will listen on
-    #[serde(default = "default_port")]
     pub port: u16,
 
-    /// Horizon fallback host
-    #[serde(default = "default_horizon_host")]
-    pub horizon_host: String,
+    /// Feature flag for new authorized users implementation
+    #[serde(default)]
+    pub use_new_authorized_users: bool,
 
-    /// Horizon fallback port
-    #[serde(default = "default_horizon_port")]
-    pub horizon_port: u16,
+    /// Horizon service configuration
+    #[serde(default)]
+    pub horizon: HorizonConfig,
 
-    /// Python interpreter path for running Horizon
-    #[serde(default = "default_python_path")]
-    pub python_path: String,
-
-    /// The URL of the OPA service
-    #[serde(default = "default_opa_url")]
-    pub opa_url: String,
-
-    /// The timeout for OPA client queries
-    #[serde(default = "default_opa_client_query_timeout")]
-    pub opa_client_query_timeout: u64,
-
-    /// The timeout for Horizon client queries (in seconds)
-    #[serde(default = "default_horizon_client_timeout")]
-    pub horizon_client_timeout: u64,
+    /// OPA service configuration
+    #[serde(default)]
+    pub opa: OpaConfig,
 
     /// Cache configuration
     #[serde(default)]
     pub cache: CacheConfig,
-
-    /// API Key for authentication - mandatory for all API calls
-    pub api_key: String,
-
-    /// Debug mode
-    #[serde(default)]
-    pub debug: Option<bool>,
-
-    /// Use new authorized users flag (controlled by Permit via environment settings)
-    #[serde(default)]
-    pub use_new_authorized_users: bool,
 }
 
-fn default_port() -> u16 {
-    7766
-}
-
-pub fn default_cache_ttl() -> u32 {
-    3600
-}
-
-fn default_in_memory_capacity() -> usize {
-    128
-}
-
-fn default_opa_client_query_timeout() -> u64 {
-    1
-}
-
-pub fn default_horizon_host() -> String {
-    "0.0.0.0".to_string()
-}
-
-pub fn default_horizon_port() -> u16 {
-    7001
-}
-
-fn default_opa_url() -> String {
-    "http://localhost:8181".to_string()
-}
-
-fn default_python_path() -> String {
-    "python3".to_string()
-}
-
-fn default_horizon_client_timeout() -> u64 {
-    60
-}
-
-impl Default for Settings {
+impl Default for PDPConfig {
     fn default() -> Self {
         Self {
-            port: default_port(),
-            horizon_host: default_horizon_host(),
-            horizon_port: default_horizon_port(),
-            python_path: default_python_path(),
-            opa_url: default_opa_url(),
-            opa_client_query_timeout: default_opa_client_query_timeout(),
-            horizon_client_timeout: default_horizon_client_timeout(),
-            cache: CacheConfig::default(),
-            api_key: String::new(),
+            api_key: "".to_string(),
             debug: None,
+            port: 7766,
             use_new_authorized_users: false,
+            horizon: HorizonConfig::default(),
+            opa: OpaConfig::default(),
+            cache: CacheConfig::default(),
         }
     }
 }
 
-impl Settings {
+impl PDPConfig {
+    /// Creates a new Config instance from environment variables
     pub fn new() -> Result<Self, String> {
-        Config::builder()
+        ConfigCrate::builder()
             .add_source(
                 config::Environment::with_prefix("PDP")
                     .prefix_separator("_")
-                    .separator("__")
+                    .separator("_")
                     .convert_case(config::Case::Snake),
             )
             .build()
@@ -178,14 +70,16 @@ impl Settings {
             .map_err(|e| e.to_string())
     }
 
+    /// Provides backward compatibility with old code
+    /// In a later change, this method can be deprecated and code updated to use config.services.horizon directly
     pub fn get_horizon_url<S: Into<String>>(&self, path: S) -> String {
         let path = path.into();
         if path.starts_with("/") {
-            format!("http://{}:{}{}", self.horizon_host, self.horizon_port, path,)
+            format!("http://{}:{}{}", self.horizon.host, self.horizon.port, path,)
         } else {
             format!(
                 "http://{}:{}/{}",
-                self.horizon_host, self.horizon_port, path,
+                self.horizon.host, self.horizon.port, path,
             )
         }
     }
@@ -196,17 +90,26 @@ impl Settings {
         opa_mock: &wiremock::MockServer,
     ) -> Self {
         Self {
-            port: 0, // Let the OS choose a port
-            horizon_host: horizon_mock.address().ip().to_string(),
-            horizon_port: horizon_mock.address().port(),
-            opa_url: opa_mock.uri(),
             api_key: "test_api_key".to_string(),
-            cache: CacheConfig {
-                ttl_secs: 60,
-                store: CacheStore::None,
-                ..CacheConfig::default()
+            debug: Some(true),
+            port: 0, // Let the OS choose a port
+            use_new_authorized_users: false,
+            // Use the mock server addresses for testing
+            horizon: HorizonConfig {
+                host: horizon_mock.address().ip().to_string(),
+                port: horizon_mock.address().port(),
+                python_path: "python3".to_string(),
+                client_timeout: 60,
             },
-            ..Default::default()
+            opa: OpaConfig {
+                url: opa_mock.uri(),
+                query_timeout: 5,
+            },
+            cache: CacheConfig {
+                ttl: 60,
+                store: CacheStore::None,
+                ..Default::default()
+            },
         }
     }
 }
@@ -216,63 +119,72 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_default_settings() {
+    fn test_default_config() {
         // Clear any existing environment variables
-        std::env::remove_var("PDP_PORT");
-        std::env::remove_var("PDP_CACHE__TTL_SECS");
-        std::env::remove_var("PDP_LEGACY_FALLBACK_URL");
-        std::env::remove_var("PDP_OPA_URL");
-        std::env::remove_var("PDP_PYTHON_PATH");
-        std::env::remove_var("PDP_CACHE__STORE");
-        std::env::remove_var("PDP_CACHE__REDIS__URL");
-        std::env::remove_var("PDP_CACHE__IN_MEMORY__CAPACITY_MIB");
-        std::env::remove_var("PDP_HORIZON_CLIENT_TIMEOUT");
+        for (name, _value) in std::env::vars() {
+            if name.starts_with("PDP_") {
+                std::env::remove_var(name);
+            }
+        }
+        // Set environment variables for testing
         std::env::set_var("PDP_API_KEY", "test-api-key");
+        std::env::set_var("PDP_PORT", "7766");
 
-        let settings = Settings::new().unwrap();
-        assert_eq!(settings.port, 7766); // Default value
-        assert_eq!(settings.cache.ttl_secs, 3600); // Default value
-        assert_eq!(settings.horizon_host, "0.0.0.0"); // Default value
-        assert_eq!(settings.horizon_port, 7001); // Default value
-        assert_eq!(settings.python_path, "python3"); // Default value
-        assert_eq!(settings.opa_url, "http://localhost:8181"); // Default value
-        assert_eq!(settings.opa_client_query_timeout, 1); // Default value
-        assert_eq!(settings.horizon_client_timeout, 60); // Default value
-        assert_eq!(settings.cache.store, CacheStore::None); // Default value
-        assert_eq!(settings.cache.in_memory.capacity_mib, 128); // Default value
-        assert_eq!(settings.cache.redis.url, ""); // Default value
-        assert_eq!(settings.api_key, "test-api-key"); // Default value
+        let config = PDPConfig::new().unwrap();
+        assert_eq!(config.port, 7766);
+        assert_eq!(config.cache.ttl, 3600);
+        assert_eq!(config.horizon.host, "0.0.0.0");
+        assert_eq!(config.horizon.port, 7001);
+        assert_eq!(config.horizon.python_path, "python3");
+        assert_eq!(config.opa.url, "http://localhost:8181");
+        assert_eq!(config.opa.query_timeout, 1);
+        assert_eq!(config.horizon.client_timeout, 60);
+        assert_eq!(config.cache.store, CacheStore::None);
+        assert_eq!(config.cache.memory.capacity, 128);
+        assert_eq!(config.cache.redis.url, "");
+        assert_eq!(config.api_key, "test-api-key");
+
+        // Clean up
+        std::env::remove_var("PDP_API_KEY");
+        std::env::remove_var("PDP_PORT");
     }
 
     #[test]
-    fn test_cache_store_settings() {
-        // Clear any existing environment variables that might affect the test
-        std::env::remove_var("PDP_CACHE__STORE");
-        std::env::remove_var("PDP_CACHE__REDIS_URL");
-        std::env::remove_var("PDP_CACHE__IN_MEMORY__CAPACITY_MIB");
+    fn test_default_cache_store() {
+        std::env::remove_var("PDP_CACHE_STORE");
+        std::env::remove_var("PDP_CACHE_REDIS_URL");
+        std::env::remove_var("PDP_CACHE_MEMORY_CAPACITY");
         std::env::set_var("PDP_API_KEY", "test-api-key");
-        // Test default value (should be None)
-        let settings = Settings::new().unwrap();
-        assert_eq!(settings.cache.store, CacheStore::None);
 
-        // Test in-memory cache store with custom capacity
-        std::env::set_var("PDP_CACHE__STORE", "in-memory");
-        std::env::set_var("PDP_CACHE__IN_MEMORY__CAPACITY_MIB", "256");
-        let settings = Settings::new().unwrap();
-        assert_eq!(settings.cache.store, CacheStore::InMemory);
-        assert_eq!(settings.cache.in_memory.capacity_mib, 256);
+        let config = PDPConfig::new().unwrap();
+        assert_eq!(config.cache.store, CacheStore::None);
 
-        // Test redis cache store
-        std::env::set_var("PDP_CACHE__STORE", "redis");
-        std::env::set_var("PDP_CACHE__REDIS__URL", "redis://localhost:6379");
-        let settings = Settings::new().unwrap();
-        assert_eq!(settings.cache.store, CacheStore::Redis);
-        assert_eq!(settings.cache.redis.url, "redis://localhost:6379");
-
-        // Reset environment variables
-        std::env::remove_var("PDP_CACHE__STORE");
-        std::env::remove_var("PDP_CACHE__REDIS__URL");
-        std::env::remove_var("PDP_CACHE__IN_MEMORY__CAPACITY_MIB");
         std::env::remove_var("PDP_API_KEY");
+    }
+
+    #[test]
+    fn test_in_memory_cache_store() {
+        std::env::set_var("PDP_CACHE_STORE", "in-memory");
+        std::env::set_var("PDP_CACHE_MEMORY_CAPACITY", "256");
+
+        let config = PDPConfig::new().unwrap();
+        assert_eq!(config.cache.store, CacheStore::InMemory);
+        assert_eq!(config.cache.memory.capacity, 256);
+
+        std::env::remove_var("PDP_CACHE_STORE");
+        std::env::remove_var("PDP_CACHE_MEMORY_CAPACITY");
+    }
+
+    #[test]
+    fn test_redis_cache_store() {
+        std::env::set_var("PDP_CACHE_STORE", "redis");
+        std::env::set_var("PDP_CACHE_REDIS_URL", "redis://localhost:6379");
+
+        let config = PDPConfig::new().unwrap();
+        assert_eq!(config.cache.store, CacheStore::Redis);
+        assert_eq!(config.cache.redis.url, "redis://localhost:6379");
+
+        std::env::remove_var("PDP_CACHE_STORE");
+        std::env::remove_var("PDP_CACHE_REDIS_URL");
     }
 }

@@ -55,7 +55,7 @@ pub(super) async fn user_permissions_handler(
     if client_cache.should_use_cache() {
         if let Ok(Some(cached)) = state.cache.get::<UserPermissionsResults>(&cache_key).await {
             let mut response = Response::new(Json(cached).into_response().into_body());
-            presets::private_cache(state.settings.cache.ttl_secs).apply(&mut response);
+            presets::private_cache(state.config.cache.ttl).apply(&mut response);
             return StatusCode::OK.into_response();
         }
     }
@@ -116,7 +116,7 @@ pub(super) async fn user_permissions_handler(
 
     // Create response using the map directly
     let mut http_response = Json(response).into_response();
-    presets::private_cache(state.settings.cache.ttl_secs).apply(&mut http_response);
+    presets::private_cache(state.config.cache.ttl).apply(&mut http_response);
     (StatusCode::OK, http_response).into_response()
 }
 

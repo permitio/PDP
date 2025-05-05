@@ -31,7 +31,7 @@ pub(super) async fn authorized_users_handler(
     State(state): State<AppState>,
     Json(query): Json<AuthorizedUsersAuthorizationQuery>,
 ) -> Response {
-    let endpoint = if state.settings.use_new_authorized_users {
+    let endpoint = if state.config.use_new_authorized_users {
         "/v1/data/permit/authorized_users_new/authorized_users"
     } else {
         "/v1/data/permit/authorized_users/authorized_users"

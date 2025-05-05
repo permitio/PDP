@@ -23,8 +23,8 @@ async fn main() {
     env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
 
     // Load configuration
-    let settings = match config::Settings::new() {
-        Ok(settings) => settings,
+    let config = match config::PDPConfig::new() {
+        Ok(config) => config,
         Err(e) => {
             error!("Configuration error: {}", e);
             std::process::exit(1);
@@ -32,7 +32,7 @@ async fn main() {
     };
 
     // Initialize cache asynchronously without using block_in_place
-    let cache = match cache::create_cache(&settings).await {
+    let cache = match cache::create_cache(&config).await {
         Ok(cache) => cache,
         Err(e) => {
             error!("Failed to initialize cache: {}", e);
@@ -41,7 +41,7 @@ async fn main() {
     };
 
     // Initialize application state
-    let state: AppState = AppState::with_existing_cache(&settings, cache)
+    let state: AppState = AppState::with_existing_cache(&config, cache)
         .await
         .expect("Failed to initialize application state");
 
@@ -49,7 +49,7 @@ async fn main() {
     let app = create_app(state).await;
 
     // Build server address
-    let addr = SocketAddr::from(([0, 0, 0, 0], settings.port));
+    let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
 
     // Start server
     let server = match tokio::net::TcpListener::bind(&addr).await {

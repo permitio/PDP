@@ -42,7 +42,7 @@ pub(super) async fn fallback_to_horizon(
     };
 
     // Prepare request builder
-    let url = state.settings.get_horizon_url(path);
+    let url = state.config.get_horizon_url(path);
     log::debug!("Forwarding request to Horizon: {} {}", req.method(), url);
     let req_builder = state.horizon_client.request(method, &url);
 
@@ -448,8 +448,15 @@ mod tests {
         let mut fixture = TestFixture::new().await;
 
         // Update settings to point to non-existent server
-        fixture.settings.horizon_host = "invalid-server".to_string();
-        fixture.settings.horizon_port = 12345;
+        fixture.config.horizon.host = "invalid-server".to_string();
+        fixture.config.horizon.port = 12345;
+
+        // Override the horizon client timeout to be very short (1 sec)
+        fixture.config.horizon.client_timeout = 1; // 1 second for test speed
+
+        // Need to recreate the app state with the new timeout settings
+        let state = AppState::for_testing(&fixture.config);
+        fixture.app = create_app(state).await;
 
         // Create test request
         let req = Request::builder()
@@ -460,7 +467,7 @@ mod tests {
 
         // Forward request with modified state
         let response =
-            fallback_to_horizon(State(AppState::for_testing(&fixture.settings)), req).await;
+            fallback_to_horizon(State(AppState::for_testing(&fixture.config)), req).await;
         let response = response.into_response();
 
         assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
@@ -475,10 +482,10 @@ mod tests {
         let mut fixture = TestFixture::new().await;
 
         // Override the horizon client timeout to be very short (1 sec)
-        fixture.settings.horizon_client_timeout = 1; // 1 second for test speed
+        fixture.config.horizon.client_timeout = 1; // 1 second for test speed
 
         // Need to recreate the app state with the new timeout settings
-        let state = AppState::for_testing(&fixture.settings);
+        let state = AppState::for_testing(&fixture.config);
         fixture.app = create_app(state).await;
 
         // Setup mock that delays longer than the timeout
@@ -498,7 +505,7 @@ mod tests {
 
         // Forward request directly using the fallback handler to ensure the timeout is used
         let response =
-            fallback_to_horizon(State(AppState::for_testing(&fixture.settings)), req).await;
+            fallback_to_horizon(State(AppState::for_testing(&fixture.config)), req).await;
         let response = response.into_response();
 
         // Assert timeout error (502 Bad Gateway)
@@ -525,7 +532,7 @@ mod tests {
         let mut fixture = TestFixture::new().await;
 
         // Set a 2 second timeout
-        fixture.settings.horizon_client_timeout = 2;
+        fixture.config.horizon.client_timeout = 2;
 
         // Setup mock that responds slower but within the timeout
         Mock::given(matchers::method("GET"))
