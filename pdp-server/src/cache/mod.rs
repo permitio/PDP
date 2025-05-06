@@ -143,17 +143,15 @@ impl CacheBackend for Cache {
 /// # Example
 ///
 /// ```
-/// let config = Settings::new().expect("Failed to load configuration");
+/// let config = Config::new().expect("Failed to load configuration");
 /// let cache = create_cache(&config).await.expect("Failed to create cache");
 /// ```
-pub async fn create_cache(config: &crate::config::Settings) -> Result<Cache, CacheError> {
+pub async fn create_cache(config: &crate::config::PDPConfig) -> Result<Cache, CacheError> {
     match config.cache.store {
         crate::config::CacheStore::InMemory => {
-            let cache = memory::InMemoryCache::new(
-                config.cache.ttl_secs as u64,
-                config.cache.in_memory.capacity_mib,
-            )
-            .map_err(CacheError::Config)?;
+            let cache =
+                memory::InMemoryCache::new(config.cache.ttl as u64, config.cache.memory.capacity)
+                    .map_err(CacheError::Config)?;
             Ok(Cache::InMemory(cache))
         }
         crate::config::CacheStore::Redis => {
@@ -162,10 +160,9 @@ pub async fn create_cache(config: &crate::config::Settings) -> Result<Cache, Cac
                     "Redis URL is required for Redis cache".to_string(),
                 ));
             }
-            let cache =
-                redis::RedisCache::new(&config.cache.redis.url, config.cache.ttl_secs as u64)
-                    .await
-                    .map_err(CacheError::Config)?;
+            let cache = redis::RedisCache::new(&config.cache.redis.url, config.cache.ttl as u64)
+                .await
+                .map_err(CacheError::Config)?;
             Ok(Cache::Redis(cache))
         }
         crate::config::CacheStore::None => {

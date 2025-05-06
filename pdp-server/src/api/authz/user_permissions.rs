@@ -55,7 +55,7 @@ pub(super) async fn user_permissions_handler(
     if client_cache.should_use_cache() {
         if let Ok(Some(cached)) = state.cache.get::<UserPermissionsResults>(&cache_key).await {
             let mut response = Response::new(Json(cached).into_response().into_body());
-            presets::private_cache(state.settings.cache.ttl_secs).apply(&mut response);
+            presets::private_cache(state.config.cache.ttl).apply(&mut response);
             return StatusCode::OK.into_response();
         }
     }
@@ -116,7 +116,7 @@ pub(super) async fn user_permissions_handler(
 
     // Create response using the map directly
     let mut http_response = Json(response).into_response();
-    presets::private_cache(state.settings.cache.ttl_secs).apply(&mut http_response);
+    presets::private_cache(state.config.cache.ttl).apply(&mut http_response);
     (StatusCode::OK, http_response).into_response()
 }
 
@@ -156,12 +156,292 @@ pub fn generate_cache_key(query: &UserPermissionsQuery) -> Result<String, serde_
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::User;
+    use crate::test_utils::TestFixture;
+    use http::Method;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn test_user_permissions_success() {
+        // Setup test fixture
+        let fixture = TestFixture::new().await;
+
+        // Setup mock OPA response using the helper method
+        fixture
+            .add_opa_mock(
+                Method::POST,
+                "/v1/data/permit/user_permissions",
+                json!({
+                    "result": {
+                        "permissions": {
+                            "resource1": {
+                                "tenant": {
+                                    "key": "tenant1",
+                                    "attributes": {}
+                                },
+                                "resource": {
+                                    "key": "resource1",
+                                    "type": "document",
+                                    "attributes": {}
+                                },
+                                "permissions": ["document:read", "document:write"],
+                                "roles": ["editor"]
+                            }
+                        }
+                    }
+                }),
+                StatusCode::OK,
+                1,
+            )
+            .await;
+
+        // Send request to the API
+        let response = fixture
+            .post(
+                "/user-permissions",
+                &json!({
+                    "user": {
+                        "key": "test-user",
+                        "first_name": "Test",
+                        "last_name": "User",
+                        "email": "test@example.com",
+                        "attributes": {}
+                    },
+                    "tenants": ["tenant1"],
+                    "resources": ["resource1"],
+                    "resource_types": ["document"]
+                }),
+            )
+            .await;
+
+        // Verify response status and body
+        response.assert_ok();
+        let result_map: HashMap<String, UserPermissionsResult> = response.json_as();
+
+        // Check the response structure
+        assert_eq!(result_map.len(), 1);
+        assert!(result_map.contains_key("resource1"));
+
+        let resource_result = &result_map["resource1"];
+        assert_eq!(resource_result.permissions.len(), 2);
+        assert!(resource_result
+            .permissions
+            .contains(&"document:read".to_string()));
+        assert!(resource_result
+            .permissions
+            .contains(&"document:write".to_string()));
+        assert_eq!(resource_result.roles.as_ref().unwrap()[0], "editor");
+
+        // Verify mock expectations
+        fixture.opa_mock.verify().await;
+    }
+
+    #[tokio::test]
+    async fn test_user_permissions_empty_result() {
+        // Setup test fixture
+        let fixture = TestFixture::new().await;
+
+        // Setup mock OPA response using the helper method
+        fixture
+            .add_opa_mock(
+                Method::POST,
+                "/v1/data/permit/user_permissions",
+                json!({
+                    "result": {
+                        "permissions": {}
+                    }
+                }),
+                StatusCode::OK,
+                1,
+            )
+            .await;
+
+        // Send request
+        let response = fixture
+            .post(
+                "/user-permissions",
+                &json!({
+                    "user": {
+                        "key": "test-user",
+                        "attributes": {}
+                    },
+                    "tenants": ["tenant1"]
+                }),
+            )
+            .await;
+
+        // Verify response - should still be 200 OK with empty results
+        response.assert_ok();
+        let result_map: HashMap<String, UserPermissionsResult> = response.json_as();
+        assert_eq!(result_map.len(), 0, "Expected empty permissions map");
+
+        // Verify mock expectations
+        fixture.opa_mock.verify().await;
+    }
+
+    #[tokio::test]
+    async fn test_user_permissions_opa_error() {
+        // Setup test fixture
+        let fixture = TestFixture::new().await;
+
+        // Create request JSON directly
+        let request_json = json!({
+            "user": {
+                "key": "test-user",
+                "attributes": {}
+            }
+        });
+
+        // Setup mock OPA response with error (500 status code)
+        fixture
+            .add_opa_mock(
+                Method::POST,
+                "/v1/data/permit/user_permissions",
+                "Internal Server Error",
+                StatusCode::INTERNAL_SERVER_ERROR,
+                1,
+            )
+            .await;
+
+        // Send request
+        let response = fixture.post("/user-permissions", &request_json).await;
+
+        // Verify response - should be a 502 Bad Gateway when OPA returns 5xx
+        response.assert_status(StatusCode::BAD_GATEWAY);
+
+        // Verify mock expectations
+        fixture.opa_mock.verify().await;
+    }
+
+    #[tokio::test]
+    async fn test_user_permissions_no_cache_control() {
+        // Setup test fixture
+        let fixture = TestFixture::new().await;
+
+        // Create request JSON directly
+        let request_json = json!({
+            "user": {
+                "key": "test-user",
+                "attributes": {}
+            },
+            "resource_types": ["document"]
+        });
+
+        // Create response JSON directly
+        let response_json = json!({
+            "result": {
+                "permissions": {
+                    "resource1": {
+                        "tenant": {
+                            "key": "tenant1",
+                            "attributes": {}
+                        },
+                        "resource": {
+                            "key": "resource1",
+                            "type": "document",
+                            "attributes": {}
+                        },
+                        "permissions": ["document:read"]
+                    }
+                }
+            }
+        });
+
+        // Setup mock OPA response using the helper method
+        fixture
+            .add_opa_mock(
+                Method::POST,
+                "/v1/data/permit/user_permissions",
+                response_json,
+                StatusCode::OK,
+                1,
+            )
+            .await;
+
+        // Send request to the API
+        let response = fixture.post("/user-permissions", &request_json).await;
+
+        // Simply verify the request was successful
+        response.assert_ok();
+        let result_map: HashMap<String, UserPermissionsResult> = response.json_as();
+        assert_eq!(result_map.len(), 1);
+
+        // Verify mock expectations
+        fixture.opa_mock.verify().await;
+    }
+
+    #[tokio::test]
+    async fn test_user_permissions_with_no_store_header() {
+        // Setup test fixture
+        let fixture = TestFixture::new().await;
+
+        // Create request JSON directly
+        let request_json = json!({
+            "user": {
+                "key": "test-user-cache",
+                "attributes": {}
+            },
+            "resource_types": ["document"]
+        });
+
+        // Create response JSON directly
+        let response_json = json!({
+            "result": {
+                "permissions": {
+                    "resource1": {
+                        "tenant": {
+                            "key": "tenant1",
+                            "attributes": {}
+                        },
+                        "resource": {
+                            "key": "resource1",
+                            "type": "document",
+                            "attributes": {}
+                        },
+                        "permissions": ["document:read"]
+                    }
+                }
+            }
+        });
+
+        // Setup mock OPA response using the helper method
+        fixture
+            .add_opa_mock(
+                Method::POST,
+                "/v1/data/permit/user_permissions",
+                response_json,
+                StatusCode::OK,
+                1,
+            )
+            .await;
+
+        // Send request with no-store cache header
+        let custom_headers = &[(CACHE_CONTROL.as_str(), "no-store")];
+        let response = fixture
+            .post_with_headers("/user-permissions", &request_json, custom_headers)
+            .await;
+
+        // Verify response is successful
+        response.assert_ok();
+        let result_map: HashMap<String, UserPermissionsResult> = response.json_as();
+        assert_eq!(
+            result_map.len(),
+            1,
+            "Should have one resource in permissions"
+        );
+        assert!(
+            result_map.contains_key("resource1"),
+            "Should contain resource1 entry"
+        );
+
+        // Verify mock expectations
+        fixture.opa_mock.verify().await;
+    }
 
     #[test]
     fn test_cache_key_generation() {
+        // Create test query directly as a struct since we're testing the function
         let query = UserPermissionsQuery {
-            user: User {
+            user: crate::models::User {
                 key: "test_user".to_string(),
                 first_name: None,
                 last_name: None,
@@ -185,83 +465,4 @@ mod tests {
             "Cache key should contain user key"
         );
     }
-    //
-    // #[tokio::test]
-    // async fn test_forward_to_opa_minimal_payload() {
-    //     let mock_server = MockServer::start().await;
-    //     let settings = Settings {
-    //         legacy_fallback_url: mock_server.uri(),
-    //         opa_url: mock_server.uri(),
-    //         port: 3000,
-    //         opa_client_query_timeout: 5,
-    //         cache: CacheConfig {
-    //             ttl_secs: 60,
-    //             store: CacheStore::None,
-    //             in_memory: InMemoryCacheConfig::default(),
-    //             redis: RedisCacheConfig::default(),
-    //         },
-    //         api_key: "test-api-key".to_string(),
-    //     };
-    //
-    //     let state = AppState::new(settings).await.unwrap();
-    //
-    //     // Create a minimal query with only required fields
-    //     let minimal_query = UserPermissionsQuery {
-    //         user: User {
-    //             key: "test_user".to_string(),
-    //             attributes: HashMap::new(),
-    //             first_name: None,
-    //             last_name: None,
-    //             email: None,
-    //         },
-    //         tenants: None,
-    //         resources: None,
-    //         resource_types: None,
-    //         context: None,
-    //     };
-    //     let minimal_query_str = r#"{"user":{"key":"test_user"}}"#;
-    //
-    //     // Create a test result
-    //     let permission_result = UserPermissionsResult {
-    //         tenant: Some(TenantDetails {
-    //             key: "test".to_string(),
-    //             attributes: HashMap::new(),
-    //         }),
-    //         resource: Some(ResourceDetails {
-    //             key: "test".to_string(),
-    //             r#type: "test".to_string(),
-    //             attributes: HashMap::new(),
-    //         }),
-    //         permissions: vec!["test:read".to_string()],
-    //         roles: Some(vec!["viewer".to_string()]),
-    //     };
-    //
-    //     // Create a HashMap for the response
-    //     let mut response_map = HashMap::new();
-    //     response_map.insert("test_resource".to_string(), permission_result);
-    //
-    //     // Setup mock to verify exact JSON payload sent to OPA
-    //     Mock::given(method("POST"))
-    //         .and(path("/user-permissions"))
-    //         .and(body_json(&minimal_query))
-    //         .respond_with(
-    //             ResponseTemplate::new(200).set_body_json(response_map)
-    //         )
-    //         .expect(1)
-    //         .mount(&mock_server)
-    //         .await;
-    //
-    //     let headers = HeaderMap::new();
-    //     let json_value = forward_to_opa::create_opa_request(&minimal_query).unwrap();
-    //     let _ = forward_to_opa::send_request_to_opa(&state, "user-permissions", &headers, &json_value).await;
-    //     let requests = mock_server.received_requests().await.unwrap();
-    //     assert_eq!(requests.len(), 1);
-    //     assert_eq!(requests[0].method, Method::POST);
-    //     assert_eq!(requests[0].url.path(), "/user-permissions");
-    //     assert_eq!(
-    //         String::from_utf8(requests[0].body.clone()).unwrap(),
-    //         minimal_query_str
-    //     );
-    //     mock_server.verify().await;
-    // }
 }
