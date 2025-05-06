@@ -71,4 +71,69 @@ impl HorizonConfig {
             format!("http://{}:{}/{}", self.host, self.port, path)
         }
     }
+
+    /// Creates a new configuration from environment variables
+    pub fn from_env(config: &Self) -> Self {
+        // Start with the provided configuration
+        let mut result = config.clone();
+
+        // Apply environment variable overrides for horizon configuration
+        if let Ok(host) = std::env::var("PDP_HORIZON_HOST") {
+            result.host = host;
+        }
+
+        if let Ok(port) = std::env::var("PDP_HORIZON_PORT") {
+            if let Ok(parsed) = port.parse::<u16>() {
+                result.port = parsed;
+            }
+        }
+
+        if let Ok(python_path) = std::env::var("PDP_HORIZON_PYTHON_PATH") {
+            result.python_path = python_path;
+        }
+
+        if let Ok(timeout) = std::env::var("PDP_HORIZON_CLIENT_TIMEOUT") {
+            if let Ok(parsed) = timeout.parse::<u64>() {
+                result.client_timeout = parsed;
+            }
+        }
+
+        if let Ok(timeout) = std::env::var("PDP_HORIZON_HEALTH_CHECK_TIMEOUT") {
+            if let Ok(parsed) = timeout.parse::<u64>() {
+                result.health_check_timeout = parsed;
+            }
+        }
+
+        if let Ok(interval) = std::env::var("PDP_HORIZON_HEALTH_CHECK_INTERVAL") {
+            if let Ok(parsed) = interval.parse::<u64>() {
+                result.health_check_interval = parsed;
+            }
+        }
+
+        if let Ok(threshold) = std::env::var("PDP_HORIZON_HEALTH_CHECK_FAILURE_THRESHOLD") {
+            if let Ok(parsed) = threshold.parse::<u32>() {
+                result.health_check_failure_threshold = parsed;
+            }
+        }
+
+        if let Ok(delay) = std::env::var("PDP_HORIZON_STARTUP_DELAY") {
+            if let Ok(parsed) = delay.parse::<u64>() {
+                result.startup_delay = parsed;
+            }
+        }
+
+        if let Ok(interval) = std::env::var("PDP_HORIZON_RESTART_INTERVAL") {
+            if let Ok(parsed) = interval.parse::<u64>() {
+                result.restart_interval = parsed;
+            }
+        }
+
+        if let Ok(timeout) = std::env::var("PDP_HORIZON_TERMINATION_TIMEOUT") {
+            if let Ok(parsed) = timeout.parse::<u64>() {
+                result.termination_timeout = parsed;
+            }
+        }
+
+        result
+    }
 }

@@ -57,13 +57,8 @@ impl Default for PDPConfig {
 impl PDPConfig {
     /// Creates a new Config instance from environment variables
     pub fn new() -> Result<Self, String> {
+        // Create a config builder with environment source
         let config_builder = ConfigCrate::builder()
-            .add_source(
-                config::Environment::with_prefix("PDP")
-                    .prefix_separator("_")
-                    .separator("_")
-                    .convert_case(config::Case::Snake),
-            )
             .build()
             .map_err(|e: ConfigError| e.to_string())?;
 
@@ -73,40 +68,52 @@ impl PDPConfig {
             println!("Config builder debug: {:?}", config_builder);
         }
 
-        // Try to extract key values directly from environment variables
-        let api_key = std::env::var("PDP_API_KEY").unwrap_or_else(|_| String::new());
-
-        // Parse port from environment variable
-        let port = std::env::var("PDP_PORT")
-            .ok()
-            .and_then(|p| p.parse::<u16>().ok())
-            .unwrap_or(7766);
-
-        // Parse cache TTL from environment variable
-        let cache_ttl = std::env::var("PDP_CACHE_TTL")
-            .ok()
-            .and_then(|ttl| ttl.parse::<u32>().ok())
-            .unwrap_or(3600);
-
-        // Parse cache store type
-        let cache_store = match std::env::var("PDP_CACHE_STORE").as_deref() {
-            Ok("in-memory") => CacheStore::InMemory,
-            Ok("redis") => CacheStore::Redis,
-            Ok("none") => CacheStore::None,
-            _ => CacheStore::None,
-        };
-
-        let mut config: Self = config_builder
+        // Deserialize the basic configuration
+        let base_config: Self = config_builder
             .try_deserialize()
             .map_err(|e| e.to_string())?;
 
-        // Apply the direct environment variable values
-        config.api_key = api_key;
-        config.port = port;
-        config.cache.ttl = cache_ttl;
-        config.cache.store = cache_store;
+        // Create a new configuration with environment variables
+        Ok(Self::from_env(&base_config))
+    }
 
-        Ok(config)
+    /// Creates a new configuration from environment variables
+    pub fn from_env(config: &Self) -> Self {
+        // Apply environment variables to main config
+        let mut result = config.clone();
+
+        // Apply API key from environment
+        if let Ok(api_key) = std::env::var("PDP_API_KEY") {
+            result.api_key = api_key;
+        }
+
+        // Apply port from environment
+        if let Ok(port) = std::env::var("PDP_PORT") {
+            if let Ok(parsed) = port.parse::<u16>() {
+                result.port = parsed;
+            }
+        }
+
+        // Apply debug flag from environment
+        if let Ok(debug) = std::env::var("PDP_DEBUG") {
+            if let Ok(parsed) = debug.parse::<bool>() {
+                result.debug = Some(parsed);
+            }
+        }
+
+        // Apply use_new_authorized_users flag from environment
+        if let Ok(use_new) = std::env::var("PDP_USE_NEW_AUTHORIZED_USERS") {
+            if let Ok(parsed) = use_new.parse::<bool>() {
+                result.use_new_authorized_users = parsed;
+            }
+        }
+
+        // Apply sub-configurations
+        result.horizon = HorizonConfig::from_env(&result.horizon);
+        result.opa = OpaConfig::from_env(&result.opa);
+        result.cache = CacheConfig::from_env(&result.cache);
+
+        result
     }
 
     #[cfg(test)]
@@ -271,6 +278,69 @@ mod tests {
                 let config = PDPConfig::new().unwrap();
                 assert_eq!(config.cache.store, CacheStore::Redis);
                 assert_eq!(config.cache.redis.url, "redis://localhost:6379");
+            },
+        );
+    }
+
+    #[test]
+    fn test_comprehensive_env_vars() {
+        with_env_vars(
+            &[
+                // Top level config
+                ("PDP_API_KEY", "env-test-api-key"),
+                ("PDP_PORT", "7777"),
+                ("PDP_DEBUG", "true"),
+                ("PDP_USE_NEW_AUTHORIZED_USERS", "true"),
+                // Cache config
+                ("PDP_CACHE_TTL", "1800"),
+                ("PDP_CACHE_STORE", "in-memory"),
+                ("PDP_CACHE_MEMORY_CAPACITY", "256"),
+                ("PDP_CACHE_REDIS_URL", "redis://test-host:6379"),
+                // OPA config
+                ("PDP_OPA_URL", "http://test-opa:8181"),
+                ("PDP_OPA_QUERY_TIMEOUT", "3"),
+                // Horizon config
+                ("PDP_HORIZON_HOST", "test-horizon-host"),
+                ("PDP_HORIZON_PORT", "7002"),
+                ("PDP_HORIZON_PYTHON_PATH", "/usr/bin/python3"),
+                ("PDP_HORIZON_CLIENT_TIMEOUT", "30"),
+                ("PDP_HORIZON_HEALTH_CHECK_TIMEOUT", "2"),
+                ("PDP_HORIZON_HEALTH_CHECK_INTERVAL", "10"),
+                ("PDP_HORIZON_HEALTH_CHECK_FAILURE_THRESHOLD", "5"),
+                ("PDP_HORIZON_STARTUP_DELAY", "3"),
+                ("PDP_HORIZON_RESTART_INTERVAL", "2"),
+                ("PDP_HORIZON_TERMINATION_TIMEOUT", "15"),
+            ],
+            || {
+                let config = PDPConfig::new().unwrap();
+
+                // Test top level config
+                assert_eq!(config.api_key, "env-test-api-key");
+                assert_eq!(config.port, 7777);
+                assert_eq!(config.debug, Some(true));
+                assert_eq!(config.use_new_authorized_users, true);
+
+                // Test cache config
+                assert_eq!(config.cache.ttl, 1800);
+                assert_eq!(config.cache.store, CacheStore::InMemory);
+                assert_eq!(config.cache.memory.capacity, 256);
+                assert_eq!(config.cache.redis.url, "redis://test-host:6379");
+
+                // Test OPA config
+                assert_eq!(config.opa.url, "http://test-opa:8181");
+                assert_eq!(config.opa.query_timeout, 3);
+
+                // Test Horizon config
+                assert_eq!(config.horizon.host, "test-horizon-host");
+                assert_eq!(config.horizon.port, 7002);
+                assert_eq!(config.horizon.python_path, "/usr/bin/python3");
+                assert_eq!(config.horizon.client_timeout, 30);
+                assert_eq!(config.horizon.health_check_timeout, 2);
+                assert_eq!(config.horizon.health_check_interval, 10);
+                assert_eq!(config.horizon.health_check_failure_threshold, 5);
+                assert_eq!(config.horizon.startup_delay, 3);
+                assert_eq!(config.horizon.restart_interval, 2);
+                assert_eq!(config.horizon.termination_timeout, 15);
             },
         );
     }

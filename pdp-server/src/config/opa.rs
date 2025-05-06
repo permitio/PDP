@@ -20,3 +20,24 @@ impl Default for OpaConfig {
         }
     }
 }
+
+impl OpaConfig {
+    /// Creates a new configuration from environment variables
+    pub fn from_env(config: &Self) -> Self {
+        // Start with the provided configuration
+        let mut result = config.clone();
+
+        // Apply environment variable overrides for OPA configuration
+        if let Ok(url) = std::env::var("PDP_OPA_URL") {
+            result.url = url;
+        }
+
+        if let Ok(timeout) = std::env::var("PDP_OPA_QUERY_TIMEOUT") {
+            if let Ok(parsed) = timeout.parse::<u64>() {
+                result.query_timeout = parsed;
+            }
+        }
+
+        result
+    }
+}
