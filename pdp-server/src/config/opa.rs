@@ -9,14 +9,14 @@ pub struct OpaConfig {
 
     /// The timeout for OPA client queries in seconds (default: 1)
     #[serde(default)]
-    pub query_timeout: u64,
+    pub client_query_timeout: u64,
 }
 
 impl Default for OpaConfig {
     fn default() -> Self {
         Self {
             url: "http://localhost:8181".to_string(),
-            query_timeout: 1, // 1 second
+            client_query_timeout: 1, // 1 second
         }
     }
 }
@@ -32,9 +32,9 @@ impl OpaConfig {
             result.url = url;
         }
 
-        if let Ok(timeout) = std::env::var("PDP_OPA_QUERY_TIMEOUT") {
+        if let Ok(timeout) = std::env::var("PDP_OPA_CLIENT_QUERY_TIMEOUT") {
             if let Ok(parsed) = timeout.parse::<u64>() {
-                result.query_timeout = parsed;
+                result.client_query_timeout = parsed;
             }
         }
 

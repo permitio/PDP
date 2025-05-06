@@ -541,7 +541,7 @@ mod tests {
             },
             opa: crate::config::opa::OpaConfig {
                 url: "http://localhost:8181".to_string(),
-                query_timeout: 1,
+                client_query_timeout: 1,
             },
             cache: crate::config::cache::CacheConfig::default(),
         };

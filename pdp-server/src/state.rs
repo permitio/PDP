@@ -40,7 +40,7 @@ impl AppState {
             watchdog: Some(Arc::new(watchdog)),
             opa_client: Arc::new(create_http_client(
                 config.api_key.clone(),
-                config.opa.query_timeout,
+                config.opa.client_query_timeout,
             )),
             horizon_client: Arc::new(create_http_client(
                 config.api_key.clone(),
@@ -62,7 +62,7 @@ impl AppState {
             watchdog: Some(Arc::new(watchdog)),
             opa_client: Arc::new(create_http_client(
                 config.api_key.clone(),
-                config.opa.query_timeout,
+                config.opa.client_query_timeout,
             )),
             horizon_client: Arc::new(create_http_client(
                 config.api_key.clone(),
@@ -80,7 +80,7 @@ impl AppState {
             watchdog: None,
             opa_client: Arc::new(create_http_client(
                 config.api_key.clone(),
-                config.opa.query_timeout,
+                config.opa.client_query_timeout,
             )),
             horizon_client: Arc::new(create_http_client(
                 config.api_key.clone(),
@@ -191,7 +191,7 @@ mod tests {
             },
             opa: crate::config::opa::OpaConfig {
                 url: "http://localhost:8181".to_string(),
-                query_timeout: 5,
+                client_query_timeout: 5,
             },
             cache: CacheConfig {
                 ttl: 60,

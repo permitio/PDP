@@ -141,7 +141,7 @@ impl PDPConfig {
             },
             opa: OpaConfig {
                 url: opa_mock.uri(),
-                query_timeout: 5,
+                client_query_timeout: 5,
             },
             cache: CacheConfig {
                 ttl: 60,
@@ -232,7 +232,7 @@ mod tests {
                 assert_eq!(config.horizon.port, 7001);
                 assert_eq!(config.horizon.python_path, "python3");
                 assert_eq!(config.opa.url, "http://localhost:8181");
-                assert_eq!(config.opa.query_timeout, 1);
+                assert_eq!(config.opa.client_query_timeout, 1);
                 assert_eq!(config.horizon.client_timeout, 60);
                 assert_eq!(config.cache.store, CacheStore::None);
                 assert_eq!(config.cache.memory.capacity, 128);
@@ -328,7 +328,7 @@ mod tests {
 
                 // Test OPA config
                 assert_eq!(config.opa.url, "http://test-opa:8181");
-                assert_eq!(config.opa.query_timeout, 3);
+                assert_eq!(config.opa.client_query_timeout, 3);
 
                 // Test Horizon config
                 assert_eq!(config.horizon.host, "test-horizon-host");
