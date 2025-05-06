@@ -60,7 +60,9 @@ fn create_opa_request<T: Serialize>(
     if let Some(debug) = debug {
         // Inject `use_debugger` if the value is an object
         if let Object(ref mut obj) = value {
-            obj.insert("use_debugger".to_string(), Bool(debug));
+            if !obj.contains_key("use_debugger") {
+                obj.insert("use_debugger".to_string(), Bool(debug));
+            }
         }
     }
     Ok(OpaRequest { input: value })
