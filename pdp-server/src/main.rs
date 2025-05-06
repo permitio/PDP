@@ -6,6 +6,8 @@ mod headers;
 mod models;
 mod openapi;
 mod state;
+#[cfg(test)]
+mod test_utils;
 
 use crate::state::AppState;
 use axum::Router;
@@ -21,8 +23,8 @@ async fn main() {
     env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
 
     // Load configuration
-    let settings = match config::Settings::new() {
-        Ok(settings) => settings,
+    let config = match config::PDPConfig::new() {
+        Ok(config) => config,
         Err(e) => {
             error!("Configuration error: {}", e);
             std::process::exit(1);
@@ -30,7 +32,7 @@ async fn main() {
     };
 
     // Initialize cache asynchronously without using block_in_place
-    let cache = match cache::create_cache(&settings).await {
+    let cache = match cache::create_cache(&config).await {
         Ok(cache) => cache,
         Err(e) => {
             error!("Failed to initialize cache: {}", e);
@@ -39,23 +41,19 @@ async fn main() {
     };
 
     // Initialize application state
-    let state: AppState = AppState::with_existing_cache(&settings, cache)
+    let state: AppState = AppState::with_existing_cache(&config, cache)
         .await
         .expect("Failed to initialize application state");
 
     // Create application & Initialize PDPEngine
-    let app = create_app(state.clone()).await;
+    let app = create_app(state).await;
 
     // Build server address
-    let addr = SocketAddr::from(([0, 0, 0, 0], settings.port));
-    info!("Starting server on {}", addr);
+    let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
 
     // Start server
     let server = match tokio::net::TcpListener::bind(&addr).await {
-        Ok(listener) => {
-            info!("Listening on {}", addr);
-            listener
-        }
+        Ok(listener) => listener,
         Err(e) => {
             error!("Failed to bind to {}: {}", addr, e);
             std::process::exit(1);
@@ -63,16 +61,17 @@ async fn main() {
     };
 
     // Start the server and wait for it to finish
-    info!("Server running, press Ctrl+C to stop");
-    axum::serve(server, app)
+    info!("Server running on {}, press Ctrl+C to stop", addr);
+    let serve = axum::serve(server, app)
         .with_graceful_shutdown(shutdown_signal())
-        .await
-        .unwrap_or_else(|err| {
-            error!("Server error: {}", err);
-        });
+        .await;
+    if let Err(e) = serve {
+        error!("Server error: {}", e);
+        std::process::exit(1);
+    }
 
     // Drop state to ensure clean shutdown of watchdog
-    drop(state);
+    drop(serve);
     info!("Server shutdown complete");
 }
 
@@ -116,86 +115,5 @@ async fn shutdown_signal() {
         _ = terminate => {
             info!("Received SIGTERM, shutting down");
         }
-    }
-}
-
-#[cfg(test)]
-pub(crate) mod test {
-    use crate::config::{CacheConfig, CacheStore, Settings};
-    use crate::create_app;
-    use axum::body::Body;
-
-    use crate::state::AppState;
-    use axum::Router;
-    use http::{Method, Request, StatusCode};
-    use http_body_util::BodyExt;
-    use log::LevelFilter;
-    use tower::ServiceExt;
-    use wiremock::MockServer;
-
-    /// Set up a test server
-    pub(crate) async fn setup_test_app_with_state(app_state: AppState) -> Router {
-        // Setup logger
-        let _ = env_logger::builder()
-            .filter_level(LevelFilter::Debug)
-            .is_test(true)
-            .try_init();
-
-        create_app(app_state).await
-    }
-
-    /// Set up a test server
-    pub(crate) async fn setup_test_app() -> Router {
-        let settings = setup_test_settings().await;
-        let state = AppState::for_testing(&settings);
-        setup_test_app_with_state(state).await
-    }
-
-    /// Set up test settings with given mock server
-    pub(crate) fn setup_test_settings_with_mock(mock_server: &MockServer) -> Settings {
-        // TODO move to a method on Settings
-        // Create test settings
-        Settings {
-            port: 0, // Let the OS choose a port
-            cache: CacheConfig {
-                ttl_secs: 60,
-                store: CacheStore::None,
-                ..CacheConfig::default()
-            },
-            api_key: "test_api_key".to_string(),
-            horizon_host: mock_server.address().ip().to_string(),
-            horizon_port: mock_server.address().port(),
-            opa_url: mock_server.uri(),
-            ..Settings::default()
-        }
-    }
-
-    /// Set up test settings
-    pub(crate) async fn setup_test_settings() -> Settings {
-        // Create a mock server
-        let mock_server = MockServer::start().await;
-        setup_test_settings_with_mock(&mock_server)
-    }
-
-    pub(crate) async fn get_request(app: &Router, uri: &str) -> serde_json::Value {
-        let request = Request::builder()
-            .method(Method::GET)
-            .uri(uri)
-            .body(Body::empty())
-            .expect("Failed to build request");
-
-        let resp = app
-            .clone()
-            .oneshot(request)
-            .await
-            .expect("Failed to send request");
-        assert_eq!(resp.status(), StatusCode::OK);
-        let raw_body = resp
-            .into_body()
-            .collect()
-            .await
-            .expect("Failed to read response body")
-            .to_bytes();
-        serde_json::from_slice(&raw_body).expect("Failed to deserialize response body")
     }
 }
