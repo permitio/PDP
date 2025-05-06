@@ -58,7 +58,7 @@ pub(super) async fn authentication_middleware(
     };
 
     // Verify the API key
-    if api_key != state.settings.api_key {
+    if api_key != state.config.api_key {
         warn!("Authentication failed: Invalid API key");
         return Response::builder()
             .status(StatusCode::FORBIDDEN)
@@ -73,7 +73,7 @@ pub(super) async fn authentication_middleware(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::setup_test_settings;
+    use crate::test_utils::TestFixture;
     use axum::routing::get;
     use axum::Router;
     use http_body_util::BodyExt;
@@ -83,9 +83,11 @@ mod tests {
 
     /// Helper function to set up a mock app with authentication middleware
     async fn setup_authn_mock_app(api_key: &str) -> Router {
-        let mut settings = setup_test_settings().await;
-        settings.api_key = api_key.to_string();
-        let state = AppState::for_testing(&settings);
+        // Create a TestFixture and get settings from it, but customize the API key
+        let fixture = TestFixture::new().await;
+        let mut config = fixture.config.clone();
+        config.api_key = api_key.to_string();
+        let state = AppState::for_testing(&config);
 
         Router::new()
             .route(TEST_ROUTE, get(async || (StatusCode::OK, "Authenticated")))
