@@ -62,12 +62,6 @@ impl PDPConfig {
             .build()
             .map_err(|e: ConfigError| e.to_string())?;
 
-        // Debug during tests
-        #[cfg(test)]
-        {
-            println!("Config builder debug: {:?}", config_builder);
-        }
-
         // Deserialize the basic configuration
         let base_config: Self = config_builder
             .try_deserialize()
@@ -166,7 +160,9 @@ mod tests {
         F: FnOnce() -> R,
     {
         // Acquire the mutex to prevent other tests from modifying the environment
-        let _lock = ENV_MUTEX.lock().unwrap();
+        let lock = ENV_MUTEX
+            .lock()
+            .expect("Failed to acquire environment mutex");
 
         // Save the original values
         let mut old_values = Vec::new();
@@ -210,6 +206,9 @@ mod tests {
                 std::env::set_var(key, val);
             }
         }
+
+        // Release the lock explicitly (though it would happen automatically at the end of scope)
+        drop(lock);
 
         result
     }
@@ -298,7 +297,7 @@ mod tests {
                 ("PDP_CACHE_REDIS_URL", "redis://test-host:6379"),
                 // OPA config
                 ("PDP_OPA_URL", "http://test-opa:8181"),
-                ("PDP_OPA_QUERY_TIMEOUT", "3"),
+                ("PDP_OPA_CLIENT_QUERY_TIMEOUT", "3"),
                 // Horizon config
                 ("PDP_HORIZON_HOST", "test-horizon-host"),
                 ("PDP_HORIZON_PORT", "7002"),
