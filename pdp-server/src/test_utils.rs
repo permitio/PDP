@@ -106,6 +106,94 @@ impl TestFixture {
         }
     }
 
+    /// Creates a new test fixture with custom configuration.
+    ///
+    /// This method creates a fixture and then allows modifying its config
+    /// before it's returned, making it easy to create tests with custom settings.
+    ///
+    /// # Parameters
+    ///
+    /// - `config_modifier`: A function that modifies the config
+    ///
+    /// # Returns
+    ///
+    /// A TestFixture with the modified configuration
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// #[tokio::test]
+    /// async fn test_with_custom_config() {
+    ///     let fixture = TestFixture::with_config_modifier(|config| {
+    ///         config.use_new_authorized_users = true;
+    ///         config.custom_option = "test value".to_string();
+    ///     }).await;
+    ///
+    ///     // The fixture now has custom configuration
+    /// }
+    /// ```
+    pub async fn with_config_modifier(mut config_modifier: impl FnMut(&mut PDPConfig)) -> Self {
+        // Create mock servers
+        let opa_mock = MockServer::start().await;
+        let horizon_mock = MockServer::start().await;
+
+        // Create settings configured with mocks
+        let mut config = PDPConfig::for_test_with_mocks(&horizon_mock, &opa_mock);
+
+        // Apply the config modifications
+        config_modifier(&mut config);
+
+        Self::with_config(config, opa_mock, horizon_mock).await
+    }
+
+    /// Creates a new test fixture with a provided configuration.
+    ///
+    /// This method allows providing a fully configured PDPConfig object directly.
+    ///
+    /// # Parameters
+    ///
+    /// - `config`: The configuration to use
+    ///
+    /// # Returns
+    ///
+    /// A TestFixture with the provided configuration
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// #[tokio::test]
+    /// async fn test_with_specific_config() {
+    ///     // Create mock servers
+    ///     let opa_mock = MockServer::start().await;
+    ///     let horizon_mock = MockServer::start().await;
+    ///
+    ///     // Create and customize a config
+    ///     let mut config = PDPConfig::for_test_with_mocks(&horizon_mock, &opa_mock);
+    ///     config.use_new_authorized_users = true;
+    ///
+    ///     // Create fixture with the config
+    ///     let fixture = TestFixture::with_config(config, opa_mock, horizon_mock).await;
+    ///
+    ///     // The fixture now has the specific configuration
+    /// }
+    /// ```
+    pub async fn with_config(
+        config: PDPConfig,
+        opa_mock: MockServer,
+        horizon_mock: MockServer,
+    ) -> Self {
+        // Create app state with the config
+        let state = AppState::for_testing(&config);
+        let app = create_app(state).await;
+
+        Self {
+            app,
+            config,
+            opa_mock,
+            horizon_mock,
+        }
+    }
+
     /// Initializes the test logger with customized settings.
     ///
     /// This method can be called to configure custom log levels for tests.

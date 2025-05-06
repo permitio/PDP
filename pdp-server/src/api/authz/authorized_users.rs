@@ -279,9 +279,46 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "New endpoint not properly configured in test environment"]
     async fn test_authorized_users_new_endpoint() {
-        // This test is disabled because the new endpoint doesn't seem to be
-        // properly configured in the test environment
+        // Setup test fixture
+        let fixture = TestFixture::with_config_modifier(|config| {
+            config.use_new_authorized_users = true;
+        })
+        .await;
+
+        // Setup mock OPA response using the helper method
+        fixture
+            .add_opa_mock(
+                Method::POST,
+                "/v1/data/permit/authorized_users_new/authorized_users",
+                "Internal Server Error",
+                StatusCode::INTERNAL_SERVER_ERROR,
+                1,
+            )
+            .await;
+
+        // Send request
+        let response = fixture
+            .post(
+                "/authorized_users",
+                &json!({
+                    "action": "view",
+                    "resource": {
+                        "type": "document",
+                        "key": "doc-123",
+                        "tenant": "test_tenant",
+                        "attributes": {},
+                        "context": {}
+                    },
+                    "context": {}
+                }),
+            )
+            .await;
+
+        // Verify response - should be a 502 Bad Gateway when OPA returns 5xx
+        response.assert_status(StatusCode::BAD_GATEWAY);
+
+        // Verify mock expectations
+        fixture.opa_mock.verify().await;
     }
 }
