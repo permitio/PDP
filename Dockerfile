@@ -113,6 +113,9 @@ ENV OPAL_AUTH_PUBLIC_KEY="ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDe2iQ+/E01P2W5/E
 
 # We ignore this callback because we are sunsetting this feature in favor of the new inline OPA data updater
 ENV PDP_IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS='["http://localhost:8181/v1/data/permit/rebac/cache_rebuild"]'
+# We need to set v0_compatible to true to make sure the PDP works with the OPA v0
+# syntax.
+ENV OPAL_INLINE_OPA_LOG_CONFIG='{"v0_compatible": true}'
 # if we are using the custom OPA binary, we need to load the permit plugin,
 # if we don't then we MUST not add a non existing plugin
 FROM main AS main-vanilla
