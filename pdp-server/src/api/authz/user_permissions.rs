@@ -1,12 +1,10 @@
-use std::collections::HashMap;
-
 use crate::errors::ApiError;
 use crate::opa_client::user_permissions::{query_user_permissions, UserPermissionsResults};
 use crate::openapi::AUTHZ_TAG;
 use crate::{
     cache::CacheBackend,
     headers::{presets, ClientCacheControl},
-    models::{UserPermissionsQuery, UserPermissionsResult},
+    models::UserPermissionsQuery,
     state::AppState,
 };
 use axum::{
@@ -15,9 +13,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use http::header::CACHE_CONTROL;
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use utoipa::ToSchema;
 
 #[utoipa::path(
     post,
@@ -105,6 +101,7 @@ mod tests {
     use crate::test_utils::TestFixture;
     use http::Method;
     use serde_json::json;
+    use std::collections::HashMap;
 
     #[tokio::test]
     async fn test_user_permissions_success() {
