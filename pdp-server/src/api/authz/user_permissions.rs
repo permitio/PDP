@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use crate::api::authz::forward_to_opa::send_request_to_opa;
 use crate::errors::ApiError;
+use crate::opa_client::user_permissions::{query_user_permissions, UserPermissionsResults};
 use crate::openapi::AUTHZ_TAG;
 use crate::{
     cache::CacheBackend,
@@ -16,7 +16,6 @@ use axum::{
 };
 use http::header::CACHE_CONTROL;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use sha2::{Digest, Sha256};
 use utoipa::ToSchema;
 
@@ -54,58 +53,23 @@ pub(super) async fn user_permissions_handler(
     // Check cache if allowed by client
     if client_cache.should_use_cache() {
         if let Ok(Some(cached)) = state.cache.get::<UserPermissionsResults>(&cache_key).await {
-            let mut response = Response::new(Json(cached).into_response().into_body());
+            let mut response = Json(cached).into_response();
             presets::private_cache(state.config.cache.ttl).apply(&mut response);
             return StatusCode::OK.into_response();
         }
     }
 
-    // Forward to OPA service
-    let full_result: serde_json::Value = match send_request_to_opa::<serde_json::Value, _>(
-        &state,
-        "/v1/data/permit/user_permissions",
-        &query,
-    )
-    .await
-    {
-        Ok(result) => result,
+    // Forward to OPA service and get the result
+    let permissions = match query_user_permissions(&state, &query).await {
+        Ok(permissions) => permissions,
         Err(err) => {
             log::error!("Failed to send request to OPA: {}", err);
             return ApiError::from(err).into_response();
         }
     };
 
-    // Extract "permissions" field from the response
-    let result = match &full_result {
-        serde_json::Value::Object(map) => {
-            if let Some(permissions) = map.get("permissions") {
-                permissions.clone()
-            } else {
-                log::warn!(
-                    "OPA response did not contain 'permissions' field: got {:?}",
-                    full_result
-                );
-                // If the response does not contain the "permissions" field, we return an empty result
-                return (StatusCode::OK, Json(json!({}))).into_response();
-            }
-        }
-        _ => {
-            log::warn!(
-                "Invalid response from OPA: expected an object, got {:?}",
-                full_result
-            );
-            // If the response is not an object, we return an empty result
-            return (StatusCode::OK, Json(json!({}))).into_response();
-        }
-    };
-
-    let response: UserPermissionsResults = match serde_json::from_value(result) {
-        Ok(response) => response,
-        Err(err) => {
-            log::error!("Failed to deserialize OPA response: {}", err);
-            return ApiError::internal("Invalid response from OPA".to_string()).into_response();
-        }
-    };
+    // Create response using the map
+    let response = UserPermissionsResults::from(permissions);
 
     // Cache the result if allowed
     if !client_cache.no_store {
@@ -118,24 +82,6 @@ pub(super) async fn user_permissions_handler(
     let mut http_response = Json(response).into_response();
     presets::private_cache(state.config.cache.ttl).apply(&mut http_response);
     (StatusCode::OK, http_response).into_response()
-}
-
-// Define a newtype wrapper for HashMap<String, UserPermissionsResult>
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, ToSchema)]
-struct UserPermissionsResults(HashMap<String, UserPermissionsResult>);
-
-// Implement IntoResponse for our newtype
-impl IntoResponse for UserPermissionsResults {
-    fn into_response(self) -> Response {
-        Json(self.0).into_response()
-    }
-}
-
-// Implement conversion from HashMap to our newtype
-impl From<HashMap<String, UserPermissionsResult>> for UserPermissionsResults {
-    fn from(map: HashMap<String, UserPermissionsResult>) -> Self {
-        UserPermissionsResults(map)
-    }
 }
 
 /// Generate a cache key specifically for user permissions
@@ -215,13 +161,13 @@ mod tests {
 
         // Verify response status and body
         response.assert_ok();
-        let result_map: HashMap<String, UserPermissionsResult> = response.json_as();
+        let result_map: UserPermissionsResults = response.json_as();
 
         // Check the response structure
-        assert_eq!(result_map.len(), 1);
-        assert!(result_map.contains_key("resource1"));
+        assert_eq!(result_map.0.len(), 1);
+        assert!(result_map.0.contains_key("resource1"));
 
-        let resource_result = &result_map["resource1"];
+        let resource_result = &result_map.0["resource1"];
         assert_eq!(resource_result.permissions.len(), 2);
         assert!(resource_result
             .permissions
@@ -271,8 +217,8 @@ mod tests {
 
         // Verify response - should still be 200 OK with empty results
         response.assert_ok();
-        let result_map: HashMap<String, UserPermissionsResult> = response.json_as();
-        assert_eq!(result_map.len(), 0, "Expected empty permissions map");
+        let result_map: UserPermissionsResults = response.json_as();
+        assert_eq!(result_map.0.len(), 0, "Expected empty permissions map");
 
         // Verify mock expectations
         fixture.opa_mock.verify().await;
@@ -362,8 +308,8 @@ mod tests {
 
         // Simply verify the request was successful
         response.assert_ok();
-        let result_map: HashMap<String, UserPermissionsResult> = response.json_as();
-        assert_eq!(result_map.len(), 1);
+        let result_map: UserPermissionsResults = response.json_as();
+        assert_eq!(result_map.0.len(), 1);
 
         // Verify mock expectations
         fixture.opa_mock.verify().await;
@@ -422,14 +368,14 @@ mod tests {
 
         // Verify response is successful
         response.assert_ok();
-        let result_map: HashMap<String, UserPermissionsResult> = response.json_as();
+        let result_map: UserPermissionsResults = response.json_as();
         assert_eq!(
-            result_map.len(),
+            result_map.0.len(),
             1,
             "Should have one resource in permissions"
         );
         assert!(
-            result_map.contains_key("resource1"),
+            result_map.0.contains_key("resource1"),
             "Should contain resource1 entry"
         );
 
