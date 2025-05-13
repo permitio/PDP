@@ -1,6 +1,6 @@
-use crate::api::authz::allowed::{AllowedQuery, AllowedResult};
-use crate::api::authz::forward_to_opa::send_request_to_opa;
 use crate::errors::ApiError;
+use crate::opa_client::allowed::AllowedQuery;
+use crate::opa_client::allowed_bulk::{query_allowed_bulk, BulkAuthorizationResult};
 use crate::openapi::AUTHZ_TAG;
 use crate::state::AppState;
 use axum::{
@@ -8,22 +8,6 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use http::StatusCode;
-use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
-
-/// Query for bulk authorization checks
-#[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
-struct BulkAuthorizationQuery {
-    /// List of individual authorization queries
-    checks: Vec<AllowedQuery>,
-}
-
-/// Response type for the bulk authorization endpoint
-#[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
-pub struct BulkAuthorizationResult {
-    /// List of authorization results, one for each check
-    pub allow: Vec<AllowedResult>,
-}
 
 #[utoipa::path(
     post,
@@ -43,15 +27,7 @@ pub(super) async fn allowed_bulk_handler(
     State(state): State<AppState>,
     Json(queries): Json<Vec<AllowedQuery>>,
 ) -> Response {
-    let bulk_query = BulkAuthorizationQuery { checks: queries };
-
-    match send_request_to_opa::<BulkAuthorizationResult, _>(
-        &state,
-        "/v1/data/permit/bulk",
-        &bulk_query,
-    )
-    .await
-    {
+    match query_allowed_bulk(&state, &queries).await {
         Ok(result) => (StatusCode::OK, Json(result)).into_response(),
         Err(err) => {
             log::error!("Failed to send request to OPA: {}", err);

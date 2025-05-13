@@ -1,0 +1,96 @@
+---
+description:
+globs: *.rs,Cargo.toml
+alwaysApply: false
+---
+You are an expert in Rust, async programming, and concurrent systems, particularly for the PDP server project.
+
+Key Principles
+- Write clear, concise, and idiomatic Rust code with accurate examples.
+- Use async programming paradigms effectively, leveraging `tokio` for concurrency.
+- Prioritize modularity, clean code organization, and efficient resource management.
+- Use expressive variable names that convey intent (e.g., `is_ready`, `has_data`).
+- Adhere to Rust's naming conventions: snake_case for variables and functions, PascalCase for types and structs.
+- Avoid code duplication; use functions and modules to encapsulate reusable logic.
+- Write code with safety, concurrency, and performance in mind, embracing Rust's ownership and type system.
+- Structure code following the established module pattern (api, cache, config, models, state).
+
+Async Programming
+- Use `tokio` as the async runtime for handling asynchronous tasks and I/O.
+- Mark main function with `#[tokio::main]` for async execution.
+- Implement async functions using `async fn` syntax.
+- Leverage `tokio::spawn` for task spawning and concurrency.
+- Use `tokio::select!` for managing multiple async tasks and cancellations.
+- Implement proper shutdown handling with signals as shown in main.rs.
+- Favor structured concurrency: prefer scoped tasks and clean cancellation paths.
+- Implement timeouts, retries, and backoff strategies for robust async operations.
+
+HTTP Server (axum)
+- Structure routes using axum's Router and organized by domain (health, authz).
+- Use middleware for cross-cutting concerns like authentication.
+- Implement proper error handling that maps to HTTP status codes.
+- Use axum's state management (AppState pattern) for dependency injection.
+- Implement OpenAPI documentation using utoipa and utoipa-axum.
+- Follow the middleware pattern for request/response processing.
+- Use axum's built-in extractors for request data.
+
+Channels and Concurrency
+- Use Rust's `tokio::sync::mpsc` for asynchronous, multi-producer, single-consumer channels.
+- Use `tokio::sync::broadcast` for broadcasting messages to multiple consumers.
+- Implement `tokio::sync::oneshot` for one-time communication between tasks.
+- Prefer bounded channels for backpressure; handle capacity limits gracefully.
+- Use `tokio::sync::Mutex` and `tokio::sync::RwLock` for shared state across tasks, avoiding deadlocks.
+
+Error Handling and Safety
+- Embrace Rust's Result and Option types for error handling.
+- Use `?` operator to propagate errors in async functions.
+- Implement custom error types using `thiserror` (not anyhow) following the ApiError pattern.
+- Make errors implement IntoResponse for axum integration.
+- Handle errors and edge cases early, returning errors where appropriate.
+- Use `.await` responsibly, ensuring safe points for context switching.
+- Provide detailed error messages that are safe to expose.
+
+HTTP Client (reqwest)
+- Use reqwest for HTTP client operations.
+- Configure timeouts and retries for external service calls.
+- Handle connection failures gracefully.
+- Deserialize responses using serde_json.
+- Implement circuit breaking for unreliable dependencies.
+
+Caching Strategy
+- Use moka for in-memory caching with appropriate size limits.
+- Implement redis for distributed caching when needed.
+- Define clear cache invalidation policies.
+- Use structured cache keys based on request parameters.
+- Handle cache failures gracefully, falling back to direct calls.
+
+Testing
+- Write unit tests with `tokio::test` for async tests.
+- Use test_utils.rs for shared testing functionality.
+- Implement integration tests with axum's testing tools.
+- Use wiremock for mocking external services.
+- Use `tokio::time::pause` for testing time-dependent code without real delays.
+- Test error conditions and edge cases thoroughly.
+- Leverage redis-test for testing redis-dependent code.
+
+Configuration Management
+- Use the config crate to load configuration from environment and files.
+- Validate configuration at startup as shown in main.rs.
+- Provide sensible defaults for all configuration options.
+- Document all configuration options.
+- Exit with clear error messages if configuration is invalid.
+
+API Documentation
+- Document all API endpoints using utoipa annotations.
+- Generate OpenAPI specification as shown in openapi.rs.
+- Provide clear examples for request/response formats.
+- Document error codes and their meanings.
+- Serve interactive API documentation with Scalar.
+
+Security Best Practices
+- Implement proper authentication middleware.
+- Validate all incoming data.
+- Use constant-time comparisons for security-sensitive operations.
+- Follow the principle of least privilege.
+
+Refer to Rust's async book and `tokio` documentation for in-depth information on async patterns, best practices, and advanced features.

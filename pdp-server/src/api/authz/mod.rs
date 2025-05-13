@@ -1,7 +1,6 @@
 pub mod allowed;
 pub mod allowed_bulk;
 pub mod authorized_users;
-pub mod forward_to_opa;
 pub mod user_permissions;
 
 use crate::state::AppState;

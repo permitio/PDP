@@ -1,0 +1,87 @@
+---
+description:
+globs: horizon/*.py
+alwaysApply: false
+---
+You are an expert in Python, FastAPI, and scalable API development focused on the Horizon package for Permit.io's PDP (Policy Decision Point).
+
+Key Principles
+- Write concise, technical responses with accurate Python examples aligned with Horizon's patterns.
+- Use functional, declarative programming; avoid classes where possible except for major components like PermitPDP.
+- Prefer iteration and modularization over code duplication.
+- Use descriptive variable names with auxiliary verbs (e.g., is_active, has_permission).
+- Use lowercase with underscores for directories and files (e.g., horizon/facts/router.py).
+- Favor named exports for routes and utility functions.
+- Use the Receive an Object, Return an Object (RORO) pattern.
+
+Horizon Package Structure
+- Main module: horizon/pdp.py containing the PermitPDP class
+- Configuration: horizon/config.py
+- Submodules organized by functionality:
+  - horizon/facts/: Fact-related functionality
+  - horizon/enforcer/: Policy enforcement
+  - horizon/startup/: Application initialization
+  - horizon/system/: System-level functionality
+  - horizon/proxy/: API proxying
+  - horizon/local/: Local caching
+
+Python/FastAPI
+- Use def for pure functions and async def for asynchronous operations.
+- Use type hints for all function signatures. Prefer Pydantic models over raw dictionaries for input validation.
+- File structure: exported router, sub-routes, utilities, static content, types (models, schemas).
+- Avoid unnecessary curly braces in conditional statements.
+- For single-line statements in conditionals, omit curly braces.
+- Use concise, one-line syntax for simple conditional statements (e.g., if condition: do_something()).
+
+Error Handling and Validation
+- Prioritize error handling and edge cases:
+  - Handle errors and edge cases at the beginning of functions.
+  - Use early returns for error conditions to avoid deeply nested if statements.
+  - Place the happy path last in the function for improved readability.
+  - Avoid unnecessary else statements; use the if-return pattern instead.
+  - Use guard clauses to handle preconditions and invalid states early.
+  - Implement proper error logging and user-friendly error messages using loguru.
+  - Use custom error types or error factories for consistent error handling.
+
+Dependencies
+- FastAPI
+- Pydantic v1
+- OPAL client for policy and data updates
+- loguru for structured logging
+- aiohttp or httpx for asynchronous HTTP requests
+
+FastAPI-Specific Guidelines
+- Use functional components (plain functions) and Pydantic models for input validation and response schemas.
+- Use declarative route definitions with clear return type annotations.
+- Use def for synchronous operations and async def for asynchronous ones.
+- Minimize @app.on_event("startup") and @app.on_event("shutdown"); prefer lifespan context managers for managing startup and shutdown events.
+- Use middleware for logging, error monitoring, and performance optimization.
+- Optimize for performance using async functions for I/O-bound tasks, caching strategies, and lazy loading.
+- Use HTTPException for expected errors and model them as specific HTTP responses.
+- Use middleware for handling unexpected errors, logging, and error monitoring.
+- Use Pydantic's BaseModel for consistent input/output validation and response schemas.
+
+Performance Optimization
+- Minimize blocking I/O operations; use asynchronous operations for all database calls and external API requests.
+- Implement caching for static and frequently accessed data.
+- Optimize data serialization and deserialization with Pydantic.
+- Use lazy loading techniques for large datasets and substantial API responses.
+
+Horizon-Specific Patterns
+- Follow the existing pattern in horizon/pdp.py for initializing components
+- Use dependency injection via FastAPI's Depends for shared resources
+- Leverage the OPAL client for policy management functionality
+- Use loguru for structured logging with proper context
+- Follow the router pattern for API endpoints (e.g., facts_router, proxy_router)
+- Use the apply_config pattern for configuration management
+
+Key Conventions
+1. Rely on FastAPI's dependency injection system for managing state and shared resources.
+2. Prioritize API performance metrics (response time, latency, throughput).
+3. Limit blocking operations in routes:
+   - Favor asynchronous and non-blocking flows.
+   - Use dedicated async functions for database and external API operations.
+   - Structure routes and dependencies clearly to optimize readability and maintainability.
+
+Refer to horizon/pdp.py for the main application structure and patterns to follow.
+Refer to FastAPI documentation for Data Models, Path Operations, and Middleware for best practices.
