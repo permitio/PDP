@@ -502,26 +502,6 @@ pub struct TestResponse {
 }
 
 impl TestResponse {
-    /// Checks if the response status is successful (2xx).
-    ///
-    /// # Returns
-    ///
-    /// `true` if the status code is in the 200-299 range, `false` otherwise.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// let response = fixture.get("/resource").await;
-    /// if response.is_success() {
-    ///     // Process successful response
-    /// } else {
-    ///     // Handle error
-    /// }
-    /// ```
-    pub fn is_success(&self) -> bool {
-        self.status.is_success()
-    }
-
     /// Asserts that the response has the expected status code.
     ///
     /// # Parameters
@@ -673,6 +653,7 @@ impl TestResponse {
     /// # Returns
     ///
     /// A reference to the response headers.
+    #[allow(dead_code)]
     pub fn headers(&self) -> &http::HeaderMap {
         &self.headers
     }
@@ -700,6 +681,7 @@ impl TestResponse {
     /// let text = response.text();
     /// assert!(text.contains("Expected message"));
     /// ```
+    #[allow(dead_code)]
     pub fn text(&self) -> String {
         String::from_utf8_lossy(&self.body).to_string()
     }

@@ -39,9 +39,9 @@ impl CacheBackend for NullCache {
         Ok(None)
     }
 
-    fn health_check(&self) -> bool {
-        // Always healthy since there's nothing to fail
-        true
+    async fn health_check(&self) -> Result<(), String> {
+        // NullCache is always healthy as it doesn't interact with any external systems
+        Ok(())
     }
 
     async fn delete(&self, _key: &str) -> Result<(), CacheError> {
@@ -77,8 +77,12 @@ mod tests {
 
         // Test delete (should do nothing)
         assert!(cache.delete("test_key").await.is_ok());
+    }
 
-        // Test health check (should always be healthy)
-        assert!(cache.health_check());
+    #[tokio::test]
+    async fn test_health_check() {
+        let cache = NullCache::new();
+        let result = cache.health_check().await;
+        assert!(result.is_ok(), "health check failed: {:?}", result);
     }
 }

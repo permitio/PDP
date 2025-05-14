@@ -89,16 +89,6 @@ impl AppState {
         }
     }
 
-    /// Check if all components are healthy
-    pub async fn health_check(&self) -> bool {
-        let is_cache_healthy = self.cache.health_check();
-        let is_watchdog_healthy = match &self.watchdog {
-            Some(watchdog) => watchdog.is_healthy(),
-            None => true, // If no watchdog is running (e.g. in tests), consider it healthy
-        };
-        is_cache_healthy && is_watchdog_healthy
-    }
-
     /// Set up and initialize the Horizon service watchdog
     async fn setup_horizon_watchdog(config: &PDPConfig) -> ServiceWatchdog {
         let mut command = Command::new(&config.horizon.python_path);
@@ -208,7 +198,7 @@ mod tests {
         let state = AppState::for_testing(&config);
 
         // Verify that state was created correctly
-        assert!(state.cache.health_check());
+        assert!(state.cache.health_check().await.is_ok());
         assert!(state.watchdog.is_none()); // No watchdog in test mode
     }
 
