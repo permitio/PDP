@@ -80,10 +80,11 @@ pub struct EvaluationResult {
 }
 
 // Convert an IndividualEvaluation to AllowedQuery, using defaults when needed
+// Returns Ok with the query, or Err with a list of missing field names
 fn convert_to_allowed_query(
     evaluation: &IndividualEvaluation,
     defaults: &AccessEvaluationsRequest,
-) -> Option<AllowedQuery> {
+) -> Result<AllowedQuery, Vec<&'static str>> {
     // Get subject from evaluation or default
     let subject = match (&evaluation.subject, &defaults.subject) {
         (Some(s), _) => Some(s),
@@ -111,9 +112,21 @@ fn convert_to_allowed_query(
         context.extend(eval_context.clone());
     }
 
-    // Return None if any required field is missing
-    if subject.is_none() || resource.is_none() || action.is_none() {
-        return None;
+    // Check for missing fields
+    let mut missing_fields = Vec::new();
+    if subject.is_none() {
+        missing_fields.push("subject");
+    }
+    if resource.is_none() {
+        missing_fields.push("resource");
+    }
+    if action.is_none() {
+        missing_fields.push("action");
+    }
+
+    // Return error if any required field is missing
+    if !missing_fields.is_empty() {
+        return Err(missing_fields);
     }
 
     // Create a complete AccessEvaluationRequest
@@ -125,7 +138,7 @@ fn convert_to_allowed_query(
     };
 
     // Convert to AllowedQuery
-    Some(AllowedQuery::from(req))
+    Ok(AllowedQuery::from(req))
 }
 
 // Implement From trait for converting AllowedResult to EvaluationResult
@@ -172,17 +185,37 @@ pub async fn access_evaluations_handler(
         return ApiError::bad_request("No evaluations provided").into_response();
     }
 
-    // Convert each evaluation to an AllowedQuery
-    let queries: Vec<AllowedQuery> = request
-        .evaluations
-        .iter()
-        .filter_map(|eval| convert_to_allowed_query(eval, &request))
-        .collect();
+    // Convert each evaluation to an AllowedQuery, tracking failures with details
+    let mut queries = Vec::with_capacity(request.evaluations.len());
+    let mut missing_details = Vec::new();
 
-    // If any conversion failed, return an error
-    if queries.len() != request.evaluations.len() {
-        return ApiError::bad_request("One or more evaluations is missing required fields")
-            .into_response();
+    for (idx, eval) in request.evaluations.iter().enumerate() {
+        match convert_to_allowed_query(eval, &request) {
+            Ok(query) => queries.push(query),
+            Err(missing_fields) => {
+                missing_details.push((idx, eval.clone(), missing_fields));
+            }
+        }
+    }
+
+    // If any conversion failed, return an error with detailed information
+    if !missing_details.is_empty() {
+        let mut error_msg = String::from("Invalid evaluations request:\n");
+
+        for (idx, eval, missing) in missing_details {
+            let eval_json = serde_json::to_string_pretty(&eval)
+                .unwrap_or_else(|_| "Unable to serialize".to_string());
+            error_msg.push_str(&format!(
+                "- Evaluation at position {}: Missing required fields: {}\n  Provided evaluation: {}\n",
+                idx,
+                missing.join(", "),
+                eval_json
+            ));
+        }
+
+        error_msg.push_str("\nPlease provide all required fields (subject, resource, action) either in individual evaluations or at the request level.");
+        log::warn!("{}", error_msg);
+        return ApiError::bad_request(&error_msg).into_response();
     }
 
     // Send bulk request to OPA
