@@ -3,11 +3,6 @@ use async_trait::async_trait;
 use log::error;
 use redis::{aio::ConnectionManager, AsyncCommands, Client};
 use serde::{de::DeserializeOwned, Serialize};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-
-const HEALTH_CHECK_INTERVAL_SECONDS: u64 = 10;
 
 // TODO derive Debug - https://stackoverflow.com/questions/78870773/skip-struct-field-when-deriving-debug
 #[derive(Clone)]
@@ -15,9 +10,6 @@ pub struct RedisCache {
     _client: Client,
     conn_manager: ConnectionManager,
     ttl_secs: u64,
-    // Health status cache to avoid doing a Redis ping on every health check
-    healthy: Arc<AtomicBool>,
-    last_health_check: Arc<std::sync::Mutex<Instant>>,
 }
 
 impl RedisCache {
@@ -50,29 +42,7 @@ impl RedisCache {
             conn_manager,
             ttl_secs,
             _client: client,
-            healthy: Arc::new(AtomicBool::new(true)), // Initially assume healthy
-            last_health_check: Arc::new(std::sync::Mutex::new(Instant::now())),
         })
-    }
-
-    // Updates the health status asynchronously without blocking
-    async fn update_health_status(&self) {
-        let mut conn = self.conn_manager.clone();
-        let health_result = redis::cmd("PING").query_async::<String>(&mut conn).await;
-        let is_healthy = health_result.is_ok();
-
-        if !is_healthy {
-            if let Err(err) = health_result {
-                error!("Redis health check failed: {}", err);
-            }
-        }
-
-        self.healthy.store(is_healthy, Ordering::Relaxed);
-
-        // Update last health check time
-        if let Ok(mut last_check) = self.last_health_check.lock() {
-            *last_check = Instant::now();
-        }
     }
 }
 
@@ -92,8 +62,6 @@ impl CacheBackend for RedisCache {
         {
             Ok(_) => Ok(()),
             Err(err) => {
-                // Mark as unhealthy on error
-                self.healthy.store(false, Ordering::Relaxed);
                 error!("Redis error while setting key {}: {}", key, err);
                 Err(CacheError::Redis(err.to_string()))
             }
@@ -113,8 +81,6 @@ impl CacheBackend for RedisCache {
                     // Key doesn't exist
                     return Ok(None);
                 }
-                // Mark as unhealthy on error
-                self.healthy.store(false, Ordering::Relaxed);
                 error!("Redis error while getting key {}: {}", key, err);
                 return Err(CacheError::Redis(err.to_string()));
             }
@@ -129,27 +95,12 @@ impl CacheBackend for RedisCache {
         }
     }
 
-    fn health_check(&self) -> bool {
-        // Check if we need to update the health status
-        let should_check = {
-            if let Ok(last_check) = self.last_health_check.lock() {
-                last_check.elapsed() > Duration::from_secs(HEALTH_CHECK_INTERVAL_SECONDS)
-            } else {
-                // If we can't get the lock, assume we should check
-                true
-            }
-        };
-
-        // Spawn a task to update health status in the background if needed
-        if should_check {
-            let self_clone = self.clone();
-            tokio::spawn(async move {
-                self_clone.update_health_status().await;
-            });
+    async fn health_check(&self) -> Result<(), String> {
+        let mut conn = self.conn_manager.clone();
+        match redis::cmd("PING").query_async::<String>(&mut conn).await {
+            Ok(_) => Ok(()),
+            Err(err) => Err(format!("Redis health check failed: {}", err)),
         }
-
-        // Return the cached health status
-        self.healthy.load(Ordering::Relaxed)
     }
 
     async fn delete(&self, key: &str) -> Result<(), CacheError> {
@@ -158,8 +109,6 @@ impl CacheBackend for RedisCache {
         match conn.del::<_, ()>(key).await {
             Ok(_) => Ok(()),
             Err(err) => {
-                // Mark as unhealthy on error
-                self.healthy.store(false, Ordering::Relaxed);
                 error!("Redis error while deleting key {}: {}", key, err);
                 Err(CacheError::Redis(err.to_string()))
             }
@@ -215,18 +164,15 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_redis_health_check() {
-        // Start a Redis server for testing
+        // Arrange
         let server = RedisServer::new();
         let redis_url = get_redis_url(&server);
-
-        // Initialize the cache with the test server
         let cache = RedisCache::new(&redis_url, 1).await.unwrap();
 
-        // Test the health check - this should now be almost instant
-        assert!(cache.health_check());
+        // Act
+        let result = cache.health_check().await;
 
-        // Also test the async health update
-        cache.update_health_status().await;
-        assert!(cache.health_check());
+        // Assert
+        assert!(result.is_ok(), "health check failed: {:?}", result);
     }
 }

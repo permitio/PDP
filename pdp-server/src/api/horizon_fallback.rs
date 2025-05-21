@@ -462,6 +462,7 @@ mod tests {
             debug: None,
             port: 0,
             use_new_authorized_users: false,
+            healthcheck_timeout: 1.0,
             // Point to a non-existent server with a reserved port
             horizon: crate::config::horizon::HorizonConfig {
                 host: "127.0.0.1".to_string(),
@@ -527,6 +528,7 @@ mod tests {
             debug: None,
             port: 0,
             use_new_authorized_users: false,
+            healthcheck_timeout: 1.0,
             horizon: crate::config::horizon::HorizonConfig {
                 host: horizon_mock.address().ip().to_string(),
                 port: horizon_mock.address().port(),

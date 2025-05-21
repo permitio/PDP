@@ -59,8 +59,8 @@ impl CacheBackend for InMemoryCache {
         }
     }
 
-    fn health_check(&self) -> bool {
-        true // Moka is an in-memory cache, so it's always healthy if we can access it
+    async fn health_check(&self) -> Result<(), String> {
+        Ok(())
     }
 
     async fn delete(&self, key: &str) -> Result<(), CacheError> {
@@ -100,7 +100,8 @@ mod tests {
     #[tokio::test]
     async fn test_health_check() {
         let cache = InMemoryCache::new(1, 128).unwrap();
-        assert!(cache.health_check());
+        let result = cache.health_check().await;
+        assert!(result.is_ok(), "health check failed: {:?}", result);
     }
 
     #[tokio::test]
