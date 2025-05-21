@@ -128,19 +128,21 @@ fn convert_to_allowed_query(
     Some(AllowedQuery::from(req))
 }
 
-// Convert AllowedResult to EvaluationResult
-fn convert_to_evaluation_result(allowed_result: AllowedResult) -> EvaluationResult {
-    let mut context: Option<HashMap<String, serde_json::Value>> = None;
+// Implement From trait for converting AllowedResult to EvaluationResult
+impl From<AllowedResult> for EvaluationResult {
+    fn from(allowed_result: AllowedResult) -> Self {
+        let mut context: Option<HashMap<String, serde_json::Value>> = None;
 
-    if let Some(debug) = allowed_result.debug {
-        context = Some(debug);
-    } else if let Some(query) = allowed_result.query {
-        context = Some(query);
-    }
+        if let Some(debug) = allowed_result.debug {
+            context = Some(debug);
+        } else if let Some(query) = allowed_result.query {
+            context = Some(query);
+        }
 
-    EvaluationResult {
-        decision: allowed_result.allow,
-        context,
+        EvaluationResult {
+            decision: allowed_result.allow,
+            context,
+        }
     }
 }
 
@@ -186,12 +188,9 @@ pub async fn access_evaluations_handler(
     // Send bulk request to OPA
     match query_allowed_bulk(&state, &queries).await {
         Ok(bulk_result) => {
-            // Convert each AllowedResult to an EvaluationResult
-            let results: Vec<EvaluationResult> = bulk_result
-                .allow
-                .into_iter()
-                .map(convert_to_evaluation_result)
-                .collect();
+            // Convert each AllowedResult to an EvaluationResult using Into trait
+            let results: Vec<EvaluationResult> =
+                bulk_result.allow.into_iter().map(Into::into).collect();
 
             // Return the response with evaluations wrapper
             let response = AccessEvaluationsResponse {
