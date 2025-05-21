@@ -167,6 +167,7 @@ mod tests {
             debug: Some(true),
             port: 3000,
             use_new_authorized_users: false,
+            healthcheck_timeout: 1.0,
             horizon: crate::config::horizon::HorizonConfig {
                 host: "localhost".to_string(),
                 port: 3000,

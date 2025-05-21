@@ -27,6 +27,10 @@ pub struct PDPConfig {
     #[serde(default)]
     pub use_new_authorized_users: bool,
 
+    /// Timeout in seconds for health checks (default: 1.0 second)
+    #[serde(default)]
+    pub healthcheck_timeout: f64,
+
     /// Horizon service configuration
     #[serde(default)]
     pub horizon: HorizonConfig,
@@ -47,6 +51,7 @@ impl Default for PDPConfig {
             debug: None,
             port: 7766,
             use_new_authorized_users: false,
+            healthcheck_timeout: 1.0, // 1 second timeout for health checks
             horizon: HorizonConfig::default(),
             opa: OpaConfig::default(),
             cache: CacheConfig::default(),
@@ -102,6 +107,13 @@ impl PDPConfig {
             }
         }
 
+        // Apply health check timeout from environment
+        if let Ok(timeout) = std::env::var("PDP_HEALTHCHECK_TIMEOUT") {
+            if let Ok(parsed) = timeout.parse::<f64>() {
+                result.healthcheck_timeout = parsed;
+            }
+        }
+
         // Apply sub-configurations
         result.horizon = HorizonConfig::from_env(&result.horizon);
         result.opa = OpaConfig::from_env(&result.opa);
@@ -120,6 +132,7 @@ impl PDPConfig {
             debug: Some(true),
             port: 0, // Let the OS choose a port
             use_new_authorized_users: false,
+            healthcheck_timeout: 1.0,
             // Use the mock server addresses for testing
             horizon: HorizonConfig {
                 host: horizon_mock.address().ip().to_string(),
@@ -290,6 +303,7 @@ mod tests {
                 ("PDP_PORT", "7777"),
                 ("PDP_DEBUG", "true"),
                 ("PDP_USE_NEW_AUTHORIZED_USERS", "true"),
+                ("PDP_HEALTHCHECK_TIMEOUT", "2.5"),
                 // Cache config
                 ("PDP_CACHE_TTL", "1800"),
                 ("PDP_CACHE_STORE", "in-memory"),
@@ -318,6 +332,7 @@ mod tests {
                 assert_eq!(config.port, 7777);
                 assert_eq!(config.debug, Some(true));
                 assert_eq!(config.use_new_authorized_users, true);
+                assert_eq!(config.healthcheck_timeout, 2.5);
 
                 // Test cache config
                 assert_eq!(config.cache.ttl, 1800);

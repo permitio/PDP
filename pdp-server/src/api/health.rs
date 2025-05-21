@@ -14,8 +14,6 @@ use std::time::Duration;
 use tokio::time::timeout;
 use utoipa::{IntoParams, ToSchema};
 
-const COMPONENT_TIMEOUT_MS: u64 = 1000; // 1 second timeout for component health checks
-
 /// Health check query parameters
 #[derive(Debug, Deserialize, ToSchema, IntoParams)]
 pub struct HealthQuery {
@@ -97,7 +95,7 @@ async fn check_all_health(state: &AppState, check_cache: bool) -> HealthResponse
 
     // Check OPA health directly
     let opa_status = match timeout(
-        Duration::from_millis(COMPONENT_TIMEOUT_MS),
+        Duration::from_secs_f64(state.config.healthcheck_timeout),
         check_opa_health(state),
     )
     .await
@@ -114,7 +112,7 @@ async fn check_all_health(state: &AppState, check_cache: bool) -> HealthResponse
     let cache_status = if check_cache {
         Some(
             match timeout(
-                Duration::from_millis(COMPONENT_TIMEOUT_MS),
+                Duration::from_secs_f64(state.config.healthcheck_timeout),
                 check_cache_health(state),
             )
             .await
@@ -176,7 +174,7 @@ async fn check_horizon_and_watchdog_health(state: &AppState) -> ComponentStatus 
 
     // Check Horizon health via direct HTTP call
     let horizon_health = match timeout(
-        Duration::from_millis(COMPONENT_TIMEOUT_MS),
+        Duration::from_secs_f64(state.config.healthcheck_timeout),
         check_direct_horizon_health(state),
     )
     .await
