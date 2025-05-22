@@ -175,7 +175,6 @@ async fn test_watchdog_termination_timeout() {
     let opt = CommandWatchdogOptions {
         restart_interval: Duration::from_millis(100),
         termination_timeout: Duration::from_millis(500),
-        ..Default::default()
     };
     let watchdog = CommandWatchdog::start_with_opt(test_server.get_command(), opt);
     tokio::time::sleep(Duration::from_millis(100)).await;

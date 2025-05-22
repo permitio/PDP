@@ -79,7 +79,7 @@ mod tests {
     use http_body_util::BodyExt;
     use tower::ServiceExt;
 
-    const TEST_ROUTE: &'static str = "/test";
+    const TEST_ROUTE: &str = "/test";
 
     /// Helper function to set up a mock app with authentication middleware
     async fn setup_authn_mock_app(api_key: &str) -> Router {

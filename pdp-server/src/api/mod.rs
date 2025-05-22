@@ -1,5 +1,6 @@
 mod authn_middleware;
 pub(crate) mod authz;
+pub(crate) mod authzen;
 pub(crate) mod health;
 mod horizon_fallback;
 
@@ -20,6 +21,7 @@ fn protected_routes(state: &AppState) -> Router<AppState> {
     // Protected routes that require API key authentication
     Router::new()
         .merge(authz::router())
+        .merge(authzen::router())
         // Add fallback route to handle any unmatched requests
         .fallback(any(fallback_to_horizon))
         .route_layer(middleware::from_fn_with_state(

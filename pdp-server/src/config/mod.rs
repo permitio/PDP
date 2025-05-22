@@ -317,7 +317,7 @@ mod tests {
                 assert_eq!(config.api_key, "env-test-api-key");
                 assert_eq!(config.port, 7777);
                 assert_eq!(config.debug, Some(true));
-                assert_eq!(config.use_new_authorized_users, true);
+                assert!(config.use_new_authorized_users);
 
                 // Test cache config
                 assert_eq!(config.cache.ttl, 1800);

@@ -3,7 +3,6 @@ use crate::create_app;
 use crate::state::AppState;
 use axum::body::Body;
 use axum::Router;
-use env_logger;
 use http::{Method, Request, StatusCode};
 use http_body_util::BodyExt;
 use log::LevelFilter;
@@ -53,6 +52,8 @@ use wiremock::ResponseTemplate;
 pub struct TestFixture {
     /// The application router
     pub app: Router,
+    /// The application state
+    pub state: AppState,
     /// Configuration settings
     pub config: PDPConfig,
     /// Mock server for OPA
@@ -96,10 +97,11 @@ impl TestFixture {
 
         // Create app state
         let state = AppState::for_testing(&config);
-        let app = create_app(state).await;
+        let app = create_app(state.clone()).await;
 
         Self {
             app,
+            state,
             config,
             opa_mock,
             horizon_mock,
@@ -184,10 +186,11 @@ impl TestFixture {
     ) -> Self {
         // Create app state with the config
         let state = AppState::for_testing(&config);
-        let app = create_app(state).await;
+        let app = create_app(state.clone()).await;
 
         Self {
             app,
+            state,
             config,
             opa_mock,
             horizon_mock,
@@ -477,7 +480,7 @@ impl TestFixture {
         response_body: impl Serialize,
         status_code: StatusCode,
         expected_calls: u64,
-    ) -> () {
+    ) {
         let path_string = path.into();
 
         Mock::given(matchers::method(method.as_str()))
@@ -656,7 +659,7 @@ impl TestResponse {
         let header = self
             .headers
             .get(name)
-            .expect(&format!("Header '{}' not found", name));
+            .unwrap_or_else(|| panic!("Header '{}' not found", name));
         assert_eq!(
             header.to_str().unwrap(),
             expected_value,

@@ -9,10 +9,6 @@ pub mod redis;
 // Only used in tests, so let's restrict their visibility
 #[cfg(test)]
 pub use memory::InMemoryCache;
-#[cfg(test)]
-pub use null::NullCache;
-#[cfg(test)]
-pub use redis::RedisCache;
 
 /// Errors that can occur during cache operations
 #[derive(Debug, Error)]

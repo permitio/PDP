@@ -3,13 +3,19 @@ use crate::state::AppState;
 use axum::http::StatusCode;
 use http::header::InvalidHeaderValue;
 use log::debug;
-use reqwest;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value::{Bool, Object};
 use thiserror::Error;
 
-pub(crate) async fn send_request_to_opa<R: DeserializeOwned, B: Serialize>(
+// Reexport modules
+pub mod allowed;
+pub mod allowed_bulk;
+pub mod authorized_users;
+pub mod user_permissions;
+
+/// Generic function to send a request to OPA and return a specific response type
+async fn send_request_to_opa<R: DeserializeOwned, B: Serialize>(
     state: &AppState,
     endpoint: &str,
     body: &B,
@@ -34,7 +40,6 @@ async fn send_raw_request_to_opa<B: Serialize, R: DeserializeOwned>(
     debug!("Forwarding request to OPA at: {}", opa_url);
 
     // Send request to OPA using the specialized OPA client
-    // TODO add timeout
     let response = state.opa_client.post(&opa_url).json(body).send().await?;
 
     // Check if the request was successful
@@ -82,8 +87,9 @@ pub struct OpaResponse<T> {
     pub result: T,
 }
 
+/// Errors that can occur when forwarding requests to OPA
 #[derive(Debug, Error)]
-pub(crate) enum ForwardingError {
+pub enum ForwardingError {
     #[error("Failed to build request to OPA: {0}")]
     BuildError(#[from] InvalidHeaderValue),
     #[error("Failed to send request to OPA: {0}")]
@@ -113,7 +119,7 @@ impl From<ForwardingError> for ApiError {
 
 #[cfg(test)]
 mod test {
-    use crate::api::authz::forward_to_opa::create_opa_request;
+    use super::create_opa_request;
     use serde_json::json;
 
     #[test]
