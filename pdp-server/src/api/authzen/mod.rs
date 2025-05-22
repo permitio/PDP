@@ -1,10 +1,11 @@
-pub mod evaluation;
-pub mod evaluations;
-pub mod metadata;
+mod common;
+mod evaluation;
+mod evaluations;
+mod metadata;
 mod schema;
-pub mod search_action;
-pub mod search_resource;
-pub mod search_subject;
+mod search_action;
+mod search_resource;
+mod search_subject;
 
 use crate::state::AppState;
 use axum::routing::{get, post};

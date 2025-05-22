@@ -53,6 +53,8 @@ use wiremock::ResponseTemplate;
 pub struct TestFixture {
     /// The application router
     pub app: Router,
+    /// The application state
+    pub state: AppState,
     /// Configuration settings
     pub config: PDPConfig,
     /// Mock server for OPA
@@ -96,10 +98,11 @@ impl TestFixture {
 
         // Create app state
         let state = AppState::for_testing(&config);
-        let app = create_app(state).await;
+        let app = create_app(state.clone()).await;
 
         Self {
             app,
+            state,
             config,
             opa_mock,
             horizon_mock,
@@ -184,10 +187,11 @@ impl TestFixture {
     ) -> Self {
         // Create app state with the config
         let state = AppState::for_testing(&config);
-        let app = create_app(state).await;
+        let app = create_app(state.clone()).await;
 
         Self {
             app,
+            state,
             config,
             opa_mock,
             horizon_mock,

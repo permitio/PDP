@@ -1,10 +1,11 @@
 use crate::errors::ApiError;
-use crate::opa_client::user_permissions::{query_user_permissions, UserPermissionsResults};
+use crate::opa_client::user_permissions::{
+    query_user_permissions, UserPermissionsQuery, UserPermissionsResults,
+};
 use crate::openapi::AUTHZ_TAG;
 use crate::{
     cache::CacheBackend,
     headers::{presets, ClientCacheControl},
-    models::UserPermissionsQuery,
     state::AppState,
 };
 use axum::{
@@ -98,7 +99,10 @@ pub fn generate_cache_key(query: &UserPermissionsQuery) -> Result<String, serde_
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::TestFixture;
+    use crate::{
+        opa_client::{allowed::User, user_permissions::UserPermissionsQuery},
+        test_utils::TestFixture,
+    };
     use http::Method;
     use serde_json::json;
     use std::collections::HashMap;
@@ -384,7 +388,7 @@ mod tests {
     fn test_cache_key_generation() {
         // Create test query directly as a struct since we're testing the function
         let query = UserPermissionsQuery {
-            user: crate::models::User {
+            user: User {
                 key: "test_user".to_string(),
                 first_name: None,
                 last_name: None,

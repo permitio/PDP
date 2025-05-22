@@ -1,7 +1,8 @@
+use crate::api::authzen::common::{PageRequest, PageResponse};
 use crate::api::authzen::schema::{AuthZenAction, AuthZenResource, AuthZenSubject};
 use crate::errors::ApiError;
-use crate::opa_client::allowed::User as OpaUser;
-use crate::opa_client::{ForwardingError, OpaRequest};
+use crate::opa_client::allowed::User;
+use crate::opa_client::user_permissions::{query_user_permissions, UserPermissionsQuery};
 use crate::openapi::AUTHZEN_TAG;
 use crate::state::AppState;
 use axum::{
@@ -12,45 +13,6 @@ use http::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use utoipa::ToSchema;
-
-// Helper function to send a request to OPA
-async fn send_to_opa<T: Serialize>(
-    state: &AppState,
-    endpoint: &str,
-    body: &T,
-) -> Result<serde_json::Value, ForwardingError> {
-    // Create a new OPA request
-    let request = OpaRequest {
-        input: serde_json::to_value(body)?,
-    };
-
-    // Send the request to OPA
-    let client = &state.opa_client;
-    let endpoint = endpoint.strip_prefix("/").unwrap_or(endpoint);
-    let opa_url = format!("{}/{}", state.config.opa.url, endpoint);
-
-    // Send the request
-    let response = client.post(&opa_url).json(&request).send().await?;
-
-    // Check if the request was successful
-    if !response.status().is_success() {
-        let status = response.status();
-        return Err(ForwardingError::InvalidStatus(status));
-    }
-
-    // Parse the response body
-    let body = response.bytes().await?;
-    let full_response: serde_json::Value = serde_json::from_slice(&body)?;
-
-    // Extract the result field
-    if let serde_json::Value::Object(map) = &full_response {
-        if let Some(result) = map.get("result") {
-            return Ok(result.clone());
-        }
-    }
-
-    Ok(serde_json::Value::Null)
-}
 
 /// AuthZen Resource Search Request - to find resources a subject can access
 #[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
@@ -69,26 +31,6 @@ pub struct ResourceSearchRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page: Option<PageRequest>,
 }
-
-/// Pagination request parameters
-#[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
-pub struct PageRequest {
-    /// Token for retrieving the next page of results
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub next_token: Option<String>,
-    /// Maximum number of results to return per page
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub size: Option<i32>,
-}
-
-/// Pagination response parameters
-#[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
-pub struct PageResponse {
-    /// Token for retrieving the next page of results, empty if no more results
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next_token: Option<String>,
-}
-
 /// Resource action pair representing a permission
 #[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
 pub struct ResourceAction {
@@ -111,101 +53,21 @@ pub struct ResourceSearchResponse {
     pub context: Option<HashMap<String, serde_json::Value>>,
 }
 
-// Internal structure to interface with OPA
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct OpaResourceSearchRequest {
-    user: OpaUser,
-    action: Option<String>,
-    resource_type: Option<String>,
-    context: HashMap<String, serde_json::Value>,
-    sdk: Option<String>,
-}
-
-// Internal structure to receive OPA response
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct OpaResourceSearchResponse {
-    permissions: HashMap<String, UserPermission>,
-}
-
-// Structure to receive user permission data from OPA
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct UserPermission {
-    tenant: Option<TenantInfo>,
-    resource: ResourceInfo,
-    permissions: Vec<String>,
-    roles: Option<Vec<String>>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct TenantInfo {
-    key: String,
-    attributes: HashMap<String, serde_json::Value>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct ResourceInfo {
-    key: String,
-    r#type: String,
-    attributes: HashMap<String, serde_json::Value>,
-}
-
-// Convert AuthZen request to OPA request
-impl From<ResourceSearchRequest> for OpaResourceSearchRequest {
+// Convert AuthZen request to UserPermissionsQuery
+impl From<ResourceSearchRequest> for UserPermissionsQuery {
     fn from(req: ResourceSearchRequest) -> Self {
-        let user = OpaUser {
-            key: req.subject.id.clone(),
-            first_name: None,
-            last_name: None,
-            email: None,
-            attributes: req.subject.properties.unwrap_or_default(),
-        };
-
-        let action = req.action.map(|a| a.name);
-
-        OpaResourceSearchRequest {
-            user,
-            action,
-            resource_type: req.resource_type,
-            context: req.context.unwrap_or_default(),
-            sdk: Some("authzen".to_string()),
-        }
-    }
-}
-
-// Convert OPA response to AuthZen response
-impl From<OpaResourceSearchResponse> for ResourceSearchResponse {
-    fn from(res: OpaResourceSearchResponse) -> Self {
-        // Extract unique resources from permissions
-        let mut unique_resources = HashMap::new();
-
-        // Process each permission and extract the resources
-        for (_, perm) in res.permissions {
-            let resource = AuthZenResource {
-                r#type: perm.resource.r#type.clone(),
-                id: perm.resource.key.clone(),
-                properties: if perm.resource.attributes.is_empty() {
-                    None
-                } else {
-                    Some(perm.resource.attributes)
-                },
-            };
-
-            // Use the resource ID as key to ensure uniqueness
-            unique_resources.insert(resource.id.clone(), resource);
-        }
-
-        // Convert the unique resources HashMap to a Vec
-        let results = unique_resources
-            .into_iter()
-            .map(|(_, resource)| resource)
-            .collect();
-
-        ResourceSearchResponse {
-            results,
-            page: Some(PageResponse {
-                next_token: None, // Pagination not yet fully implemented
-            }),
-            context: None,
+        UserPermissionsQuery {
+            user: User {
+                key: req.subject.id.clone(),
+                first_name: None,
+                last_name: None,
+                email: None,
+                attributes: req.subject.properties.unwrap_or_default(),
+            },
+            tenants: None,
+            resources: None,
+            resource_types: req.resource_type.map(|rt| vec![rt]),
+            context: Some(req.context.unwrap_or_default()),
         }
     }
 }
@@ -231,53 +93,55 @@ pub async fn search_resource_handler(
     State(state): State<AppState>,
     Json(request): Json<ResourceSearchRequest>,
 ) -> Response {
-    // Convert AuthZen request to OPA format
-    let opa_request: OpaResourceSearchRequest = request.into();
+    // Convert AuthZen request to UserPermissionsQuery
+    let query: UserPermissionsQuery = request.into();
 
-    // Send request to OPA - get the raw JSON response first
-    match send_to_opa(&state, "/v1/data/permit/user_permissions", &opa_request).await {
-        Ok(result) => {
-            // Extract the "permissions" field from the result
-            if let serde_json::Value::Object(map) = result {
-                if let Some(permissions_value) = map.get("permissions") {
-                    // Try to deserialize the permissions map
-                    match serde_json::from_value::<HashMap<String, UserPermission>>(
-                        permissions_value.clone(),
-                    ) {
-                        Ok(permissions) => {
-                            // Create the OPA response structure
-                            let opa_response = OpaResourceSearchResponse { permissions };
-
-                            // Convert to AuthZen response
-                            let authzen_response: ResourceSearchResponse = opa_response.into();
-
-                            // Return the response
-                            return (StatusCode::OK, Json(authzen_response)).into_response();
-                        }
-                        Err(err) => {
-                            log::error!("Failed to deserialize permissions map: {}", err);
-                            return ApiError::internal("Invalid permissions in OPA response")
-                                .into_response();
-                        }
-                    }
-                }
-            }
-
-            // If we get here, we didn't find the permissions field or it wasn't valid
-            // Return an empty result
-            let empty_response = ResourceSearchResponse {
-                results: Vec::new(),
-                page: Some(PageResponse { next_token: None }),
-                context: None,
-            };
-
-            (StatusCode::OK, Json(empty_response)).into_response()
-        }
+    // Query OPA using the existing function
+    let permissions = match query_user_permissions(&state, &query).await {
+        Ok(permissions) => permissions,
         Err(err) => {
             log::error!("Failed to process AuthZen resource search request: {}", err);
-            ApiError::from(err).into_response()
+            return ApiError::from(err).into_response();
+        }
+    };
+
+    // Extract unique resources from permissions
+    let mut unique_resources = HashMap::new();
+
+    // Process each permission and extract the resources
+    for (_, perm) in permissions {
+        if let Some(resource_details) = perm.resource {
+            let resource = AuthZenResource {
+                r#type: resource_details.r#type.clone(),
+                id: resource_details.key.clone(),
+                properties: if resource_details.attributes.is_empty() {
+                    None
+                } else {
+                    Some(resource_details.attributes)
+                },
+            };
+
+            // Use the resource ID as key to ensure uniqueness
+            unique_resources.insert(resource.id.clone(), resource);
         }
     }
+
+    // Convert the unique resources HashMap to a Vec
+    let results = unique_resources
+        .into_iter()
+        .map(|(_, resource)| resource)
+        .collect();
+
+    // Create the response
+    let response = ResourceSearchResponse {
+        results,
+        page: Some(PageResponse {
+            next_token: None, // Pagination not yet fully implemented
+        }),
+        context: None,
+    };
+
+    (StatusCode::OK, Json(response)).into_response()
 }
 
 #[cfg(test)]
@@ -295,7 +159,7 @@ mod tests {
         let test_request = json!({
             "subject": {
                 "type": "user",
-                "id": "alice@acmecorp.com"
+                "id": "alice@example.com"
             }
         });
 
@@ -401,7 +265,7 @@ mod tests {
         let test_request = json!({
             "subject": {
                 "type": "user",
-                "id": "bob@acmecorp.com"
+                "id": "bob@example.com"
             }
         });
 
@@ -450,7 +314,7 @@ mod tests {
         let test_request = json!({
             "subject": {
                 "type": "user",
-                "id": "alice@acmecorp.com"
+                "id": "alice@example.com"
             },
             "action": {
                 "name": "can_read"
@@ -523,7 +387,7 @@ mod tests {
         let test_request = json!({
             "subject": {
                 "type": "user",
-                "id": "alice@acmecorp.com"
+                "id": "alice@example.com"
             },
             "page": {
                 "size": 10,

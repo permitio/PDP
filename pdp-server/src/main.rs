@@ -3,7 +3,6 @@ mod cache;
 mod config;
 mod errors;
 mod headers;
-mod models;
 mod opa_client;
 mod openapi;
 mod state;

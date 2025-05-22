@@ -1,4 +1,3 @@
-use crate::models::*;
 use utoipa::OpenApi;
 
 pub(crate) const HEALTH_TAG: &str = "Health API";
@@ -7,16 +6,6 @@ pub(crate) const AUTHZEN_TAG: &str = "AuthZen API";
 
 #[derive(OpenApi)]
 #[openapi(
-    components(
-        schemas(
-            User,
-            ResourceDetails,
-            TenantDetails,
-            UserPermissionsResult,
-            UserPermissionsQuery,
-            ValidationError,
-        )
-    ),
     tags(
         (name = HEALTH_TAG, description = "Health check endpoints"),
         (name = AUTHZ_TAG, description = "Authorization endpoints")

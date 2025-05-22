@@ -57,9 +57,10 @@ mod tests {
                 "/v1/data/permit/authorized_users/authorized_users",
                 json!({
                     "result": {
-                        "resource": "document:doc-123",
-                        "tenant": "test_tenant",
-                        "users": {
+                        "result": {
+                            "resource": "document:doc-123",
+                            "tenant": "test_tenant",
+                            "users": {
                             "user1": [
                                 {
                                     "user": "user1",
@@ -77,6 +78,7 @@ mod tests {
                                 }
                             ]
                         }
+                        },
                     }
                 }),
                 StatusCode::OK,
@@ -109,6 +111,9 @@ mod tests {
         // Verify key fields in response
         assert_eq!(result.resource, "document:doc-123");
         assert_eq!(result.tenant, "test_tenant");
+        assert_eq!(result.users.len(), 2);
+        assert_eq!(result.users.get("user1").unwrap()[0].role, "viewer");
+        assert_eq!(result.users.get("user2").unwrap()[0].role, "editor");
 
         // Verify mock expectations
         fixture.opa_mock.verify().await;
@@ -126,9 +131,11 @@ mod tests {
                 "/v1/data/permit/authorized_users/authorized_users",
                 json!({
                     "result": {
-                        "resource": "document:doc-123",
-                        "tenant": "test_tenant",
-                        "users": {}
+                        "result": {
+                            "resource": "document:doc-123",
+                            "tenant": "test_tenant",
+                            "users": {}
+                        }
                     }
                 }),
                 StatusCode::OK,

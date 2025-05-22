@@ -1,7 +1,8 @@
+use crate::api::authzen::common::{PageRequest, PageResponse};
 use crate::api::authzen::schema::{AuthZenAction, AuthZenResource, AuthZenSubject};
 use crate::errors::ApiError;
-use crate::opa_client::allowed::{Resource as OpaResource, User as OpaUser};
-use crate::opa_client::{ForwardingError, OpaRequest};
+use crate::opa_client::allowed::Resource;
+use crate::opa_client::authorized_users::{query_authorized_users, AuthorizedUsersQuery};
 use crate::openapi::AUTHZEN_TAG;
 use crate::state::AppState;
 use axum::{
@@ -12,168 +13,6 @@ use http::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use utoipa::ToSchema;
-
-// Helper function to send a request to OPA
-async fn send_to_opa<T: Serialize>(
-    state: &AppState,
-    endpoint: &str,
-    body: &T,
-) -> Result<serde_json::Value, ForwardingError> {
-    // Create a new OPA request
-    let request = OpaRequest {
-        input: serde_json::to_value(body)?,
-    };
-
-    // Send the request to OPA
-    let client = &state.opa_client;
-    let endpoint = endpoint.strip_prefix("/").unwrap_or(endpoint);
-    let opa_url = format!("{}/{}", state.config.opa.url, endpoint);
-
-    // Send the request
-    let response = client.post(&opa_url).json(&request).send().await?;
-
-    // Check if the request was successful
-    if !response.status().is_success() {
-        let status = response.status();
-        return Err(ForwardingError::InvalidStatus(status));
-    }
-
-    // Parse the response body
-    let body = response.bytes().await?;
-    let full_response: serde_json::Value = serde_json::from_slice(&body)?;
-
-    // Extract the result field
-    if let serde_json::Value::Object(map) = &full_response {
-        if let Some(result) = map.get("result") {
-            return Ok(result.clone());
-        }
-    }
-
-    Ok(serde_json::Value::Null)
-}
-
-/// Resource type specification for Resource Search API
-#[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
-pub struct ResourceType {
-    /// Type of the resource
-    pub r#type: String,
-    /// Optional properties of the resource
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub properties: Option<HashMap<String, serde_json::Value>>,
-}
-
-/// AuthZen Resource Search Request - to find resources that a subject can access
-#[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
-pub struct ResourceSearchRequest {
-    /// Subject making the request
-    pub subject: AuthZenSubject,
-    /// Action being performed
-    pub action: AuthZenAction,
-    /// Resource type to search for (without ID as per spec)
-    pub resource: ResourceType,
-    /// Context for the evaluation
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context: Option<HashMap<String, serde_json::Value>>,
-    /// Pagination parameters
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub page: Option<PageRequest>,
-}
-
-/// Pagination request parameters
-#[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
-pub struct PageRequest {
-    /// Token for retrieving the next page of results
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub next_token: Option<String>,
-    /// Maximum number of results to return per page
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub size: Option<i32>,
-}
-
-/// Pagination response parameters
-#[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
-pub struct PageResponse {
-    /// Token for retrieving the next page of results, empty if no more results
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next_token: Option<String>,
-}
-
-/// AuthZen Resource Search Response - contains list of resources a subject can access
-#[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
-pub struct ResourceSearchResponse {
-    /// List of resources the subject can access
-    pub results: Vec<AuthZenResource>,
-    /// Pagination information
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub page: Option<PageResponse>,
-    /// Optional additional context
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context: Option<HashMap<String, serde_json::Value>>,
-}
-
-// Internal structure to interface with OPA
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct OpaResourceSearchRequest {
-    user: OpaUser,
-    action: String,
-    resource_type: String,
-    context: HashMap<String, serde_json::Value>,
-    sdk: Option<String>,
-}
-
-// Internal structure to receive OPA response
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct OpaResourceSearchResponse {
-    resources: HashMap<String, OpaResource>,
-}
-
-// Convert AuthZen request to OPA request
-impl From<ResourceSearchRequest> for OpaResourceSearchRequest {
-    fn from(req: ResourceSearchRequest) -> Self {
-        let user = OpaUser {
-            key: req.subject.id.clone(),
-            first_name: None,
-            last_name: None,
-            email: None,
-            attributes: req.subject.properties.unwrap_or_default(),
-        };
-
-        OpaResourceSearchRequest {
-            user,
-            action: req.action.name,
-            resource_type: req.resource.r#type,
-            context: req.context.unwrap_or_default(),
-            sdk: Some("authzen".to_string()),
-        }
-    }
-}
-
-// Convert OPA response to AuthZen response
-impl From<OpaResourceSearchResponse> for ResourceSearchResponse {
-    fn from(res: OpaResourceSearchResponse) -> Self {
-        let results = res
-            .resources
-            .into_iter()
-            .map(|(_, resource)| AuthZenResource {
-                r#type: resource.r#type,
-                id: resource.key.unwrap_or_default(),
-                properties: if resource.attributes.is_empty() {
-                    None
-                } else {
-                    Some(resource.attributes)
-                },
-            })
-            .collect();
-
-        ResourceSearchResponse {
-            results,
-            page: Some(PageResponse {
-                next_token: None, // Pagination not yet fully implemented
-            }),
-            context: None,
-        }
-    }
-}
 
 /// AuthZen Subject Search Request - to find subjects with access to a resource
 #[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
@@ -203,66 +42,19 @@ pub struct SubjectSearchResponse {
     pub context: Option<HashMap<String, serde_json::Value>>,
 }
 
-// Internal structure to interface with OPA for subject search
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct OpaSubjectSearchRequest {
-    action: String,
-    resource: OpaResource,
-    context: HashMap<String, serde_json::Value>,
-    sdk: Option<String>,
-}
-
-// Internal structure to receive OPA response for subject search
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct OpaSubjectSearchResponse {
-    subjects: HashMap<String, OpaUser>,
-}
-
-// Convert AuthZen request to OPA request for subject search
-impl From<SubjectSearchRequest> for OpaSubjectSearchRequest {
+impl From<SubjectSearchRequest> for AuthorizedUsersQuery {
     fn from(req: SubjectSearchRequest) -> Self {
-        let resource = OpaResource {
-            r#type: req.resource.r#type.clone(),
-            key: Some(req.resource.id.clone()),
-            tenant: None,
-            attributes: req.resource.properties.unwrap_or_default(),
-            context: HashMap::new(),
-        };
-
-        OpaSubjectSearchRequest {
+        AuthorizedUsersQuery {
             action: req.action.name,
-            resource,
+            resource: Resource {
+                r#type: req.resource.r#type.clone(),
+                key: Some(req.resource.id.clone()),
+                tenant: None,
+                attributes: req.resource.properties.unwrap_or_default(),
+                context: HashMap::new(),
+            },
             context: req.context.unwrap_or_default(),
             sdk: Some("authzen".to_string()),
-        }
-    }
-}
-
-// Convert OPA response to AuthZen response for subject search
-impl From<OpaSubjectSearchResponse> for SubjectSearchResponse {
-    fn from(res: OpaSubjectSearchResponse) -> Self {
-        let results = res
-            .subjects
-            .into_iter()
-            .map(|(_, user)| {
-                AuthZenSubject {
-                    r#type: "user".to_string(), // Default type for subjects
-                    id: user.key,
-                    properties: if user.attributes.is_empty() {
-                        None
-                    } else {
-                        Some(user.attributes)
-                    },
-                }
-            })
-            .collect();
-
-        SubjectSearchResponse {
-            results,
-            page: Some(PageResponse {
-                next_token: None, // Pagination not yet fully implemented
-            }),
-            context: None,
         }
     }
 }
@@ -289,59 +81,35 @@ pub async fn search_subject_handler(
     State(state): State<AppState>,
     Json(request): Json<SubjectSearchRequest>,
 ) -> Response {
-    // Convert AuthZen request to OPA format
-    let opa_request: OpaSubjectSearchRequest = request.into();
-
-    // Select the appropriate endpoint based on configuration
-    let endpoint = if state.config.use_new_authorized_users {
-        "/v1/data/permit/authorized_users_new/authorized_users"
-    } else {
-        "/v1/data/permit/authorized_users/authorized_users"
-    };
-
-    // Send request to OPA - we're receiving a raw JSON response first
-    match send_to_opa(&state, endpoint, &opa_request).await {
-        Ok(result) => {
-            // Extract the subjects from the result
-            if let serde_json::Value::Object(map) = result {
-                if let Some(subjects_value) = map.get("subjects") {
-                    // Try to deserialize the subjects map
-                    match serde_json::from_value::<HashMap<String, OpaUser>>(subjects_value.clone())
-                    {
-                        Ok(subjects) => {
-                            // Create the OPA response structure
-                            let opa_response = OpaSubjectSearchResponse { subjects };
-
-                            // Convert to AuthZen response
-                            let authzen_response: SubjectSearchResponse = opa_response.into();
-
-                            // Return the response
-                            return (StatusCode::OK, Json(authzen_response)).into_response();
-                        }
-                        Err(err) => {
-                            log::error!("Failed to deserialize subjects map: {}", err);
-                            return ApiError::internal("Invalid subjects in OPA response")
-                                .into_response();
-                        }
-                    }
-                }
-            }
-
-            // If we get here, we didn't find the subjects field or it wasn't valid
-            // Return an empty result
-            let empty_response = SubjectSearchResponse {
-                results: Vec::new(),
-                page: Some(PageResponse { next_token: None }),
-                context: None,
-            };
-
-            (StatusCode::OK, Json(empty_response)).into_response()
-        }
+    let query: AuthorizedUsersQuery = request.into();
+    let result = match query_authorized_users(&state, &query).await {
+        Ok(result) => result,
         Err(err) => {
             log::error!("Failed to process AuthZen subject search request: {}", err);
-            ApiError::from(err).into_response()
+            return ApiError::from(err).into_response();
         }
-    }
+    };
+
+    // Convert the result to AuthZen format
+    let subjects = result
+        .users
+        .iter()
+        .filter(|(_, assignments)| !assignments.is_empty())
+        .map(|(user_key, _)| AuthZenSubject {
+            r#type: "user".to_string(),
+            id: user_key.clone(),
+            properties: None,
+        })
+        .collect();
+
+    // Create the AuthZen response
+    let response = SubjectSearchResponse {
+        results: subjects,
+        page: Some(PageResponse { next_token: None }),
+        context: None,
+    };
+
+    (StatusCode::OK, Json(response)).into_response()
 }
 
 #[cfg(test)]
@@ -355,43 +123,37 @@ mod tests {
         // Setup test fixture
         let fixture = TestFixture::new().await;
 
-        // Test AuthZen request
-        let test_request = json!({
-            "resource": {
-                "type": "document",
-                "id": "123"
-            },
-            "action": {
-                "name": "can_read"
-            }
-        });
-
-        // Mock OPA response with two users
-        let mock_response = json!({
-            "result": {
-                "subjects": {
-                    "alice": {
-                        "key": "alice@acmecorp.com",
-                        "attributes": {
-                            "department": "Engineering"
-                        }
-                    },
-                    "bob": {
-                        "key": "bob@acmecorp.com",
-                        "attributes": {
-                            "department": "Sales"
-                        }
-                    }
-                }
-            }
-        });
-
         // Set up the mock response
         fixture
             .add_opa_mock(
                 http::Method::POST,
                 "/v1/data/permit/authorized_users/authorized_users",
-                mock_response,
+                json!({
+                    "result": {
+                        "result": {
+                            "resource": "document:123",
+                            "tenant": "default",
+                            "users": {
+                                "alice@example.com": [
+                                    {
+                                        "user": "alice@example.com",
+                                        "tenant": "default",
+                                        "resource": "document:123",
+                                        "role": "reader"
+                                    }
+                                ],
+                                "bob@example.com": [
+                                    {
+                                        "user": "bob@example.com",
+                                        "tenant": "default",
+                                        "resource": "document:123",
+                                        "role": "reader"
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                }),
                 http::StatusCode::OK,
                 1,
             )
@@ -399,7 +161,18 @@ mod tests {
 
         // Send the request using the fixture's post method
         let response = fixture
-            .post("/access/v1/search/subject", &test_request)
+            .post(
+                "/access/v1/search/subject",
+                &json!({
+                    "resource": {
+                        "type": "document",
+                        "id": "123"
+                    },
+                    "action": {
+                        "name": "can_read"
+                    }
+                }),
+            )
             .await;
 
         // Assert the response
@@ -409,38 +182,28 @@ mod tests {
         let search_response: SubjectSearchResponse = response.json_as();
 
         // Check the response
-        assert_eq!(search_response.results.len(), 2);
+        assert_eq!(
+            search_response.results.len(),
+            2,
+            "Expected 2 users, found: {}",
+            search_response.results.len()
+        );
 
         // Find Alice in the response
         let alice = search_response
             .results
             .iter()
-            .find(|subject| subject.id == "alice@acmecorp.com")
+            .find(|subject| subject.id == "alice@example.com")
             .unwrap();
         assert_eq!(alice.r#type, "user");
-        assert!(alice.properties.is_some());
-        assert_eq!(
-            alice
-                .properties
-                .as_ref()
-                .unwrap()
-                .get("department")
-                .unwrap(),
-            "Engineering"
-        );
 
         // Find Bob in the response
         let bob = search_response
             .results
             .iter()
-            .find(|subject| subject.id == "bob@acmecorp.com")
+            .find(|subject| subject.id == "bob@example.com")
             .unwrap();
         assert_eq!(bob.r#type, "user");
-        assert!(bob.properties.is_some());
-        assert_eq!(
-            bob.properties.as_ref().unwrap().get("department").unwrap(),
-            "Sales"
-        );
 
         // Verify page is present
         assert!(search_response.page.is_some());
@@ -451,30 +214,20 @@ mod tests {
         // Setup test fixture
         let fixture = TestFixture::new().await;
 
-        // Test AuthZen request
-        let test_request = json!({
-            "resource": {
-                "type": "document",
-                "id": "456"
-            },
-            "action": {
-                "name": "can_write"
-            }
-        });
-
-        // Mock OPA response with no users (empty map)
-        let mock_response = json!({
-            "result": {
-                "subjects": {}
-            }
-        });
-
         // Set up the mock response
         fixture
             .add_opa_mock(
                 http::Method::POST,
                 "/v1/data/permit/authorized_users/authorized_users",
-                mock_response,
+                json!({
+                    "result": {
+                        "result": {
+                            "resource": "document:456",
+                            "tenant": "default",
+                            "users": {}
+                        }
+                    }
+                }),
                 http::StatusCode::OK,
                 1,
             )
@@ -482,7 +235,18 @@ mod tests {
 
         // Send the request using the fixture's post method
         let response = fixture
-            .post("/access/v1/search/subject", &test_request)
+            .post(
+                "/access/v1/search/subject",
+                &json!({
+                    "resource": {
+                        "type": "document",
+                        "id": "456"
+                    },
+                    "action": {
+                        "name": "can_write"
+                    }
+                }),
+            )
             .await;
 
         // Assert the response
@@ -497,47 +261,34 @@ mod tests {
         // Verify page is present
         assert!(search_response.page.is_some());
     }
-
     #[tokio::test]
     async fn test_subject_search_with_pagination() {
         // Setup test fixture
         let fixture = TestFixture::new().await;
-
-        // Test AuthZen request with pagination
-        let test_request = json!({
-            "resource": {
-                "type": "document",
-                "id": "123"
-            },
-            "action": {
-                "name": "can_read"
-            },
-            "page": {
-                "size": 10,
-                "next_token": null
-            }
-        });
-
-        // Mock OPA response with users
-        let mock_response = json!({
-            "result": {
-                "subjects": {
-                    "alice": {
-                        "key": "alice@acmecorp.com",
-                        "attributes": {
-                            "department": "Engineering"
-                        }
-                    }
-                }
-            }
-        });
 
         // Set up the mock response
         fixture
             .add_opa_mock(
                 http::Method::POST,
                 "/v1/data/permit/authorized_users/authorized_users",
-                mock_response,
+                json!({
+                    "result": {
+                        "result": {
+                            "resource": "document:123",
+                            "tenant": "default",
+                            "users": {
+                                "alice@example.com": [
+                                    {
+                                        "user": "alice@example.com",
+                                        "tenant": "default",
+                                        "resource": "document:123",
+                                        "role": "reader"
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                }),
                 http::StatusCode::OK,
                 1,
             )
@@ -545,7 +296,22 @@ mod tests {
 
         // Send the request using the fixture's post method
         let response = fixture
-            .post("/access/v1/search/subject", &test_request)
+            .post(
+                "/access/v1/search/subject",
+                &json!({
+                    "resource": {
+                        "type": "document",
+                        "id": "123"
+                    },
+                    "action": {
+                        "name": "can_read"
+                    },
+                    "page": {
+                        "size": 10,
+                        "next_token": null
+                    }
+                }),
+            )
             .await;
 
         // Assert the response
