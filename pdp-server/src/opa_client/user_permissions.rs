@@ -141,13 +141,9 @@ mod tests {
         // Extract permissions using the same logic as query_user_permissions
         let permissions: HashMap<String, UserPermissionsResult> =
             if let serde_json::Value::Object(map) = &test_response {
-                if let Some(result) = map.get("result") {
-                    if let serde_json::Value::Object(result_map) = result {
-                        if let Some(permissions) = result_map.get("permissions") {
-                            serde_json::from_value(permissions.clone()).unwrap()
-                        } else {
-                            HashMap::new()
-                        }
+                if let Some(serde_json::Value::Object(result_map)) = map.get("result") {
+                    if let Some(permissions) = result_map.get("permissions") {
+                        serde_json::from_value(permissions.clone()).unwrap()
                     } else {
                         HashMap::new()
                     }
@@ -196,13 +192,9 @@ mod tests {
         // Extract permissions using the same logic as query_user_permissions
         let permissions: HashMap<String, UserPermissionsResult> =
             if let serde_json::Value::Object(map) = &test_response {
-                if let Some(result) = map.get("result") {
-                    if let serde_json::Value::Object(result_map) = result {
-                        if let Some(permissions) = result_map.get("permissions") {
-                            serde_json::from_value(permissions.clone()).unwrap()
-                        } else {
-                            HashMap::new()
-                        }
+                if let Some(serde_json::Value::Object(result_map)) = map.get("result") {
+                    if let Some(permissions) = result_map.get("permissions") {
+                        serde_json::from_value(permissions.clone()).unwrap()
                     } else {
                         HashMap::new()
                     }

@@ -3,7 +3,6 @@ use crate::state::AppState;
 use axum::http::StatusCode;
 use http::header::InvalidHeaderValue;
 use log::debug;
-use reqwest;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value::{Bool, Object};

@@ -127,10 +127,7 @@ pub async fn search_resource_handler(
     }
 
     // Convert the unique resources HashMap to a Vec
-    let results = unique_resources
-        .into_iter()
-        .map(|(_, resource)| resource)
-        .collect();
+    let results = unique_resources.into_values().collect();
 
     // Create the response
     let response = ResourceSearchResponse {

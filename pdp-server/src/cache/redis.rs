@@ -184,7 +184,7 @@ mod tests {
             redis::ConnectionAddr::Tcp(host, port) => {
                 format!("redis://{}:{}/", host, port)
             }
-            _ => format!("redis://127.0.0.1:6379/"),
+            _ => "redis://127.0.0.1:6379/".to_string(),
         }
     }
 
