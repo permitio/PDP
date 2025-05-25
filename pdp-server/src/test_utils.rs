@@ -3,7 +3,6 @@ use crate::create_app;
 use crate::state::AppState;
 use axum::body::Body;
 use axum::Router;
-use env_logger;
 use http::{Method, Request, StatusCode};
 use http_body_util::BodyExt;
 use log::LevelFilter;
@@ -477,7 +476,7 @@ impl TestFixture {
         response_body: impl Serialize,
         status_code: StatusCode,
         expected_calls: u64,
-    ) -> () {
+    ) {
         let path_string = path.into();
 
         Mock::given(matchers::method(method.as_str()))
@@ -502,26 +501,6 @@ pub struct TestResponse {
 }
 
 impl TestResponse {
-    /// Checks if the response status is successful (2xx).
-    ///
-    /// # Returns
-    ///
-    /// `true` if the status code is in the 200-299 range, `false` otherwise.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// let response = fixture.get("/resource").await;
-    /// if response.is_success() {
-    ///     // Process successful response
-    /// } else {
-    ///     // Handle error
-    /// }
-    /// ```
-    pub fn is_success(&self) -> bool {
-        self.status.is_success()
-    }
-
     /// Asserts that the response has the expected status code.
     ///
     /// # Parameters
@@ -656,7 +635,7 @@ impl TestResponse {
         let header = self
             .headers
             .get(name)
-            .expect(&format!("Header '{}' not found", name));
+            .unwrap_or_else(|| panic!("Header '{}' not found", name));
         assert_eq!(
             header.to_str().unwrap(),
             expected_value,
@@ -673,6 +652,7 @@ impl TestResponse {
     /// # Returns
     ///
     /// A reference to the response headers.
+    #[allow(dead_code)]
     pub fn headers(&self) -> &http::HeaderMap {
         &self.headers
     }
@@ -700,6 +680,7 @@ impl TestResponse {
     /// let text = response.text();
     /// assert!(text.contains("Expected message"));
     /// ```
+    #[allow(dead_code)]
     pub fn text(&self) -> String {
         String::from_utf8_lossy(&self.body).to_string()
     }

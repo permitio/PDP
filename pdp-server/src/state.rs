@@ -1,5 +1,5 @@
 use crate::{
-    cache::{create_cache, Cache, CacheBackend},
+    cache::{create_cache, Cache},
     config::PDPConfig,
 };
 use http::header::{AUTHORIZATION, CONTENT_TYPE};
@@ -27,12 +27,11 @@ impl AppState {
     /// Create a new application state with all components initialized
     pub async fn new(config: &PDPConfig) -> Result<Self, std::io::Error> {
         let watchdog = Self::setup_horizon_watchdog(config).await;
-        let cache = Arc::new(create_cache(config).await.map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to create cache: {}", e),
-            )
-        })?);
+        let cache = Arc::new(
+            create_cache(config)
+                .await
+                .map_err(|e| std::io::Error::other(format!("Failed to create cache: {}", e)))?,
+        );
 
         Ok(Self {
             config: Arc::new(config.clone()),
@@ -87,16 +86,6 @@ impl AppState {
                 config.horizon.client_timeout,
             )),
         }
-    }
-
-    /// Check if all components are healthy
-    pub async fn health_check(&self) -> bool {
-        let is_cache_healthy = self.cache.health_check();
-        let is_watchdog_healthy = match &self.watchdog {
-            Some(watchdog) => watchdog.is_healthy(),
-            None => true, // If no watchdog is running (e.g. in tests), consider it healthy
-        };
-        is_cache_healthy && is_watchdog_healthy
     }
 
     /// Set up and initialize the Horizon service watchdog
@@ -168,6 +157,7 @@ fn create_http_client(token: String, timeout_secs: u64) -> Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cache::CacheBackend;
     use crate::config::cache::{InMemoryConfig, RedisConfig};
     use crate::config::{CacheConfig, CacheStore};
 
@@ -177,6 +167,7 @@ mod tests {
             debug: Some(true),
             port: 3000,
             use_new_authorized_users: false,
+            healthcheck_timeout: 1.0,
             horizon: crate::config::horizon::HorizonConfig {
                 host: "localhost".to_string(),
                 port: 3000,
@@ -208,7 +199,7 @@ mod tests {
         let state = AppState::for_testing(&config);
 
         // Verify that state was created correctly
-        assert!(state.cache.health_check());
+        assert!(state.cache.health_check().await.is_ok());
         assert!(state.watchdog.is_none()); // No watchdog in test mode
     }
 

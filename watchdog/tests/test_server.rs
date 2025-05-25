@@ -14,6 +14,12 @@ pub struct TestServer {
     ignore_sigterm: bool,
 }
 
+impl Default for TestServer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TestServer {
     pub fn new() -> Self {
         Self::new_with_options(false)
