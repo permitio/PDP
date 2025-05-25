@@ -6,10 +6,6 @@ pub mod memory;
 pub mod null;
 pub mod redis;
 
-// Only used in tests, so let's restrict their visibility
-#[cfg(test)]
-pub use memory::InMemoryCache;
-
 /// Errors that can occur during cache operations
 #[derive(Debug, Error)]
 pub enum CacheError {
@@ -38,7 +34,7 @@ struct CacheValue {
 /// Implementations of this trait should be thread-safe (Send + Sync)
 /// and cloneable to support sharing across multiple handlers.
 #[async_trait::async_trait]
-pub trait CacheBackend: Send + Sync + Clone {
+pub trait CacheBackend: Send + Sync {
     /// Store a value in the cache with default TTL
     async fn set<T: Serialize + Send + Sync>(&self, key: &str, value: &T)
         -> Result<(), CacheError>;
@@ -49,9 +45,15 @@ pub trait CacheBackend: Send + Sync + Clone {
         key: &str,
     ) -> Result<Option<T>, CacheError>;
 
-    /// Check if the cache is healthy
-    /// This method is deliberately non-async to allow for quick health checks
-    fn health_check(&self) -> bool;
+    /// Performs a deep health check on the cache backend
+    ///
+    /// This method performs a more thorough health check than `health_check`,
+    /// potentially testing actual connectivity to the backend.
+    /// For Redis, this will ping the server. For memory cache, this will
+    /// check if the cache is initialized.
+    ///
+    /// Returns Ok(()) if healthy, or Err with a descriptive message if unhealthy.
+    async fn health_check(&self) -> Result<(), String>;
 
     /// Delete a value from the cache
     async fn delete(&self, key: &str) -> Result<(), CacheError>;
@@ -100,11 +102,11 @@ impl CacheBackend for Cache {
         }
     }
 
-    fn health_check(&self) -> bool {
+    async fn health_check(&self) -> Result<(), String> {
         match self {
-            Self::InMemory(cache) => cache.health_check(),
-            Self::Redis(cache) => cache.health_check(),
-            Self::Null(cache) => cache.health_check(),
+            Self::InMemory(cache) => cache.health_check().await,
+            Self::Redis(cache) => cache.health_check().await,
+            Self::Null(cache) => cache.health_check().await,
         }
     }
 
@@ -171,6 +173,7 @@ pub async fn create_cache(config: &crate::config::PDPConfig) -> Result<Cache, Ca
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::cache::memory::InMemoryCache;
     use serde::{Deserialize, Serialize};
     use std::time::Duration;
 
