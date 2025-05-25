@@ -1,5 +1,5 @@
 use crate::{
-    cache::{create_cache, Cache, CacheBackend},
+    cache::{create_cache, Cache},
     config::PDPConfig,
 };
 use http::header::{AUTHORIZATION, CONTENT_TYPE};
@@ -158,6 +158,7 @@ fn create_http_client(token: String, timeout_secs: u64) -> Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cache::CacheBackend;
     use crate::config::cache::{InMemoryConfig, RedisConfig};
     use crate::config::{CacheConfig, CacheStore};
 

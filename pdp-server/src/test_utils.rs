@@ -3,7 +3,6 @@ use crate::create_app;
 use crate::state::AppState;
 use axum::body::Body;
 use axum::Router;
-use env_logger;
 use http::{Method, Request, StatusCode};
 use http_body_util::BodyExt;
 use log::LevelFilter;
@@ -477,7 +476,7 @@ impl TestFixture {
         response_body: impl Serialize,
         status_code: StatusCode,
         expected_calls: u64,
-    ) -> () {
+    ) {
         let path_string = path.into();
 
         Mock::given(matchers::method(method.as_str()))
@@ -636,7 +635,7 @@ impl TestResponse {
         let header = self
             .headers
             .get(name)
-            .expect(&format!("Header '{}' not found", name));
+            .unwrap_or_else(|| panic!("Header '{}' not found", name));
         assert_eq!(
             header.to_str().unwrap(),
             expected_value,

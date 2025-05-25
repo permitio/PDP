@@ -137,8 +137,8 @@ mod tests {
         response.assert_ok();
         let result: BulkAuthorizationResult = response.json_as();
         assert_eq!(result.allow.len(), 2);
-        assert_eq!(result.allow[0].allow, true);
-        assert_eq!(result.allow[1].allow, false);
+        assert!(result.allow[0].allow);
+        assert!(!result.allow[1].allow);
 
         // Verify mock expectations
         fixture.opa_mock.verify().await;

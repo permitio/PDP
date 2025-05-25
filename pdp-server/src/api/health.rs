@@ -141,7 +141,7 @@ async fn check_all_health(state: &AppState, check_cache: bool) -> HealthResponse
         && components
             .cache
             .as_ref()
-            .map_or(true, |c| c.status == "healthy");
+            .is_none_or(|c| c.status == "healthy");
 
     HealthResponse {
         status: if all_healthy {
