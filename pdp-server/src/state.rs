@@ -27,12 +27,11 @@ impl AppState {
     /// Create a new application state with all components initialized
     pub async fn new(config: &PDPConfig) -> Result<Self, std::io::Error> {
         let watchdog = Self::setup_horizon_watchdog(config).await;
-        let cache = Arc::new(create_cache(config).await.map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to create cache: {}", e),
-            )
-        })?);
+        let cache = Arc::new(
+            create_cache(config)
+                .await
+                .map_err(|e| std::io::Error::other(format!("Failed to create cache: {}", e)))?,
+        );
 
         Ok(Self {
             config: Arc::new(config.clone()),
