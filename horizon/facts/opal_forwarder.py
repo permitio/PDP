@@ -1,6 +1,6 @@
 from functools import cache
 from urllib.parse import urljoin
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from opal_common.fetcher.providers.http_fetch_provider import HttpFetcherConfig
 from opal_common.schemas.data import DataSourceEntry, DataUpdate
@@ -34,6 +34,8 @@ def create_data_source_entry(
     obj_id: str,
     obj_key: str,
     authorization_header: str,
+    *,
+    update_id: UUID | None = None,
 ) -> DataSourceEntry:
     obj_id = obj_id.replace("-", "")  # convert UUID to Hex
     url = urljoin(
@@ -49,6 +51,9 @@ def create_data_source_entry(
     if sidecar_config.SHARD_ID:
         headers["X-Shard-Id"] = sidecar_config.SHARD_ID
 
+    if update_id:
+        headers["X-Permit-Update-Id"] = update_id.hex
+
     return DataSourceEntry(
         url=url,
         data=None,
@@ -59,18 +64,26 @@ def create_data_source_entry(
     )
 
 
-def create_data_update_entry(entries: list[DataSourceEntry]) -> DataUpdate:
+def create_data_update_entry(
+    entries: list[DataSourceEntry],
+    *,
+    update_id: UUID | None = None,
+) -> DataUpdate:
     entries_text = ", ".join(entry.dst_path for entry in entries)
-    update_id = uuid4().hex
+    _update_id = (update_id or uuid4()).hex
 
-    def inject_update_id(entry: DataSourceEntry) -> DataSourceEntry:
-        entry_headers = entry.config.get("headers", {})
-        entry_headers["X-Permit-Update-Id"] = update_id
-        entry.config["headers"] = entry_headers
-        return entry
+    if update_id is None:
+
+        def inject_update_id(entry: DataSourceEntry) -> DataSourceEntry:
+            entry_headers = entry.config.get("headers", {})
+            entry_headers["X-Permit-Update-Id"] = _update_id
+            entry.config["headers"] = entry_headers
+            return entry
+
+        entries = list(map(inject_update_id, entries))
 
     return DataUpdate(
-        id=uuid4().hex,
-        entries=list(map(inject_update_id, entries)),
+        id=_update_id,
+        entries=entries,
         reason=f"Local facts upload for {entries_text}",
     )
