@@ -27,8 +27,8 @@ pub struct PDPConfig {
     #[serde(default)]
     pub use_new_authorized_users: bool,
 
-    /// Timeout in seconds for health checks (default: 1.0 second)
-    #[serde(default)]
+    /// Timeout in seconds for health checks (default: 3 second)
+    #[serde(default = "default_healthcheck_timeout")]
     pub healthcheck_timeout: f64,
 
     /// Horizon service configuration
@@ -44,6 +44,11 @@ pub struct PDPConfig {
     pub cache: CacheConfig,
 }
 
+// Helper function to provide the default healthcheck timeout for serde
+fn default_healthcheck_timeout() -> f64 {
+    3.0
+}
+
 impl Default for PDPConfig {
     fn default() -> Self {
         Self {
@@ -51,7 +56,7 @@ impl Default for PDPConfig {
             debug: None,
             port: 7766,
             use_new_authorized_users: false,
-            healthcheck_timeout: 1.0, // 1 second timeout for health checks
+            healthcheck_timeout: default_healthcheck_timeout(), // Use the function here too for consistency
             horizon: HorizonConfig::default(),
             opa: OpaConfig::default(),
             cache: CacheConfig::default(),
@@ -132,7 +137,7 @@ impl PDPConfig {
             debug: Some(true),
             port: 0, // Let the OS choose a port
             use_new_authorized_users: false,
-            healthcheck_timeout: 1.0,
+            healthcheck_timeout: 3.0,
             // Use the mock server addresses for testing
             horizon: HorizonConfig {
                 host: horizon_mock.address().ip().to_string(),

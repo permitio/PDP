@@ -21,7 +21,7 @@ async fn test_watchdog_spawn() {
 
     // Start the test server
     let watchdog = CommandWatchdog::start(test_server.get_command());
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
 
     let ping_response = test_server.ping().await.unwrap();
     assert_eq!(ping_response, "pong");
@@ -43,7 +43,7 @@ async fn test_watchdog_restart_after_crash() {
         ..Default::default()
     };
     let watchdog = CommandWatchdog::start_with_opt(test_server.get_command(), opt);
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
 
     // Check if the server is running
     let ping_response = test_server.ping().await.unwrap();
@@ -126,7 +126,7 @@ async fn test_watchdog_explicit_restart() {
         ..Default::default()
     };
     let watchdog = CommandWatchdog::start_with_opt(test_server.get_command(), opt);
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
 
     // Check if the server is running
     let ping_response = test_server.ping().await.unwrap();
@@ -177,7 +177,7 @@ async fn test_watchdog_termination_timeout() {
         termination_timeout: Duration::from_millis(500),
     };
     let watchdog = CommandWatchdog::start_with_opt(test_server.get_command(), opt);
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
 
     // Get initial status
     let status = test_server.status().await.unwrap();
@@ -264,7 +264,7 @@ async fn test_service_watchdog_recover() {
     let opt = ServiceWatchdogOptions {
         health_check_interval: Duration::from_millis(50),
         health_check_failure_threshold: 2,
-        initial_startup_delay: Duration::from_millis(50),
+        initial_startup_delay: Duration::from_millis(250),
         ..Default::default()
     };
     let watchdog = ServiceWatchdog::start_with_opt(

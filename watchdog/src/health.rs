@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use log::debug;
 use std::fmt::Debug;
+use std::fmt::Write;
 use std::time::Duration;
 
 /// Trait for health checkers to monitor service health
@@ -45,6 +46,15 @@ impl HttpHealthChecker {
     }
 }
 
+fn report(mut err: &dyn std::error::Error) -> String {
+    let mut s = format!("{}", err);
+    while let Some(src) = err.source() {
+        let _ = write!(s, "\n\nCaused by: {}", src);
+        err = src;
+    }
+    s
+}
+
 #[async_trait]
 impl HealthCheck for HttpHealthChecker {
     async fn check_health(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -52,7 +62,7 @@ impl HealthCheck for HttpHealthChecker {
         let response = match self.client.get(&self.url).send().await {
             Ok(resp) => resp,
             Err(e) => {
-                return Err(format!("HTTP request failed: {}", e).into());
+                return Err(format!("HTTP request failed: {}", report(&e)).into());
             }
         };
         let status_code = response.status().as_u16();
