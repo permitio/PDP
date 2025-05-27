@@ -265,6 +265,16 @@ class SidecarConfig(Confi):
         description="The path to the file that contains the PDP version",
     )
 
+    HORIZON_NICENESS = confi.int(
+        "HORIZON_NICENESS",
+        10,
+        description=(
+            "The niceness value for the PDP Horizon process (Python process). "
+            "Niceness values range from -20 (highest priority) to 19 (lowest priority) with 0 is neutral. "
+            "Adjusting this can help manage CPU resource allocation. "
+        ),
+    )
+
     @staticmethod
     def parse_callbacks(value: Any) -> list[CallbackEntry]:
         if isinstance(value, str):
