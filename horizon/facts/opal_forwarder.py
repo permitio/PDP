@@ -1,6 +1,6 @@
 from functools import cache
 from urllib.parse import urljoin
-from uuid import uuid4
+from uuid import UUID
 
 from opal_common.fetcher.providers.http_fetch_provider import HttpFetcherConfig
 from opal_common.schemas.data import DataSourceEntry, DataUpdate
@@ -34,6 +34,8 @@ def create_data_source_entry(
     obj_id: str,
     obj_key: str,
     authorization_header: str,
+    *,
+    update_id: UUID,
 ) -> DataSourceEntry:
     obj_id = obj_id.replace("-", "")  # convert UUID to Hex
     url = urljoin(
@@ -45,6 +47,7 @@ def create_data_source_entry(
 
     headers = {
         "Authorization": authorization_header,
+        "X-Permit-Update-Id": update_id.hex,
     }
     if sidecar_config.SHARD_ID:
         headers["X-Shard-Id"] = sidecar_config.SHARD_ID
@@ -59,10 +62,15 @@ def create_data_source_entry(
     )
 
 
-def create_data_update_entry(entries: list[DataSourceEntry]) -> DataUpdate:
+def create_data_update_entry(
+    entries: list[DataSourceEntry],
+    *,
+    update_id: UUID,
+) -> DataUpdate:
     entries_text = ", ".join(entry.dst_path for entry in entries)
+
     return DataUpdate(
-        id=uuid4().hex,
+        id=update_id.hex,
         entries=entries,
         reason=f"Local facts upload for {entries_text}",
     )

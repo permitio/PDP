@@ -1,5 +1,6 @@
 from collections.abc import Callable, Iterable
 from typing import Any
+from uuid import UUID, uuid4
 
 from fastapi import (
     APIRouter,
@@ -45,12 +46,13 @@ async def create_user(
         update_subscriber,
         wait_timeout,
         path="/users",
-        entries_callback=lambda r, body: [
+        entries_callback=lambda r, body, update_id: [
             create_data_source_entry(
                 obj_type="users",
                 obj_id=body["id"],
                 obj_key=body["key"],
                 authorization_header=r.headers.get("Authorization"),
+                update_id=update_id,
             )
         ],
         timeout_policy=timeout_policy,
@@ -71,12 +73,13 @@ async def create_tenant(
         update_subscriber,
         wait_timeout,
         path="/tenants",
-        entries_callback=lambda r, body: [
+        entries_callback=lambda r, body, update_id: [
             create_data_source_entry(
                 obj_type="tenants",
                 obj_id=body["id"],
                 obj_key=body["key"],
                 authorization_header=r.headers.get("Authorization"),
+                update_id=update_id,
             )
         ],
         timeout_policy=timeout_policy,
@@ -98,12 +101,13 @@ async def sync_user(
         update_subscriber,
         wait_timeout,
         path=f"/users/{user_id}",
-        entries_callback=lambda r, body: [
+        entries_callback=lambda r, body, update_id: [
             create_data_source_entry(
                 obj_type="users",
                 obj_id=body["id"],
                 obj_key=body["key"],
                 authorization_header=r.headers.get("Authorization"),
+                update_id=update_id,
             )
         ],
         timeout_policy=timeout_policy,
@@ -125,31 +129,36 @@ async def update_user(
         update_subscriber,
         wait_timeout,
         path=f"/users/{user_id}",
-        entries_callback=lambda r, body: [
+        entries_callback=lambda r, body, update_id: [
             create_data_source_entry(
                 obj_type="users",
                 obj_id=body["id"],
                 obj_key=body["key"],
                 authorization_header=r.headers.get("Authorization"),
+                update_id=update_id,
             )
         ],
         timeout_policy=timeout_policy,
     )
 
 
-def create_role_assignment_data_entries(request: FastApiRequest, body: dict[str, Any]) -> Iterable[DataSourceEntry]:
+def create_role_assignment_data_entries(
+    request: FastApiRequest, body: dict[str, Any], update_id: UUID | None
+) -> Iterable[DataSourceEntry]:
     if not body.get("resource_instance"):
         yield create_data_source_entry(
             obj_type="role_assignments",
             obj_id=body["user_id"],
             obj_key=f"user:{body['user']}",
             authorization_header=request.headers.get("Authorization"),
+            update_id=update_id,
         )
         yield create_data_source_entry(
             obj_type="users",
             obj_id=body["user_id"],
             obj_key=body["user"],
             authorization_header=request.headers.get("Authorization"),
+            update_id=update_id,
         )
     else:
         # note that user_id == subject_id,
@@ -159,6 +168,7 @@ def create_role_assignment_data_entries(request: FastApiRequest, body: dict[str,
             obj_id=body["user_id"],
             obj_key=f"user:{body['user']}",
             authorization_header=request.headers.get("Authorization"),
+            update_id=update_id,
         )
 
 
@@ -215,12 +225,13 @@ async def create_resource_instance(
         update_subscriber,
         wait_timeout,
         path="/resource_instances",
-        entries_callback=lambda r, body: [
+        entries_callback=lambda r, body, update_id: [
             create_data_source_entry(
                 obj_type="resource_instances",
                 obj_id=body["id"],
                 obj_key=f"{body['resource']}:{body['key']}",
                 authorization_header=r.headers.get("Authorization"),
+                update_id=update_id,
             ),
         ],
         timeout_policy=timeout_policy,
@@ -242,12 +253,13 @@ async def update_resource_instance(
         update_subscriber,
         wait_timeout,
         path=f"/resource_instances/{instance_id}",
-        entries_callback=lambda r, body: [
+        entries_callback=lambda r, body, update_id: [
             create_data_source_entry(
                 obj_type="resource_instances",
                 obj_id=body["id"],
                 obj_key=f"{body['resource']}:{body['key']}",
                 authorization_header=r.headers.get("Authorization"),
+                update_id=update_id,
             ),
         ],
         timeout_policy=timeout_policy,
@@ -268,12 +280,13 @@ async def create_relationship_tuple(
         update_subscriber,
         wait_timeout,
         path="/relationship_tuples",
-        entries_callback=lambda r, body: [
+        entries_callback=lambda r, body, update_id: [
             create_data_source_entry(
                 obj_type="relationships",
                 obj_id=body["object_id"],
                 obj_key=body["object"],
                 authorization_header=r.headers.get("Authorization"),
+                update_id=update_id,
             ),
         ],
         timeout_policy=timeout_policy,
@@ -287,16 +300,20 @@ async def forward_request_then_wait_for_update(
     wait_timeout: float | None,
     *,
     path: str,
-    entries_callback: Callable[[FastApiRequest, dict[str, Any]], Iterable[DataSourceEntry]],
+    update_id: UUID | None = None,
+    entries_callback: Callable[[FastApiRequest, dict[str, Any], UUID | None], Iterable[DataSourceEntry]],
     timeout_policy: TimeoutPolicy = TimeoutPolicy.IGNORE,
 ) -> Response:
+    _update_id = update_id or uuid4()
     response = await client.send_forward_request(request, path)
     body = client.extract_body(response)
     if body is None:
         return client.convert_response(response)
 
     try:
-        data_update_entry = create_data_update_entry(list(entries_callback(request, body)))
+        data_update_entry = create_data_update_entry(
+            list(entries_callback(request, body, _update_id)), update_id=_update_id
+        )
     except KeyError as e:
         logger.warning(f"Missing required field {e.args[0]} in the response body, skipping wait for update.")
         return client.convert_response(response)
@@ -315,6 +332,7 @@ async def forward_request_then_wait_for_update(
         )
     else:
         logger.warning("Timeout waiting for update and policy is set to ignore")
+        return client.convert_response(response)
 
 
 @facts_router.api_route(
