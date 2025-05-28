@@ -52,7 +52,14 @@ impl From<AccessEvaluationRequest> for AllowedQuery {
         let resource = OpaResource {
             r#type: req.resource.r#type.clone(),
             key: Some(req.resource.id.clone()),
-            tenant: None,
+            tenant: req
+                .resource
+                .properties
+                .clone()
+                .unwrap_or_default()
+                .get("tenant")
+                .cloned()
+                .map(|v| v.to_string()),
             attributes: req.resource.properties.unwrap_or_default(),
             context: HashMap::new(),
         };
