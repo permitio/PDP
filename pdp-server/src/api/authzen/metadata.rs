@@ -30,18 +30,25 @@ pub struct AuthZenMetadataResponse {
 )]
 pub async fn authzen_metadata_handler(request: Request<Body>) -> Response {
     // Get the base URL from the request
-    let parts = request.uri().clone().into_parts();
-    let base_url = format!(
-        "{}://{}",
-        parts
-            .scheme
-            .map(|s| s.to_string())
-            .unwrap_or("http".to_string()),
-        parts
-            .authority
-            .map(|a| a.to_string())
-            .unwrap_or("localhost:7766".to_string())
-    );
+    // Prioritize Host header for authority, then URI authority, then default.
+    // Scheme is from URI or defaults to "http".
+    let uri_parts = request.uri().clone().into_parts();
+    let scheme = uri_parts
+        .scheme
+        .as_ref()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "http".to_string());
+
+    let authority = request
+        .headers()
+        .get(http::header::HOST)
+        .and_then(|host_header| host_header.to_str().ok())
+        .map(|host_str| host_str.to_string())
+        .or_else(|| uri_parts.authority.as_ref().map(|auth| auth.to_string()))
+        .unwrap_or_else(|| "localhost:7766".to_string());
+
+    let base_url = format!("{}://{}", scheme, authority);
+
     let metadata = AuthZenMetadataResponse {
         policy_decision_point: base_url.clone(),
         access_evaluation_endpoint: format!("{}/access/v1/evaluation", base_url),
