@@ -1,4 +1,5 @@
 import logging
+import os
 import sys
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -43,6 +44,37 @@ from horizon.system.api import init_system_api_router
 from horizon.system.consts import GUNICORN_EXIT_APP
 
 OPA_LOGGER_MODULE = "opal_client.opa.logger"
+
+
+def set_process_niceness(target_nice: int) -> None:
+    """
+    Attempts to set the current process's niceness value to `target_nice`.
+    This operation is performed only once during the call.
+
+    This function is idempotent if the current niceness already equals `target_nice`.
+    Setting a lower niceness value (increasing priority) may require CAP_SYS_NICE
+    capabilities and could fail if the process lacks sufficient privileges.
+    """
+    if target_nice < -20 or target_nice > 19:
+        raise ValueError(f"Target niceness must be between -20 and 19, got {target_nice}")
+
+    try:
+        current_niceness = os.nice(0)  # Read current niceness without changing it
+        delta = target_nice - current_niceness
+        if delta != 0:
+            os.nice(delta)  # Apply the change
+            new_niceness = os.nice(0)  # Read the new niceness to confirm
+            logging.info(
+                "Changed the process niceness by %d from %d to %d (target was %d).",
+                delta,
+                current_niceness,
+                new_niceness,
+                target_nice,
+            )
+        else:
+            logging.debug("Process niceness is already %d, which matches the target; no change made.", current_niceness)
+    except OSError as exc:
+        logging.warning("Failed to change process niceness to %d: %s", target_nice, exc)
 
 
 def apply_config(overrides_dict: dict, config_object: Confi):
@@ -130,6 +162,9 @@ class PermitPDP:
 
         if sidecar_config.ENABLE_MONITORING:
             self._configure_monitoring()
+
+        if sidecar_config.HORIZON_NICENESS:
+            set_process_niceness(sidecar_config.HORIZON_NICENESS)
 
         self._opal = OpalClient(shard_id=sidecar_config.SHARD_ID, data_topics=self._fix_data_topics())
         self._inject_extra_callbacks()
