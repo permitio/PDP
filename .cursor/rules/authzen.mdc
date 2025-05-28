@@ -235,7 +235,7 @@ The following is a non-normative example of a Subject:
 
 {
   "type": "user",
-  "id": "alice@acmecorp.com"
+  "id": "alice@example.com"
 }
 Figure 1: Example Subject
 5.1.1. Subject Properties
@@ -247,7 +247,7 @@ The following is a non-normative example of a Subject which adds a string-valued
 
 {
   "type": "user",
-  "id": "alice@acmecorp.com",
+  "id": "alice@example.com",
   "properties": {
     "department": "Sales"
   }
@@ -262,7 +262,7 @@ The following is a non-normative example of a subject which adds the ip_address 
 
 {
   "type": "user",
-  "id": "alice@acmecorp.com",
+  "id": "alice@example.com",
   "properties": {
     "department": "Sales",
     "ip_address": "172.217.22.14"
@@ -276,7 +276,7 @@ The following is a non-normative example of a subject which adds the device_id p
 
 {
   "type": "user",
-  "id": "alice@acmecorp.com",
+  "id": "alice@example.com",
   "properties": {
     "department": "Sales",
     "ip_address": "172.217.22.14",
@@ -365,7 +365,7 @@ OPTIONAL. The context (or environment) of type Context.
 {
   "subject": {
     "type": "user",
-    "id": "alice@acmecorp.com"
+    "id": "alice@example.com"
   },
   "resource": {
     "type": "account",
@@ -490,7 +490,7 @@ The following is a non-normative example for specifying three requests, with no 
     {
       "subject": {
         "type": "user",
-        "id": "alice@acmecorp.com"
+        "id": "alice@example.com"
       },
       "action": {
         "name": "can_read"
@@ -506,7 +506,7 @@ The following is a non-normative example for specifying three requests, with no 
     {
       "subject": {
         "type": "user",
-        "id": "alice@acmecorp.com"
+        "id": "alice@example.com"
       },
       "action": {
         "name": "can_read"
@@ -522,7 +522,7 @@ The following is a non-normative example for specifying three requests, with no 
     {
       "subject": {
         "type": "user",
-        "id": "alice@acmecorp.com"
+        "id": "alice@example.com"
       },
       "action": {
         "name": "can_read"
@@ -549,7 +549,7 @@ The following is a non-normative example for specifying three requests that refe
 {
   "subject": {
     "type": "user",
-    "id": "alice@acmecorp.com"
+    "id": "alice@example.com"
   },
   "context": {
     "time": "2024-05-31T15:22-07:00"
@@ -589,7 +589,7 @@ The following is a non-normative example for specifying three requests that refe
 {
   "subject": {
     "type": "user",
-    "id": "alice@acmecorp.com"
+    "id": "alice@example.com"
   },
   "context": {
     "time": "2024-05-31T15:22-07:00"
@@ -921,11 +921,11 @@ The response is a paged array of Subjects.
   "results": [
     {
       "type": "user",
-      "id": "alice@acmecorp.com"
+      "id": "alice@example.com"
     },
     {
       "type": "user",
-      "id": "bob@acmecorp.com"
+      "id": "bob@example.com"
     }
   ],
   "page": {
@@ -940,11 +940,11 @@ A response that needs to be split across page boundaries returns a non-empty pag
   "results": [
     {
       "type": "user",
-      "id": "alice@acmecorp.com"
+      "id": "alice@example.com"
     },
     {
       "type": "user",
-      "id": "bob@acmecorp.com"
+      "id": "bob@example.com"
     }
   ],
   "page": {
@@ -1002,12 +1002,12 @@ page:
 OPTIONAL. A page token for paged requests.
 
 9.2.1. Example (non-normative)
-The following payload defines a request for the resources of type account on which the subject of type user and ID alice@acmecorp.com can perform the can_read action.
+The following payload defines a request for the resources of type account on which the subject of type user and ID alice@example.com can perform the can_read action.
 
 {
   "subject": {
     "type": "user",
-    "id": "alice@acmecorp.com"
+    "id": "alice@example.com"
   },
   "action": {
     "name": "can_read"
@@ -1059,7 +1059,7 @@ To retrieve the next page, provide page.next_token in the next request:
 {
   "subject": {
     "type": "user",
-    "id": "alice@acmecorp.com"
+    "id": "alice@example.com"
   },
   "action": {
     "name": "can_read"
@@ -1256,7 +1256,7 @@ X-Request-ID: bfe9eb29-ab87-4ca3-be83-a1d5d8305716
 {
   "subject": {
     "type": "user",
-    "id": "alice@acmecorp.com"
+    "id": "alice@example.com"
   },
   "resource": {
     "type": "todo",
@@ -1296,7 +1296,7 @@ X-Request-ID: bfe9eb29-ab87-4ca3-be83-a1d5d8305716
 {
   "subject": {
     "type": "user",
-    "id": "alice@acmecorp.com"
+    "id": "alice@example.com"
   },
   "context": {
     "time": "2024-05-31T15:22-07:00"
@@ -1397,11 +1397,11 @@ X-Request-ID: bfe9eb29-ab87-4ca3-be83-a1d5d8305716
   "results": [
     {
       "type": "user",
-      "id": "alice@acmecorp.com"
+      "id": "alice@example.com"
     },
     {
       "type": "user",
-      "id": "bob@acmecorp.com"
+      "id": "bob@example.com"
     }
   ],
   "page": {
@@ -1422,7 +1422,7 @@ X-Request-ID: bfe9eb29-ab87-4ca3-be83-a1d5d8305716
 {
   "subject": {
     "type": "user",
-    "id": "alice@acmecorp.com"
+    "id": "alice@example.com"
   },
   "action": {
     "name": "can_read"
@@ -1470,7 +1470,7 @@ X-Request-ID: bfe9eb29-ab87-4ca3-be83-a1d5d8305716
 {
   "subject": {
     "type": "user",
-    "id": "alice@acmecorp.com"
+    "id": "alice@example.com"
   },
   "resource": {
     "type": "account",

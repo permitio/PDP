@@ -143,7 +143,7 @@ mod tests {
         let test_request = json!({
             "subject": {
                 "type": "user",
-                "id": "alice@acmecorp.com"
+                "id": "alice@example.com"
             },
             "resource": {
                 "type": "document",
@@ -194,7 +194,7 @@ mod tests {
         let test_request = json!({
             "subject": {
                 "type": "user",
-                "id": "alice@acmecorp.com"
+                "id": "alice@example.com"
             },
             "resource": {
                 "type": "document",
@@ -241,7 +241,7 @@ mod tests {
         let test_request = json!({
             "subject": {
                 "type": "user",
-                "id": "alice@acmecorp.com",
+                "id": "alice@example.com",
                 "properties": {
                     "department": "Sales"
                 }
@@ -309,7 +309,7 @@ mod tests {
         let test_request = json!({
             "subject": {
                 "type": "user",
-                "id": "alice@acmecorp.com",
+                "id": "alice@example.com",
                 "properties": {
                     "department": "Sales"
                 }
@@ -376,7 +376,7 @@ mod tests {
         let test_request = json!({
             "subject": {
                 "type": "user",
-                "id": "alice@acmecorp.com"
+                "id": "alice@example.com"
             },
             "resource": {
                 "type": "document",
@@ -438,7 +438,7 @@ mod tests {
         let test_request = json!({
             "subject": {
                 "type": "user",
-                "id": "alice@acmecorp.com"
+                "id": "alice@example.com"
             },
             "resource": {
                 "type": "document",
@@ -496,7 +496,7 @@ mod tests {
         let test_request = json!({
             "subject": {
                 "type": "user",
-                "id": "alice@acmecorp.com"
+                "id": "alice@example.com"
             },
             "resource": {
                 "type": "document",
@@ -536,7 +536,7 @@ mod tests {
         // Missing type field in subject
         let invalid_request = json!({
             "subject": {
-                "id": "alice@acmecorp.com"
+                "id": "alice@example.com"
                 // Missing type field
             },
             "resource": {
@@ -567,7 +567,7 @@ mod tests {
         let invalid_request = json!({
             "subject": {
                 "type": "user",
-                "id": "alice@acmecorp.com"
+                "id": "alice@example.com"
             },
             // Missing resource
             "action": {
@@ -594,7 +594,7 @@ mod tests {
         let request_with_empty_id = json!({
             "subject": {
                 "type": "user",
-                "id": "alice@acmecorp.com"
+                "id": "alice@example.com"
             },
             "resource": {
                 "type": "document",
@@ -643,7 +643,7 @@ mod tests {
         let invalid_request = json!({
             "subject": {
                 "type": "user",
-                "id": "alice@acmecorp.com"
+                "id": "alice@example.com"
             },
             "resource": {
                 "type": "document",

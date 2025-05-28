@@ -253,7 +253,7 @@ mod tests {
         let test_request = json!({
             "subject": {
                 "type": "user",
-                "id": "alice@acmecorp.com"
+                "id": "alice@example.com"
             },
             "evaluations": [
                 {
@@ -323,7 +323,7 @@ mod tests {
         let test_request = json!({
             "subject": {
                 "type": "user",
-                "id": "alice@acmecorp.com"
+                "id": "alice@example.com"
             },
             "action": {
                 "name": "can_read"
@@ -390,7 +390,7 @@ mod tests {
         let test_request = json!({
             "subject": {
                 "type": "user",
-                "id": "alice@acmecorp.com"
+                "id": "alice@example.com"
             },
             "evaluations": [
                 {
