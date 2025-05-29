@@ -14,18 +14,18 @@ repos:
       - id: check-xml
       - id: check-merge-conflict
       - id: mixed-line-ending
-        args: [ --fix=lf ]
+        args: [--fix=lf]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.11.6
     hooks:
       - id: ruff
-        args: [ --fix ]
+        args: [--fix]
         files: \.py$
-        types: [ file ]
+        types: [file]
       - id: ruff-format
         files: \.py$
-        types: [ file ]
+        types: [file]
 
   #  - repo: https://github.com/pre-commit/mirrors-mypy
   #    rev: v1.13.0
@@ -42,9 +42,19 @@ repos:
     rev: v1.0
     hooks:
       - id: cargo-check
-        args: [ --all-targets ]
+        args: [--all-targets]
         files: \.rs$
       - id: fmt
         files: \.(rs|toml)$
-        args: [ '--verbose' ]
+        args: ["--verbose"]
         pass_filenames: false
+
+  - repo: local
+    hooks:
+      - id: rust-clippy
+        name: Rust clippy
+        description: Run cargo clippy on files included in the commit. clippy should be installed before-hand.
+        entry: cargo clippy --all-targets --all-features -- -Dclippy::all
+        pass_filenames: false
+        types: [file, rust]
+        language: system

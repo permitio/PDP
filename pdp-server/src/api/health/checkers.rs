@@ -160,6 +160,7 @@ mod tests {
     use crate::api::health::models::HealthStatusType;
     use crate::cache::null::NullCache;
     use crate::cache::Cache;
+    use crate::config::opa::OpaConfig;
     use crate::config::PDPConfig;
     use crate::state::AppState;
     use reqwest::Client;
@@ -167,9 +168,14 @@ mod tests {
     use tokio::time::sleep;
 
     async fn create_test_app_state(health_timeout_secs: f64) -> AppState {
-        let mut pdp_config = PDPConfig::default();
-        pdp_config.healthcheck_timeout = health_timeout_secs;
-        pdp_config.opa.url = "http://localhost:1234".to_string();
+        let pdp_config = PDPConfig {
+            healthcheck_timeout: health_timeout_secs,
+            opa: OpaConfig {
+                url: "http://localhost:1234".to_string(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
 
         AppState {
             config: Arc::new(pdp_config),

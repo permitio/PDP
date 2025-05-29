@@ -1,18 +1,12 @@
-use crate::api::authz::forward_to_opa::send_request_to_opa;
 use crate::errors::ApiError;
+use crate::opa_client::allowed::{query_allowed, AllowedQuery, AllowedResult};
 use crate::openapi::AUTHZ_TAG;
-use crate::{
-    models::{Resource, User},
-    state::AppState,
-};
+use crate::state::AppState;
 use axum::{
     extract::{Json, State},
     response::{IntoResponse, Response},
 };
 use http::StatusCode;
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use utoipa::ToSchema;
 
 #[utoipa::path(
     post,
@@ -32,46 +26,13 @@ pub(super) async fn allowed_handler(
     State(state): State<AppState>,
     Json(query): Json<AllowedQuery>,
 ) -> Response {
-    match send_request_to_opa::<AllowedResult, _>(&state, "/v1/data/permit/root", &query).await {
+    match query_allowed(&state, &query).await {
         Ok(result) => (StatusCode::OK, Json(result)).into_response(),
         Err(err) => {
             log::error!("Failed to send request to OPA: {}", err);
             ApiError::from(err).into_response()
         }
     }
-}
-
-/// Authorization query parameters for the allowed endpoint
-#[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
-pub(crate) struct AllowedQuery {
-    /// User making the request
-    pub user: User,
-    /// The action the user wants to perform
-    pub action: String,
-    /// The resource the user wants to access
-    pub resource: Resource,
-    /// Additional context for permission evaluation
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub context: HashMap<String, serde_json::Value>,
-    /// SDK identifier
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sdk: Option<String>,
-}
-
-/// Response type for the allowed endpoint
-#[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
-pub(crate) struct AllowedResult {
-    /// Whether the action is allowed
-    pub allow: bool,
-    /// Query details for debugging
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub query: Option<HashMap<String, serde_json::Value>>,
-    /// Debug information
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub debug: Option<HashMap<String, serde_json::Value>>,
-    /// Result (deprecated field for backward compatibility)
-    #[serde(default)]
-    pub result: bool,
 }
 
 #[cfg(test)]
