@@ -1,5 +1,5 @@
+use crate::api::authzen::errors::AuthZenError;
 use crate::api::authzen::schema::{AuthZenAction, AuthZenResource, AuthZenSubject};
-use crate::errors::ApiError;
 use crate::opa_client::allowed::{
     query_allowed, AllowedQuery, AllowedResult, Resource as OpaResource, User as OpaUser,
 };
@@ -103,10 +103,10 @@ impl From<AllowedResult> for AccessEvaluationResponse {
     ),
     responses(
         (status = 200, description = "Access evaluation completed successfully", body = AccessEvaluationResponse),
-        (status = 400, description = "Bad Request"),
-        (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Forbidden"),
-        (status = 500, description = "Internal server error")
+        (status = 400, description = "Bad Request", body = String),
+        (status = 401, description = "Unauthorized", body = String),
+        (status = 403, description = "Forbidden", body = String),
+        (status = 500, description = "Internal server error", body = String)
     )
 )]
 pub async fn access_evaluation_handler(
@@ -127,7 +127,8 @@ pub async fn access_evaluation_handler(
         }
         Err(err) => {
             log::error!("Failed to process AuthZen request: {}", err);
-            ApiError::from(err).into_response()
+            let authzen_error = AuthZenError::from(err);
+            authzen_error.into_response()
         }
     }
 }
@@ -528,8 +529,8 @@ mod tests {
         // Send request to the AuthZen endpoint
         let response = fixture.post("/access/v1/evaluation", &test_request).await;
 
-        // Verify we get a BAD_GATEWAY error when OPA fails
-        response.assert_status(StatusCode::BAD_GATEWAY);
+        // Verify we get a INTERNAL_SERVER_ERROR error when OPA fails
+        response.assert_status(StatusCode::INTERNAL_SERVER_ERROR);
 
         // Verify mock expectations
         fixture.opa_mock.verify().await;
@@ -672,5 +673,163 @@ mod tests {
 
         let response = fixture.send(request).await;
         response.assert_status(StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn test_authzen_error_format() {
+        // Setup test fixture
+        let fixture = TestFixture::new().await;
+
+        // Setup mock OPA response with error using the fixture helper method
+        fixture
+            .add_opa_mock(
+                Method::POST,
+                "/v1/data/permit/root",
+                "Internal Server Error",
+                StatusCode::INTERNAL_SERVER_ERROR,
+                1,
+            )
+            .await;
+
+        // Test AuthZen request that will trigger an OPA error
+        let test_request = json!({
+            "subject": {
+                "type": "user",
+                "id": "alice@example.com"
+            },
+            "resource": {
+                "type": "document",
+                "id": "123"
+            },
+            "action": {
+                "name": "can_read"
+            }
+        });
+
+        // Send request to the AuthZen endpoint
+        let response = fixture.post("/access/v1/evaluation", &test_request).await;
+
+        // Should return 500 with AuthZen error format (OPA errors become 500 Internal Server Error)
+        response.assert_status(StatusCode::INTERNAL_SERVER_ERROR);
+
+        // AuthZen spec requires error responses to be plain strings, not JSON objects
+        let error_response_text = String::from_utf8_lossy(&response.body);
+
+        // Verify it's a plain string, not JSON
+        assert!(
+            !error_response_text.starts_with("{"),
+            "AuthZen errors must be plain strings per spec section 12.1.11, got: {}",
+            error_response_text
+        );
+        assert!(
+            !error_response_text.contains("\"error\""),
+            "AuthZen errors must not be structured JSON, got: {}",
+            error_response_text
+        );
+
+        // The error message should be our generic internal server error message
+        assert_eq!(error_response_text.trim(), "Internal server error");
+
+        // Verify mock expectations
+        fixture.opa_mock.verify().await;
+    }
+
+    #[tokio::test]
+    async fn test_authzen_spec_compliance_comprehensive() {
+        // Test 1: Valid request should return 200 with decision
+        {
+            let fixture = TestFixture::new().await;
+            let valid_request = json!({
+                "subject": {
+                    "type": "user",
+                    "id": "alice@example.com"
+                },
+                "resource": {
+                    "type": "document",
+                    "id": "123"
+                },
+                "action": {
+                    "name": "can_read"
+                }
+            });
+
+            fixture
+                .add_opa_mock(
+                    Method::POST,
+                    "/v1/data/permit/root",
+                    json!({"result": {"allow": true}}),
+                    StatusCode::OK,
+                    1,
+                )
+                .await;
+
+            let response = fixture.post("/access/v1/evaluation", &valid_request).await;
+            response.assert_status(StatusCode::OK);
+            let result: AccessEvaluationResponse = response.json_as();
+            assert!(result.decision);
+            fixture.opa_mock.verify().await;
+        }
+
+        // Test 2: Invalid request should return 422 with plain string error
+        {
+            let fixture = TestFixture::new().await;
+            let invalid_request = json!({
+                "subject": {
+                    "id": "alice@example.com"  // Missing required "type" field
+                },
+                "resource": {
+                    "type": "document",
+                    "id": "123"
+                },
+                "action": {
+                    "name": "can_read"
+                }
+            });
+
+            let response = fixture
+                .post("/access/v1/evaluation", &invalid_request)
+                .await;
+            response.assert_status(StatusCode::UNPROCESSABLE_ENTITY);
+            // Error response should be a plain string (handled by Axum for validation errors)
+        }
+
+        // Test 3: Internal server error should return 500 with plain string
+        {
+            let fixture = TestFixture::new().await;
+            let valid_request = json!({
+                "subject": {
+                    "type": "user",
+                    "id": "alice@example.com"
+                },
+                "resource": {
+                    "type": "document",
+                    "id": "123"
+                },
+                "action": {
+                    "name": "can_read"
+                }
+            });
+
+            fixture
+                .add_opa_mock(
+                    Method::POST,
+                    "/v1/data/permit/root",
+                    "Internal Server Error",
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    1,
+                )
+                .await;
+
+            let response = fixture.post("/access/v1/evaluation", &valid_request).await;
+            response.assert_status(StatusCode::INTERNAL_SERVER_ERROR);
+
+            let error_text = String::from_utf8_lossy(&response.body);
+            assert_eq!(error_text.trim(), "Internal server error");
+            assert!(
+                !error_text.contains("{"),
+                "Error must be plain string per AuthZen spec"
+            );
+            fixture.opa_mock.verify().await;
+        }
     }
 }

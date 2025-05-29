@@ -1,6 +1,6 @@
 use crate::api::authzen::common::{PageRequest, PageResponse};
+use crate::api::authzen::errors::AuthZenError;
 use crate::api::authzen::schema::{AuthZenAction, AuthZenResource, AuthZenSubject};
-use crate::errors::ApiError;
 use crate::opa_client::authorized_users::{query_authorized_users, AuthorizedUsersQuery};
 use crate::openapi::AUTHZEN_TAG;
 use crate::state::AppState;
@@ -64,10 +64,10 @@ impl From<SubjectSearchRequest> for AuthorizedUsersQuery {
     ),
     responses(
         (status = 200, description = "Subject search completed successfully", body = SubjectSearchResponse),
-        (status = 400, description = "Bad Request"),
-        (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Forbidden"),
-        (status = 500, description = "Internal server error")
+        (status = 400, description = "Bad Request", body = String),
+        (status = 401, description = "Unauthorized", body = String),
+        (status = 403, description = "Forbidden", body = String),
+        (status = 500, description = "Internal server error", body = String)
     )
 )]
 pub async fn search_subject_handler(
@@ -78,8 +78,12 @@ pub async fn search_subject_handler(
     let result = match query_authorized_users(&state, &query).await {
         Ok(result) => result,
         Err(err) => {
-            log::error!("Failed to process AuthZen subject search request: {}", err);
-            return ApiError::from(err).into_response();
+            log::error!(
+                "Failed to process AuthZen subject search request: {:?}",
+                err
+            );
+            let authzen_error = AuthZenError::from(err);
+            return authzen_error.into_response();
         }
     };
 

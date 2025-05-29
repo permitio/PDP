@@ -1,6 +1,6 @@
+use crate::api::authzen::errors::AuthZenError;
 use crate::api::authzen::evaluation::AccessEvaluationRequest;
 use crate::api::authzen::schema::{AuthZenAction, AuthZenResource, AuthZenSubject};
-use crate::errors::ApiError;
 use crate::opa_client::allowed::{AllowedQuery, AllowedResult};
 use crate::opa_client::allowed_bulk::query_allowed_bulk;
 use crate::openapi::AUTHZEN_TAG;
@@ -170,10 +170,10 @@ impl From<AllowedResult> for EvaluationResult {
     ),
     responses(
         (status = 200, description = "Access evaluations completed successfully", body = AccessEvaluationsResponse),
-        (status = 400, description = "Bad Request"),
-        (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Forbidden"),
-        (status = 500, description = "Internal server error")
+        (status = 400, description = "Bad Request", body = String),
+        (status = 401, description = "Unauthorized", body = String),
+        (status = 403, description = "Forbidden", body = String),
+        (status = 500, description = "Internal server error", body = String)
     )
 )]
 pub async fn access_evaluations_handler(
@@ -182,7 +182,8 @@ pub async fn access_evaluations_handler(
 ) -> Response {
     // Handle the case with no evaluations (backward compatibility)
     if request.evaluations.is_empty() {
-        return ApiError::bad_request("No evaluations provided").into_response();
+        let authzen_error = AuthZenError::invalid_request("No evaluations provided");
+        return authzen_error.into_response();
     }
 
     // Convert each evaluation to an AllowedQuery, tracking failures with details
@@ -215,7 +216,8 @@ pub async fn access_evaluations_handler(
 
         error_msg.push_str("\nPlease provide all required fields (subject, resource, action) either in individual evaluations or at the request level.");
         log::warn!("{}", error_msg);
-        return ApiError::bad_request(&error_msg).into_response();
+        let authzen_error = AuthZenError::invalid_request(&error_msg);
+        return authzen_error.into_response();
     }
 
     // Send bulk request to OPA
@@ -232,8 +234,9 @@ pub async fn access_evaluations_handler(
             (StatusCode::OK, Json(response)).into_response()
         }
         Err(err) => {
-            log::error!("Failed to process AuthZen evaluations request: {}", err);
-            ApiError::from(err).into_response()
+            log::error!("Failed to process AuthZen evaluations request: {:?}", err);
+            let authzen_error = AuthZenError::from(err);
+            authzen_error.into_response()
         }
     }
 }

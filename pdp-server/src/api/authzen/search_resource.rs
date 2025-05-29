@@ -1,6 +1,6 @@
 use crate::api::authzen::common::{PageRequest, PageResponse};
+use crate::api::authzen::errors::AuthZenError;
 use crate::api::authzen::schema::{AuthZenAction, AuthZenResource, AuthZenSubject};
-use crate::errors::ApiError;
 use crate::opa_client::user_permissions::{query_user_permissions, UserPermissionsQuery};
 use crate::openapi::AUTHZEN_TAG;
 use crate::state::AppState;
@@ -76,10 +76,10 @@ impl From<ResourceSearchRequest> for UserPermissionsQuery {
     ),
     responses(
         (status = 200, description = "Resource search completed successfully", body = ResourceSearchResponse),
-        (status = 400, description = "Bad Request"),
-        (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Forbidden"),
-        (status = 500, description = "Internal server error")
+        (status = 400, description = "Bad Request", body = String),
+        (status = 401, description = "Unauthorized", body = String),
+        (status = 403, description = "Forbidden", body = String),
+        (status = 500, description = "Internal server error", body = String)
     )
 )]
 pub async fn search_resource_handler(
@@ -93,8 +93,12 @@ pub async fn search_resource_handler(
     let permissions = match query_user_permissions(&state, &query).await {
         Ok(permissions) => permissions,
         Err(err) => {
-            log::error!("Failed to process AuthZen resource search request: {}", err);
-            return ApiError::from(err).into_response();
+            log::error!(
+                "Failed to process AuthZen resource search request: {:?}",
+                err
+            );
+            let authzen_error = AuthZenError::from(err);
+            return authzen_error.into_response();
         }
     };
 
