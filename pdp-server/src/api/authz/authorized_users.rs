@@ -1,23 +1,21 @@
-use crate::api::authz::forward_to_opa::send_request_to_opa;
 use crate::errors::ApiError;
+use crate::opa_client::authorized_users::{
+    query_authorized_users, AuthorizedUsersQuery, AuthorizedUsersResult,
+};
 use crate::openapi::AUTHZ_TAG;
-use crate::{models::Resource, state::AppState};
+use crate::state::AppState;
 use axum::extract::State;
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
     Json,
 };
-use serde::{Deserialize, Serialize};
-use serde_json::Value::Object;
-use std::collections::HashMap;
-use utoipa::ToSchema;
 
 #[utoipa::path(
     post,
     path = "/authorized_users",
     tag = AUTHZ_TAG,
-    request_body = AuthorizedUsersAuthorizationQuery,
+    request_body = AuthorizedUsersQuery,
     params(
         ("Authorization" = String, Header, description = "Authorization header"),
     ),
@@ -29,85 +27,15 @@ use utoipa::ToSchema;
 )]
 pub(super) async fn authorized_users_handler(
     State(state): State<AppState>,
-    Json(query): Json<AuthorizedUsersAuthorizationQuery>,
+    Json(query): Json<AuthorizedUsersQuery>,
 ) -> Response {
-    let endpoint = if state.config.use_new_authorized_users {
-        "/v1/data/permit/authorized_users_new/authorized_users"
-    } else {
-        "/v1/data/permit/authorized_users/authorized_users"
-    };
-    let result: serde_json::Value =
-        match send_request_to_opa::<serde_json::Value, _>(&state, endpoint, &query).await {
-            Ok(result) => result,
-            Err(err) => {
-                log::error!("Failed to send request to OPA: {}", err);
-                return ApiError::from(err).into_response();
-            }
-        };
-
-    // Attempt to extract the "result" field from the response
-    if let Object(map) = result {
-        if let Some(result) = map.get("result") {
-            // Deserialize the inner result into the AuthorizedUsersResult struct
-            let result: AuthorizedUsersResult = match serde_json::from_value(result.clone()) {
-                Ok(result) => result,
-                Err(err) => {
-                    log::error!("Failed to deserialize OPA response: {}", err);
-                    return ApiError::internal("Invalid response from OPA".to_string())
-                        .into_response();
-                }
-            };
-            return (StatusCode::OK, Json(result)).into_response();
+    match query_authorized_users(&state, &query).await {
+        Ok(result) => (StatusCode::OK, Json(result)).into_response(),
+        Err(err) => {
+            log::error!("Failed to send request to OPA: {}", err);
+            ApiError::from(err).into_response()
         }
     }
-
-    // If the result field is not present, return an empty result
-    let resource_key = query.resource.key.unwrap_or("*".to_string());
-    let result = AuthorizedUsersResult {
-        resource: format!("{}:{}", query.resource.r#type, resource_key),
-        tenant: query.resource.tenant.unwrap_or("default".to_string()),
-        users: HashMap::new(),
-    };
-    (StatusCode::OK, Json(result)).into_response()
-}
-
-/// Query parameters for the authorized users endpoint
-#[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
-pub(crate) struct AuthorizedUsersAuthorizationQuery {
-    /// The action to check
-    action: String,
-    /// The resource to check access for
-    resource: Resource,
-    /// Additional context for permission evaluation
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    context: HashMap<String, serde_json::Value>,
-    /// SDK identifier
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    sdk: Option<String>,
-}
-
-/// User assignment details in the authorized users response
-#[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
-struct AuthorizedUserAssignment {
-    /// User key
-    user: String,
-    /// Tenant key
-    tenant: String,
-    /// Resource identifier
-    resource: String,
-    /// Role assigned to the user
-    role: String,
-}
-
-/// Response type for the authorized users endpoint
-#[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
-struct AuthorizedUsersResult {
-    /// Resource identifier
-    resource: String,
-    /// Tenant identifier
-    tenant: String,
-    /// Map of user keys to their assignments
-    users: HashMap<String, Vec<AuthorizedUserAssignment>>,
 }
 
 #[cfg(test)]
@@ -129,9 +57,10 @@ mod tests {
                 "/v1/data/permit/authorized_users/authorized_users",
                 json!({
                     "result": {
-                        "resource": "document:doc-123",
-                        "tenant": "test_tenant",
-                        "users": {
+                        "result": {
+                            "resource": "document:doc-123",
+                            "tenant": "test_tenant",
+                            "users": {
                             "user1": [
                                 {
                                     "user": "user1",
@@ -149,6 +78,7 @@ mod tests {
                                 }
                             ]
                         }
+                        },
                     }
                 }),
                 StatusCode::OK,
@@ -181,6 +111,9 @@ mod tests {
         // Verify key fields in response
         assert_eq!(result.resource, "document:doc-123");
         assert_eq!(result.tenant, "test_tenant");
+        assert_eq!(result.users.len(), 2);
+        assert_eq!(result.users.get("user1").unwrap()[0].role, "viewer");
+        assert_eq!(result.users.get("user2").unwrap()[0].role, "editor");
 
         // Verify mock expectations
         fixture.opa_mock.verify().await;
@@ -198,9 +131,11 @@ mod tests {
                 "/v1/data/permit/authorized_users/authorized_users",
                 json!({
                     "result": {
-                        "resource": "document:doc-123",
-                        "tenant": "test_tenant",
-                        "users": {}
+                        "result": {
+                            "resource": "document:doc-123",
+                            "tenant": "test_tenant",
+                            "users": {}
+                        }
                     }
                 }),
                 StatusCode::OK,
