@@ -1,7 +1,6 @@
 use crate::api::authzen::common::{PageRequest, PageResponse};
 use crate::api::authzen::schema::{AuthZenAction, AuthZenResource, AuthZenSubject};
 use crate::errors::ApiError;
-use crate::opa_client::allowed::User;
 use crate::opa_client::user_permissions::{query_user_permissions, UserPermissionsQuery};
 use crate::openapi::AUTHZEN_TAG;
 use crate::state::AppState;
@@ -57,13 +56,7 @@ pub struct ResourceSearchResponse {
 impl From<ResourceSearchRequest> for UserPermissionsQuery {
     fn from(req: ResourceSearchRequest) -> Self {
         UserPermissionsQuery {
-            user: User {
-                key: req.subject.id.clone(),
-                first_name: None,
-                last_name: None,
-                email: None,
-                attributes: req.subject.properties.unwrap_or_default(),
-            },
+            user: req.subject.into(),
             tenants: None,
             resources: None,
             resource_types: req.resource_type.map(|rt| vec![rt]),

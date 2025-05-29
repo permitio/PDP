@@ -1,7 +1,6 @@
 use crate::api::authzen::common::{PageRequest, PageResponse};
 use crate::api::authzen::schema::{AuthZenAction, AuthZenResource, AuthZenSubject};
 use crate::errors::ApiError;
-use crate::opa_client::allowed::User;
 use crate::opa_client::user_permissions::{query_user_permissions, UserPermissionsQuery};
 use crate::openapi::AUTHZEN_TAG;
 use crate::state::AppState;
@@ -45,14 +44,8 @@ pub struct ActionSearchResponse {
 // Direct conversion from ActionSearchRequest to UserPermissionsQuery
 impl From<ActionSearchRequest> for UserPermissionsQuery {
     fn from(req: ActionSearchRequest) -> Self {
-        // Convert AuthZenSubject to User
-        let user = User {
-            key: req.subject.id.clone(),
-            first_name: None,
-            last_name: None,
-            email: None,
-            attributes: req.subject.properties.unwrap_or_default(),
-        };
+        // Convert AuthZenSubject to User using the common Into implementation
+        let user = req.subject.into();
 
         // Create the query with SDK field included for AuthZen compatibility
         let context = req.context.unwrap_or_default();

@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use utoipa::ToSchema;
 
+// Import the OPA client types for conversion
+use crate::opa_client::allowed::{Resource, User};
+
 /// AuthZen Subject - represents the user in AuthZen protocol
 #[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
 pub struct AuthZenSubject {
@@ -34,4 +37,32 @@ pub struct AuthZenAction {
     /// Optional properties of the action
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub properties: Option<HashMap<String, serde_json::Value>>,
+}
+
+// Common conversion implementations to reduce duplication across search handlers
+
+/// Convert AuthZenSubject to OPA User type
+impl From<AuthZenSubject> for User {
+    fn from(val: AuthZenSubject) -> Self {
+        User {
+            key: val.id,
+            first_name: None,
+            last_name: None,
+            email: None,
+            attributes: val.properties.unwrap_or_default(),
+        }
+    }
+}
+
+/// Convert AuthZenResource to OPA Resource type
+impl From<AuthZenResource> for Resource {
+    fn from(val: AuthZenResource) -> Self {
+        Resource {
+            r#type: val.r#type,
+            key: Some(val.id),
+            tenant: None,
+            attributes: val.properties.unwrap_or_default(),
+            context: HashMap::new(),
+        }
+    }
 }

@@ -1,7 +1,6 @@
 use crate::api::authzen::common::{PageRequest, PageResponse};
 use crate::api::authzen::schema::{AuthZenAction, AuthZenResource, AuthZenSubject};
 use crate::errors::ApiError;
-use crate::opa_client::allowed::Resource;
 use crate::opa_client::authorized_users::{query_authorized_users, AuthorizedUsersQuery};
 use crate::openapi::AUTHZEN_TAG;
 use crate::state::AppState;
@@ -46,13 +45,7 @@ impl From<SubjectSearchRequest> for AuthorizedUsersQuery {
     fn from(req: SubjectSearchRequest) -> Self {
         AuthorizedUsersQuery {
             action: req.action.name,
-            resource: Resource {
-                r#type: req.resource.r#type.clone(),
-                key: Some(req.resource.id.clone()),
-                tenant: None,
-                attributes: req.resource.properties.unwrap_or_default(),
-                context: HashMap::new(),
-            },
+            resource: req.resource.into(),
             context: req.context.unwrap_or_default(),
             sdk: Some("authzen".to_string()),
         }
