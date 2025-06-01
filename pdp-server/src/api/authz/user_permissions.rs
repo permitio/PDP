@@ -1,20 +1,33 @@
 use crate::errors::ApiError;
-use crate::opa_client::user_permissions::{
-    query_user_permissions, UserPermissionsQuery, UserPermissionsResults,
+use crate::headers::ClientCacheControl;
+use crate::opa_client::cached::{
+    query_user_permissions_cached, UserPermissionsQuery, UserPermissionsResult,
 };
 use crate::openapi::AUTHZ_TAG;
-use crate::{
-    cache::CacheBackend,
-    headers::{presets, ClientCacheControl},
-    state::AppState,
-};
+use crate::{headers::presets, state::AppState};
 use axum::{
     extract::{Json, State},
-    http::{HeaderMap, StatusCode},
+    http::HeaderMap,
     response::{IntoResponse, Response},
 };
 use http::header::CACHE_CONTROL;
-use sha2::{Digest, Sha256};
+use std::collections::HashMap;
+
+// Wrapper type for proper response serialization
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone, PartialEq, utoipa::ToSchema)]
+pub struct UserPermissionsResults(pub HashMap<String, UserPermissionsResult>);
+
+impl IntoResponse for UserPermissionsResults {
+    fn into_response(self) -> Response {
+        axum::Json(self.0).into_response()
+    }
+}
+
+impl From<HashMap<String, UserPermissionsResult>> for UserPermissionsResults {
+    fn from(map: HashMap<String, UserPermissionsResult>) -> Self {
+        UserPermissionsResults(map)
+    }
+}
 
 #[utoipa::path(
     post,
@@ -23,6 +36,7 @@ use sha2::{Digest, Sha256};
     request_body = UserPermissionsQuery,
     params(
         ("Authorization" = String, Header, description = "Authorization header"),
+        ("Cache-Control" = String, Header, description = "Cache control directives"),
     ),
     responses(
         (status = 200, description = "User permissions retrieved successfully", body = UserPermissionsResults),
@@ -36,28 +50,10 @@ pub(super) async fn user_permissions_handler(
     Json(query): Json<UserPermissionsQuery>,
 ) -> Response {
     // Parse client cache control headers
-    let client_cache = ClientCacheControl::from_header_value(headers.get(CACHE_CONTROL));
+    let cache_control = ClientCacheControl::from_header_value(headers.get(CACHE_CONTROL));
 
-    // Generate cache key
-    let cache_key = match generate_cache_key(&query) {
-        Ok(key) => key,
-        Err(err) => {
-            log::error!("Failed to generate cache key: {}", err);
-            return ApiError::internal("Failed to generate cache key".to_string()).into_response();
-        }
-    };
-
-    // Check cache if allowed by client
-    if client_cache.should_use_cache() {
-        if let Ok(Some(cached)) = state.cache.get::<UserPermissionsResults>(&cache_key).await {
-            let mut response = Json(cached).into_response();
-            presets::private_cache(state.config.cache.ttl).apply(&mut response);
-            return StatusCode::OK.into_response();
-        }
-    }
-
-    // Forward to OPA service and get the result
-    let permissions = match query_user_permissions(&state, &query).await {
+    // Use the cached OPA client function which handles caching internally
+    let permissions = match query_user_permissions_cached(&state, &query, &cache_control).await {
         Ok(permissions) => permissions,
         Err(err) => {
             log::error!("Failed to send request to OPA: {}", err);
@@ -68,44 +64,18 @@ pub(super) async fn user_permissions_handler(
     // Create response using the map
     let response = UserPermissionsResults::from(permissions);
 
-    // Cache the result if allowed
-    if !client_cache.no_store {
-        if let Err(e) = state.cache.set(&cache_key, &response).await {
-            log::error!("Failed to cache permissions result: {}", e);
-        }
-    }
-
-    // Create response using the map directly
+    // Create response with appropriate cache headers
     let mut http_response = Json(response).into_response();
     presets::private_cache(state.config.cache.ttl).apply(&mut http_response);
-    (StatusCode::OK, http_response).into_response()
-}
-
-/// Generate a cache key specifically for user permissions
-pub fn generate_cache_key(query: &UserPermissionsQuery) -> Result<String, serde_json::Error> {
-    let mut hasher = Sha256::new();
-
-    // Add query to hash
-    hasher.update(serde_json::to_string(query)?.as_bytes());
-
-    // Return as Result
-    Ok(format!(
-        "pdp:user_permissions:{}:{:x}",
-        query.user.key,
-        hasher.finalize()
-    ))
+    http_response
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        opa_client::{allowed::User, user_permissions::UserPermissionsQuery},
-        test_utils::TestFixture,
-    };
-    use http::Method;
+    use crate::test_utils::TestFixture;
+    use http::{Method, StatusCode};
     use serde_json::json;
-    use std::collections::HashMap;
 
     #[tokio::test]
     async fn test_user_permissions_success() {
@@ -382,34 +352,5 @@ mod tests {
 
         // Verify mock expectations
         fixture.opa_mock.verify().await;
-    }
-
-    #[test]
-    fn test_cache_key_generation() {
-        // Create test query directly as a struct since we're testing the function
-        let query = UserPermissionsQuery {
-            user: User {
-                key: "test_user".to_string(),
-                first_name: None,
-                last_name: None,
-                email: None,
-                attributes: HashMap::new(),
-            },
-            tenants: Some(vec!["tenant1".to_string()]),
-            resources: Some(vec!["resource1".to_string()]),
-            resource_types: Some(vec!["type1".to_string()]),
-            context: None,
-        };
-
-        // Generate key and ensure it's consistent
-        let key1 = generate_cache_key(&query).unwrap();
-        let key2 = generate_cache_key(&query).unwrap();
-        assert_eq!(key1, key2, "Same input should generate same key");
-
-        // Verify the key contains expected user key
-        assert!(
-            key1.contains("test_user"),
-            "Cache key should contain user key"
-        );
     }
 }

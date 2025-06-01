@@ -1,13 +1,14 @@
 use crate::errors::ApiError;
-use crate::opa_client::allowed::AllowedQuery;
-use crate::opa_client::allowed_bulk::{query_allowed_bulk, BulkAuthorizationResult};
+use crate::headers::ClientCacheControl;
+use crate::opa_client::cached::{query_allowed_bulk_cached, AllowedQuery, BulkAuthorizationResult};
 use crate::openapi::AUTHZ_TAG;
 use crate::state::AppState;
 use axum::{
     extract::{Json, State},
+    http::HeaderMap,
     response::{IntoResponse, Response},
 };
-use http::StatusCode;
+use http::{header::CACHE_CONTROL, StatusCode};
 
 #[utoipa::path(
     post,
@@ -16,6 +17,7 @@ use http::StatusCode;
     request_body = Vec<AllowedQuery>,
     params(
         ("Authorization" = String, Header, description = "Authorization header"),
+        ("Cache-Control" = String, Header, description = "Cache control directives"),
     ),
     responses(
         (status = 200, description = "Bulk authorization check completed successfully", body = BulkAuthorizationResult),
@@ -25,9 +27,13 @@ use http::StatusCode;
 )]
 pub(super) async fn allowed_bulk_handler(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(queries): Json<Vec<AllowedQuery>>,
 ) -> Response {
-    match query_allowed_bulk(&state, &queries).await {
+    // Parse client cache control headers
+    let cache_control = ClientCacheControl::from_header_value(headers.get(CACHE_CONTROL));
+
+    match query_allowed_bulk_cached(&state, &queries, &cache_control).await {
         Ok(result) => (StatusCode::OK, Json(result)).into_response(),
         Err(err) => {
             log::error!("Failed to send request to OPA: {}", err);

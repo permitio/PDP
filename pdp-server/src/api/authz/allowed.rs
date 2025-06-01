@@ -1,12 +1,14 @@
 use crate::errors::ApiError;
-use crate::opa_client::allowed::{query_allowed, AllowedQuery, AllowedResult};
+use crate::headers::ClientCacheControl;
+use crate::opa_client::cached::{query_allowed_cached, AllowedQuery, AllowedResult};
 use crate::openapi::AUTHZ_TAG;
 use crate::state::AppState;
 use axum::{
     extract::{Json, State},
+    http::HeaderMap,
     response::{IntoResponse, Response},
 };
-use http::StatusCode;
+use http::{header::CACHE_CONTROL, StatusCode};
 
 #[utoipa::path(
     post,
@@ -15,6 +17,7 @@ use http::StatusCode;
     request_body = AllowedQuery,
     params(
         ("Authorization" = String, Header, description = "Authorization header"),
+        ("Cache-Control" = String, Header, description = "Cache control directives"),
     ),
     responses(
         (status = 200, description = "Allowed check completed successfully", body = AllowedResult),
@@ -24,9 +27,13 @@ use http::StatusCode;
 )]
 pub(super) async fn allowed_handler(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(query): Json<AllowedQuery>,
 ) -> Response {
-    match query_allowed(&state, &query).await {
+    // Parse client cache control headers
+    let cache_control = ClientCacheControl::from_header_value(headers.get(CACHE_CONTROL));
+
+    match query_allowed_cached(&state, &query, &cache_control).await {
         Ok(result) => (StatusCode::OK, Json(result)).into_response(),
         Err(err) => {
             log::error!("Failed to send request to OPA: {}", err);
