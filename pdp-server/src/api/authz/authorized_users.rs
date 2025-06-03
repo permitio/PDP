@@ -1,15 +1,17 @@
 use crate::errors::ApiError;
-use crate::opa_client::authorized_users::{
-    query_authorized_users, AuthorizedUsersQuery, AuthorizedUsersResult,
+use crate::headers::ClientCacheControl;
+use crate::opa_client::cached::{
+    query_authorized_users_cached, AuthorizedUsersQuery, AuthorizedUsersResult,
 };
 use crate::openapi::AUTHZ_TAG;
 use crate::state::AppState;
 use axum::extract::State;
 use axum::{
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
+use http::header::CACHE_CONTROL;
 
 #[utoipa::path(
     post,
@@ -18,6 +20,7 @@ use axum::{
     request_body = AuthorizedUsersQuery,
     params(
         ("Authorization" = String, Header, description = "Authorization header"),
+        ("Cache-Control" = String, Header, description = "Cache control directives"),
     ),
     responses(
         (status = 200, description = "Authorized users retrieved successfully", body = AuthorizedUsersResult),
@@ -27,9 +30,13 @@ use axum::{
 )]
 pub(super) async fn authorized_users_handler(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(query): Json<AuthorizedUsersQuery>,
 ) -> Response {
-    match query_authorized_users(&state, &query).await {
+    // Parse client cache control headers
+    let cache_control = ClientCacheControl::from_header_value(headers.get(CACHE_CONTROL));
+
+    match query_authorized_users_cached(&state, &query, &cache_control).await {
         Ok(result) => (StatusCode::OK, Json(result)).into_response(),
         Err(err) => {
             log::error!("Failed to send request to OPA: {}", err);

@@ -1,15 +1,16 @@
 use crate::api::authzen::errors::AuthZenError;
 use crate::api::authzen::schema::{AuthZenAction, AuthZenResource, AuthZenSubject};
-use crate::opa_client::allowed::{
-    query_allowed, AllowedQuery, AllowedResult, Resource as OpaResource, User as OpaUser,
-};
+use crate::headers::ClientCacheControl;
+use crate::opa_client::allowed::{Resource as OpaResource, User as OpaUser};
+use crate::opa_client::cached::{query_allowed_cached, AllowedQuery, AllowedResult};
 use crate::openapi::AUTHZEN_TAG;
 use crate::state::AppState;
 use axum::{
     extract::{Json, State},
+    http::HeaderMap,
     response::{IntoResponse, Response},
 };
-use http::StatusCode;
+use http::{header::CACHE_CONTROL, StatusCode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use utoipa::ToSchema;
@@ -100,6 +101,7 @@ impl From<AllowedResult> for AccessEvaluationResponse {
     params(
         ("Authorization" = String, Header, description = "Authorization header"),
         ("X-Request-ID" = String, Header, description = "Request Identifier"),
+        ("Cache-Control" = String, Header, description = "Cache control directives"),
     ),
     responses(
         (status = 200, description = "Access evaluation completed successfully", body = AccessEvaluationResponse),
@@ -111,13 +113,17 @@ impl From<AllowedResult> for AccessEvaluationResponse {
 )]
 pub async fn access_evaluation_handler(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(request): Json<AccessEvaluationRequest>,
 ) -> Response {
+    // Parse client cache control headers
+    let cache_control = ClientCacheControl::from_header_value(headers.get(CACHE_CONTROL));
+
     // Convert AuthZen request to AllowedQuery
     let allowed_query: AllowedQuery = request.into();
 
-    // Send request to OPA using query_allowed
-    match query_allowed(&state, &allowed_query).await {
+    // Send request to OPA using query_allowed_cached
+    match query_allowed_cached(&state, &allowed_query, &cache_control).await {
         Ok(allowed_result) => {
             // Convert AllowedResult to AuthZen format
             let authzen_response: AccessEvaluationResponse = allowed_result.into();

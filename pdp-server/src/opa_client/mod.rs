@@ -12,6 +12,7 @@ use thiserror::Error;
 pub mod allowed;
 pub mod allowed_bulk;
 pub mod authorized_users;
+pub mod cached;
 pub mod user_permissions;
 
 /// Generic function to send a request to OPA and return a specific response type
@@ -98,6 +99,14 @@ pub enum ForwardingError {
     InvalidStatus(StatusCode),
     #[error("Failed to parse OPA response: {0}")]
     ParseError(#[from] serde_json::Error),
+    #[error("Cache key generation error: {0}")]
+    CacheKeyError(String),
+}
+
+impl From<String> for ForwardingError {
+    fn from(err: String) -> Self {
+        ForwardingError::CacheKeyError(err)
+    }
 }
 
 impl From<ForwardingError> for ApiError {
@@ -112,6 +121,9 @@ impl From<ForwardingError> for ApiError {
             }
             ForwardingError::ParseError(e) => {
                 ApiError::internal(format!("Failed to parse OPA response: {}", e))
+            }
+            ForwardingError::CacheKeyError(e) => {
+                ApiError::internal(format!("Cache key generation failed: {}", e))
             }
         }
     }
