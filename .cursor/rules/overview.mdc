@@ -1,0 +1,215 @@
+---
+description: Project Overview - Purpose, Layout and Design
+globs:
+alwaysApply: false
+---
+# PDP Overview – Purpose, Layout and Design&#x20;
+
+---
+
+## 1  Purpose
+
+Permit.io’s **Policy Decision Point (PDP)** is a self‑hosted micro‑service that evaluates authorization queries locally while staying in real‑time sync with the Permit control‑plane. It is the **data‑plane** component in Permit’s hybrid architecture:
+
+* **Low‑latency decisions** – Runs beside your apps; no round‑trip to the cloud.
+* **Continuous consistency** – Uses OPAL to stream policy and data updates the moment they change.
+* **Deterministic evaluation** – Embeds **OPA (Rego)** enhanced with Permit’s custom **ReBAC** plugin for relation‑based access control.
+* **Containerized deployment** – Distributed as an official Docker image; run it alongside your services and connect it to your Permit environment via `PDP_API_KEY`.
+* **Defence‑in‑depth** – Works offline from the last good state; no sensitive data leaves your network.
+
+---
+
+## 2  Responsibilities
+
+| Domain                   | Responsibilities                                                                              |
+| ------------------------ | --------------------------------------------------------------------------------------------- |
+| **Policy enforcement**   | Evaluate `allow/deny`, filtered lists, and bulk checks through OPA + ReBAC plugin.            |
+| **Live synchronisation** | Subscribe to Permit’s OPAL server, pull policy & data diffs, and apply them to OPA instantly. |
+| **Performance**          | Optional in‑memory or Redis decision cache; Rust rewrite of hot paths.                        |
+| **Resilience**           | Watchdog restarts crashed components and performs internal health checks.                     |
+| **Extensibility**        | Custom data sources, new endpoints, and pluggable policy‑engine adapters are supported.       |
+
+---
+
+## 3  High‑Level Architecture
+
+**Runtime layout (textual)**
+
+A single **PDP container** bundles several cooperative services:
+
+* **Rust API server (port 7000)** – Public HTTP endpoint for authorization queries.
+* **Horizon Python service (port 7001)** – Internal FastAPI app that hosts the OPAL client and any endpoints not yet ported to Rust. The Rust server transparently proxies requests here when needed.
+* **Embedded policy engine** – **OPA** (Rego) running as a local daemon (default port 8181) with Permit’s **ReBAC** plugin.
+* **OPAL client** – Embedded in Horizon; maintains a WebSocket subscription to Permit’s OPAL server, streams diffs, and writes updates into OPA in real time.
+* **Decision cache (optional)** – In‑memory or Redis store consulted by the Rust server to avoid re‑evaluating frequent queries (`PDP_CACHE_STORE`).
+* **Watchdog supervisor** – Lightweight monitor that launches each component, performs health checks, and restarts them automatically on failure.
+
+### End‑to‑end flow
+
+1. A client application sends `POST /allowed` with a JSON body such as
+
+```json
+{
+  "user": "alice",
+  "action": "read",
+  "resource": "doc123"
+}
+```
+
+to the Rust API server.
+
+2\. The Rust server checks the **decision cache** (if enabled). On a cache miss it serialises the request into OPA’s expected input JSON.
+
+3\. It sends a local HTTP request to OPA (`POST /v1/data/permit/allowed`) for evaluation.
+
+4\. OPA returns an `allow` / `deny` (or filtered list) decision that the Rust server forwards to the client—typically in **single‑digit milliseconds** (median under 10 ms on a typical deployment).
+
+5\. Meanwhile, the **OPAL client** keeps OPA’s data fresh: whenever an admin changes roles, relations, or policies in Permit, OPAL streams the diff and Horizon applies it to OPA. Decision latency remains unaffected during continuous updates.
+
+### 3.1  Core Components
+
+1. **Rust API Server** (`/pdp-server`)
+
+   * Async HTTP server (Axum) on **port 7000**.
+   * Implements high‑traffic endpoints: `/allowed`, `/allowed/bulk`, `/user‑permissions`, `/authorized_users`.
+   * Integrates the decision cache and falls back to Horizon when an endpoint is not yet ported.
+
+2. **Horizon Python Service** (`/horizon`)
+
+   * FastAPI on **port 7001**.
+   * Hosts the OPAL client, legacy endpoints, and admin/debug routes.
+
+3. **Embedded OPA**
+
+   * Launched as a subprocess (`OPAL_INLINE_OPA_ENABLED=true`).
+   * Evaluates Rego policies via REST (`http://localhost:8181/v1/data/...`).
+
+4. **OPAL Client**
+
+   * WebSocket subscriber → Permit cloud.
+   * Pulls policy/data diffs, fetches objects, and writes them into OPA’s data store.
+
+5. **Cache Layer**
+
+   * `PDP_CACHE_STORE=[none|memory|redis]`.
+   * Caches results for a configurable TTL. In v0.9, caching is implemented for `/user‑permissions`.
+
+6. **Watchdog**
+
+   * Supervises subprocesses; periodically pings each component and automatically restarts any that become unresponsive.
+
+---
+
+## 4  Request Life‑cycle
+
+1. **Application call** → `POST /allowed` with body:
+
+```json
+{
+  "user": "alice",
+  "action": "read",
+  "resource": "doc123"
+}
+```
+
+2. **Rust server** checks the decision cache (if enabled). *Cache miss?* → step 3.
+3. Builds OPA input JSON and issues a local REST query:
+
+   ```http
+   POST /v1/data/permit/allowed
+   { "input": { ... } }
+   ```
+4. **OPA** evaluates Rego policies + data → boolean result.
+5. Rust server returns structured JSON `{"allowed": true}` (often < 10 ms round‑trip).
+6. If caching is enabled, the result is stored for the configured TTL.
+
+---
+
+## 5  Repository Layout
+
+| Path                                                                  | Purpose                                                             |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| [`/pdp-server`](https://github.com/permitio/PDP/tree/main/pdp-server) | Rust crate – HTTP API, cache, Horizon proxy                         |
+| [`/horizon`](https://github.com/permitio/PDP/tree/main/horizon)       | Python FastAPI app, OPAL client                                     |
+| [`/watchdog`](https://github.com/permitio/PDP/tree/main/watchdog)     | Process supervisor & health checks                                  |
+| [`charts/pdp`](https://github.com/permitio/PDP/tree/main/charts/pdp)  | Helm chart for Kubernetes deployment                                |
+| `Dockerfile`                                                          | Multi‑stage build – compiles Rust, installs Python deps, embeds OPA |
+| `scripts/*.sh`                                                        | Helpers for local builds & releases                                 |
+
+---
+
+## 6  Notable Changes in 0.9.x
+
+* **Rust performance core** – ∼10× lower p99 latencies.
+* **Automatic Horizon fallback** – zero feature loss during migration.
+* **Decision cache** – optional memory/Redis cache (early‑access).
+* **Watchdog** – improves resilience by recovering from component crashes.
+
+---
+
+## 7  Configuration Quick Reference
+
+```text
+# mandatory
+PDP_API_KEY=<permit-env-api-key>
+
+# connectivity
+PDP_CONTROL_PLANE=https://api.permit.io
+PDP_PORT=7000               # external API
+PDP_HORIZON_PORT=7001       # internal Horizon API
+
+# caching (optional)
+PDP_CACHE_STORE=memory|redis|none
+PDP_CACHE_TTL=60            # seconds
+PDP_CACHE_REDIS_URL=redis://host:6379/0
+
+# inline OPA process\NOPAL_INLINE_OPA_ENABLED=true
+
+# debugging
+PDP_DEBUG=false
+```
+
+---
+
+## 8  Deployment Patterns
+
+| Pattern                | When to Use                                                | Notes                                                                          |
+| ---------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| **Sidecar**            | Micro‑service architectures; each app pod runs its own PDP | Simplest isolation; uses memory cache.                                         |
+| **Standalone Service** | One PDP per environment; multiple apps query over network  | Centralised; enable Redis cache for scale.                                     |
+| **HA Cluster**         | High throughput or strict SLA                              | Deploy Helm chart ≥ 2 replicas + Redis; use Kubernetes readiness probes.       |
+| **Multi‑Tenant PDP**   | SaaS actors share hardware                                 | Use Permit projects/environments separation; ensure cache keys include tenant. |
+
+---
+
+## 9  Extending & Contributing
+
+1. **Clone the repository**:
+
+   ```bash
+   git clone https://github.com/permitio/PDP.git
+   ```
+2. **Rust API** – add/modify endpoints in `pdp-server/src/handlers`.
+
+   ```bash
+   cd PDP/pdp-server
+   cargo test
+   ```
+3. **Python Horizon** – extend FastAPI routes in `horizon/routes`.
+
+   ```bash
+   cd ../horizon
+   uvicorn horizon.main:app --reload
+   ```
+4. **Policy‑engine adapters** – implement the `Engine` trait (Rust) or `PolicyEngine` ABC (Python) for new back‑ends.
+5. **Pull requests** – follow `CONTRIBUTING.md`; include unit tests and docs updates.
+
+---
+
+## 10  Conclusion
+
+PDP is Permit’s authorization engine used as a **high‑performance, resilient, and extensible** service ready for production. Its hybrid Rust/Python design brings speed without sacrificing breadth of features, while OPAL keeps it perpetually in sync with your central policy source of truth. Whether deployed as a sidecar or a shared cluster, the PDP delivers single‑digit‑millisecond, deterministic access decisions and a clear path for contributors to innovate on top of a solid foundation.
+
+---
+
+*Happy hacking & may your requests always be **********************************allowed**********************************!*

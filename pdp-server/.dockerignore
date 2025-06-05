@@ -1,0 +1,28 @@
+# Git
+.git/
+.gitignore
+
+# Rust build artifacts
+target/
+**/*.rs.bk
+
+# RocksDB data
+data/
+
+# Editor directories
+.idea/
+.vscode/
+.cursor/
+*.iml
+
+# Docker
+Dockerfile
+.dockerignore
+
+# Temporary files
+**/*.tmp
+**/*.log
+
+# Documentation
+*.md
+!README.md
