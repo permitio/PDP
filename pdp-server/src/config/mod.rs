@@ -1,130 +1,53 @@
 pub(crate) use crate::config::cache::{CacheConfig, CacheStore};
 use crate::config::horizon::HorizonConfig;
 use crate::config::opa::OpaConfig;
-use config::{Config as ConfigCrate, ConfigError};
-use serde::Deserialize;
+use confique::Config;
 
 pub mod cache;
 pub mod horizon;
 pub mod opa;
 
 /// Main configuration structure for the PDP server
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Config, Clone, Default)]
 pub struct PDPConfig {
     /// API Key for authentication - mandatory for all API calls
-    #[serde(default)]
+    #[config(env = "PDP_API_KEY", default = "")]
     pub api_key: String,
 
     /// Debug mode (injects debug attributes to OPA requests)
-    #[serde(default)]
+    #[config(env = "PDP_DEBUG")]
     pub debug: Option<bool>,
 
     /// The port the PDP server will listen to (default: 7766)
-    #[serde(default)]
+    #[config(env = "PDP_PORT", default = 7766)]
     pub port: u16,
 
     /// Feature flag for new authorized users implementation
-    #[serde(default)]
+    #[config(env = "PDP_USE_NEW_AUTHORIZED_USERS", default = false)]
     pub use_new_authorized_users: bool,
 
     /// Timeout in seconds for health checks (default: 3 second)
-    #[serde(default = "default_healthcheck_timeout")]
+    #[config(env = "PDP_HEALTHCHECK_TIMEOUT", default = 3.0)]
     pub healthcheck_timeout: f64,
 
     /// Horizon service configuration
-    #[serde(default)]
+    #[config(nested)]
     pub horizon: HorizonConfig,
 
     /// OPA service configuration
-    #[serde(default)]
+    #[config(nested)]
     pub opa: OpaConfig,
 
     /// Cache configuration
-    #[serde(default)]
+    #[config(nested)]
     pub cache: CacheConfig,
-}
-
-// Helper function to provide the default healthcheck timeout for serde
-fn default_healthcheck_timeout() -> f64 {
-    3.0
-}
-
-impl Default for PDPConfig {
-    fn default() -> Self {
-        Self {
-            api_key: "".to_string(),
-            debug: None,
-            port: 7766,
-            use_new_authorized_users: false,
-            healthcheck_timeout: default_healthcheck_timeout(), // Use the function here too for consistency
-            horizon: HorizonConfig::default(),
-            opa: OpaConfig::default(),
-            cache: CacheConfig::default(),
-        }
-    }
 }
 
 impl PDPConfig {
     /// Creates a new Config instance from environment variables
     pub fn new() -> Result<Self, String> {
-        // Create a config builder with environment source
-        let config_builder = ConfigCrate::builder()
-            .build()
-            .map_err(|e: ConfigError| e.to_string())?;
-
-        // Deserialize the basic configuration
-        let base_config: Self = config_builder
-            .try_deserialize()
-            .map_err(|e| e.to_string())?;
-
-        // Create a new configuration with environment variables
-        Ok(Self::from_env(&base_config))
-    }
-
-    /// Creates a new configuration from environment variables
-    pub fn from_env(config: &Self) -> Self {
-        // Apply environment variables to main config
-        let mut result = config.clone();
-
-        // Apply API key from environment
-        if let Ok(api_key) = std::env::var("PDP_API_KEY") {
-            result.api_key = api_key;
-        }
-
-        // Apply port from environment
-        if let Ok(port) = std::env::var("PDP_PORT") {
-            if let Ok(parsed) = port.parse::<u16>() {
-                result.port = parsed;
-            }
-        }
-
-        // Apply debug flag from environment
-        if let Ok(debug) = std::env::var("PDP_DEBUG") {
-            if let Ok(parsed) = debug.parse::<bool>() {
-                result.debug = Some(parsed);
-            }
-        }
-
-        // Apply use_new_authorized_users flag from environment
-        if let Ok(use_new) = std::env::var("PDP_USE_NEW_AUTHORIZED_USERS") {
-            if let Ok(parsed) = use_new.parse::<bool>() {
-                result.use_new_authorized_users = parsed;
-            }
-        }
-
-        // Apply health check timeout from environment
-        if let Ok(timeout) = std::env::var("PDP_HEALTHCHECK_TIMEOUT") {
-            if let Ok(parsed) = timeout.parse::<f64>() {
-                result.healthcheck_timeout = parsed;
-            }
-        }
-
-        // Apply sub-configurations
-        result.horizon = HorizonConfig::from_env(&result.horizon);
-        result.opa = OpaConfig::from_env(&result.opa);
-        result.cache = CacheConfig::from_env(&result.cache);
-
-        result
+        // Use confique's builder to load configuration from environment
+        Self::builder().env().load().map_err(|e| e.to_string())
     }
 
     #[cfg(test)]
@@ -132,35 +55,59 @@ impl PDPConfig {
         horizon_mock: &wiremock::MockServer,
         opa_mock: &wiremock::MockServer,
     ) -> Self {
-        Self {
-            api_key: "test_api_key".to_string(),
-            debug: Some(true),
-            port: 0, // Let the OS choose a port
-            use_new_authorized_users: false,
-            healthcheck_timeout: 3.0,
-            // Use the mock server addresses for testing
-            horizon: HorizonConfig {
-                host: horizon_mock.address().ip().to_string(),
-                port: horizon_mock.address().port(),
-                python_path: "python3".to_string(),
-                client_timeout: 60,
-                health_check_timeout: 1,
-                health_check_interval: 5,
-                health_check_failure_threshold: 12,
-                startup_delay: 5,
-                restart_interval: 1,
-                termination_timeout: 30,
-            },
-            opa: OpaConfig {
-                url: opa_mock.uri(),
-                client_query_timeout: 5,
-            },
-            cache: CacheConfig {
-                ttl: 60,
-                store: CacheStore::None,
-                ..Default::default()
-            },
-        }
+        use crate::config::cache::{InMemoryConfig, RedisConfig};
+
+        // Create a base configuration and override specific values for testing
+        let mut config = Self::builder().env().load().unwrap_or_else(|_| {
+            // Create a minimal config if loading fails
+            Self {
+                api_key: "test_api_key".to_string(),
+                debug: Some(true),
+                port: 0,
+                use_new_authorized_users: false,
+                healthcheck_timeout: 3.0,
+                horizon: HorizonConfig::builder()
+                    .env()
+                    .load()
+                    .unwrap_or_else(|_| HorizonConfig {
+                        host: "0.0.0.0".to_string(),
+                        port: 7001,
+                        python_path: "python3".to_string(),
+                        client_timeout: 60,
+                        health_check_timeout: 1,
+                        health_check_interval: 5,
+                        health_check_failure_threshold: 12,
+                        startup_delay: 5,
+                        restart_interval: 1,
+                        termination_timeout: 30,
+                    }),
+                opa: OpaConfig::builder()
+                    .env()
+                    .load()
+                    .unwrap_or_else(|_| OpaConfig {
+                        url: "http://localhost:8181".to_string(),
+                        client_query_timeout: 5,
+                    }),
+                cache: CacheConfig::builder()
+                    .env()
+                    .load()
+                    .unwrap_or_else(|_| CacheConfig {
+                        ttl: 60,
+                        store: CacheStore::None,
+                        memory: InMemoryConfig { capacity: 128 },
+                        redis: RedisConfig {
+                            url: "".to_string(),
+                        },
+                    }),
+            }
+        });
+
+        // Override with mock server addresses
+        config.horizon.host = horizon_mock.address().ip().to_string();
+        config.horizon.port = horizon_mock.address().port();
+        config.opa.url = opa_mock.uri();
+
+        config
     }
 }
 
@@ -360,6 +307,50 @@ mod tests {
                 assert_eq!(config.horizon.startup_delay, 3);
                 assert_eq!(config.horizon.restart_interval, 2);
                 assert_eq!(config.horizon.termination_timeout, 15);
+            },
+        );
+    }
+
+    #[test]
+    fn test_confique_template_generation() {
+        // Test that we can generate configuration templates
+        // This is a new feature we get from confique
+        let toml_template =
+            confique::toml::template::<PDPConfig>(confique::toml::FormatOptions::default());
+
+        // Verify that the template contains our configuration fields
+        assert!(toml_template.contains("PDP_API_KEY"));
+        assert!(toml_template.contains("PDP_PORT"));
+        assert!(toml_template.contains("PDP_DEBUG"));
+        assert!(toml_template.contains("PDP_CACHE_TTL"));
+        assert!(toml_template.contains("PDP_CACHE_STORE"));
+        assert!(toml_template.contains("PDP_OPA_URL"));
+        assert!(toml_template.contains("PDP_HORIZON_HOST"));
+
+        // Verify default values are documented
+        assert!(toml_template.contains("7766"));
+        assert!(toml_template.contains("3600"));
+        assert!(toml_template.contains("http://localhost:8181"));
+        assert!(toml_template.contains("0.0.0.0"));
+
+        println!("Generated TOML template:\n{}", toml_template);
+    }
+
+    #[test]
+    fn test_confique_builder_pattern() {
+        with_env_vars(
+            &[("PDP_API_KEY", "builder-test-key"), ("PDP_PORT", "8080")],
+            || {
+                // Test the builder pattern directly
+                let config = PDPConfig::builder()
+                    .env()
+                    .load()
+                    .expect("Failed to load config");
+
+                assert_eq!(config.api_key, "builder-test-key");
+                assert_eq!(config.port, 8080);
+                assert_eq!(config.cache.ttl, 3600); // Default value
+                assert_eq!(config.opa.url, "http://localhost:8181"); // Default value
             },
         );
     }

@@ -11,7 +11,7 @@ watchdog = { path = "../watchdog" }
 async-trait = "0.1.88"
 axum = "0.8.3"
 chrono = "0.4.40"
-config = "0.15.11"
+confique = { version = "0.3.0", features = ["toml"] }
 env_logger = "0.11.8"
 http = "1.3.1"
 log = "0.4.27"

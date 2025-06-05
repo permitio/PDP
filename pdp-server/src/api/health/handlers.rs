@@ -384,7 +384,7 @@ mod test {
 
         let mut config = crate::config::PDPConfig::for_test_with_mocks(&horizon_mock, &opa_mock);
         config.healthcheck_timeout = 0.5;
-        let fixture = TestFixture::with_config(config.clone(), opa_mock, horizon_mock).await;
+        let fixture = TestFixture::with_config(config, opa_mock, horizon_mock).await;
 
         let start_time = Instant::now();
         let response_with_cache = fixture.get("/health?check_cache=true").await;
@@ -428,9 +428,16 @@ mod test {
             "Concurrent check took too long: {:?}",
             duration_with_cache
         );
+    }
 
-        config.healthcheck_timeout = 2.0;
+    #[tokio::test]
+    async fn test_health_check_success_timing() {
+        TestFixture::setup_logger(LevelFilter::Info);
         let (horizon_mock_success, opa_mock_success) = setup_healthy_mocks().await;
+
+        let mut config =
+            crate::config::PDPConfig::for_test_with_mocks(&horizon_mock_success, &opa_mock_success);
+        config.healthcheck_timeout = 2.0;
         let fixture_success =
             TestFixture::with_config(config, opa_mock_success, horizon_mock_success).await;
 
