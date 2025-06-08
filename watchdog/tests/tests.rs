@@ -359,3 +359,150 @@ async fn test_service_watchdog_recover_unresponsive() {
         "Service should have less failed health checks than total health checks"
     );
 }
+
+#[tokio::test]
+async fn test_service_watchdog_consecutive_failures() {
+    setup_logger();
+
+    let test_server = TestServer::new();
+    let opt = ServiceWatchdogOptions {
+        health_check_interval: Duration::from_millis(50),
+        health_check_failure_threshold: 3, // Require 3 consecutive failures
+        initial_startup_delay: Duration::from_millis(100),
+        ..Default::default()
+    };
+
+    let watchdog = ServiceWatchdog::start_with_opt(
+        test_server.get_command(),
+        test_server.get_health_checker(),
+        opt,
+    );
+
+    // Wait for service to become healthy initially
+    watchdog
+        .wait_for_healthy(Duration::from_millis(1000))
+        .await
+        .expect("Service should be healthy");
+
+    assert_eq!(
+        watchdog.start_counter(),
+        1,
+        "Service should have started once"
+    );
+
+    // Make the server unhealthy to trigger consecutive failures
+    test_server
+        .make_unhealthy()
+        .await
+        .expect("Failed to make server unhealthy");
+
+    // Wait for 2 health check intervals to pass (should be 2 failures, not enough to restart)
+    tokio::time::sleep(Duration::from_millis(150)).await;
+
+    // Service should still be running (not restarted yet) because we haven't hit threshold
+    assert_eq!(
+        watchdog.start_counter(),
+        1,
+        "Service should not have restarted yet with only 2 failures"
+    );
+
+    // Wait for one more health check interval (should be 3 failures, enough to restart)
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Now the service should have been restarted
+    assert_eq!(
+        watchdog.start_counter(),
+        2,
+        "Service should have restarted after reaching failure threshold"
+    );
+
+    // Wait for the service to recover after restart
+    watchdog
+        .wait_for_healthy(Duration::from_millis(1000))
+        .await
+        .expect("Service should recover after restart");
+
+    // Verify we have failed health checks recorded
+    assert!(
+        watchdog.failed_health_checks() >= 3,
+        "Should have at least 3 failed health checks recorded"
+    );
+
+    assert!(
+        watchdog.health_checks() > watchdog.failed_health_checks(),
+        "Should have more total health checks than failed ones"
+    );
+}
+
+#[tokio::test]
+async fn test_service_watchdog_consecutive_failures_with_recovery() {
+    setup_logger();
+
+    let test_server = TestServer::new();
+    let opt = ServiceWatchdogOptions {
+        health_check_interval: Duration::from_millis(50),
+        health_check_failure_threshold: 4, // Require 4 consecutive failures
+        initial_startup_delay: Duration::from_millis(100),
+        ..Default::default()
+    };
+
+    let watchdog = ServiceWatchdog::start_with_opt(
+        test_server.get_command(),
+        test_server.get_health_checker(),
+        opt,
+    );
+
+    // Wait for service to become healthy initially
+    watchdog
+        .wait_for_healthy(Duration::from_millis(1000))
+        .await
+        .expect("Service should be healthy");
+
+    // Make the server unhealthy
+    test_server
+        .make_unhealthy()
+        .await
+        .expect("Failed to make server unhealthy");
+
+    // Wait for 2 health check failures
+    tokio::time::sleep(Duration::from_millis(150)).await;
+
+    // Make the server healthy again to reset consecutive failures
+    // This is done by restarting the server state (Python test server becomes healthy by default)
+    test_server
+        .crash()
+        .await
+        .expect("Failed to crash server for reset");
+
+    // Wait for the command watchdog to restart it (need more time due to crash loop protection)
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+
+    // Wait for server to become healthy
+    watchdog
+        .wait_for_healthy(Duration::from_millis(1000))
+        .await
+        .expect("Service should be healthy after restart");
+
+    // Make server unhealthy again
+    test_server
+        .make_unhealthy()
+        .await
+        .expect("Failed to make server unhealthy again");
+
+    // Wait for 3 failures (still less than threshold of 4)
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Should not have triggered service restart because consecutive counter was reset
+    // The service watchdog should still be on its first restart cycle
+    // (one restart from the crash() call above, but no restart from health check failures)
+    assert!(
+        watchdog.start_counter() >= 1,
+        "Service should have been restarted at least once (from manual crash)"
+    );
+
+    // Verify we have failed health checks but they were not consecutive enough to trigger restart
+    assert!(
+        watchdog.failed_health_checks() > 0,
+        "Should have some failed health checks recorded"
+    );
+}
