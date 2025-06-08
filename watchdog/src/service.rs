@@ -107,6 +107,8 @@ impl ServiceWatchdog {
             );
 
             let mut check_interval = interval(opt.health_check_interval);
+            // Skip the first tick which happens immediately
+            check_interval.tick().await;
             let mut consecutive_failures = 0;
 
             loop {
@@ -116,65 +118,64 @@ impl ServiceWatchdog {
                         break;
                     }
                     _ = check_interval.tick() => {
+                        // Increment health checks counter and perform health check
                         stats.increment_health_checks();
-                    }
-                }
 
-                // Check health
-                match health_checker.check_health().await {
-                    Ok(_) => {
-                        // Service is healthy
-                        if let Err(e) = health_status.send(true) {
-                            warn!("Failed to broadcast health status: {}", e);
+                        // Check health
+                        match health_checker.check_health().await {
+                            Ok(_) => {
+                                // Service is healthy
+                                if let Err(e) = health_status.send(true) {
+                                    warn!("Failed to broadcast health status: {}", e);
+                                }
+
+                                if consecutive_failures > 0 {
+                                    info!(
+                                        "Service '{}' health restored after {} failures",
+                                        command_watchdog.program_name, consecutive_failures
+                                    );
+                                }
+                                consecutive_failures = 0;
+                            }
+                            Err(e) => {
+                                // Health check failed
+                                if let Err(e) = health_status.send(false) {
+                                    warn!("Failed to broadcast health status: {}", e);
+                                }
+
+                                stats.increment_failed_health_checks();
+                                consecutive_failures += 1;
+
+                                warn!(
+                                    "Service '{}' health check failed: {} (consecutive failures: {}/{})",
+                                    command_watchdog.program_name,
+                                    e,
+                                    consecutive_failures,
+                                    opt.health_check_failure_threshold
+                                );
+                            }
                         }
 
-                        if consecutive_failures > 0 {
-                            info!(
-                                "Service '{}' health restored after {} failures",
+                        // Check if we need to restart
+                        if consecutive_failures >= opt.health_check_failure_threshold {
+                            warn!(
+                                "Service '{}' is unhealthy, restarting after {} consecutive failures",
                                 command_watchdog.program_name, consecutive_failures
                             );
-                        }
-                        consecutive_failures = 0;
-                        continue;
-                    }
-                    Err(e) => {
-                        // Health check failed
-                        if let Err(e) = health_status.send(false) {
-                            warn!("Failed to broadcast health status: {}", e);
-                        }
 
-                        stats.increment_failed_health_checks();
-                        consecutive_failures += 1;
+                            // Restart the command watchdog process
+                            match command_watchdog.restart().await {
+                                Ok(_) => {
+                                    info!("Service process restart requested");
 
-                        warn!(
-                            "Service '{}' health check failed: {} (consecutive failures: {}/{})",
-                            command_watchdog.program_name,
-                            e,
-                            consecutive_failures,
-                            opt.health_check_failure_threshold
-                        );
-                    }
-                }
-
-                // Check if we need to restart
-                if consecutive_failures >= opt.health_check_failure_threshold {
-                    warn!(
-                        "Service '{}' is unhealthy, restarting after {} consecutive failures",
-                        command_watchdog.program_name, consecutive_failures
-                    );
-
-                    // Restart the command watchdog process
-                    match command_watchdog.restart().await {
-                        Ok(_) => {
-                            info!("Service process restart requested");
-
-                            // Wait for initial startup before checking health again
-                            tokio::time::sleep(opt.initial_startup_delay).await;
-                            consecutive_failures = 0;
-                            continue;
-                        }
-                        Err(e) => {
-                            error!("Failed to send restart signal: {}", e);
+                                    // Wait for initial startup before checking health again
+                                    tokio::time::sleep(opt.initial_startup_delay).await;
+                                    consecutive_failures = 0;
+                                }
+                                Err(e) => {
+                                    error!("Failed to send restart signal: {}", e);
+                                }
+                            }
                         }
                     }
                 }
