@@ -3,6 +3,14 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: fluentbit-config
+  {{- with .Values.labels }}
+  labels:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 data:
   fluent-bit.conf: |
     [SERVICE]
