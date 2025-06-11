@@ -4,6 +4,13 @@ metadata:
   name: permitio-pdp
   labels:
     app: permitio-pdp
+    {{- with .Values.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   replicas: {{ .Values.pdp.replicas }}
   selector:
@@ -13,17 +20,13 @@ spec:
     metadata:
       labels:
         app: permitio-pdp
-        {{- if .Values.labels }}
-        {{- range $key, $value := .Values.labels }}
-        {{ $key }}: {{ $value | quote }}
+        {{- with .Values.labels }}
+        {{- toYaml . | nindent 8 }}
         {{- end }}
-        {{- end }}
+      {{- with .Values.annotations }}
       annotations:
-        {{- if .Values.annotations }}
-        {{- range $key, $value := .Values.annotations }}
-        {{ $key }}: {{ $value | quote }}
-        {{- end }}
-        {{- end }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       containers:
         - name: permitio-pdp
