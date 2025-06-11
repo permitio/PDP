@@ -32,8 +32,8 @@ spec:
             - name: PDP_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: permitio-pdp-secret
-                  key: ApiKey
+                  name: {{ include "pdp.secretName" . }}
+                  key: {{ include "pdp.secretKey" . }}
             {{- if .Values.pdp.pdpEnvs }}
             {{- range .Values.pdp.pdpEnvs }}
             - name: {{ .name }}

@@ -7,6 +7,11 @@ pdp:
     # - name: custom_env
     #   value: "custom_env"
   ApiKey: "<your PDP API Key>"
+  # Use an existing secret for the API key instead of creating one
+  # If defined, the chart will not create a secret and will use this existing secret
+  # existingApiKeySecret:
+  #   name: "my-existing-secret"
+  #   key: "api-key"
   port: 7766
   replicas: 1
   image:
