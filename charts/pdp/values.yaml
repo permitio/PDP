@@ -1,5 +1,9 @@
+labels: {}
+annotations: {}
+
 pdp:
-  pdpEnvs: []
+  pdpEnvs:
+    []
     # - name: custom_env
     #   value: "custom_env"
   ApiKey: "<your PDP API Key>"
@@ -12,7 +16,7 @@ pdp:
   logs_forwarder:
     enabled: false
     debug_mode: false
-    type: "stdout"  # 'stdout' or 'elasticsearch'
+    type: "stdout" # 'stdout' or 'elasticsearch'
     elasticsearch:
       host: "<elasticsearch host>"
       cloud_auth: "<{user}:{password}>"
