@@ -12,7 +12,7 @@ metadata:
   {{- end }}
 spec:
   selector:
-    app: permitio-pdp
+    {{- include "pdp.selectorLabels" . | nindent 4 }}
   ports:
     - protocol: TCP
       port: {{ .Values.pdp.port }}
