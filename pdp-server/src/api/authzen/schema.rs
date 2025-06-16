@@ -11,6 +11,7 @@ pub struct AuthZenSubject {
     /// Type of the subject
     pub r#type: String,
     /// Unique identifier of the subject
+    #[serde(default)] // default empty because it's optional on Search Subject API
     pub id: String,
     /// Optional properties of the subject
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -23,7 +24,9 @@ pub struct AuthZenResource {
     /// Type of the resource
     pub r#type: String,
     /// Unique identifier of the resource
-    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    // default empty because it's optional on Search Resource API
+    pub id: Option<String>,
     /// Optional properties of the resource
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub properties: Option<HashMap<String, serde_json::Value>>,
@@ -78,7 +81,7 @@ impl From<AuthZenResource> for Resource {
         });
         Resource {
             r#type: val.r#type,
-            key: Some(val.id),
+            key: val.id,
             tenant,
             attributes: properties,
             context: HashMap::new(),
@@ -144,7 +147,7 @@ mod tests {
         // Test with minimal resource (no properties)
         let authzen_resource = AuthZenResource {
             r#type: "document".to_string(),
-            id: "doc-456".to_string(),
+            id: Some("doc-456".to_string()),
             properties: None,
         };
 
@@ -164,7 +167,7 @@ mod tests {
         // Test with only tenant property
         let authzen_resource = AuthZenResource {
             r#type: "file".to_string(),
-            id: "file-789".to_string(),
+            id: Some("file-789".to_string()),
             properties: Some({
                 let mut props = HashMap::new();
                 props.insert("tenant".to_string(), json!("other-corp"));
@@ -301,7 +304,7 @@ mod tests {
         match result {
             Ok(request) => {
                 // If successful, verify the resource id defaults correctly
-                assert_eq!(request.resource.id, "file-123"); // Should default to empty string
+                assert_eq!(request.resource.id, Some("file-123".to_string())); // Should default to empty string
                 assert_eq!(request.resource.r#type, "File");
                 assert_eq!(request.action.name, "create");
                 assert_eq!(request.subject.id, "test-user-123");
@@ -353,7 +356,7 @@ mod tests {
         match result {
             Ok(request) => {
                 // Verify the resource id defaults to empty string
-                assert_eq!(request.resource.id, "file-123");
+                assert_eq!(request.resource.id, Some("file-123".to_string()));
                 println!("✅ Deserialization successful - resource.id defaulted to empty string");
             }
             Err(e) => {

@@ -53,13 +53,15 @@ impl From<ActionSearchRequest> for UserPermissionsQuery {
             .get("tenant")
             .map(|v| v.to_string());
 
+        let resources = req.resource.id.map(|id| vec![id]);
+
         // Create the query with SDK field included for AuthZen compatibility
         let context = req.context.unwrap_or_default();
         UserPermissionsQuery {
             user,
             tenants: tenant.map(|v| vec![v]),
             // No need to create a resource string - the user_permissions API expects resources as array of strings
-            resources: Some(vec![req.resource.id.clone()]),
+            resources,
             resource_types: Some(vec![req.resource.r#type.clone()]),
             context: Some(context),
         }

@@ -16,6 +16,8 @@ use utoipa::ToSchema;
 /// AuthZen Subject Search Request - to find subjects with access to a resource
 #[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
 pub struct SubjectSearchRequest {
+    /// Subject being searched for
+    pub subject: AuthZenSubject,
     /// Resource being accessed
     pub resource: AuthZenResource,
     /// Action being performed
@@ -161,6 +163,9 @@ mod tests {
             .post(
                 "/access/v1/search/subject",
                 &json!({
+                    "subject": {
+                        "type": "user",
+                    },
                     "resource": {
                         "type": "document",
                         "id": "123"
@@ -235,6 +240,9 @@ mod tests {
             .post(
                 "/access/v1/search/subject",
                 &json!({
+                    "subject": {
+                        "type": "user",
+                    },
                     "resource": {
                         "type": "document",
                         "id": "456"
@@ -296,6 +304,9 @@ mod tests {
             .post(
                 "/access/v1/search/subject",
                 &json!({
+                    "subject": {
+                        "type": "user",
+                    },
                     "resource": {
                         "type": "document",
                         "id": "123"
