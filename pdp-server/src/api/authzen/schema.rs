@@ -45,11 +45,6 @@ pub struct AuthZenAction {
 impl From<AuthZenSubject> for User {
     fn from(val: AuthZenSubject) -> Self {
         let mut properties = val.properties.unwrap_or_default();
-        let attributes = properties.remove("attributes").map(|v| match v {
-            serde_json::Value::Object(o) => o.into_iter().collect(),
-            _ => HashMap::new(),
-        });
-
         let first_name = properties.remove("first_name").and_then(|v| match v {
             serde_json::Value::String(s) => Some(s),
             _ => None,
@@ -68,7 +63,7 @@ impl From<AuthZenSubject> for User {
             first_name,
             last_name,
             email,
-            attributes: attributes.unwrap_or_default(),
+            attributes: properties,
         }
     }
 }
@@ -81,16 +76,12 @@ impl From<AuthZenResource> for Resource {
             serde_json::Value::String(s) => Some(s),
             _ => None,
         });
-        let attributes = properties.remove("attributes").map(|v| match v {
-            serde_json::Value::Object(o) => o.into_iter().collect(),
-            _ => HashMap::new(),
-        });
         Resource {
             r#type: val.r#type,
             key: Some(val.id),
             tenant,
-            attributes: attributes.unwrap_or_default(),
-            context: properties,
+            attributes: properties,
+            context: HashMap::new(),
         }
     }
 }
@@ -108,21 +99,15 @@ mod tests {
             "id": "doc-123",
             "properties": {
                 "tenant": "acme-corp",
-                "attributes": {
-                    "department": "sales",
-                    "classification": "confidential",
-                    "owner": "bob@example.com",
-                    "created_at": "2023-01-01T00:00:00Z",
-                    "tags": ["financial", "customer-data"],
-                    "metadata": {
-                        "version": 1,
-                        "locked": true
-                    }
+                "department": "sales",
+                "classification": "confidential",
+                "owner": "bob@example.com",
+                "created_at": "2023-01-01T00:00:00Z",
+                "tags": ["financial", "customer-data"],
+                "metadata": {
+                    "version": 1,
+                    "locked": true
                 },
-                "extra_context": {
-                    "source": "api",
-                    "request_id": "req-456"
-                }
             }
         }))
         .unwrap();
@@ -149,12 +134,6 @@ mod tests {
                     "locked": true
                 }
             },
-            "context": {
-                "extra_context": {
-                    "source": "api",
-                    "request_id": "req-456"
-                }
-            }
         });
 
         assert_eq!(result_json, expected_json);
@@ -208,26 +187,20 @@ mod tests {
     #[test]
     fn test_authzen_subject_conversion_with_attributes() {
         // Create an AuthZen subject with attributes
-        let authzen_subject = AuthZenSubject {
-            r#type: "user".to_string(),
-            id: "alice@example.com".to_string(),
-            properties: Some({
-                let mut props = HashMap::new();
-                props.insert("first_name".to_string(), json!("Alice"));
-                props.insert("last_name".to_string(), json!("Smith"));
-                props.insert("email".to_string(), json!("alice@example.com"));
-                props.insert(
-                    "attributes".to_string(),
-                    json!({
-                        "department": "engineering",
-                        "role": "senior",
-                        "clearance_level": 3,
-                        "active": true
-                    }),
-                );
-                props
-            }),
-        };
+        let authzen_subject = serde_json::from_value::<AuthZenSubject>(json!({
+            "type": "user",
+            "id": "alice@example.com",
+            "properties": {
+                "first_name": "Alice",
+                "last_name": "Smith",
+                "email": "alice@example.com",
+                "department": "engineering",
+                "role": "senior",
+                "clearance_level": 3,
+                "active": true,
+            }
+        }))
+        .unwrap();
 
         let opa_user: User = authzen_subject.into();
         let result_json = serde_json::to_value(&opa_user).unwrap();
@@ -275,10 +248,8 @@ mod tests {
             "id": "doc-123",
             "properties": {
                 "tenant": "test-corp",
-                "attributes": {
-                    "category": "public",
-                    "size": 1024
-                }
+                "category": "public",
+                "size": 1024,
             }
         }))
         .unwrap();
@@ -317,9 +288,7 @@ mod tests {
                 "id": "file-123",
                 "properties": {
                     "tenant": "default",
-                    "attributes": {
-                        "public": true
-                    }
+                    "public": true,
                 }
             }
         });
@@ -371,9 +340,7 @@ mod tests {
                 "id": "file-123",
                 "properties": {
                     "tenant": "default",
-                    "attributes": {
-                        "public": true
-                    }
+                    "public": true,
                 }
             }
         });

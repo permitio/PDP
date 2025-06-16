@@ -831,21 +831,15 @@ mod tests {
                 "id": "doc-123",
                 "properties": {
                     "tenant": "acme-corp",
-                    "attributes": {
-                        "department": "sales",
-                        "classification": "confidential",
-                        "owner": "bob@example.com",
-                        "created_at": "2023-01-01T00:00:00Z",
-                        "tags": ["financial", "customer-data"],
-                        "metadata": {
-                            "version": 1,
-                            "locked": true
-                        }
+                    "department": "sales",
+                    "classification": "confidential",
+                    "owner": "bob@example.com",
+                    "created_at": "2023-01-01T00:00:00Z",
+                    "tags": ["financial", "customer-data"],
+                    "metadata": {
+                        "version": 1,
+                        "locked": true
                     },
-                    "extra_context": {
-                        "source": "api",
-                        "request_id": "req-456"
-                    }
                 }
             },
             "action": {
@@ -883,38 +877,28 @@ mod tests {
     #[test]
     fn test_access_evaluation_request_conversion() {
         // Create a complete AuthZen request with resource attributes
-        let authzen_request = AccessEvaluationRequest {
-            subject: crate::api::authzen::schema::AuthZenSubject {
-                r#type: "user".to_string(),
-                id: "alice@example.com".to_string(),
-                properties: None,
+        let authzen_request = serde_json::from_value::<AccessEvaluationRequest>(json!({
+            "subject": {
+                "type": "user",
+                "id": "alice@example.com"
             },
-            resource: crate::api::authzen::schema::AuthZenResource {
-                r#type: "document".to_string(),
-                id: "doc-123".to_string(),
-                properties: Some({
-                    let mut props = HashMap::new();
-                    props.insert("tenant".to_string(), json!("acme-corp"));
-                    props.insert(
-                        "attributes".to_string(),
-                        json!({
-                            "department": "sales",
-                            "classification": "confidential"
-                        }),
-                    );
-                    props
-                }),
+            "resource": {
+                "type": "document",
+                "id": "doc-123",
+                "properties": {
+                    "tenant": "acme-corp",
+                    "department": "sales",
+                    "classification": "confidential"
+                }
             },
-            action: crate::api::authzen::schema::AuthZenAction {
-                name: "can_read".to_string(),
-                properties: None,
+            "action": {
+                "name": "can_read"
             },
-            context: Some({
-                let mut context = HashMap::new();
-                context.insert("request_time".to_string(), json!("2023-01-01T12:00:00Z"));
-                context
-            }),
-        };
+            "context": {
+                "request_time": "2023-01-01T12:00:00Z"
+            }
+        }))
+        .unwrap();
 
         // Convert to AllowedQuery
         let allowed_query: AllowedQuery = authzen_request.into();
@@ -935,7 +919,7 @@ mod tests {
                 "attributes": {
                     "department": "sales",
                     "classification": "confidential"
-                }
+                },
             },
             "context": {
                 "request_time": "2023-01-01T12:00:00Z"
