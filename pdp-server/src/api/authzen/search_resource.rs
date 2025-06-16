@@ -46,14 +46,14 @@ pub struct ResourceSearchResponse {
 // Convert AuthZen request to UserPermissionsQuery
 impl From<ResourceSearchRequest> for UserPermissionsQuery {
     fn from(req: ResourceSearchRequest) -> Self {
-        let mut properties = req.context.unwrap_or_default();
+        let mut properties = req.resource.properties.unwrap_or_default();
         let tenant = properties.remove("tenant").map(|v| v.to_string());
         UserPermissionsQuery {
             user: req.subject.into(),
             tenants: tenant.map(|v| vec![v]),
             resources: None,
             resource_types: Some(vec![req.resource.r#type.clone()]),
-            context: Some(properties),
+            context: req.context,
         }
     }
 }
@@ -265,6 +265,7 @@ mod tests {
             },
             "resource": {
                 "type": "document",
+                "id": ""
             }
         });
 
