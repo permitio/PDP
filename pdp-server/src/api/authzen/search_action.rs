@@ -46,12 +46,14 @@ impl From<ActionSearchRequest> for UserPermissionsQuery {
     fn from(req: ActionSearchRequest) -> Self {
         // Convert AuthZenSubject to User using the common Into implementation
         let user = req.subject.into();
+        let mut properties = req.resource.properties.unwrap_or_default();
+        let tenant = properties.remove("tenant").map(|v| v.to_string());
 
         // Create the query with SDK field included for AuthZen compatibility
         let context = req.context.unwrap_or_default();
         UserPermissionsQuery {
             user,
-            tenants: None,
+            tenants: tenant.map(|v| vec![v]),
             // No need to create a resource string - the user_permissions API expects resources as array of strings
             resources: Some(vec![req.resource.id.clone()]),
             resource_types: Some(vec![req.resource.r#type.clone()]),
