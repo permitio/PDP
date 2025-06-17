@@ -1,7 +1,6 @@
 use crate::api::authzen::errors::AuthZenError;
 use crate::api::authzen::schema::{AuthZenAction, AuthZenResource, AuthZenSubject};
 use crate::headers::ClientCacheControl;
-use crate::opa_client::allowed::{Resource as OpaResource, User as OpaUser};
 use crate::opa_client::cached::{query_allowed_cached, AllowedQuery, AllowedResult};
 use crate::openapi::AUTHZEN_TAG;
 use crate::state::AppState;
@@ -42,33 +41,10 @@ pub struct AccessEvaluationResponse {
 // Convert AuthZen request to AllowedQuery
 impl From<AccessEvaluationRequest> for AllowedQuery {
     fn from(req: AccessEvaluationRequest) -> Self {
-        let user = OpaUser {
-            key: req.subject.id.clone(),
-            first_name: None,
-            last_name: None,
-            email: None,
-            attributes: req.subject.properties.unwrap_or_default(),
-        };
-
-        let resource = OpaResource {
-            r#type: req.resource.r#type.clone(),
-            key: Some(req.resource.id.clone()),
-            tenant: req
-                .resource
-                .properties
-                .clone()
-                .unwrap_or_default()
-                .get("tenant")
-                .cloned()
-                .map(|v| v.to_string()),
-            attributes: req.resource.properties.unwrap_or_default(),
-            context: HashMap::new(),
-        };
-
         AllowedQuery {
-            user,
+            user: req.subject.into(),
             action: req.action.name,
-            resource,
+            resource: req.resource.into(),
             context: req.context.unwrap_or_default(),
             sdk: Some("authzen".to_string()),
         }
@@ -837,5 +813,120 @@ mod tests {
             );
             fixture.opa_mock.verify().await;
         }
+    }
+
+    #[tokio::test]
+    async fn test_resource_attributes_pass_through_to_opa() {
+        // Setup test fixture
+        let fixture = TestFixture::new().await;
+
+        // Test AuthZen request with resource containing inline attributes
+        let test_request = json!({
+            "subject": {
+                "type": "user",
+                "id": "alice@example.com"
+            },
+            "resource": {
+                "type": "document",
+                "id": "doc-123",
+                "properties": {
+                    "tenant": "acme-corp",
+                    "department": "sales",
+                    "classification": "confidential",
+                    "owner": "bob@example.com",
+                    "created_at": "2023-01-01T00:00:00Z",
+                    "tags": ["financial", "customer-data"],
+                    "metadata": {
+                        "version": 1,
+                        "locked": true
+                    },
+                }
+            },
+            "action": {
+                "name": "can_read"
+            }
+        });
+
+        // Setup mock OPA response using the fixture helper method
+        fixture
+            .add_opa_mock(
+                Method::POST,
+                "/v1/data/permit/root",
+                json!({
+                    "result": {
+                        "allow": true
+                    }
+                }),
+                StatusCode::OK,
+                1,
+            )
+            .await;
+
+        // Send request to the AuthZen endpoint
+        let response = fixture.post("/access/v1/evaluation", &test_request).await;
+
+        // Verify response
+        response.assert_ok();
+        let result: AccessEvaluationResponse = response.json_as();
+        assert!(result.decision);
+
+        // Verify mock expectations
+        fixture.opa_mock.verify().await;
+    }
+
+    #[test]
+    fn test_access_evaluation_request_conversion() {
+        // Create a complete AuthZen request with resource attributes
+        let authzen_request = serde_json::from_value::<AccessEvaluationRequest>(json!({
+            "subject": {
+                "type": "user",
+                "id": "alice@example.com"
+            },
+            "resource": {
+                "type": "document",
+                "id": "doc-123",
+                "properties": {
+                    "tenant": "acme-corp",
+                    "department": "sales",
+                    "classification": "confidential"
+                }
+            },
+            "action": {
+                "name": "can_read"
+            },
+            "context": {
+                "request_time": "2023-01-01T12:00:00Z"
+            }
+        }))
+        .unwrap();
+
+        // Convert to AllowedQuery
+        let allowed_query: AllowedQuery = authzen_request.into();
+
+        // Convert to JSON for comparison
+        let result_json = serde_json::to_value(&allowed_query).unwrap();
+
+        // Expected JSON structure
+        let expected_json = json!({
+            "user": {
+                "key": "alice@example.com"
+            },
+            "action": "can_read",
+            "resource": {
+                "type": "document",
+                "key": "doc-123",
+                "tenant": "acme-corp",
+                "attributes": {
+                    "department": "sales",
+                    "classification": "confidential"
+                },
+            },
+            "context": {
+                "request_time": "2023-01-01T12:00:00Z"
+            },
+            "sdk": "authzen"
+        });
+
+        assert_eq!(result_json, expected_json);
     }
 }

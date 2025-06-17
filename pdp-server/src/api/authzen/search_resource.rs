@@ -19,24 +19,15 @@ pub struct ResourceSearchRequest {
     /// Subject making the request
     pub subject: AuthZenSubject,
     /// Action being performed
-    pub action: Option<AuthZenAction>,
+    pub action: AuthZenAction,
     /// Resource type to filter by
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resource_type: Option<String>,
+    pub resource: AuthZenResource,
     /// Context for the evaluation
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<HashMap<String, serde_json::Value>>,
     /// Pagination parameters
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page: Option<PageRequest>,
-}
-/// Resource action pair representing a permission
-#[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
-pub struct ResourceAction {
-    /// Resource that can be accessed
-    pub resource: AuthZenResource,
-    /// Action that can be performed
-    pub action: AuthZenAction,
 }
 
 /// AuthZen Resource Search Response - contains list of resources a subject can access
@@ -55,12 +46,14 @@ pub struct ResourceSearchResponse {
 // Convert AuthZen request to UserPermissionsQuery
 impl From<ResourceSearchRequest> for UserPermissionsQuery {
     fn from(req: ResourceSearchRequest) -> Self {
+        let mut properties = req.resource.properties.unwrap_or_default();
+        let tenant = properties.remove("tenant").map(|v| v.to_string());
         UserPermissionsQuery {
             user: req.subject.into(),
-            tenants: None,
+            tenants: tenant.map(|v| vec![v]),
             resources: None,
-            resource_types: req.resource_type.map(|rt| vec![rt]),
-            context: Some(req.context.unwrap_or_default()),
+            resource_types: Some(vec![req.resource.r#type.clone()]),
+            context: req.context,
         }
     }
 }
@@ -110,7 +103,7 @@ pub async fn search_resource_handler(
         if let Some(resource_details) = perm.resource {
             let resource = AuthZenResource {
                 r#type: resource_details.r#type.clone(),
-                id: resource_details.key.clone(),
+                id: Some(resource_details.key.clone()),
                 properties: if resource_details.attributes.is_empty() {
                     None
                 } else {
@@ -154,6 +147,12 @@ mod tests {
             "subject": {
                 "type": "user",
                 "id": "alice@example.com"
+            },
+            "action": {
+                "name": "can_read"
+            },
+            "resource": {
+                "type": "document",
             }
         });
 
@@ -224,7 +223,7 @@ mod tests {
         let doc1 = search_response
             .results
             .iter()
-            .find(|res| res.id == "doc1")
+            .find(|res| res.id == Some("doc1".to_string()))
             .unwrap();
         assert_eq!(doc1.r#type, "document");
         assert!(doc1.properties.is_some());
@@ -237,7 +236,7 @@ mod tests {
         let doc2 = search_response
             .results
             .iter()
-            .find(|res| res.id == "doc2")
+            .find(|res| res.id == Some("doc2".to_string()))
             .unwrap();
         assert_eq!(doc2.r#type, "document");
         assert!(doc2.properties.is_some());
@@ -260,6 +259,13 @@ mod tests {
             "subject": {
                 "type": "user",
                 "id": "bob@example.com"
+            },
+            "action": {
+                "name": "can_read"
+            },
+            "resource": {
+                "type": "document",
+                "id": ""
             }
         });
 
@@ -312,6 +318,10 @@ mod tests {
             },
             "action": {
                 "name": "can_read"
+            },
+            "resource": {
+                "type": "document",
+                "id": ""
             }
         });
 
@@ -365,7 +375,7 @@ mod tests {
 
         // Verify resource details
         let doc = &search_response.results[0];
-        assert_eq!(doc.id, "doc1");
+        assert_eq!(doc.id, Some("doc1".to_string()));
         assert_eq!(doc.r#type, "document");
 
         // Verify page is present
@@ -382,6 +392,12 @@ mod tests {
             "subject": {
                 "type": "user",
                 "id": "alice@example.com"
+            },
+            "action": {
+                "name": "can_read"
+            },
+            "resource": {
+                "type": "document",
             },
             "page": {
                 "size": 10,
