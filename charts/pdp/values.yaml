@@ -1,8 +1,17 @@
+labels: {}
+annotations: {}
+
 pdp:
-  pdpEnvs: []
+  pdpEnvs:
+    []
     # - name: custom_env
     #   value: "custom_env"
   ApiKey: "<your PDP API Key>"
+  # Use an existing secret for the API key instead of creating one
+  # If defined, the chart will not create a secret and will use this existing secret
+  # existingApiKeySecret:
+  #   name: "my-existing-secret"
+  #   key: "api-key"
   port: 7766
   replicas: 1
   image:
@@ -12,13 +21,19 @@ pdp:
   logs_forwarder:
     enabled: false
     debug_mode: false
-    type: "stdout"  # 'stdout' or 'elasticsearch'
+    type: "stdout" # 'stdout' or 'elasticsearch'
     elasticsearch:
       host: "<elasticsearch host>"
       cloud_auth: "<{user}:{password}>"
       port: 443
       index: "<elasticsearch index>"
   debug_mode: false
+
+podDisruptionBudget:
+  # Automatically enabled when replicas > 1
+  # Set minAvailable OR maxUnavailable (not both)
+  minAvailable: 1
+  # maxUnavailable: 1
 
 resources:
   requests:

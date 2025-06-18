@@ -3,27 +3,24 @@ kind: Deployment
 metadata:
   name: permitio-pdp
   labels:
-    app: permitio-pdp
+    {{- include "pdp.labels" . | nindent 4 }}
+  {{- with .Values.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   replicas: {{ .Values.pdp.replicas }}
   selector:
     matchLabels:
-      app: permitio-pdp
+      {{- include "pdp.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        app: permitio-pdp
-        {{- if .Values.labels }}
-        {{- range $key, $value := .Values.labels }}
-        {{ $key }}: {{ $value | quote }}
-        {{- end }}
-        {{- end }}
+        {{- include "pdp.labels" . | nindent 8 }}
+      {{- with .Values.annotations }}
       annotations:
-        {{- if .Values.annotations }}
-        {{- range $key, $value := .Values.annotations }}
-        {{ $key }}: {{ $value | quote }}
-        {{- end }}
-        {{- end }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       containers:
         - name: permitio-pdp
@@ -35,8 +32,8 @@ spec:
             - name: PDP_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: permitio-pdp-secret
-                  key: ApiKey
+                  name: {{ include "pdp.secretName" . }}
+                  key: {{ include "pdp.secretKey" . }}
             {{- if .Values.pdp.pdpEnvs }}
             {{- range .Values.pdp.pdpEnvs }}
             - name: {{ .name }}
