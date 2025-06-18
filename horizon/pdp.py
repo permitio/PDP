@@ -142,9 +142,9 @@ class PermitPDP:
 
         self._log_environment(remote_config.context)
 
-        if sidecar_config.OPA_BEARER_TOKEN_REQUIRED or sidecar_config.OPA_DECISION_LOG_ENABLED:
-            # we need to pass to OPAL a custom inline OPA config to enable these features
-            self._configure_inline_opa_config()
+        # we need to pass to OPAL a custom inline OPA config to
+        # enable some of the features
+        self._configure_inline_opa_config()
 
         self._configure_opal_data_updater()
         self._configure_opal_offline_mode()
@@ -273,12 +273,11 @@ class PermitPDP:
 
         logger.debug(f"existing OPAL_INLINE_OPA_CONFIG={inline_opa_config}")
 
-        if sidecar_config.OPA_DECISION_LOG_ENABLED:
-            # decision logs needs to be configured via the config file
-            config_file_path = get_opa_config_file_path(sidecar_config)
+        # decision logs needs to be configured via the config file
+        config_file_path = get_opa_config_file_path(sidecar_config)
 
-            # append the config file to inline OPA config
-            inline_opa_config.update({"config_file": config_file_path})
+        # append the config file to inline OPA config
+        inline_opa_config.update({"config_file": config_file_path})
 
         if sidecar_config.OPA_BEARER_TOKEN_REQUIRED:
             # overrides OPAL client config so that OPAL passes the bearer token in requests
