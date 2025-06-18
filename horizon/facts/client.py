@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Any
 from urllib.parse import urljoin
 
 from fastapi import Depends, HTTPException
@@ -30,7 +30,9 @@ class FactsClient:
             )
         return self._client
 
-    async def build_forward_request(self, request: FastApiRequest, path: str) -> HttpxRequest:
+    async def build_forward_request(
+        self, request: FastApiRequest, path: str, *, query_params: dict[str, Any] | None = None
+    ) -> HttpxRequest:
         """
         Build an HTTPX request from a FastAPI request to forward to the facts service.
         :param request: FastAPI request
@@ -53,7 +55,7 @@ class FactsClient:
         return self.client.build_request(
             method=request.method,
             url=full_path,
-            params=request.query_params,
+            params={**request.query_params, **(query_params or {})},
             headers=forward_headers,
             content=request.stream(),
         )
@@ -62,14 +64,16 @@ class FactsClient:
         logger.info(f"Forwarding facts request: {request.method} {request.url}")
         return await self.client.send(request, stream=stream)
 
-    async def send_forward_request(self, request: FastApiRequest, path: str) -> HttpxResponse:
+    async def send_forward_request(
+        self, request: FastApiRequest, path: str, *, query_params: dict[str, Any] | None = None
+    ) -> HttpxResponse:
         """
         Send a forward request to the facts service.
         :param request: FastAPI request
         :param path: Backend facts service path to forward to
         :return: HTTPX response
         """
-        forward_request = await self.build_forward_request(request, path)
+        forward_request = await self.build_forward_request(request, path, query_params=query_params)
         return await self.send(forward_request)
 
     @staticmethod

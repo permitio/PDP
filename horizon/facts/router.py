@@ -192,6 +192,27 @@ async def assign_user_role(
     )
 
 
+@facts_router.delete("/users/{user_id}/roles")
+async def unassign_user_role(
+    request: FastApiRequest,
+    client: FactsClientDependency,
+    update_subscriber: DataUpdateSubscriberDependency,
+    wait_timeout: WaitTimeoutDependency,
+    timeout_policy: TimeoutPolicyDependency,
+    user_id: str,
+):
+    return await forward_request_then_wait_for_update(
+        client,
+        request,
+        update_subscriber,
+        wait_timeout,
+        path=f"/users/{user_id}/roles",
+        query_params={"return_deleted": True},
+        entries_callback=create_role_assignment_data_entries,
+        timeout_policy=timeout_policy,
+    )
+
+
 @facts_router.post("/role_assignments")
 async def create_role_assignment(
     request: FastApiRequest,
@@ -206,6 +227,26 @@ async def create_role_assignment(
         update_subscriber,
         wait_timeout,
         path="/role_assignments",
+        entries_callback=create_role_assignment_data_entries,
+        timeout_policy=timeout_policy,
+    )
+
+
+@facts_router.delete("/role_assignments")
+async def delete_role_assignment(
+    request: FastApiRequest,
+    client: FactsClientDependency,
+    update_subscriber: DataUpdateSubscriberDependency,
+    wait_timeout: WaitTimeoutDependency,
+    timeout_policy: TimeoutPolicyDependency,
+):
+    return await forward_request_then_wait_for_update(
+        client,
+        request,
+        update_subscriber,
+        wait_timeout,
+        path="/role_assignments",
+        query_params={"return_deleted": True},
         entries_callback=create_role_assignment_data_entries,
         timeout_policy=timeout_policy,
     )
@@ -300,12 +341,13 @@ async def forward_request_then_wait_for_update(
     wait_timeout: float | None,
     *,
     path: str,
+    query_params: dict[str, Any] | None = None,
     update_id: UUID | None = None,
     entries_callback: Callable[[FastApiRequest, dict[str, Any], UUID | None], Iterable[DataSourceEntry]],
     timeout_policy: TimeoutPolicy = TimeoutPolicy.IGNORE,
 ) -> Response:
     _update_id = update_id or uuid4()
-    response = await client.send_forward_request(request, path)
+    response = await client.send_forward_request(request, path, query_params=query_params)
     body = client.extract_body(response)
     if body is None:
         return client.convert_response(response)
