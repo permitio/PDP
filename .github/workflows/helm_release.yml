@@ -7,7 +7,7 @@ on:
 
 jobs:
   helm-release:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/v2'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: write
     runs-on: ubuntu-latest
