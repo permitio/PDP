@@ -2,7 +2,11 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
+  {{- if .Values.useStandardHelmNamingConventions }}
+  name: {{ include "..fullname" . }}-fluentbit-config
+  {{- else }}
   name: fluentbit-config
+  {{- end }}
   {{- with .Values.labels }}
   labels:
     {{- toYaml . | nindent 4 }}

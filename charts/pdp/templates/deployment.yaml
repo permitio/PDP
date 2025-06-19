@@ -1,7 +1,11 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+  {{- if .Values.useStandardHelmNamingConventions }}
+  name: {{ include "..fullname" . }}
+  {{- else }}
   name: permitio-pdp
+  {{- end }}
   labels:
     {{- include "pdp.labels" . | nindent 4 }}
   {{- with .Values.annotations }}
