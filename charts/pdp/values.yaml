@@ -1,5 +1,24 @@
+# Feature flag added to preserve backward compatibility with the old naming conventions
+# When useStandardHelmNamingConventions is false (default):
+# - Service name: permitio-pdp
+# - Secret name: permitio-pdp-secret
+# - Deployment name: permitio-pdp
+# - PodDisruptionBudget name: permitio-pdp-pdb
+#
+# When useStandardHelmNamingConventions is true:
+# - Service name: {release-name}-{chart-name} (e.g., my-release-pdp)
+# - Secret name: {release-name}-{chart-name} (e.g., my-release-pdp)
+# - Deployment name: {release-name}-{chart-name} (e.g., my-release-pdp)
+# - PodDisruptionBudget name: {release-name}-{chart-name} (e.g., my-release-pdp)
+#
+# The standard Helm naming convention follows the pattern {release-name}-{chart-name}
+# and automatically truncates names to 63 characters to comply with Kubernetes DNS naming spec.
+useStandardHelmNamingConventions: false
+
 labels: {}
 annotations: {}
+
+nameOverride: ""
 
 pdp:
   pdpEnvs:
