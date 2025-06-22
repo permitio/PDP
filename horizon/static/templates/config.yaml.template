@@ -1,12 +1,12 @@
 services:
   permit_io:
     url: {{ cloud_service_url }}
-    {% if bearer_token is defined %}
+    {% if bearer_token %}
     credentials:
       bearer:
         token: "{{ bearer_token }}"
     {% endif %}
-
+{% if decision_logs_enabled %}
 decision_logs:
   {% if log_to_console %}
   console: true
@@ -17,6 +17,7 @@ decision_logs:
     min_delay_seconds: {{ min_delay_seconds }}
     max_delay_seconds: {{ max_delay_seconds }}
     upload_size_limit_bytes: {{ upload_size_limit_bytes }}
+{% endif %}
 
 {% if plugins %}
 plugins:
