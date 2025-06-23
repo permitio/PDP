@@ -1,4 +1,3 @@
-from collections.abc import Callable
 from typing import Annotated, Any
 from urllib.parse import urljoin
 
@@ -90,7 +89,6 @@ class FactsClient:
         response: HttpxResponse,
         *,
         stream: bool = False,
-        pre_return_callback: Callable[[FastApiResponse], FastApiResponse] | None = None,
     ) -> FastApiResponse:
         """
         Convert an HTTPX response to a FastAPI response.
@@ -100,20 +98,17 @@ class FactsClient:
         """
         if stream or not hasattr(response, "_content"):
             # if the response content has not loaded yet, optimize it to stream the response.
-            res = StreamingResponse(
+            return StreamingResponse(
                 content=response.aiter_bytes(),
                 status_code=response.status_code,
                 headers=response.headers,
             )
         else:
-            res = FastApiResponse(
+            return FastApiResponse(
                 content=response.content,
                 status_code=response.status_code,
                 headers=response.headers,
             )
-        if pre_return_callback:
-            return pre_return_callback(res)
-        return res
 
     @staticmethod
     def extract_body(response: HttpxResponse):
