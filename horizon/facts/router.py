@@ -201,14 +201,17 @@ async def unassign_user_role(
     timeout_policy: TimeoutPolicyDependency,
     user_id: str,
 ):
+    pre_return_callback = cast_delete_200_to_204 if not request.query_params.get("return_deleted") else None
     return await forward_request_then_wait_for_update(
         client,
         request,
         update_subscriber,
         wait_timeout,
         path=f"/users/{user_id}/roles",
+        query_params={"return_deleted": True},
         entries_callback=create_role_assignment_data_entries,
         timeout_policy=timeout_policy,
+        pre_return_callback=pre_return_callback,
     )
 
 
@@ -239,6 +242,7 @@ async def delete_role_assignment(
     wait_timeout: WaitTimeoutDependency,
     timeout_policy: TimeoutPolicyDependency,
 ):
+    pre_return_callback = cast_delete_200_to_204 if not request.query_params.get("return_deleted") else None
     return await forward_request_then_wait_for_update(
         client,
         request,
@@ -247,6 +251,8 @@ async def delete_role_assignment(
         path="/role_assignments",
         entries_callback=create_role_assignment_data_entries,
         timeout_policy=timeout_policy,
+        query_params={"return_deleted": True},
+        pre_return_callback=pre_return_callback,
     )
 
 
@@ -332,6 +338,12 @@ async def create_relationship_tuple(
     )
 
 
+def cast_delete_200_to_204(response: Response) -> Response:
+    if response.status_code == 200:
+        return Response(status_code=204)
+    return response
+
+
 async def forward_request_then_wait_for_update(
     client: FactsClient,
     request: FastApiRequest,
@@ -342,12 +354,14 @@ async def forward_request_then_wait_for_update(
     update_id: UUID | None = None,
     entries_callback: Callable[[FastApiRequest, dict[str, Any], UUID | None], Iterable[DataSourceEntry]],
     timeout_policy: TimeoutPolicy = TimeoutPolicy.IGNORE,
+    query_params: dict[str, Any] | None = None,
+    pre_return_callback: Callable[[Response], Response] | None = None,
 ) -> Response:
     _update_id = update_id or uuid4()
-    response = await client.send_forward_request(request, path)
+    response = await client.send_forward_request(request, path, query_params=query_params)
     body = client.extract_body(response)
     if body is None:
-        return client.convert_response(response)
+        return client.convert_response(response, pre_return_callback=pre_return_callback)
 
     try:
         data_update_entry = create_data_update_entry(
@@ -355,14 +369,14 @@ async def forward_request_then_wait_for_update(
         )
     except KeyError as e:
         logger.warning(f"Missing required field {e.args[0]} in the response body, skipping wait for update.")
-        return client.convert_response(response)
+        return client.convert_response(response, pre_return_callback=pre_return_callback)
 
     wait_result = await update_subscriber.publish_and_wait(
         data_update_entry,
         timeout=wait_timeout,
     )
     if wait_result:
-        return client.convert_response(response)
+        return client.convert_response(response, pre_return_callback=pre_return_callback)
     elif timeout_policy == TimeoutPolicy.FAIL:
         logger.error("Timeout waiting for update and policy is set to fail")
         raise HTTPException(
@@ -371,7 +385,7 @@ async def forward_request_then_wait_for_update(
         )
     else:
         logger.warning("Timeout waiting for update and policy is set to ignore")
-        return client.convert_response(response)
+        return client.convert_response(response, pre_return_callback=pre_return_callback)
 
 
 @facts_router.api_route(

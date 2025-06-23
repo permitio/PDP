@@ -1,4 +1,5 @@
-from typing import Annotated
+from collections.abc import Callable
+from typing import Annotated, Any
 from urllib.parse import urljoin
 
 from fastapi import Depends, HTTPException
@@ -34,6 +35,8 @@ class FactsClient:
         self,
         request: FastApiRequest,
         path: str,
+        *,
+        query_params: dict[str, Any] | None = None,
     ) -> HttpxRequest:
         """
         Build an HTTPX request from a FastAPI request to forward to the facts service.
@@ -57,7 +60,7 @@ class FactsClient:
         return self.client.build_request(
             method=request.method,
             url=full_path,
-            params=request.query_params,
+            params={**request.query_params, **(query_params or {})},
             headers=forward_headers,
             content=request.stream(),
         )
@@ -70,6 +73,8 @@ class FactsClient:
         self,
         request: FastApiRequest,
         path: str,
+        *,
+        query_params: dict[str, Any] | None = None,
     ) -> HttpxResponse:
         """
         Send a forward request to the facts service.
@@ -77,11 +82,16 @@ class FactsClient:
         :param path: Backend facts service path to forward to
         :return: HTTPX response
         """
-        forward_request = await self.build_forward_request(request, path)
+        forward_request = await self.build_forward_request(request, path, query_params=query_params)
         return await self.send(forward_request)
 
     @staticmethod
-    def convert_response(response: HttpxResponse, *, stream: bool = False) -> FastApiResponse:
+    def convert_response(
+        response: HttpxResponse,
+        *,
+        stream: bool = False,
+        pre_return_callback: Callable[[FastApiResponse], FastApiResponse] | None = None,
+    ) -> FastApiResponse:
         """
         Convert an HTTPX response to a FastAPI response.
         :param response: HTTPX response
@@ -90,17 +100,20 @@ class FactsClient:
         """
         if stream or not hasattr(response, "_content"):
             # if the response content has not loaded yet, optimize it to stream the response.
-            return StreamingResponse(
+            res = StreamingResponse(
                 content=response.aiter_bytes(),
                 status_code=response.status_code,
                 headers=response.headers,
             )
         else:
-            return FastApiResponse(
+            res = FastApiResponse(
                 content=response.content,
                 status_code=response.status_code,
                 headers=response.headers,
             )
+        if pre_return_callback:
+            return pre_return_callback(res)
+        return res
 
     @staticmethod
     def extract_body(response: HttpxResponse):
@@ -111,6 +124,8 @@ class FactsClient:
             return None
 
         try:
+            if response.status_code == 204:
+                return None
             body = response.json()
         except Exception:  # noqa: BLE001
             logger.exception("Failed to parse response body as JSON, skipping wait for update.")
