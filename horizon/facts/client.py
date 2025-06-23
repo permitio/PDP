@@ -56,10 +56,11 @@ class FactsClient:
             )
 
         full_path = urljoin(f"/v2/facts/{project_id}/{environment_id}/", path.removeprefix("/"))
+        _query_params = {**request.query_params, **(query_params or {})}
         return self.client.build_request(
             method=request.method,
             url=full_path,
-            params={**request.query_params, **(query_params or {})},
+            params=_query_params,
             headers=forward_headers,
             content=request.stream(),
         )
