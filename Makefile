@@ -1,4 +1,4 @@
-.PHONY: help build prepare
+.PHONY: help build prepare build-amd64 build-arm64
 
 .DEFAULT_GOAL := help
 
