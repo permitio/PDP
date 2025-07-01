@@ -73,7 +73,7 @@ pub(super) async fn fallback_to_horizon(
             let bytes = match response.bytes().await {
                 Ok(bytes) => bytes,
                 Err(e) => {
-                    log::error!("Failed to read response body: {}", e);
+                    log::error!("Failed to read response body: {e}");
                     return (StatusCode::BAD_GATEWAY, "Failed to read response body")
                         .into_response();
                 }
@@ -112,12 +112,12 @@ pub(super) async fn fallback_to_horizon(
                     StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
                 return (
                     status_code,
-                    format!("Error response from horizon server: {}", e),
+                    format!("Error response from horizon server: {e}"),
                 )
                     .into_response();
             } else {
                 // Generic error message for other types of errors
-                format!("Failed to send request: {}", e)
+                format!("Failed to send request: {e}")
             };
 
             (StatusCode::BAD_GATEWAY, error_message).into_response()
@@ -501,8 +501,7 @@ mod tests {
         let body_text = String::from_utf8_lossy(&body_bytes);
         assert!(
             body_text.contains("Connection"),
-            "Expected connection error message, got: {}",
-            body_text
+            "Expected connection error message, got: {body_text}"
         );
     }
 
@@ -569,8 +568,7 @@ mod tests {
         let body_text = String::from_utf8_lossy(&body_bytes);
         assert!(
             body_text.contains("timeout") || body_text.contains("timed out"),
-            "Expected timeout error message, got: {}",
-            body_text
+            "Expected timeout error message, got: {body_text}"
         );
 
         // We don't verify the mock expectations as the request might time out

@@ -101,7 +101,7 @@ mod tests {
     async fn test_health_check() {
         let cache = InMemoryCache::new(1, 128).unwrap();
         let result = cache.health_check().await;
-        assert!(result.is_ok(), "health check failed: {:?}", result);
+        assert!(result.is_ok(), "health check failed: {result:?}");
     }
 
     #[tokio::test]
@@ -115,7 +115,7 @@ mod tests {
 
         // Insert entries to fill the cache beyond capacity
         for i in 0..10 {
-            let key = format!("key_{}", i);
+            let key = format!("key_{i}");
             cache.set(&key, &data).await.unwrap();
             // Sleep for 100ms to allow moka to process the insertion
             // and the eviction to happen
@@ -128,7 +128,7 @@ mod tests {
         // Verify that at least some items were evicted due to capacity limits
         let mut found_items = 0;
         for i in 0..10 {
-            let key = format!("key_{}", i);
+            let key = format!("key_{i}");
             if cache.get::<String>(&key).await.unwrap().is_some() {
                 found_items += 1;
             }
@@ -138,8 +138,7 @@ mod tests {
         // we expect some items to be evicted, but we can't guarantee exactly how many
         assert!(
             found_items < 10,
-            "Expected some items to be evicted, but found {} items",
-            found_items
+            "Expected some items to be evicted, but found {found_items} items"
         );
     }
 }

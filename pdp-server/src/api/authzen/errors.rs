@@ -88,7 +88,7 @@ impl From<crate::errors::ApiError> for AuthZenError {
             StatusCode::FORBIDDEN => AuthZenError::forbidden("Access denied"),
             StatusCode::BAD_REQUEST => AuthZenError::invalid_request(err.detail),
             _ => {
-                log::error!("Internal error converted to AuthZen format: {:?}", err);
+                log::error!("Internal error converted to AuthZen format: {err:?}");
                 AuthZenError::internal_error("Internal server error")
             }
         }
@@ -98,7 +98,7 @@ impl From<crate::errors::ApiError> for AuthZenError {
 /// Convert OPA forwarding errors to AuthZen format
 impl From<crate::opa_client::ForwardingError> for AuthZenError {
     fn from(err: crate::opa_client::ForwardingError) -> Self {
-        log::error!("OPA forwarding error: {:?}", err);
+        log::error!("OPA forwarding error: {err:?}");
         // Use generic message to avoid leaking internal implementation details
         AuthZenError::internal_error("Internal server error")
     }

@@ -18,24 +18,21 @@ impl RedisCache {
         let client = match Client::open(redis_url) {
             Ok(client) => client,
             Err(err) => {
-                return Err(format!("Failed to connect to Redis: {}", err));
+                return Err(format!("Failed to connect to Redis: {err}"));
             }
         };
 
         let conn_manager = match ConnectionManager::new(client.clone()).await {
             Ok(manager) => manager,
             Err(err) => {
-                return Err(format!(
-                    "Failed to create Redis connection manager: {}",
-                    err
-                ));
+                return Err(format!("Failed to create Redis connection manager: {err}"));
             }
         };
 
         // Test the connection to ensure it's working
         let mut conn = conn_manager.clone();
         if let Err(err) = redis::cmd("PING").query_async::<String>(&mut conn).await {
-            return Err(format!("Failed to ping Redis: {}", err));
+            return Err(format!("Failed to ping Redis: {err}"));
         }
 
         Ok(Self {
@@ -62,7 +59,7 @@ impl CacheBackend for RedisCache {
         {
             Ok(_) => Ok(()),
             Err(err) => {
-                error!("Redis error while setting key {}: {}", key, err);
+                error!("Redis error while setting key {key}: {err}");
                 Err(CacheError::Redis(err.to_string()))
             }
         }
@@ -81,7 +78,7 @@ impl CacheBackend for RedisCache {
                     // Key doesn't exist
                     return Ok(None);
                 }
-                error!("Redis error while getting key {}: {}", key, err);
+                error!("Redis error while getting key {key}: {err}");
                 return Err(CacheError::Redis(err.to_string()));
             }
         };
@@ -99,7 +96,7 @@ impl CacheBackend for RedisCache {
         let mut conn = self.conn_manager.clone();
         match redis::cmd("PING").query_async::<String>(&mut conn).await {
             Ok(_) => Ok(()),
-            Err(err) => Err(format!("Redis health check failed: {}", err)),
+            Err(err) => Err(format!("Redis health check failed: {err}")),
         }
     }
 
@@ -109,7 +106,7 @@ impl CacheBackend for RedisCache {
         match conn.del::<_, ()>(key).await {
             Ok(_) => Ok(()),
             Err(err) => {
-                error!("Redis error while deleting key {}: {}", key, err);
+                error!("Redis error while deleting key {key}: {err}");
                 Err(CacheError::Redis(err.to_string()))
             }
         }
@@ -131,7 +128,7 @@ mod tests {
     fn get_redis_url(server: &RedisServer) -> String {
         match &server.addr {
             redis::ConnectionAddr::Tcp(host, port) => {
-                format!("redis://{}:{}/", host, port)
+                format!("redis://{host}:{port}/")
             }
             _ => "redis://127.0.0.1:6379/".to_string(),
         }
@@ -173,6 +170,6 @@ mod tests {
         let result = cache.health_check().await;
 
         // Assert
-        assert!(result.is_ok(), "health check failed: {:?}", result);
+        assert!(result.is_ok(), "health check failed: {result:?}");
     }
 }

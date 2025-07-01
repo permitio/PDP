@@ -38,7 +38,7 @@ async fn send_raw_request_to_opa<B: Serialize, R: DeserializeOwned>(
     // Build the OPA URL from the settings
     let endpoint = endpoint.strip_prefix("/").unwrap_or(endpoint);
     let opa_url = format!("{}/{}", state.config.opa.url, endpoint);
-    debug!("Forwarding request to OPA at: {}", opa_url);
+    debug!("Forwarding request to OPA at: {opa_url}");
 
     // Send request to OPA using the specialized OPA client
     let response = state.opa_client.post(&opa_url).json(body).send().await?;
@@ -117,13 +117,13 @@ impl From<ForwardingError> for ApiError {
                 ApiError::bad_gateway("Failed to send request to OPA")
             }
             ForwardingError::InvalidStatus(status) => {
-                ApiError::bad_gateway(format!("OPA request failed with status: {}", status))
+                ApiError::bad_gateway(format!("OPA request failed with status: {status}"))
             }
             ForwardingError::ParseError(e) => {
-                ApiError::internal(format!("Failed to parse OPA response: {}", e))
+                ApiError::internal(format!("Failed to parse OPA response: {e}"))
             }
             ForwardingError::CacheKeyError(e) => {
-                ApiError::internal(format!("Cache key generation failed: {}", e))
+                ApiError::internal(format!("Cache key generation failed: {e}"))
             }
         }
     }

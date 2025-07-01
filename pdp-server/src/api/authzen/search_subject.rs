@@ -80,10 +80,7 @@ pub async fn search_subject_handler(
     let result = match query_authorized_users(&state, &query).await {
         Ok(result) => result,
         Err(err) => {
-            log::error!(
-                "Failed to process AuthZen subject search request: {:?}",
-                err
-            );
+            log::error!("Failed to process AuthZen subject search request: {err:?}");
             let authzen_error = AuthZenError::from(err);
             return authzen_error.into_response();
         }

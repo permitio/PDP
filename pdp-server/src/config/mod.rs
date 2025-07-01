@@ -151,7 +151,7 @@ mod tests {
         println!("Environment variables for test:");
         for (name, value) in std::env::vars() {
             if name.starts_with("PDP_") {
-                println!("  {}: {}", name, value);
+                println!("  {name}: {value}");
             }
         }
 
@@ -333,7 +333,7 @@ mod tests {
         assert!(toml_template.contains("http://localhost:8181"));
         assert!(toml_template.contains("0.0.0.0"));
 
-        println!("Generated TOML template:\n{}", toml_template);
+        println!("Generated TOML template:\n{toml_template}");
     }
 
     #[test]
