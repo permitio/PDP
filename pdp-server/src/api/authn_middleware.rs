@@ -33,10 +33,7 @@ pub(super) async fn authentication_middleware(
             header_str[7..].to_string()
         }
         Ok(header_str) => {
-            warn!(
-                "Invalid Authorization header format, missing 'Bearer ' prefix: {}",
-                header_str
-            );
+            warn!("Invalid Authorization header format, missing 'Bearer ' prefix: {header_str}");
             return Response::builder()
                 .status(StatusCode::FORBIDDEN)
                 .body(
@@ -46,7 +43,7 @@ pub(super) async fn authentication_middleware(
                 .expect("Failed to create response");
         }
         Err(e) => {
-            warn!("Failed to parse Authorization header to string: {}", e);
+            warn!("Failed to parse Authorization header to string: {e}");
             return Response::builder()
                 .status(StatusCode::FORBIDDEN)
                 .body(

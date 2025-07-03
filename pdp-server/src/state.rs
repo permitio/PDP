@@ -30,7 +30,7 @@ impl AppState {
         let cache = Arc::new(
             create_cache(config)
                 .await
-                .map_err(|e| std::io::Error::other(format!("Failed to create cache: {}", e)))?,
+                .map_err(|e| std::io::Error::other(format!("Failed to create cache: {e}")))?,
         );
 
         Ok(Self {
@@ -137,7 +137,7 @@ fn create_http_client(token: String, timeout_secs: u64) -> Client {
     let mut headers = HeaderMap::new();
     headers.insert(
         AUTHORIZATION,
-        format!("Bearer {}", token)
+        format!("Bearer {token}")
             .parse()
             .expect("Failed to parse API token"),
     );

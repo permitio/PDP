@@ -90,10 +90,10 @@ impl CacheControl {
             parts.push("private".to_string());
         }
         if let Some(max_age) = self.max_age {
-            parts.push(format!("max-age={}", max_age));
+            parts.push(format!("max-age={max_age}"));
         }
         if let Some(s_maxage) = self.s_maxage {
-            parts.push(format!("s-maxage={}", s_maxage));
+            parts.push(format!("s-maxage={s_maxage}"));
         }
 
         HeaderValue::from_str(&parts.join(", ")).unwrap_or(HeaderValue::from_static(""))
@@ -143,7 +143,7 @@ impl CacheHeaders {
                 Ok(expires_value) => {
                     headers.insert(EXPIRES, expires_value);
                 }
-                Err(e) => warn!("failed to set expires header: {}", e),
+                Err(e) => warn!("failed to set expires header: {e}"),
             }
         } else if self.cache_control.no_store || self.cache_control.no_cache {
             // Set Expires to 0 for no-store/no-cache

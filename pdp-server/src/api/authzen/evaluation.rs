@@ -108,7 +108,7 @@ pub async fn access_evaluation_handler(
             (StatusCode::OK, Json(authzen_response)).into_response()
         }
         Err(err) => {
-            log::error!("Failed to process AuthZen request: {}", err);
+            log::error!("Failed to process AuthZen request: {err}");
             let authzen_error = AuthZenError::from(err);
             authzen_error.into_response()
         }
@@ -700,13 +700,11 @@ mod tests {
         // Verify it's a plain string, not JSON
         assert!(
             !error_response_text.starts_with("{"),
-            "AuthZen errors must be plain strings per spec section 12.1.11, got: {}",
-            error_response_text
+            "AuthZen errors must be plain strings per spec section 12.1.11, got: {error_response_text}"
         );
         assert!(
             !error_response_text.contains("\"error\""),
-            "AuthZen errors must not be structured JSON, got: {}",
-            error_response_text
+            "AuthZen errors must not be structured JSON, got: {error_response_text}"
         );
 
         // The error message should be our generic internal server error message

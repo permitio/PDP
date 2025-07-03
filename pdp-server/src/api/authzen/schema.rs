@@ -360,7 +360,7 @@ mod tests {
                 println!("✅ Deserialization successful - resource.id defaulted to empty string");
             }
             Err(e) => {
-                println!("❌ Deserialization failed: {}", e);
+                println!("❌ Deserialization failed: {e}");
                 println!(
                     "Payload: {}",
                     serde_json::to_string_pretty(&json_payload).unwrap()

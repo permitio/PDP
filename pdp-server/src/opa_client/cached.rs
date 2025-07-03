@@ -23,24 +23,21 @@ async fn handle_cache_get<T: serde::de::DeserializeOwned + Send + Sync>(
 ) -> Option<T> {
     // Skip cache if client requested no-cache or no-store
     if !cache_control.should_use_cache() {
-        debug!(
-            "Skipping cache lookup due to cache control directives: {:?}",
-            cache_control
-        );
+        debug!("Skipping cache lookup due to cache control directives: {cache_control:?}");
         return None;
     }
 
     match state.cache.get::<T>(cache_key).await {
         Ok(Some(cached_result)) => {
-            debug!("Cache hit for key: {}", cache_key);
+            debug!("Cache hit for key: {cache_key}");
             Some(cached_result)
         }
         Ok(None) => {
-            debug!("Cache miss for key: {}", cache_key);
+            debug!("Cache miss for key: {cache_key}");
             None
         }
         Err(cache_err) => {
-            warn!("Cache error for key {}: {}", cache_key, cache_err);
+            warn!("Cache error for key {cache_key}: {cache_err}");
             None
         }
     }
@@ -60,7 +57,7 @@ async fn handle_cache_set<T: serde::Serialize + Send + Sync>(
     }
 
     if let Err(cache_err) = state.cache.set(cache_key, value).await {
-        warn!("Failed to cache result for {}: {}", cache_key, cache_err);
+        warn!("Failed to cache result for {cache_key}: {cache_err}");
     }
 }
 
@@ -68,7 +65,7 @@ async fn handle_cache_set<T: serde::Serialize + Send + Sync>(
 fn generate_allowed_cache_key(query: &AllowedQuery) -> Result<String, String> {
     let mut hasher = Sha256::new();
     let serialized = serde_json::to_string(query)
-        .map_err(|e| format!("Failed to serialize AllowedQuery for cache key: {}", e))?;
+        .map_err(|e| format!("Failed to serialize AllowedQuery for cache key: {e}"))?;
     hasher.update(serialized.as_bytes());
     let hash = format!("{:x}", hasher.finalize());
     Ok(format!("opa:allowed:{}", &hash[..16]))
@@ -77,12 +74,8 @@ fn generate_allowed_cache_key(query: &AllowedQuery) -> Result<String, String> {
 /// Generate a cache key for user permissions queries
 fn generate_user_permissions_cache_key(query: &UserPermissionsQuery) -> Result<String, String> {
     let mut hasher = Sha256::new();
-    let serialized = serde_json::to_string(query).map_err(|e| {
-        format!(
-            "Failed to serialize UserPermissionsQuery for cache key: {}",
-            e
-        )
-    })?;
+    let serialized = serde_json::to_string(query)
+        .map_err(|e| format!("Failed to serialize UserPermissionsQuery for cache key: {e}"))?;
     hasher.update(serialized.as_bytes());
     let hash = format!("{:x}", hasher.finalize());
     Ok(format!("opa:user_permissions:{}", &hash[..16]))
@@ -91,12 +84,8 @@ fn generate_user_permissions_cache_key(query: &UserPermissionsQuery) -> Result<S
 /// Generate a cache key for authorized users queries
 fn generate_authorized_users_cache_key(query: &AuthorizedUsersQuery) -> Result<String, String> {
     let mut hasher = Sha256::new();
-    let serialized = serde_json::to_string(query).map_err(|e| {
-        format!(
-            "Failed to serialize AuthorizedUsersQuery for cache key: {}",
-            e
-        )
-    })?;
+    let serialized = serde_json::to_string(query)
+        .map_err(|e| format!("Failed to serialize AuthorizedUsersQuery for cache key: {e}"))?;
     hasher.update(serialized.as_bytes());
     let hash = format!("{:x}", hasher.finalize());
     Ok(format!("opa:authorized_users:{}", &hash[..16]))
@@ -150,10 +139,10 @@ pub async fn query_allowed_bulk_cached(
         if let Some(cached_result) =
             handle_cache_get::<AllowedResult>(state, &cache_key, cache_control).await
         {
-            debug!("Cache hit for bulk allowed query {}: {}", index, cache_key);
+            debug!("Cache hit for bulk allowed query {index}: {cache_key}");
             results.push(Some(cached_result));
         } else {
-            debug!("Cache miss for bulk allowed query {}: {}", index, cache_key);
+            debug!("Cache miss for bulk allowed query {index}: {cache_key}");
             results.push(None);
             cache_misses.push(query.clone());
             cache_miss_indices.push(index);

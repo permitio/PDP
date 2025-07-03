@@ -126,7 +126,7 @@ impl ServiceWatchdog {
                             Ok(_) => {
                                 // Service is healthy
                                 if let Err(e) = health_status.send(true) {
-                                    warn!("Failed to broadcast health status: {}", e);
+                                    warn!("Failed to broadcast health status: {e}");
                                 }
 
                                 if consecutive_failures > 0 {
@@ -140,7 +140,7 @@ impl ServiceWatchdog {
                             Err(e) => {
                                 // Health check failed
                                 if let Err(e) = health_status.send(false) {
-                                    warn!("Failed to broadcast health status: {}", e);
+                                    warn!("Failed to broadcast health status: {e}");
                                 }
 
                                 stats.increment_failed_health_checks();
@@ -173,7 +173,7 @@ impl ServiceWatchdog {
                                     consecutive_failures = 0;
                                 }
                                 Err(e) => {
-                                    error!("Failed to send restart signal: {}", e);
+                                    error!("Failed to send restart signal: {e}");
                                 }
                             }
                         }

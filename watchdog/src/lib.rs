@@ -145,32 +145,32 @@ impl CommandWatchdog {
                 let mut child = match command.spawn() {
                     Ok(child) => child,
                     Err(e) => {
-                        info!("Failed to start process '{}': {}", program_name, e);
+                        info!("Failed to start process '{program_name}': {e}");
                         tokio::time::sleep(opt.restart_interval).await;
                         continue;
                     }
                 };
                 tokio::select! {
                     _ = shutdown_token.cancelled() => {
-                        info!("Watchdog received shutdown signal, terminating process '{}'", cmd_line);
+                        info!("Watchdog received shutdown signal, terminating process '{cmd_line}'");
                         match terminate_process_with_timeout(&mut child, &program_name, termination_timeout).await {
                             Ok(_) => {
-                                info!("Process '{}' terminated successfully", program_name);
+                                info!("Process '{program_name}' terminated successfully");
                             }
                             Err(e) => {
-                                error!("Failed to terminate process '{}': {}", program_name, e);
+                                error!("Failed to terminate process '{program_name}': {e}");
                             }
                         };
                         break;
                     }
                     _ = restart_rx.recv() => {
-                        info!("Watchdog received restart signal, restarting process '{}'", cmd_line);
+                        info!("Watchdog received restart signal, restarting process '{cmd_line}'");
                         match terminate_process_with_timeout(&mut child, &program_name, termination_timeout).await {
                             Ok(_) => {
-                                debug!("Process '{}' terminated for restart", program_name);
+                                debug!("Process '{program_name}' terminated for restart");
                             }
                             Err(e) => {
-                                error!("Failed to terminate process '{}' for restart: {}", program_name, e);
+                                error!("Failed to terminate process '{program_name}' for restart: {e}");
                             }
                         };
                         // Continue immediately without delay to restart
@@ -181,10 +181,10 @@ impl CommandWatchdog {
                             Ok(status) => {
                                 let exit_code = status.code().unwrap_or(-1);
                                 stats.set_last_exit_code(exit_code);
-                                info!("Process '{}' exited with status: {} (code: {})", program_name, status, exit_code);
+                                info!("Process '{program_name}' exited with status: {status} (code: {exit_code})");
                             }
                             Err(e) => {
-                                info!("Failed to wait for process '{}': {}", program_name, e);
+                                info!("Failed to wait for process '{program_name}': {e}");
                             }
                         }
                     }
@@ -234,12 +234,9 @@ async fn terminate_process_with_timeout(
         {
             // On Unix systems, use SIGTERM via nix
             match signal::kill(Pid::from_raw(id as i32), Signal::SIGTERM) {
-                Ok(_) => debug!("Sent SIGTERM to process '{}' (pid: {})", program_name, id),
+                Ok(_) => debug!("Sent SIGTERM to process '{program_name}' (pid: {id})"),
                 Err(e) => {
-                    error!(
-                        "Failed to send SIGTERM to process '{}': {}",
-                        program_name, e
-                    );
+                    error!("Failed to send SIGTERM to process '{program_name}': {e}");
                     // If SIGTERM fails, attempt SIGKILL immediately
                     return child.kill().await;
                 }
@@ -261,24 +258,17 @@ async fn terminate_process_with_timeout(
     match tokio::time::timeout(timeout, child.wait()).await {
         Ok(result) => match result {
             Ok(status) => {
-                info!(
-                    "Process '{}' terminated with status: {}",
-                    program_name, status
-                );
+                info!("Process '{program_name}' terminated with status: {status}");
                 Ok(())
             }
             Err(e) => {
-                error!(
-                    "Error waiting for process '{}' termination: {}",
-                    program_name, e
-                );
+                error!("Error waiting for process '{program_name}' termination: {e}");
                 Err(e)
             }
         },
         Err(_) => {
             error!(
-                "Process '{}' did not terminate gracefully within timeout, using SIGKILL",
-                program_name
+                "Process '{program_name}' did not terminate gracefully within timeout, using SIGKILL"
             );
             // Process didn't exit within timeout, use SIGKILL/TerminateProcess
             child.kill().await?;
