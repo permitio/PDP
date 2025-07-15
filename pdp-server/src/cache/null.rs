@@ -83,6 +83,6 @@ mod tests {
     async fn test_health_check() {
         let cache = NullCache::new();
         let result = cache.health_check().await;
-        assert!(result.is_ok(), "health check failed: {:?}", result);
+        assert!(result.is_ok(), "health check failed: {result:?}");
     }
 }

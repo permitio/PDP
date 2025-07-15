@@ -215,7 +215,7 @@ pub async fn access_evaluations_handler(
         }
 
         error_msg.push_str("\nPlease provide all required fields (subject, resource, action) either in individual evaluations or at the request level.");
-        log::warn!("{}", error_msg);
+        log::warn!("{error_msg}");
         let authzen_error = AuthZenError::invalid_request(&error_msg);
         return authzen_error.into_response();
     }
@@ -234,7 +234,7 @@ pub async fn access_evaluations_handler(
             (StatusCode::OK, Json(response)).into_response()
         }
         Err(err) => {
-            log::error!("Failed to process AuthZen evaluations request: {:?}", err);
+            log::error!("Failed to process AuthZen evaluations request: {err:?}");
             let authzen_error = AuthZenError::from(err);
             authzen_error.into_response()
         }

@@ -35,7 +35,7 @@ async fn check_all_health(state: &AppState, check_cache: bool) -> HealthResponse
     };
 
     let horizon_status = horizon_handle.await.unwrap_or_else(|e| {
-        log::error!("Horizon check task panicked: {:?}", e);
+        log::error!("Horizon check task panicked: {e:?}");
         ComponentStatus {
             status: HealthStatusType::Error,
             error: Some("Horizon check task failed".to_string()),
@@ -44,7 +44,7 @@ async fn check_all_health(state: &AppState, check_cache: bool) -> HealthResponse
     });
 
     let opa_status = opa_handle.await.unwrap_or_else(|e| {
-        log::error!("OPA check task panicked: {:?}", e);
+        log::error!("OPA check task panicked: {e:?}");
         ComponentStatus {
             status: HealthStatusType::Error,
             error: Some("OPA check task failed".to_string()),
@@ -54,7 +54,7 @@ async fn check_all_health(state: &AppState, check_cache: bool) -> HealthResponse
 
     let cache_status = if let Some(cache_handle) = cache_handle_opt {
         Some(cache_handle.await.unwrap_or_else(|e| {
-            log::error!("Cache check task panicked: {:?}", e);
+            log::error!("Cache check task panicked: {e:?}");
             ComponentStatus {
                 status: HealthStatusType::Error,
                 error: Some("Cache check task failed".to_string()),
@@ -425,8 +425,7 @@ mod test {
 
         assert!(
             duration_with_cache < Duration::from_millis(750),
-            "Concurrent check took too long: {:?}",
-            duration_with_cache
+            "Concurrent check took too long: {duration_with_cache:?}"
         );
     }
 
@@ -469,8 +468,7 @@ mod test {
 
         assert!(
             duration_success < Duration::from_millis(1500),
-            "Concurrent successful check took too long: {:?}",
-            duration_success
+            "Concurrent successful check took too long: {duration_success:?}"
         );
     }
 

@@ -96,7 +96,7 @@ pub async fn search_action_handler(
     let permissions_map = match query_user_permissions(&state, &user_permissions_query).await {
         Ok(permissions_map) => permissions_map,
         Err(err) => {
-            log::error!("Failed to process AuthZen action search request: {:?}", err);
+            log::error!("Failed to process AuthZen action search request: {err:?}");
             let authzen_error = AuthZenError::from(err);
             return authzen_error.into_response();
         }
@@ -189,7 +189,7 @@ mod tests {
         let search_response: ActionSearchResponse = response.json_as();
 
         // Print the search response for debugging
-        println!("Search response: {:?}", search_response);
+        println!("Search response: {search_response:?}");
 
         // Check the response - should have 2 actions
         assert_eq!(search_response.results.len(), 2);
@@ -307,7 +307,7 @@ mod tests {
         let search_response: ActionSearchResponse = response.json_as();
 
         // Print the search response for debugging
-        println!("Search response: {:?}", search_response);
+        println!("Search response: {search_response:?}");
 
         // Check the response (should have 1 action)
         assert_eq!(search_response.results.len(), 1);

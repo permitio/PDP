@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Any
 from urllib.parse import urljoin
 
 from fastapi import Depends, HTTPException
@@ -30,7 +30,13 @@ class FactsClient:
             )
         return self._client
 
-    async def build_forward_request(self, request: FastApiRequest, path: str) -> HttpxRequest:
+    async def build_forward_request(
+        self,
+        request: FastApiRequest,
+        path: str,
+        *,
+        query_params: dict[str, Any] | None = None,
+    ) -> HttpxRequest:
         """
         Build an HTTPX request from a FastAPI request to forward to the facts service.
         :param request: FastAPI request
@@ -50,10 +56,11 @@ class FactsClient:
             )
 
         full_path = urljoin(f"/v2/facts/{project_id}/{environment_id}/", path.removeprefix("/"))
+        _query_params = {**request.query_params, **(query_params or {})}
         return self.client.build_request(
             method=request.method,
             url=full_path,
-            params=request.query_params,
+            params=_query_params,
             headers=forward_headers,
             content=request.stream(),
         )
@@ -62,18 +69,28 @@ class FactsClient:
         logger.info(f"Forwarding facts request: {request.method} {request.url}")
         return await self.client.send(request, stream=stream)
 
-    async def send_forward_request(self, request: FastApiRequest, path: str) -> HttpxResponse:
+    async def send_forward_request(
+        self,
+        request: FastApiRequest,
+        path: str,
+        *,
+        query_params: dict[str, Any] | None = None,
+    ) -> HttpxResponse:
         """
         Send a forward request to the facts service.
         :param request: FastAPI request
         :param path: Backend facts service path to forward to
         :return: HTTPX response
         """
-        forward_request = await self.build_forward_request(request, path)
+        forward_request = await self.build_forward_request(request, path, query_params=query_params)
         return await self.send(forward_request)
 
     @staticmethod
-    def convert_response(response: HttpxResponse, *, stream: bool = False) -> FastApiResponse:
+    def convert_response(
+        response: HttpxResponse,
+        *,
+        stream: bool = False,
+    ) -> FastApiResponse:
         """
         Convert an HTTPX response to a FastAPI response.
         :param response: HTTPX response
@@ -103,6 +120,8 @@ class FactsClient:
             return None
 
         try:
+            if response.status_code == 204:
+                return None
             body = response.json()
         except Exception:  # noqa: BLE001
             logger.exception("Failed to parse response body as JSON, skipping wait for update.")

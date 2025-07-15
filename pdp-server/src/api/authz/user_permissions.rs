@@ -56,7 +56,7 @@ pub(super) async fn user_permissions_handler(
     let permissions = match query_user_permissions_cached(&state, &query, &cache_control).await {
         Ok(permissions) => permissions,
         Err(err) => {
-            log::error!("Failed to send request to OPA: {}", err);
+            log::error!("Failed to send request to OPA: {err}");
             return ApiError::from(err).into_response();
         }
     };

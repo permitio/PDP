@@ -639,7 +639,7 @@ impl TestResponse {
         let header = self
             .headers
             .get(name)
-            .unwrap_or_else(|| panic!("Header '{}' not found", name));
+            .unwrap_or_else(|| panic!("Header '{name}' not found"));
         assert_eq!(
             header.to_str().unwrap(),
             expected_value,

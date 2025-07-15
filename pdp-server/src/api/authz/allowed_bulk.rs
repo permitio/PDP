@@ -36,7 +36,7 @@ pub(super) async fn allowed_bulk_handler(
     match query_allowed_bulk_cached(&state, &queries, &cache_control).await {
         Ok(result) => (StatusCode::OK, Json(result)).into_response(),
         Err(err) => {
-            log::error!("Failed to send request to OPA: {}", err);
+            log::error!("Failed to send request to OPA: {err}");
             ApiError::from(err).into_response()
         }
     }

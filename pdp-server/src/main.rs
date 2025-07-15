@@ -26,7 +26,7 @@ async fn main() {
     let config = match config::PDPConfig::new() {
         Ok(config) => config,
         Err(e) => {
-            error!("Configuration error: {}", e);
+            error!("Configuration error: {e}");
             std::process::exit(1);
         }
     };
@@ -35,7 +35,7 @@ async fn main() {
     let cache = match cache::create_cache(&config).await {
         Ok(cache) => cache,
         Err(e) => {
-            error!("Failed to initialize cache: {}", e);
+            error!("Failed to initialize cache: {e}");
             std::process::exit(1);
         }
     };
@@ -55,18 +55,18 @@ async fn main() {
     let server = match tokio::net::TcpListener::bind(&addr).await {
         Ok(listener) => listener,
         Err(e) => {
-            error!("Failed to bind to {}: {}", addr, e);
+            error!("Failed to bind to {addr}: {e}");
             std::process::exit(1);
         }
     };
 
     // Start the server and wait for it to finish
-    info!("Server running on {}, press Ctrl+C to stop", addr);
+    info!("Server running on {addr}, press Ctrl+C to stop");
     let serve = axum::serve(server, app)
         .with_graceful_shutdown(shutdown_signal())
         .await;
     if let Err(e) = serve {
-        error!("Server error: {}", e);
+        error!("Server error: {e}");
         std::process::exit(1);
     }
 

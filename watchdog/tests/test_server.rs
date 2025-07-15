@@ -27,7 +27,7 @@ impl TestServer {
 
     pub fn new_with_options(ignore_sigterm: bool) -> Self {
         let port = Self::find_available_port();
-        let base_url = format!("http://localhost:{}", port);
+        let base_url = format!("http://localhost:{port}");
         let client = Client::new();
         TestServer {
             port,

@@ -76,7 +76,7 @@ pub fn check_opa_health<'a>(
             }
             Err(err) => ComponentStatus {
                 status: HealthStatusType::Error,
-                error: Some(format!("Failed to connect to OPA: {}", err)),
+                error: Some(format!("Failed to connect to OPA: {err}")),
                 details: None,
             },
         }
@@ -96,7 +96,7 @@ pub fn check_cache_health<'a>(
             },
             Err(err) => ComponentStatus {
                 status: HealthStatusType::Error,
-                error: Some(format!("Cache health check failed: {}", err)),
+                error: Some(format!("Cache health check failed: {err}")),
                 details: None,
             },
         }
@@ -148,7 +148,7 @@ async fn check_horizon_health_directly(state: &AppState) -> ComponentStatus {
         }
         Err(err) => ComponentStatus {
             status: HealthStatusType::Error,
-            error: Some(format!("Failed to connect to Horizon: {}", err)),
+            error: Some(format!("Failed to connect to Horizon: {err}")),
             details: None,
         },
     }

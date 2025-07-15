@@ -39,7 +39,7 @@ pub(super) async fn authorized_users_handler(
     match query_authorized_users_cached(&state, &query, &cache_control).await {
         Ok(result) => (StatusCode::OK, Json(result)).into_response(),
         Err(err) => {
-            log::error!("Failed to send request to OPA: {}", err);
+            log::error!("Failed to send request to OPA: {err}");
             ApiError::from(err).into_response()
         }
     }

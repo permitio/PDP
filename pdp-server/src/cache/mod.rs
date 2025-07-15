@@ -283,10 +283,10 @@ mod test {
         let set_task = tokio::spawn(async move {
             for i in 0..100 {
                 let test_value = TestValue {
-                    field: format!("value_{}", i),
+                    field: format!("value_{i}"),
                 };
                 cache_clone
-                    .set(&format!("key_{}", i), &test_value)
+                    .set(&format!("key_{i}"), &test_value)
                     .await
                     .expect("Failed to set value");
             }
@@ -295,8 +295,8 @@ mod test {
         // Spawn task to get values
         let get_task = tokio::spawn(async move {
             for i in 0..100 {
-                if let Ok(Some(value)) = cache.get::<TestValue>(&format!("key_{}", i)).await {
-                    assert_eq!(value.field, format!("value_{}", i));
+                if let Ok(Some(value)) = cache.get::<TestValue>(&format!("key_{i}")).await {
+                    assert_eq!(value.field, format!("value_{i}"));
                 }
             }
         });

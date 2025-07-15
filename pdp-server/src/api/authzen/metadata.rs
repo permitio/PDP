@@ -47,15 +47,15 @@ pub async fn authzen_metadata_handler(request: Request<Body>) -> Response {
         .or_else(|| uri_parts.authority.as_ref().map(|auth| auth.to_string()))
         .unwrap_or_else(|| "localhost:7766".to_string());
 
-    let base_url = format!("{}://{}", scheme, authority);
+    let base_url = format!("{scheme}://{authority}");
 
     let metadata = AuthZenMetadataResponse {
         policy_decision_point: base_url.clone(),
-        access_evaluation_endpoint: format!("{}/access/v1/evaluation", base_url),
-        access_evaluations_endpoint: format!("{}/access/v1/evaluations", base_url),
-        search_subject_endpoint: format!("{}/access/v1/search/subject", base_url),
-        search_resource_endpoint: format!("{}/access/v1/search/resource", base_url),
-        search_action_endpoint: format!("{}/access/v1/search/action", base_url),
+        access_evaluation_endpoint: format!("{base_url}/access/v1/evaluation"),
+        access_evaluations_endpoint: format!("{base_url}/access/v1/evaluations"),
+        search_subject_endpoint: format!("{base_url}/access/v1/search/subject"),
+        search_resource_endpoint: format!("{base_url}/access/v1/search/resource"),
+        search_action_endpoint: format!("{base_url}/access/v1/search/action"),
     };
     (StatusCode::OK, Json(metadata)).into_response()
 }
@@ -140,23 +140,23 @@ mod tests {
         assert_eq!(metadata.policy_decision_point, expected_base);
         assert_eq!(
             metadata.access_evaluation_endpoint,
-            format!("{}/access/v1/evaluation", expected_base)
+            format!("{expected_base}/access/v1/evaluation")
         );
         assert_eq!(
             metadata.access_evaluations_endpoint,
-            format!("{}/access/v1/evaluations", expected_base)
+            format!("{expected_base}/access/v1/evaluations")
         );
         assert_eq!(
             metadata.search_subject_endpoint,
-            format!("{}/access/v1/search/subject", expected_base)
+            format!("{expected_base}/access/v1/search/subject")
         );
         assert_eq!(
             metadata.search_action_endpoint,
-            format!("{}/access/v1/search/action", expected_base)
+            format!("{expected_base}/access/v1/search/action")
         );
         assert_eq!(
             metadata.search_resource_endpoint,
-            format!("{}/access/v1/search/resource", expected_base)
+            format!("{expected_base}/access/v1/search/resource")
         );
     }
 }

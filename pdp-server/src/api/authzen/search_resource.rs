@@ -86,10 +86,7 @@ pub async fn search_resource_handler(
     let permissions = match query_user_permissions(&state, &query).await {
         Ok(permissions) => permissions,
         Err(err) => {
-            log::error!(
-                "Failed to process AuthZen resource search request: {:?}",
-                err
-            );
+            log::error!("Failed to process AuthZen resource search request: {err:?}");
             let authzen_error = AuthZenError::from(err);
             return authzen_error.into_response();
         }
