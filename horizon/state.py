@@ -198,7 +198,9 @@ class PersistentStateHandler:
         if state is not None:
             self._state = state.copy()
         config_url = f"{sidecar_config.CONTROL_PLANE}{sidecar_config.REMOTE_STATE_ENDPOINT}"
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(
+            trust_env=True,
+        ) as session:
             logger.info("Reporting status update to server...")
             response = await session.post(
                 url=config_url,
