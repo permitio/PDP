@@ -206,7 +206,7 @@ async def post_to_opa(request: Request, path: str, data: dict | None):
     _set_use_debugger(data)
     try:
         logger.debug(f"calling OPA at '{url}' with input: {data}")
-        async with aiohttp.ClientSession() as session:  # noqa: SIM117
+        async with aiohttp.ClientSession(trust_env=True) as session:  # noqa: SIM117
             async with session.post(
                 url,
                 data=json.dumps(data) if data is not None else None,

@@ -95,7 +95,7 @@ class OpalRelayAPIClient:
     def api_session(self) -> ClientSession:
         if self._api_session is None:
             env_api_key = get_env_api_key()
-            self._api_session = ClientSession(headers={"Authorization": f"Bearer {env_api_key}"})
+            self._api_session = ClientSession(headers={"Authorization": f"Bearer {env_api_key}"}, trust_env=True)
         return self._api_session
 
     async def relay_session(self) -> ClientSession:
@@ -133,7 +133,9 @@ class OpalRelayAPIClient:
                         f"Server responded to token request with an invalid result: {text}",
                     ) from e
             self._relay_token = obj.token
-            self._relay_session = ClientSession(headers={"Authorization": f"Bearer {self._relay_token}"})
+            self._relay_session = ClientSession(
+                headers={"Authorization": f"Bearer {self._relay_token}"}, trust_env=True
+            )
         return self._relay_session
 
     async def send_ping(self):
