@@ -129,10 +129,73 @@ pub(super) async fn fallback_to_horizon(
 mod tests {
     use super::*;
     use crate::test_utils::TestFixture;
-    use http::{Method, StatusCode};
+    use http::{header::AUTHORIZATION, Method, StatusCode};
     use serde_json::json;
     use std::time::Duration;
     use wiremock::{matchers, Mock, ResponseTemplate};
+
+    #[tokio::test]
+    async fn test_forward_unmatched_fail_with_wrong_auth() {
+        let fixture = TestFixture::with_config_modifier(|config| {
+            config.api_key = "test-token".to_string();
+        })
+        .await;
+
+        Mock::given(matchers::method("GET"))
+            .and(matchers::path("/test"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("reached horizon unsafely"))
+            .expect(0)
+            .mount(&fixture.horizon_mock)
+            .await;
+
+        let mut request = fixture
+            .request_builder(Method::GET, "/test")
+            .body(Body::empty())
+            .expect("Failed to build request");
+
+        // replace authorization header with wrong token
+        request.headers_mut().remove(AUTHORIZATION);
+        request.headers_mut().insert(
+            AUTHORIZATION,
+            HeaderValue::from_str("Bearer wrong-token").unwrap(),
+        );
+
+        let response = fixture.send(request).await;
+
+        response.assert_status(StatusCode::FORBIDDEN);
+        assert_eq!(
+            response.json(),
+            "You are not authorized to access this resource, please check your API key."
+        );
+
+        fixture.horizon_mock.verify().await;
+    }
+
+    #[tokio::test]
+    async fn test_forward_unmatched_fail_with_no_auth() {
+        let fixture = TestFixture::new().await;
+
+        Mock::given(matchers::method("GET"))
+            .and(matchers::path("/test"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("reached horizon unsafely"))
+            .expect(0)
+            .mount(&fixture.horizon_mock)
+            .await;
+
+        let mut request = fixture
+            .request_builder(Method::GET, "/test")
+            .body(Body::empty())
+            .expect("Failed to build request");
+
+        request.headers_mut().remove(AUTHORIZATION);
+
+        let response = fixture.send(request).await;
+
+        response.assert_status(StatusCode::UNAUTHORIZED);
+        assert_eq!(response.json(), "Missing Authorization header");
+
+        fixture.horizon_mock.verify().await;
+    }
 
     #[tokio::test]
     async fn test_forward_unmatched_basic() {
@@ -309,11 +372,10 @@ mod tests {
             .await;
 
         // Create test request
-        let req = Request::builder()
-            .method(method.clone())
-            .uri("/method-test")
+        let req = fixture
+            .request_builder(method.clone(), "/method-test")
             .body(Body::empty())
-            .unwrap();
+            .expect("Failed to build request");
 
         // Forward request
         let response = fixture.send(req).await;
@@ -337,11 +399,10 @@ mod tests {
         let fixture = TestFixture::new().await;
 
         // Create test request with CONNECT method (not supported in our implementation)
-        let req = Request::builder()
-            .method(Method::CONNECT)
-            .uri("/test")
+        let req = fixture
+            .request_builder(Method::CONNECT, "/test")
             .body(Body::empty())
-            .unwrap();
+            .expect("Failed to build request");
 
         // Forward request
         let response = fixture.send(req).await;
@@ -362,14 +423,14 @@ mod tests {
             ("X-Server", "Test-Server"),
             ("Vary", "Accept-Encoding"),
         ];
-
+        let auth_header = format!("Bearer {}", fixture.config.api_key);
         // Setup mock that demonstrates header forwarding
         // We use multiple headers in the request and in the response
         Mock::given(matchers::method("GET"))
             .and(matchers::path_regex(".*headers.*"))
             // Use header matchers to verify headers are forwarded correctly
             .and(matchers::header("Content-Type", "application/json"))
-            .and(matchers::header("Authorization", "Bearer token123"))
+            .and(matchers::header("Authorization", &auth_header))
             .and(matchers::header("X-Custom-Header", "custom value"))
             .respond_with({
                 let mut template =
@@ -388,7 +449,7 @@ mod tests {
         // Create test request with multiple headers
         let request_headers = [
             ("Content-Type", "application/json"),
-            ("Authorization", "Bearer token123"),
+            ("Authorization", &auth_header),
             ("X-Custom-Header", "custom value"),
             ("Accept-Language", "en-US,en;q=0.9"),
             ("Cache-Control", "no-cache"),
@@ -437,14 +498,15 @@ mod tests {
             .await;
 
         // Create test request with empty body
-        let req = Request::builder()
-            .method(Method::POST)
-            .uri("/empty-body")
+        let request = fixture
+            .request_builder(Method::POST, "/empty-body")
             .body(Body::empty())
-            .unwrap();
+            .expect("Failed to build request");
+
+        let response = fixture.send(request).await;
 
         // Forward request
-        let response = fixture.send(req).await;
+        // let response = fixture.send(req).await;
         response.assert_status(StatusCode::OK);
         assert_eq!(response.json(), "Empty body received");
 

@@ -102,6 +102,10 @@ impl PDPConfig {
             }
         });
 
+        if config.api_key.is_empty() {
+            config.api_key = "default-test-api-key".to_string();
+        }
+
         // Override with mock server addresses
         config.horizon.host = horizon_mock.address().ip().to_string();
         config.horizon.port = horizon_mock.address().port();

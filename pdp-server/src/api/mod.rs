@@ -24,7 +24,9 @@ fn protected_routes(state: &AppState) -> Router<AppState> {
         .merge(authzen::router())
         // Add fallback route to handle any unmatched requests
         .fallback(any(fallback_to_horizon))
-        .route_layer(middleware::from_fn_with_state(
+        // we must use layer here and not route_layer because, route_layer only
+        // affects routes that are defined on the router which doesn't affect fallback
+        .layer(middleware::from_fn_with_state(
             state.clone(),
             authentication_middleware,
         ))
