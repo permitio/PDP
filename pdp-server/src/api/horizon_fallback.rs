@@ -129,10 +129,73 @@ pub(super) async fn fallback_to_horizon(
 mod tests {
     use super::*;
     use crate::test_utils::TestFixture;
-    use http::{Method, StatusCode};
+    use http::{header::AUTHORIZATION, Method, StatusCode};
     use serde_json::json;
     use std::time::Duration;
     use wiremock::{matchers, Mock, ResponseTemplate};
+
+    #[tokio::test]
+    async fn test_forward_unmatched_fail_with_wrong_auth() {
+        let fixture = TestFixture::with_config_modifier(|config| {
+            config.api_key = "test-token".to_string();
+        })
+        .await;
+
+        Mock::given(matchers::method("GET"))
+            .and(matchers::path("/test"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("reached horizon unsafely"))
+            .expect(0)
+            .mount(&fixture.horizon_mock)
+            .await;
+
+        let mut request = fixture
+            .request_builder(Method::GET, "/test")
+            .body(Body::empty())
+            .expect("Failed to build request");
+
+        // replace authorization header with wrong token
+        request.headers_mut().remove(AUTHORIZATION);
+        request.headers_mut().insert(
+            AUTHORIZATION,
+            HeaderValue::from_str("Bearer wrong-token").unwrap(),
+        );
+
+        let response = fixture.send(request).await;
+
+        response.assert_status(StatusCode::FORBIDDEN);
+        assert_eq!(
+            response.json(),
+            "You are not authorized to access this resource, please check your API key."
+        );
+
+        fixture.horizon_mock.verify().await;
+    }
+
+    #[tokio::test]
+    async fn test_forward_unmatched_fail_with_no_auth() {
+        let fixture = TestFixture::new().await;
+
+        Mock::given(matchers::method("GET"))
+            .and(matchers::path("/test"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("reached horizon unsafely"))
+            .expect(0)
+            .mount(&fixture.horizon_mock)
+            .await;
+
+        let mut request = fixture
+            .request_builder(Method::GET, "/test")
+            .body(Body::empty())
+            .expect("Failed to build request");
+
+        request.headers_mut().remove(AUTHORIZATION);
+
+        let response = fixture.send(request).await;
+
+        response.assert_status(StatusCode::UNAUTHORIZED);
+        assert_eq!(response.json(), "Missing Authorization header");
+
+        fixture.horizon_mock.verify().await;
+    }
 
     #[tokio::test]
     async fn test_forward_unmatched_basic() {
