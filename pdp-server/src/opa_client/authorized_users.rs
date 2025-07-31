@@ -36,9 +36,11 @@ pub async fn query_authorized_users(
                     authorized_result.users.len()
                 );
                 log::debug!(
-                    "Query: {}\nResult: {:?}",
-                    serde_json::to_string_pretty(query)?,
-                    serde_json::to_string_pretty(&authorized_result)?
+                    "Query: {}\nResult: {}",
+                    serde_json::to_string_pretty(query)
+                        .unwrap_or("Serialization error".to_string()),
+                    serde_json::to_string_pretty(&authorized_result)
+                        .unwrap_or("Serialization error".to_string()),
                 );
             }
 

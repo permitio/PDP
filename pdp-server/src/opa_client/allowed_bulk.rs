@@ -45,9 +45,10 @@ pub async fn query_allowed_bulk(
                 response.allow.len() - allowed_count
             );
             log::debug!(
-                "Query: {}\nResult: {:?}",
-                serde_json::to_string_pretty(&bulk_query)?,
-                serde_json::to_string_pretty(response)?
+                "Query: {}\nResult: {}",
+                serde_json::to_string_pretty(&bulk_query)
+                    .unwrap_or("Serialization error".to_string()),
+                serde_json::to_string_pretty(response).unwrap_or("Serialization error".to_string()),
             );
         }
     }
