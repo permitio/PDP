@@ -1,7 +1,9 @@
 use crate::opa_client::{send_request_to_opa, ForwardingError};
 use crate::state::AppState;
+use log::{debug, info};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt::Display;
 use utoipa::ToSchema;
 
 /// Send an allowed query to OPA and get the result
@@ -9,7 +11,25 @@ pub async fn query_allowed(
     state: &AppState,
     query: &AllowedQuery,
 ) -> Result<AllowedResult, ForwardingError> {
-    send_request_to_opa::<AllowedResult, _>(state, "/v1/data/permit/root", query).await
+    let result =
+        send_request_to_opa::<AllowedResult, _>(state, "/v1/data/permit/root", query).await;
+    if let Ok(response) = &result {
+        if state.config.debug.unwrap_or(false) {
+            info!(
+                "permit.check(\"{user}\", \"{action}\", \"{resource}\") -> {result}",
+                user = query.user,
+                action = query.action,
+                resource = query.resource,
+                result = response.allow,
+            );
+            debug!(
+                "Query: {}\nResult: {}",
+                serde_json::to_string_pretty(query).unwrap_or("Serialization error".to_string()),
+                serde_json::to_string_pretty(response).unwrap_or("Serialization error".to_string()),
+            );
+        }
+    }
+    result
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
@@ -30,6 +50,12 @@ pub struct User {
     pub attributes: HashMap<String, serde_json::Value>,
 }
 
+impl Display for User {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.key)
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
 pub struct Resource {
     /// Type of the resource
@@ -46,6 +72,18 @@ pub struct Resource {
     /// Resource context
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub context: HashMap<String, serde_json::Value>,
+}
+
+impl Display for Resource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(key) = &self.key {
+            write!(f, "{}:{}", self.r#type, key)
+        } else if let Some(tenant) = &self.tenant {
+            write!(f, "{}@{}", self.r#type, tenant)
+        } else {
+            write!(f, "{}", self.r#type)
+        }
+    }
 }
 
 /// Authorization query parameters for the allowed endpoint

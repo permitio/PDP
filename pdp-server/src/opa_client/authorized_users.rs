@@ -24,7 +24,27 @@ pub async fn query_authorized_users(
     // Process the result to extract the nested 'result' field if it exists
     if let serde_json::Value::Object(map) = &result {
         if let Some(inner_result) = map.get("result") {
-            return Ok(serde_json::from_value(inner_result.clone())?);
+            let authorized_result: AuthorizedUsersResult =
+                serde_json::from_value(inner_result.clone())?;
+
+            // Add debug logging if enabled
+            if state.config.debug.unwrap_or(false) {
+                log::info!(
+                    "permit.authorized_users(\"{}\", \"{}\") -> {} users",
+                    query.action,
+                    query.resource,
+                    authorized_result.users.len()
+                );
+                log::debug!(
+                    "Query: {}\nResult: {}",
+                    serde_json::to_string_pretty(query)
+                        .unwrap_or("Serialization error".to_string()),
+                    serde_json::to_string_pretty(&authorized_result)
+                        .unwrap_or("Serialization error".to_string()),
+                );
+            }
+
+            return Ok(authorized_result);
         }
     }
 
@@ -40,11 +60,26 @@ pub async fn query_authorized_users(
         .clone()
         .unwrap_or_else(|| "default".to_string());
 
-    Ok(AuthorizedUsersResult {
+    let empty_result = AuthorizedUsersResult {
         resource: format!("{}:{}", query.resource.r#type, resource_key),
         tenant,
         users: HashMap::new(),
-    })
+    };
+
+    // Add debug logging if enabled
+    if state.config.debug.unwrap_or(false) {
+        log::info!(
+            "permit.authorized_users(\"{}\", \"{}\") -> 0 users",
+            query.action,
+            query.resource
+        );
+        log::debug!(
+            "Query: {}\nResult: empty",
+            serde_json::to_string_pretty(query)?
+        );
+    }
+
+    Ok(empty_result)
 }
 
 /// Query parameters for the authorized users endpoint
