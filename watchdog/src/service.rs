@@ -1,7 +1,7 @@
 use crate::health::HealthCheck;
 use crate::stats::ServiceWatchdogStats;
 use crate::{CommandWatchdog, CommandWatchdogOptions};
-use log::{debug, error, info, warn};
+use log::{debug, error, info, log, warn};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::process::Command;
@@ -130,7 +130,12 @@ impl ServiceWatchdog {
                                 }
 
                                 if consecutive_failures > 0 {
-                                    info!(
+                                    log!(
+                                        if consecutive_failures < opt.health_check_failure_threshold / 2 {
+                                            log::Level::Debug
+                                        } else {
+                                            log::Level::Info
+                                        },
                                         "Service '{}' health restored after {} failures",
                                         command_watchdog.program_name, consecutive_failures
                                     );
@@ -146,7 +151,12 @@ impl ServiceWatchdog {
                                 stats.increment_failed_health_checks();
                                 consecutive_failures += 1;
 
-                                warn!(
+                                log!(
+                                    if consecutive_failures < opt.health_check_failure_threshold / 2 {
+                                        log::Level::Debug
+                                    } else {
+                                        log::Level::Warn
+                                    },
                                     "Service '{}' health check failed: {} (consecutive failures: {}/{})",
                                     command_watchdog.program_name,
                                     e,
