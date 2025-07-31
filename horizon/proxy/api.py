@@ -200,7 +200,9 @@ async def proxy_request_to_cloud_service(
 
     logger.info(f"Proxying request: {request.method} {path}")
 
-    async with aiohttp.ClientSession() as session:
+    async with aiohttp.ClientSession(
+        trust_env=True,
+    ) as session:
         if request.method == HTTP_GET:
             async with session.get(path, headers=headers, params=params) as backend_response:
                 return await proxy_response(backend_response)

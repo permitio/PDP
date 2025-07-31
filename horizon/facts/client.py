@@ -27,6 +27,7 @@ class FactsClient:
             self._client = AsyncClient(
                 base_url=sidecar_config.CONTROL_PLANE,
                 headers={"Authorization": f"Bearer {env_api_key}"},
+                trust_env=True,
             )
         return self._client
 
