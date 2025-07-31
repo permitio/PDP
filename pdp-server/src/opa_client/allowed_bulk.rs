@@ -27,6 +27,30 @@ pub async fn query_allowed_bulk(
     let bulk_query = BulkAuthorizationQuery {
         checks: queries.to_vec(),
     };
-    send_request_to_opa::<BulkAuthorizationResult, _>(state, "/v1/data/permit/bulk", &bulk_query)
-        .await
+    let result = send_request_to_opa::<BulkAuthorizationResult, _>(
+        state,
+        "/v1/data/permit/bulk",
+        &bulk_query,
+    )
+    .await;
+
+    // Add debug logging if enabled
+    if let Ok(response) = &result {
+        if state.config.debug.unwrap_or(false) {
+            let allowed_count = response.allow.iter().filter(|r| r.allow).count();
+            log::info!(
+                "permit.bulk_check({} queries) -> {} allowed, {} denied",
+                queries.len(),
+                allowed_count,
+                response.allow.len() - allowed_count
+            );
+            log::debug!(
+                "Query: {}\nResult: {:?}",
+                serde_json::to_string_pretty(&bulk_query)?,
+                serde_json::to_string_pretty(response)?
+            );
+        }
+    }
+
+    result
 }

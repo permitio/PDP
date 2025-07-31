@@ -22,7 +22,27 @@ pub async fn query_user_permissions(
 
     if let serde_json::Value::Object(result_map) = response {
         if let Some(permissions) = result_map.get("permissions") {
-            return Ok(serde_json::from_value(permissions.clone())?);
+            let result: HashMap<String, UserPermissionsResult> =
+                serde_json::from_value(permissions.clone())?;
+
+            // Add debug logging if enabled
+            if state.config.debug.unwrap_or(false) {
+                log::info!(
+                    "permit.user_permissions(\"{}\", tenants={:?}, resources={:?}, resource_types={:?}) -> {} permissions",
+                    query.user,
+                    query.tenants,
+                    query.resources,
+                    query.resource_types,
+                    result.len()
+                );
+                log::debug!(
+                    "Query: {}\nResult: {:?}",
+                    serde_json::to_string_pretty(query)?,
+                    serde_json::to_string_pretty(&result)?
+                );
+            }
+
+            return Ok(result);
         } else {
             debug!("No 'permissions' field found in result");
         }
@@ -31,7 +51,24 @@ pub async fn query_user_permissions(
     }
 
     // If we couldn't find the permissions, return an empty map
-    Ok(HashMap::new())
+    let empty_result = HashMap::new();
+
+    // Add debug logging if enabled
+    if state.config.debug.unwrap_or(false) {
+        log::info!(
+            "permit.user_permissions(\"{}\", tenants={:?}, resources={:?}, resource_types={:?}) -> 0 permissions",
+            query.user,
+            query.tenants,
+            query.resources,
+            query.resource_types
+        );
+        log::debug!(
+            "Query: {}\nResult: empty",
+            serde_json::to_string_pretty(query)?
+        );
+    }
+
+    Ok(empty_result)
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
