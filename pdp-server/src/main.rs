@@ -39,7 +39,6 @@ async fn main() {
             std::process::exit(1);
         }
     };
-
     // Initialize application state
     let state: AppState = AppState::with_existing_cache(&config, cache)
         .await
@@ -85,7 +84,7 @@ pub async fn create_app(state: AppState) -> Router {
     Router::new()
         .merge(api::router(&state))
         .merge(openapi_router)
-        .merge(Scalar::with_url("/scalar", api_doc.clone()))
+        .merge(crate::openapi::router())
         .with_state(state)
 }
 
