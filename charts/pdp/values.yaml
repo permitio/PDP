@@ -22,6 +22,9 @@ pdp:
     enabled: false
     debug_mode: false
     type: "stdout" # 'stdout' or 'elasticsearch'
+    # Log rotation settings (only applies when enabled=true)
+    rotation: "250 MB"  # File size threshold for rotation
+    retention: "3 days"  # How long to keep rotated log files
     elasticsearch:
       host: "<elasticsearch host>"
       cloud_auth: "<{user}:{password}>"
