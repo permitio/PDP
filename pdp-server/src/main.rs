@@ -15,7 +15,6 @@ use log::{error, info};
 use std::net::SocketAddr;
 use utoipa::OpenApi;
 use utoipa_axum::router::OpenApiRouter;
-use utoipa_scalar::{Scalar, Servable};
 
 #[tokio::main]
 async fn main() {
@@ -39,7 +38,6 @@ async fn main() {
             std::process::exit(1);
         }
     };
-
     // Initialize application state
     let state: AppState = AppState::with_existing_cache(&config, cache)
         .await
@@ -78,14 +76,13 @@ async fn main() {
 /// Create a new application instance with a given state
 pub async fn create_app(state: AppState) -> Router {
     // Create OpenAPI documentation
-    let (openapi_router, api_doc) =
-        OpenApiRouter::with_openapi(openapi::ApiDoc::openapi()).split_for_parts();
+    let openapi_router = OpenApiRouter::with_openapi(openapi::ApiDoc::openapi());
 
     // Create base router with routes
     Router::new()
         .merge(api::router(&state))
         .merge(openapi_router)
-        .merge(Scalar::with_url("/scalar", api_doc.clone()))
+        .merge(crate::openapi::router())
         .with_state(state)
 }
 
