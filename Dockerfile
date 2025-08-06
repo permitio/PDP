@@ -66,7 +66,7 @@ RUN if [ -f /custom/custom_opa.tar.gz ]; \
 # MAIN IMAGE ----------------------------------------
 # Main image setup (optimized)
 # ---------------------------------------------------
-FROM python:3.10-alpine AS main
+FROM python:3.10-alpine3.22 AS main
 
 WORKDIR /app
 
@@ -79,6 +79,7 @@ RUN mkdir -p /app/backup && chmod -R 777 /app/backup
 
 # Install necessary libraries in a single RUN command
 RUN apk update && \
+    apk upgrade && \
     apk add --no-cache bash build-base libffi-dev libressl-dev musl-dev zlib-dev gcompat wget
 
 # Copy OPA binary from the build stage

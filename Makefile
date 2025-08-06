@@ -2,6 +2,8 @@
 
 .DEFAULT_GOAL := help
 
+VERSION ?= next
+
 prepare:
 ifndef VERSION
 	$(error You must set VERSION variable to build local image)
@@ -22,6 +24,9 @@ build-amd64: prepare
 
 build-arm64: prepare
 	@docker buildx build --platform linux/arm64 -t permitio/pdp-v2:$(VERSION) . --load
+
+build: prepare
+	@docker buildx build -t permitio/pdp-v2:$(VERSION) . --load
 
 run: run-prepare
 	@docker run -it --rm -p 7766:7000 --env PDP_API_KEY=$(API_KEY) --env PDP_DEBUG=true permitio/pdp-v2:$(VERSION)
