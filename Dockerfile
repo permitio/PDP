@@ -77,10 +77,12 @@ RUN addgroup -S permit -g 1001 && \
 # Create backup directory with permissions
 RUN mkdir -p /app/backup && chmod -R 777 /app/backup
 
-# Install necessary libraries in a single RUN command
+# Install necessary libraries and delete SQLite in a single RUN command
 RUN apk update && \
     apk upgrade && \
-    apk add --no-cache bash build-base libffi-dev libressl-dev musl-dev zlib-dev gcompat wget
+    apk add --no-cache bash build-base libffi-dev libressl-dev musl-dev zlib-dev gcompat wget && \
+    apk del sqlite
+
 
 # Copy OPA binary from the build stage
 COPY --from=opa_build --chmod=755 /opa /app/bin/opa
