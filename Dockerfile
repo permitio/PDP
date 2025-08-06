@@ -1,7 +1,4 @@
 ARG OPA_BUILD=permit
-ARG TARGETPLATFORM
-ARG TARGETARCH
-
 # RUST BUILD STAGE -----------------------------------
 # Build the Rust PDP binary for all targets
 # ----------------------------------------------------
