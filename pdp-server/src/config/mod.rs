@@ -18,6 +18,10 @@ pub struct PDPConfig {
     #[config(env = "PDP_DEBUG")]
     pub debug: Option<bool>,
 
+    /// Enable IPv6 binding (default: false for IPv4 0.0.0.0, true for IPv6 ::)
+    #[config(env = "PDP_IPV6_ENABLED", default = false)]
+    pub ipv6_enabled: bool,
+
     /// The port the PDP server will listen to (default: 7766)
     #[config(env = "PDP_PORT", default = 7766)]
     pub port: u16,
@@ -63,6 +67,7 @@ impl PDPConfig {
             Self {
                 api_key: "test_api_key".to_string(),
                 debug: Some(true),
+                ipv6_enabled: false,
                 port: 0,
                 use_new_authorized_users: false,
                 healthcheck_timeout: 3.0,
@@ -187,6 +192,7 @@ mod tests {
         with_env_vars(
             &[
                 ("PDP_API_KEY", "test-api-key"),
+                ("PDP_IPV6_ENABLED", "false"),
                 ("PDP_PORT", "7766"),
                 ("PDP_CACHE_TTL", "3600"),
                 ("PDP_CACHE_STORE", "none"),
@@ -194,6 +200,7 @@ mod tests {
             || {
                 let config = PDPConfig::new().unwrap();
                 println!("Config loaded: api_key='{}'", config.api_key);
+                assert!(!config.ipv6_enabled);
                 assert_eq!(config.port, 7766);
                 assert_eq!(config.cache.ttl, 3600);
                 assert_eq!(config.horizon.host, "0.0.0.0");
@@ -256,6 +263,7 @@ mod tests {
             &[
                 // Top level config
                 ("PDP_API_KEY", "env-test-api-key"),
+                ("PDP_IPV6_ENABLED", "true"),
                 ("PDP_PORT", "7777"),
                 ("PDP_DEBUG", "true"),
                 ("PDP_USE_NEW_AUTHORIZED_USERS", "true"),
@@ -285,6 +293,7 @@ mod tests {
 
                 // Test top level config
                 assert_eq!(config.api_key, "env-test-api-key");
+                assert!(config.ipv6_enabled);
                 assert_eq!(config.port, 7777);
                 assert_eq!(config.debug, Some(true));
                 assert!(config.use_new_authorized_users);
@@ -316,6 +325,37 @@ mod tests {
     }
 
     #[test]
+    fn test_ipv6_enabled() {
+        with_env_vars(
+            &[
+                ("PDP_API_KEY", "test-api-key"),
+                ("PDP_IPV6_ENABLED", "true"),
+                ("PDP_PORT", "7766"),
+            ],
+            || {
+                let config = PDPConfig::new().unwrap();
+                assert!(config.ipv6_enabled);
+                assert_eq!(config.port, 7766);
+            },
+        );
+    }
+
+    #[test]
+    fn test_ipv6_disabled_default() {
+        with_env_vars(
+            &[
+                ("PDP_API_KEY", "test-api-key"),
+                ("PDP_PORT", "7766"),
+            ],
+            || {
+                let config = PDPConfig::new().unwrap();
+                assert!(!config.ipv6_enabled); // Should default to false
+                assert_eq!(config.port, 7766);
+            },
+        );
+    }
+
+    #[test]
     fn test_confique_template_generation() {
         // Test that we can generate configuration templates
         // This is a new feature we get from confique
@@ -324,6 +364,7 @@ mod tests {
 
         // Verify that the template contains our configuration fields
         assert!(toml_template.contains("PDP_API_KEY"));
+        assert!(toml_template.contains("PDP_IPV6_ENABLED"));
         assert!(toml_template.contains("PDP_PORT"));
         assert!(toml_template.contains("PDP_DEBUG"));
         assert!(toml_template.contains("PDP_CACHE_TTL"));
@@ -343,7 +384,7 @@ mod tests {
     #[test]
     fn test_confique_builder_pattern() {
         with_env_vars(
-            &[("PDP_API_KEY", "builder-test-key"), ("PDP_PORT", "8080")],
+            &[("PDP_API_KEY", "builder-test-key"), ("PDP_IPV6_ENABLED", "false"), ("PDP_PORT", "8080")],
             || {
                 // Test the builder pattern directly
                 let config = PDPConfig::builder()
@@ -352,6 +393,7 @@ mod tests {
                     .expect("Failed to load config");
 
                 assert_eq!(config.api_key, "builder-test-key");
+                assert!(!config.ipv6_enabled);
                 assert_eq!(config.port, 8080);
                 assert_eq!(config.cache.ttl, 3600); // Default value
                 assert_eq!(config.opa.url, "http://localhost:8181"); // Default value
