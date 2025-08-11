@@ -47,11 +47,15 @@ async fn main() {
     let app = create_app(state).await;
 
     // Build server address
-    let addr = if config.ipv6_enabled {
-        SocketAddr::from((std::net::Ipv6Addr::UNSPECIFIED, config.port))
-    } else {
-        SocketAddr::from(([0, 0, 0, 0], config.port))
-    };
+    let addr = format!("{}:{}", config.host, config.port)
+        .parse::<SocketAddr>()
+        .unwrap_or_else(|e| {
+            error!(
+                "Invalid host/port combination: {}:{} ({})",
+                config.host, config.port, e
+            );
+            std::process::exit(1);
+        });
 
     // Start server
     let server = match tokio::net::TcpListener::bind(&addr).await {

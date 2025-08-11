@@ -164,6 +164,7 @@ mod tests {
     fn create_test_config() -> PDPConfig {
         PDPConfig {
             api_key: "test-api-key".to_string(),
+            host: "0.0.0.0".to_string(),
             debug: Some(true),
             port: 3000,
             use_new_authorized_users: false,
