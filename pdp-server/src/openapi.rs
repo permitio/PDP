@@ -14,7 +14,8 @@ pub(crate) const AUTHZEN_TAG: &str = "AuthZen API";
 #[openapi(
     tags(
         (name = HEALTH_TAG, description = "Health check endpoints"),
-        (name = AUTHZ_TAG, description = "Authorization endpoints")
+        (name = AUTHZ_TAG, description = "Authorization endpoints"),
+        (name = AUTHZEN_TAG, description = "AuthZen endpoints")
     ),
     info(
         title = "Permit.io PDP API",
