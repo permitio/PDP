@@ -34,6 +34,7 @@ struct CacheValue {
 /// Implementations of this trait should be thread-safe (Send + Sync)
 /// and cloneable to support sharing across multiple handlers.
 #[async_trait::async_trait]
+#[allow(dead_code)]
 pub trait CacheBackend: Send + Sync {
     /// Store a value in the cache with default TTL
     async fn set<T: Serialize + Send + Sync>(&self, key: &str, value: &T)
