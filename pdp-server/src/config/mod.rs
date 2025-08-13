@@ -124,7 +124,7 @@ impl PDPConfig {
 mod tests {
     use super::*;
     use std::{
-        net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+        net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
         sync::Mutex,
     };
 
@@ -331,17 +331,17 @@ mod tests {
         with_env_vars(
             &[
                 ("PDP_API_KEY", "test-api-key"),
-                ("PDP_HOST", "::1"),
+                ("PDP_HOST", "::"),
                 ("PDP_PORT", "7766"),
             ],
             || {
                 let config = PDPConfig::new().unwrap();
-                assert_eq!(config.host, "::1");
+                assert_eq!(config.host, "::");
                 assert_eq!(config.port, 7766);
                 let expected_addr = SocketAddr::from((Ipv6Addr::UNSPECIFIED, config.port));
                 assert_eq!(
-                    format!("{}:{}", config.host, config.port).parse(),
-                    Ok(expected_addr)
+                    SocketAddr::from((config.host.parse::<IpAddr>().unwrap(), config.port)),
+                    expected_addr
                 );
             },
         );
@@ -357,8 +357,8 @@ mod tests {
                 assert_eq!(config.port, 7766);
                 let expected_addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, config.port));
                 assert_eq!(
-                    format!("{}:{}", config.host, config.port).parse(),
-                    Ok(expected_addr)
+                    SocketAddr::from((config.host.parse::<IpAddr>().unwrap(), config.port)),
+                    expected_addr
                 );
             },
         );
