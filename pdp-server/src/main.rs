@@ -12,7 +12,7 @@ mod test_utils;
 use crate::state::AppState;
 use axum::Router;
 use log::{error, info};
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use utoipa::OpenApi;
 use utoipa_axum::router::OpenApiRouter;
 
@@ -46,8 +46,12 @@ async fn main() {
     // Create application & Initialize PDPEngine
     let app = create_app(state).await;
 
+    let host = config.host.parse::<IpAddr>().unwrap_or_else(|e| {
+        error!("Invalid host: {} ({})", config.host, e);
+        std::process::exit(1);
+    });
     // Build server address
-    let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
+    let addr = SocketAddr::new(host, config.port);
 
     // Start server
     let server = match tokio::net::TcpListener::bind(&addr).await {

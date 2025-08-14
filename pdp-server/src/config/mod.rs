@@ -18,6 +18,10 @@ pub struct PDPConfig {
     #[config(env = "PDP_DEBUG")]
     pub debug: Option<bool>,
 
+    /// The host the PDP server will listen to (default: 0.0.0.0)
+    #[config(env = "PDP_HOST", default = "0.0.0.0")]
+    pub host: String,
+
     /// The port the PDP server will listen to (default: 7766)
     #[config(env = "PDP_PORT", default = 7766)]
     pub port: u16,
@@ -63,6 +67,7 @@ impl PDPConfig {
             Self {
                 api_key: "test_api_key".to_string(),
                 debug: Some(true),
+                host: "0.0.0.0".to_string(),
                 port: 0,
                 use_new_authorized_users: false,
                 healthcheck_timeout: 3.0,
@@ -118,7 +123,10 @@ impl PDPConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
+    use std::{
+        net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+        sync::Mutex,
+    };
 
     // This mutex ensures tests don't interfere with each other's environment variables
     static ENV_MUTEX: Mutex<()> = Mutex::new(());
@@ -194,6 +202,7 @@ mod tests {
             || {
                 let config = PDPConfig::new().unwrap();
                 println!("Config loaded: api_key='{}'", config.api_key);
+                assert_eq!(config.host, "0.0.0.0");
                 assert_eq!(config.port, 7766);
                 assert_eq!(config.cache.ttl, 3600);
                 assert_eq!(config.horizon.host, "0.0.0.0");
@@ -256,6 +265,7 @@ mod tests {
             &[
                 // Top level config
                 ("PDP_API_KEY", "env-test-api-key"),
+                ("PDP_HOST", "::1"),
                 ("PDP_PORT", "7777"),
                 ("PDP_DEBUG", "true"),
                 ("PDP_USE_NEW_AUTHORIZED_USERS", "true"),
@@ -285,6 +295,7 @@ mod tests {
 
                 // Test top level config
                 assert_eq!(config.api_key, "env-test-api-key");
+                assert_eq!(config.host, "::1");
                 assert_eq!(config.port, 7777);
                 assert_eq!(config.debug, Some(true));
                 assert!(config.use_new_authorized_users);
@@ -316,6 +327,44 @@ mod tests {
     }
 
     #[test]
+    fn test_host_config() {
+        with_env_vars(
+            &[
+                ("PDP_API_KEY", "test-api-key"),
+                ("PDP_HOST", "::"),
+                ("PDP_PORT", "7766"),
+            ],
+            || {
+                let config = PDPConfig::new().unwrap();
+                assert_eq!(config.host, "::");
+                assert_eq!(config.port, 7766);
+                let expected_addr = SocketAddr::from((Ipv6Addr::UNSPECIFIED, config.port));
+                assert_eq!(
+                    SocketAddr::from((config.host.parse::<IpAddr>().unwrap(), config.port)),
+                    expected_addr
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn test_ipv4_default() {
+        with_env_vars(
+            &[("PDP_API_KEY", "test-api-key"), ("PDP_PORT", "7766")],
+            || {
+                let config = PDPConfig::new().unwrap();
+                assert_eq!(config.host, "0.0.0.0");
+                assert_eq!(config.port, 7766);
+                let expected_addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, config.port));
+                assert_eq!(
+                    SocketAddr::from((config.host.parse::<IpAddr>().unwrap(), config.port)),
+                    expected_addr
+                );
+            },
+        );
+    }
+
+    #[test]
     fn test_confique_template_generation() {
         // Test that we can generate configuration templates
         // This is a new feature we get from confique
@@ -324,6 +373,7 @@ mod tests {
 
         // Verify that the template contains our configuration fields
         assert!(toml_template.contains("PDP_API_KEY"));
+        assert!(toml_template.contains("PDP_HOST"));
         assert!(toml_template.contains("PDP_PORT"));
         assert!(toml_template.contains("PDP_DEBUG"));
         assert!(toml_template.contains("PDP_CACHE_TTL"));
@@ -343,7 +393,11 @@ mod tests {
     #[test]
     fn test_confique_builder_pattern() {
         with_env_vars(
-            &[("PDP_API_KEY", "builder-test-key"), ("PDP_PORT", "8080")],
+            &[
+                ("PDP_API_KEY", "builder-test-key"),
+                ("PDP_HOST", "0.0.0.0"),
+                ("PDP_PORT", "8080"),
+            ],
             || {
                 // Test the builder pattern directly
                 let config = PDPConfig::builder()
@@ -352,6 +406,7 @@ mod tests {
                     .expect("Failed to load config");
 
                 assert_eq!(config.api_key, "builder-test-key");
+                assert_eq!(config.host, "0.0.0.0");
                 assert_eq!(config.port, 8080);
                 assert_eq!(config.cache.ttl, 3600); // Default value
                 assert_eq!(config.opa.url, "http://localhost:8181"); // Default value

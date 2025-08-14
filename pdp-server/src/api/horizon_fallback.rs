@@ -521,6 +521,7 @@ mod tests {
         // Create a modified config for testing
         let config = crate::config::PDPConfig {
             api_key: "test_api_key".to_string(),
+            host: "0.0.0.0".to_string(),
             debug: None,
             port: 0,
             use_new_authorized_users: false,
@@ -586,6 +587,7 @@ mod tests {
         // Create custom config with very short timeout
         let config = crate::config::PDPConfig {
             api_key: "test_api_key".to_string(),
+            host: "0.0.0.0".to_string(),
             debug: None,
             port: 0,
             use_new_authorized_users: false,
