@@ -3,10 +3,9 @@ annotations: {}
 
 pdp:
   pdpEnvs:
-    []
-    # - name: custom_env
-    #   value: "custom_env"
-  ApiKey: "<your PDP API Key>"
+    - name: PDP_CONTROL_PLANE
+      value: "http://permit-backend-v2:8000"
+  ApiKey: "permit_key_kymHPKiIiUGklAMnSJfqEE9YRNCsFn52SQzFO2eCnwLfnEgQ7kg8HvuV7MOedG30IfGinaAgq9nYSoJTOArJf6"
   # Use an existing secret for the API key instead of creating one
   # If defined, the chart will not create a secret and will use this existing secret
   # existingApiKeySecret:
@@ -41,3 +40,40 @@ resources:
     memory: "512Mi"
   limits:
     memory: "1Gi"
+
+# OpenShift configuration
+openshift:
+  enabled: false  # Set to true for OpenShift deployments
+  # ServiceAccount configuration for OpenShift compatibility
+  serviceAccount:
+    create: true
+    name: "permitio-pdp-sa"
+    sccName: "restricted-v2"  # OpenShift Security Context Constraint
+  # Security context configuration for OpenShift
+  securityContext:
+    # Pod security context (applied to all containers in pod)
+    pod:
+      runAsNonRoot: true
+      # runAsUser: null  # OpenShift SCC assigns UID automatically
+      # runAsGroup: null  # OpenShift SCC assigns GID automatically  
+      # fsGroup: null  # OpenShift SCC assigns fsGroup automatically
+    # Container security context (applied to individual containers)
+    container:
+      runAsNonRoot: true
+      # runAsUser: null  # OpenShift SCC assigns UID automatically
+      # runAsGroup: null  # OpenShift SCC assigns GID automatically
+
+# Standard Kubernetes security contexts (used when openshift.enabled: false)
+securityContext:
+  standard:
+    # Pod security context (applied to all containers in pod)
+    pod:
+      runAsNonRoot: true
+      runAsUser: 1001
+      runAsGroup: 1001
+      fsGroup: 1001
+    # Container security context (applied to individual containers)
+    container:
+      runAsNonRoot: true
+      runAsUser: 1001
+      runAsGroup: 1001
