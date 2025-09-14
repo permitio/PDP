@@ -34,6 +34,12 @@ class SidecarConfig(Confi):
         description="URL to the control plane that manages this PDP, typically Permit.io cloud (api.permit.io)",
     )
 
+    CONTROL_PLANE_TIMEOUT = confi.float(
+        "CONTROL_PLANE_TIMEOUT",
+        75,
+        description="Timeout in seconds for control plane requests",
+    )
+
     CONTROL_PLANE_PDP_DELTAS_API = confi.str(
         "CONTROL_PLANE_PDP_DELTAS_API",
         "http://localhost:8000",

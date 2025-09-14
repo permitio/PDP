@@ -26,6 +26,7 @@ class FactsClient:
             env_api_key = get_env_api_key()
             self._client = AsyncClient(
                 base_url=sidecar_config.CONTROL_PLANE,
+                timeout=sidecar_config.CONTROL_PLANE_TIMEOUT,
                 headers={"Authorization": f"Bearer {env_api_key}"},
                 trust_env=True,
             )
