@@ -200,6 +200,7 @@ class PersistentStateHandler:
         config_url = f"{sidecar_config.CONTROL_PLANE}{sidecar_config.REMOTE_STATE_ENDPOINT}"
         async with aiohttp.ClientSession(
             trust_env=True,
+            timeout=aiohttp.ClientTimeout(total=sidecar_config.CONTROL_PLANE_TIMEOUT),
         ) as session:
             logger.info("Reporting status update to server...")
             response = await session.post(
