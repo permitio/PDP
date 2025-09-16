@@ -26,9 +26,6 @@ spec:
       serviceAccountName: {{ .Values.openshift.serviceAccount.name }}
       securityContext:
         runAsNonRoot: {{ .Values.openshift.securityContext.runAsNonRoot }}
-        runAsUser: {{ .Values.openshift.securityContext.runAsUser }}
-        runAsGroup: {{ .Values.openshift.securityContext.runAsGroup }}
-        fsGroup: {{ .Values.openshift.securityContext.fsGroup }}
         seccompProfile:
           type: RuntimeDefault
       {{- end }}
@@ -43,8 +40,6 @@ spec:
               drop:
               - ALL
             runAsNonRoot: {{ .Values.openshift.securityContext.runAsNonRoot }}
-            runAsUser: {{ .Values.openshift.securityContext.runAsUser }}
-            runAsGroup: {{ .Values.openshift.securityContext.runAsGroup }}
             seccompProfile:
               type: RuntimeDefault
           {{- end }}
