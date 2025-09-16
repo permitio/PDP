@@ -24,32 +24,25 @@ spec:
     spec:
       {{- if .Values.openshift.enabled }}
       serviceAccountName: {{ .Values.openshift.serviceAccount.name }}
-      {{- end }}
       securityContext:
-        runAsNonRoot: {{ .Values.securityContext.runAsNonRoot }}
-        {{- if not .Values.openshift.enabled }}
-        runAsUser: {{ .Values.securityContext.runAsUser }}
-        runAsGroup: {{ .Values.securityContext.runAsGroup }}
-        fsGroup: {{ .Values.securityContext.fsGroup }}
-        {{- end }}
+        runAsNonRoot: {{ .Values.openshift.securityContext.runAsNonRoot }}
         seccompProfile:
           type: RuntimeDefault
+      {{- end }}
       containers:
         - name: permitio-pdp
           image: "{{ .Values.pdp.image.repository }}:{{ .Values.pdp.image.tag }}"
           imagePullPolicy: {{ .Values.pdp.image.pullPolicy }}
+          {{- if .Values.openshift.enabled }}
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
               drop:
               - ALL
-            runAsNonRoot: {{ .Values.securityContext.runAsNonRoot }}
-            {{- if not .Values.openshift.enabled }}
-            runAsUser: {{ .Values.securityContext.runAsUser }}
-            runAsGroup: {{ .Values.securityContext.runAsGroup }}
-            {{- end }}
+            runAsNonRoot: {{ .Values.openshift.securityContext.runAsNonRoot }}
             seccompProfile:
               type: RuntimeDefault
+          {{- end }}
           ports:
             - containerPort: {{ .Values.pdp.port }}
           env:
@@ -118,8 +111,8 @@ spec:
           {{- if .Values.pdp.logs_forwarder.enabled }}
             - name: logs
               mountPath: /tmp/
-          {{- else if .Values.openshift.enabled }}
-            # OpenShift filesystem permissions volume mounts
+          {{- else }}
+            # Writable volume mounts for application data
             - name: tmp-volume
               mountPath: /tmp
             - name: opa-volume
@@ -147,8 +140,8 @@ spec:
             name: fluentbit-config
         - name: logs
           emptyDir: {}
-      {{- else if .Values.openshift.enabled }}
-        # OpenShift filesystem permissions volumes
+      {{- else }}
+        # Writable volumes for application data
         - name: tmp-volume
           emptyDir: {}
         - name: opa-volume

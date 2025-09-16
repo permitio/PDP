@@ -50,10 +50,9 @@ openshift:
     create: true
     name: "permitio-pdp-sa"
     sccName: "restricted-v2"  # OpenShift Security Context Constraint
-
-# Security context (OpenShift SCC will override user/group settings when openshift.enabled: true)
-securityContext:
-  runAsNonRoot: true
-  runAsUser: 1001
-  runAsGroup: 1001
-  fsGroup: 1001
+  # Security context (SCC will override user/group settings automatically)
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1001
+    runAsGroup: 1001
+    fsGroup: 1001
