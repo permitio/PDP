@@ -5,6 +5,7 @@ from base64 import b64decode
 from urllib.parse import urljoin
 from uuid import UUID
 
+import aiohttp
 from aiohttp import ClientSession
 from fastapi import status
 from fastapi.encoders import jsonable_encoder
@@ -134,7 +135,9 @@ class OpalRelayAPIClient:
                     ) from e
             self._relay_token = obj.token
             self._relay_session = ClientSession(
-                headers={"Authorization": f"Bearer {self._relay_token}"}, trust_env=True
+                headers={"Authorization": f"Bearer {self._relay_token}"},
+                trust_env=True,
+                timeout=aiohttp.ClientTimeout(total=sidecar_config.CONTROL_PLANE_TIMEOUT),
             )
         return self._relay_session
 

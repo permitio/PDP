@@ -50,6 +50,7 @@ class RemoteConfigFetcher:
         backend_url: str = sidecar_config.CONTROL_PLANE,
         remote_config_route: str = sidecar_config.REMOTE_CONFIG_ENDPOINT,
         shard_id: str | None = sidecar_config.SHARD_ID,
+        timeout: float = sidecar_config.CONTROL_PLANE_TIMEOUT,
         retry_config=None,
     ):
         """
@@ -63,6 +64,7 @@ class RemoteConfigFetcher:
         self._url = f"{backend_url}{remote_config_route}"
         self._backend_url = backend_url
         self._token = get_env_api_key()
+        self._timeout = timeout
         self._retry_config = retry_config if retry_config is not None else DEFAULT_RETRY_CONFIG
         self._shard_id = shard_id
 
@@ -91,8 +93,13 @@ class RemoteConfigFetcher:
         However, this is ok because the RemoteConfigFetcher runs *once* when the sidecar starts.
         """
         try:
-            response = BlockingRequest(token=self._token, extra_headers={"X-Shard-ID": self._shard_id}).post(
-                url=self._url, payload=PersistentStateHandler.build_state_payload_sync()
+            response = BlockingRequest(
+                token=self._token,
+                extra_headers={"X-Shard-ID": self._shard_id},
+                timeout=self._timeout,
+            ).post(
+                url=self._url,
+                payload=PersistentStateHandler.build_state_payload_sync(),
             )
 
             try:

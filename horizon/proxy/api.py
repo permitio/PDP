@@ -172,6 +172,7 @@ async def proxy_request_to_cloud_service(
     path: str,
     cloud_service_url: str,
     additional_headers: dict[str, str],
+    timeout: int = sidecar_config.CONTROL_PLANE_TIMEOUT,
 ) -> Response:
     auth_header = request.headers.get("Authorization")
     if auth_header is None:
@@ -200,9 +201,7 @@ async def proxy_request_to_cloud_service(
 
     logger.info(f"Proxying request: {request.method} {path}")
 
-    async with aiohttp.ClientSession(
-        trust_env=True,
-    ) as session:
+    async with aiohttp.ClientSession(trust_env=True, timeout=aiohttp.ClientTimeout(total=timeout)) as session:
         if request.method == HTTP_GET:
             async with session.get(path, headers=headers, params=params) as backend_response:
                 return await proxy_response(backend_response)

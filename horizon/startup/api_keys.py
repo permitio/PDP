@@ -19,9 +19,11 @@ class EnvApiKeyFetcher:
     def __init__(
         self,
         backend_url: str = sidecar_config.CONTROL_PLANE,
+        timeout: float = sidecar_config.CONTROL_PLANE_TIMEOUT,
         retry_config=None,
     ):
         self._backend_url = backend_url
+        self._timeout = timeout
         self._retry_config = retry_config or DEFAULT_RETRY_CONFIG
         self.api_key_level = self._get_api_key_level()
 
@@ -83,6 +85,7 @@ class EnvApiKeyFetcher:
         fetch_with_retry = retry(**self._retry_config)(
             lambda: BlockingRequest(
                 token=api_key,
+                timeout=self._timeout,
             ).get(url=api_key_url)
         )
         try:
@@ -105,6 +108,7 @@ class EnvApiKeyFetcher:
         fetch_with_retry = retry(**self._retry_config)(
             lambda: BlockingRequest(
                 token=api_key,
+                timeout=self._timeout,
             ).get(url=api_key_url)
         )
         try:
