@@ -3,9 +3,11 @@ annotations: {}
 
 pdp:
   pdpEnvs:
-    - name: PDP_CONTROL_PLANE
-      value: "http://permit-backend-v2:8000"
-  ApiKey: "permit_key_kymHPKiIiUGklAMnSJfqEE9YRNCsFn52SQzFO2eCnwLfnEgQ7kg8HvuV7MOedG30IfGinaAgq9nYSoJTOArJf6"
+    []
+    # - name: custom_env
+    #   value: "custom_env"
+  ApiKey: "<your PDP API Key>"
+
   # Use an existing secret for the API key instead of creating one
   # If defined, the chart will not create a secret and will use this existing secret
   # existingApiKeySecret:
