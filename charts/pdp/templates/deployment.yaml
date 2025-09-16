@@ -26,6 +26,9 @@ spec:
       serviceAccountName: {{ .Values.openshift.serviceAccount.name }}
       securityContext:
         runAsNonRoot: {{ .Values.openshift.securityContext.runAsNonRoot }}
+        runAsUser: {{ .Values.openshift.securityContext.runAsUser }}
+        runAsGroup: {{ .Values.openshift.securityContext.runAsGroup }}
+        fsGroup: {{ .Values.openshift.securityContext.fsGroup }}
         seccompProfile:
           type: RuntimeDefault
       {{- end }}
@@ -40,6 +43,8 @@ spec:
               drop:
               - ALL
             runAsNonRoot: {{ .Values.openshift.securityContext.runAsNonRoot }}
+            runAsUser: {{ .Values.openshift.securityContext.runAsUser }}
+            runAsGroup: {{ .Values.openshift.securityContext.runAsGroup }}
             seccompProfile:
               type: RuntimeDefault
           {{- end }}
@@ -111,8 +116,8 @@ spec:
           {{- if .Values.pdp.logs_forwarder.enabled }}
             - name: logs
               mountPath: /tmp/
-          {{- else }}
-            # Writable volume mounts for application data
+          {{- else if .Values.openshift.enabled }}
+            # OpenShift requires explicit writable volumes
             - name: tmp-volume
               mountPath: /tmp
             - name: opa-volume
@@ -140,8 +145,8 @@ spec:
             name: fluentbit-config
         - name: logs
           emptyDir: {}
-      {{- else }}
-        # Writable volumes for application data
+      {{- else if .Values.openshift.enabled }}
+        # OpenShift writable volumes
         - name: tmp-volume
           emptyDir: {}
         - name: opa-volume
