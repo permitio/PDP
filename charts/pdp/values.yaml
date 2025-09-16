@@ -46,36 +46,14 @@ resources:
 # OpenShift configuration
 openshift:
   enabled: false  # Set to true for OpenShift deployments
-  # ServiceAccount configuration for OpenShift compatibility
   serviceAccount:
     create: true
     name: "permitio-pdp-sa"
     sccName: "restricted-v2"  # OpenShift Security Context Constraint
-  # Security context configuration for OpenShift
-  securityContext:
-    # Pod security context (applied to all containers in pod)
-    pod:
-      runAsNonRoot: true
-      # runAsUser: null  # OpenShift SCC assigns UID automatically
-      # runAsGroup: null  # OpenShift SCC assigns GID automatically  
-      # fsGroup: null  # OpenShift SCC assigns fsGroup automatically
-    # Container security context (applied to individual containers)
-    container:
-      runAsNonRoot: true
-      # runAsUser: null  # OpenShift SCC assigns UID automatically
-      # runAsGroup: null  # OpenShift SCC assigns GID automatically
 
-# Standard Kubernetes security contexts (used when openshift.enabled: false)
+# Security context (OpenShift SCC will override user/group settings when openshift.enabled: true)
 securityContext:
-  standard:
-    # Pod security context (applied to all containers in pod)
-    pod:
-      runAsNonRoot: true
-      runAsUser: 1001
-      runAsGroup: 1001
-      fsGroup: 1001
-    # Container security context (applied to individual containers)
-    container:
-      runAsNonRoot: true
-      runAsUser: 1001
-      runAsGroup: 1001
+  runAsNonRoot: true
+  runAsUser: 1001
+  runAsGroup: 1001
+  fsGroup: 1001

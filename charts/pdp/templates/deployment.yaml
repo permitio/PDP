@@ -24,81 +24,32 @@ spec:
     spec:
       {{- if .Values.openshift.enabled }}
       serviceAccountName: {{ .Values.openshift.serviceAccount.name }}
-      # OpenShift-compatible pod security context
-      securityContext:
-        {{- if .Values.openshift.securityContext.pod.runAsNonRoot }}
-        runAsNonRoot: {{ .Values.openshift.securityContext.pod.runAsNonRoot }}
-        {{- end }}
-        {{- if .Values.openshift.securityContext.pod.runAsUser }}
-        runAsUser: {{ .Values.openshift.securityContext.pod.runAsUser }}
-        {{- end }}
-        {{- if .Values.openshift.securityContext.pod.runAsGroup }}
-        runAsGroup: {{ .Values.openshift.securityContext.pod.runAsGroup }}
-        {{- end }}
-        {{- if .Values.openshift.securityContext.pod.fsGroup }}
-        fsGroup: {{ .Values.openshift.securityContext.pod.fsGroup }}
-        {{- end }}
-        seccompProfile:
-          type: RuntimeDefault
-      {{- else }}
-      # Standard Kubernetes security context
-      securityContext:
-        {{- if .Values.securityContext.standard.pod.runAsNonRoot }}
-        runAsNonRoot: {{ .Values.securityContext.standard.pod.runAsNonRoot }}
-        {{- end }}
-        {{- if .Values.securityContext.standard.pod.runAsUser }}
-        runAsUser: {{ .Values.securityContext.standard.pod.runAsUser }}
-        {{- end }}
-        {{- if .Values.securityContext.standard.pod.runAsGroup }}
-        runAsGroup: {{ .Values.securityContext.standard.pod.runAsGroup }}
-        {{- end }}
-        {{- if .Values.securityContext.standard.pod.fsGroup }}
-        fsGroup: {{ .Values.securityContext.standard.pod.fsGroup }}
-        {{- end }}
-        seccompProfile:
-          type: RuntimeDefault
       {{- end }}
+      securityContext:
+        runAsNonRoot: {{ .Values.securityContext.runAsNonRoot }}
+        {{- if not .Values.openshift.enabled }}
+        runAsUser: {{ .Values.securityContext.runAsUser }}
+        runAsGroup: {{ .Values.securityContext.runAsGroup }}
+        fsGroup: {{ .Values.securityContext.fsGroup }}
+        {{- end }}
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: permitio-pdp
           image: "{{ .Values.pdp.image.repository }}:{{ .Values.pdp.image.tag }}"
           imagePullPolicy: {{ .Values.pdp.image.pullPolicy }}
-          {{- if .Values.openshift.enabled }}
-          # OpenShift-compatible container security context
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
               drop:
               - ALL
-            {{- if .Values.openshift.securityContext.container.runAsNonRoot }}
-            runAsNonRoot: {{ .Values.openshift.securityContext.container.runAsNonRoot }}
-            {{- end }}
-            {{- if .Values.openshift.securityContext.container.runAsUser }}
-            runAsUser: {{ .Values.openshift.securityContext.container.runAsUser }}
-            {{- end }}
-            {{- if .Values.openshift.securityContext.container.runAsGroup }}
-            runAsGroup: {{ .Values.openshift.securityContext.container.runAsGroup }}
+            runAsNonRoot: {{ .Values.securityContext.runAsNonRoot }}
+            {{- if not .Values.openshift.enabled }}
+            runAsUser: {{ .Values.securityContext.runAsUser }}
+            runAsGroup: {{ .Values.securityContext.runAsGroup }}
             {{- end }}
             seccompProfile:
               type: RuntimeDefault
-          {{- else }}
-          # Standard Kubernetes container security context
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop:
-              - ALL
-            {{- if .Values.securityContext.standard.container.runAsNonRoot }}
-            runAsNonRoot: {{ .Values.securityContext.standard.container.runAsNonRoot }}
-            {{- end }}
-            {{- if .Values.securityContext.standard.container.runAsUser }}
-            runAsUser: {{ .Values.securityContext.standard.container.runAsUser }}
-            {{- end }}
-            {{- if .Values.securityContext.standard.container.runAsGroup }}
-            runAsGroup: {{ .Values.securityContext.standard.container.runAsGroup }}
-            {{- end }}
-            seccompProfile:
-              type: RuntimeDefault
-          {{- end }}
           ports:
             - containerPort: {{ .Values.pdp.port }}
           env:
