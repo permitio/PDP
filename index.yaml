@@ -2,6 +2,24 @@ apiVersion: v1
 entries:
   pdp:
   - apiVersion: v2
+    created: "2025-09-19T16:58:20.062612159Z"
+    description: An official Helm chart for Permit.io PDP (Policy Decision Point)
+      with OpenShift support
+    digest: 299dcd52f4557f438a923d5c6da9712634cc53a8012e7d6529bdb24f96bb07a1
+    keywords:
+    - policy
+    - authorization
+    - security
+    - permit
+    - openshift
+    maintainers:
+    - name: Permit.io
+      url: https://permit.io
+    name: pdp
+    urls:
+    - https://github.com/permitio/PDP/releases/download/pdp-0.0.5/pdp-0.0.5.tgz
+    version: 0.0.5
+  - apiVersion: v2
     created: "2025-06-18T17:21:24.055916203Z"
     description: An official Helm chart for Permit.io PDP (Policy Decision Point)
     digest: d90963ac947860735395a1068e7b1861c6523afde3d21f19869f16dae5e6a326
@@ -25,4 +43,4 @@ entries:
     urls:
     - https://github.com/permitio/sidecar/releases/download/pdp-0.0.2/pdp-0.0.2.tgz
     version: 0.0.2
-generated: "2025-06-18T17:21:24.055927364Z"
+generated: "2025-09-19T16:58:20.062633248Z"
