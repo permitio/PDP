@@ -7,6 +7,7 @@ pdp:
     # - name: custom_env
     #   value: "custom_env"
   ApiKey: "<your PDP API Key>"
+
   # Use an existing secret for the API key instead of creating one
   # If defined, the chart will not create a secret and will use this existing secret
   # existingApiKeySecret:
@@ -41,3 +42,17 @@ resources:
     memory: "512Mi"
   limits:
     memory: "1Gi"
+
+# OpenShift configuration
+openshift:
+  enabled: false  # Set to true for OpenShift deployments
+  serviceAccount:
+    create: true
+    name: "permitio-pdp-sa"
+    sccName: "restricted-v2"  # OpenShift Security Context Constraint
+  # Security context (SCC will override user/group settings automatically)
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1001
+    runAsGroup: 1001
+    fsGroup: 1001

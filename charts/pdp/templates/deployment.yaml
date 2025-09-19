@@ -22,10 +22,27 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
+      {{- if .Values.openshift.enabled }}
+      serviceAccountName: {{ .Values.openshift.serviceAccount.name }}
+      securityContext:
+        runAsNonRoot: {{ .Values.openshift.securityContext.runAsNonRoot }}
+        seccompProfile:
+          type: RuntimeDefault
+      {{- end }}
       containers:
         - name: permitio-pdp
           image: "{{ .Values.pdp.image.repository }}:{{ .Values.pdp.image.tag }}"
           imagePullPolicy: {{ .Values.pdp.image.pullPolicy }}
+          {{- if .Values.openshift.enabled }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            runAsNonRoot: {{ .Values.openshift.securityContext.runAsNonRoot }}
+            seccompProfile:
+              type: RuntimeDefault
+          {{- end }}
           ports:
             - containerPort: {{ .Values.pdp.port }}
           env:
@@ -90,10 +107,16 @@ spec:
               port: 7000
             initialDelaySeconds: 10
             periodSeconds: 10
-          {{- if .Values.pdp.logs_forwarder.enabled }}
           volumeMounts:
+          {{- if .Values.pdp.logs_forwarder.enabled }}
             - name: logs
               mountPath: /tmp/
+          {{- else if .Values.openshift.enabled }}
+            # OpenShift requires explicit writable volumes
+            - name: tmp-volume
+              mountPath: /tmp
+            - name: opa-volume
+              mountPath: /opa
           {{- end }}
         {{- if .Values.pdp.logs_forwarder.enabled }}
         - name: fluentbit
@@ -110,11 +133,17 @@ spec:
                 fieldRef:
                   fieldPath: metadata.labels['app']
         {{- end }}
-      {{- if .Values.pdp.logs_forwarder.enabled }}
       volumes:
+      {{- if .Values.pdp.logs_forwarder.enabled }}
         - name: fluent-bit-config
           configMap:
             name: fluentbit-config
         - name: logs
+          emptyDir: {}
+      {{- else if .Values.openshift.enabled }}
+        # OpenShift writable volumes
+        - name: tmp-volume
+          emptyDir: {}
+        - name: opa-volume
           emptyDir: {}
       {{- end }}
