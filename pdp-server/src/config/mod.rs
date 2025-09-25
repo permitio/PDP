@@ -1,10 +1,12 @@
 pub(crate) use crate::config::cache::{CacheConfig, CacheStore};
 use crate::config::horizon::HorizonConfig;
 use crate::config::opa::OpaConfig;
+use crate::config::oauth::OAuthConfig;
 use confique::Config;
 
 pub mod cache;
 pub mod horizon;
+pub mod oauth;
 pub mod opa;
 
 /// Main configuration structure for the PDP server
@@ -41,6 +43,10 @@ pub struct PDPConfig {
     /// Cache configuration
     #[config(nested)]
     pub cache: CacheConfig,
+
+    /// OAuth 2.0 configuration
+    #[config(nested)]
+    pub oauth: OAuthConfig,
 }
 
 impl PDPConfig {
@@ -99,6 +105,10 @@ impl PDPConfig {
                             url: "".to_string(),
                         },
                     }),
+                oauth: OAuthConfig::builder()
+                    .env()
+                    .load()
+                    .unwrap_or_else(|_| OAuthConfig::default()),
             }
         });
 

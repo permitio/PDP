@@ -190,6 +190,7 @@ mod tests {
                 memory: InMemoryConfig { capacity: 128 },
                 redis: RedisConfig::default(),
             },
+            oauth: crate::config::oauth::OAuthConfig::default(),
         }
     }
 

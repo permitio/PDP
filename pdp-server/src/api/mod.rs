@@ -3,6 +3,7 @@ pub(crate) mod authz;
 pub(crate) mod authzen;
 pub(crate) mod health;
 mod horizon_fallback;
+pub(crate) mod oauth;
 
 use crate::api::authn_middleware::authentication_middleware;
 use crate::api::horizon_fallback::fallback_to_horizon;
@@ -13,6 +14,7 @@ use axum::{middleware, routing::any, Router};
 pub(super) fn router(state: &AppState) -> Router<AppState> {
     Router::new()
         .merge(health::router())
+        .merge(oauth::router()) // OAuth endpoints don't require API key auth
         .merge(protected_routes(state))
 }
 
