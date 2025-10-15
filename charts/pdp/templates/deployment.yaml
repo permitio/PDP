@@ -64,6 +64,10 @@ spec:
               value: "true"
             - name: OPAL_LOG_FILE_PATH
               value: "/tmp/pdp.log"
+            - name: OPAL_LOG_FILE_ROTATION
+              value: "{{ .Values.pdp.logs_forwarder.rotation | default "250 MB" }}"
+            - name: OPAL_LOG_FILE_RETENTION
+              value: "{{ .Values.pdp.logs_forwarder.retention | default "3 days" }}"
             {{- end }}
             {{- if .Values.pdp.debug_mode }}
             - name: PDP_DEBUG
