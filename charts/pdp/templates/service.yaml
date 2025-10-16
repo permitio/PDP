@@ -1,7 +1,11 @@
 apiVersion: v1
 kind: Service
 metadata:
+  {{- if .Values.useStandardHelmNamingConventions }}
+  name: {{ include "..fullname" . }}
+  {{- else }}
   name: permitio-pdp
+  {{- end }}
   {{- with .Values.labels }}
   labels:
     {{- toYaml . | nindent 4 }}
