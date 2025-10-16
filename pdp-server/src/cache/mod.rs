@@ -1,5 +1,5 @@
 use log::error;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Serialize};
 use thiserror::Error;
 
 pub mod memory;
@@ -17,12 +17,6 @@ pub enum CacheError {
     Redis(String),
     #[error("Configuration error: {0}")]
     Config(String),
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct CacheValue {
-    data: String,
-    expires_at: u64,
 }
 
 /// Cache trait defining the interface for all cache implementations.

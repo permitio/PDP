@@ -3,7 +3,6 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 
 /// AuthZen error codes as defined in the specification
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,14 +31,6 @@ impl AuthZenErrorCode {
 #[derive(Debug, Clone)]
 pub struct AuthZenError {
     pub code: AuthZenErrorCode,
-    pub message: String,
-}
-
-/// AuthZen error details for OpenAPI documentation only
-/// This is NOT used in actual responses, only for OpenAPI schema generation
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct AuthZenErrorDetails {
-    pub code: String,
     pub message: String,
 }
 

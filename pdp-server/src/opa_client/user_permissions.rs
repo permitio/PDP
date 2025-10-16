@@ -127,6 +127,7 @@ pub struct UserPermissionsResult {
 }
 // Define a newtype wrapper for HashMap<String, UserPermissionsResult>
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, ToSchema)]
+#[allow(dead_code)] // Used for OpenAPI documentation generation
 pub struct UserPermissionsResults(pub HashMap<String, UserPermissionsResult>);
 
 // Implement IntoResponse for our newtype
