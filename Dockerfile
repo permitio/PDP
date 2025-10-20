@@ -43,6 +43,8 @@ RUN cargo zigbuild -r --target x86_64-unknown-linux-musl --target aarch64-unknow
 # ---------------------------------------------------
 FROM golang:bullseye AS opa_build
 
+ARG TARGETARCH
+
 COPY custom* /custom
 
 # Build OPA binary if custom_opa.tar.gz is provided
@@ -50,13 +52,13 @@ RUN if [ -f /custom/custom_opa.tar.gz ]; \
   then \
     cd /custom && \
     tar xzf custom_opa.tar.gz && \
-    go build -ldflags="-extldflags=-static" -o /opa && \
+    GOOS=linux GOARCH=${TARGETARCH} go build -ldflags="-extldflags=-static" -o /opa && \
     rm -rf /custom; \
   else \
-    case $(uname -m) in \
-      x86_64) curl -L -o /opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static ;; \
-      aarch64) curl -L -o /opa https://openpolicyagent.org/downloads/latest/opa_linux_arm64_static ;; \
-      *) echo "Unknown architecture." && exit 1 ;; \
+    case ${TARGETARCH} in \
+      amd64) curl -L -o /opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static ;; \
+      arm64) curl -L -o /opa https://openpolicyagent.org/downloads/latest/opa_linux_arm64_static ;; \
+      *) echo "Unsupported architecture: ${TARGETARCH}" && exit 1 ;; \
     esac; \
   fi
 
