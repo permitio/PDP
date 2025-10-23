@@ -19,6 +19,7 @@ labels: {}
 annotations: {}
 
 nameOverride: ""
+fullnameOverride: ""
 
 pdp:
   pdpEnvs:
@@ -67,11 +68,11 @@ resources:
 
 # OpenShift configuration
 openshift:
-  enabled: false  # Set to true for OpenShift deployments
+  enabled: false # Set to true for OpenShift deployments
   serviceAccount:
     create: true
     name: "permitio-pdp-sa"
-    sccName: "restricted-v2"  # OpenShift Security Context Constraint
+    sccName: "restricted-v2" # OpenShift Security Context Constraint
   # Security context (SCC will override user/group settings automatically)
   securityContext:
     runAsNonRoot: true

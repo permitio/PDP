@@ -3,7 +3,7 @@ apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   {{- if .Values.useStandardHelmNamingConventions }}
-  name: {{ include "..fullname" . }}
+  name: {{ include "pdp.fullname" . }}
   {{- else }}
   name: permitio-pdp-pdb
   {{- end }}
