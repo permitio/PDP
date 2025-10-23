@@ -1,7 +1,7 @@
 {{/*
 Expand the name of the chart.
 */}}
-{{- define "..name" -}}
+{{- define "pdp.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
@@ -10,7 +10,7 @@ Create a default fully qualified app name.
 We truncate at 63 chars because some Kubernetes name fields are limited to this (by the DNS naming spec).
 If release name contains chart name it will be used as a full name.
 */}}
-{{- define "..fullname" -}}
+{{- define "pdp.fullname" -}}
 {{- if .Values.fullnameOverride }}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
 {{- else }}
@@ -48,7 +48,7 @@ Get the secret name for the API key
 {{- .Values.pdp.existingApiKeySecret.name -}}
 {{- else -}}
 {{- if .Values.useStandardHelmNamingConventions }}
-{{- include "..fullname" . }}
+{{- include "pdp.fullname" . }}
 {{- else -}}
 permitio-pdp-secret
 {{- end -}}
