@@ -30,6 +30,10 @@ pub struct PDPConfig {
     #[config(env = "PDP_USE_NEW_AUTHORIZED_USERS", default = false)]
     pub use_new_authorized_users: bool,
 
+    /// Dangerous flag that exposes Trino endpoints without authentication. Leave disabled unless you fully understand the risks.
+    #[config(env = "PDP_ALLOW_UNAUTHENTICATED_TRINO", default = false)]
+    pub allow_unauthenticated_trino: bool,
+
     /// Timeout in seconds for health checks (default: 3 second)
     #[config(env = "PDP_HEALTHCHECK_TIMEOUT", default = 3.0)]
     pub healthcheck_timeout: f64,
@@ -70,6 +74,7 @@ impl PDPConfig {
                 host: "0.0.0.0".to_string(),
                 port: 0,
                 use_new_authorized_users: false,
+                allow_unauthenticated_trino: false,
                 healthcheck_timeout: 3.0,
                 horizon: HorizonConfig::builder()
                     .env()
@@ -214,6 +219,7 @@ mod tests {
                 assert_eq!(config.cache.store, CacheStore::None);
                 assert_eq!(config.cache.memory.capacity, 128);
                 assert_eq!(config.cache.redis.url, "");
+                assert!(!config.allow_unauthenticated_trino);
                 assert_eq!(config.api_key, "test-api-key");
             },
         );
@@ -270,6 +276,7 @@ mod tests {
                 ("PDP_DEBUG", "true"),
                 ("PDP_USE_NEW_AUTHORIZED_USERS", "true"),
                 ("PDP_HEALTHCHECK_TIMEOUT", "2.5"),
+                ("PDP_ALLOW_UNAUTHENTICATED_TRINO", "true"),
                 // Cache config
                 ("PDP_CACHE_TTL", "1800"),
                 ("PDP_CACHE_STORE", "in-memory"),
@@ -300,6 +307,7 @@ mod tests {
                 assert_eq!(config.debug, Some(true));
                 assert!(config.use_new_authorized_users);
                 assert_eq!(config.healthcheck_timeout, 2.5);
+                assert!(config.allow_unauthenticated_trino);
 
                 // Test cache config
                 assert_eq!(config.cache.ttl, 1800);

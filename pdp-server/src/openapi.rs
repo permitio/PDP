@@ -9,13 +9,15 @@ use utoipa::OpenApi;
 pub(crate) const HEALTH_TAG: &str = "Health API";
 pub(crate) const AUTHZ_TAG: &str = "Authorization API";
 pub(crate) const AUTHZEN_TAG: &str = "AuthZen API";
+pub(crate) const TRINO_TAG: &str = "Trino API";
 
 #[derive(OpenApi)]
 #[openapi(
     tags(
         (name = HEALTH_TAG, description = "Health check endpoints"),
         (name = AUTHZ_TAG, description = "Authorization endpoints"),
-        (name = AUTHZEN_TAG, description = "AuthZen endpoints")
+        (name = AUTHZEN_TAG, description = "AuthZen endpoints"),
+        (name = TRINO_TAG, description = "Trino integration endpoints"),
     ),
     info(
         title = "Permit.io PDP API",
