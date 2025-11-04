@@ -108,6 +108,24 @@ impl TestFixture {
         }
     }
 
+    /// Sets the Trino authz config and recreates the app with the updated state.
+    ///
+    /// This is useful for testing row filter functionality.
+    pub async fn with_trino_authz_config(
+        mut self,
+        trino_authz_config: crate::config::trino_authz::TrinoAuthzConfig,
+    ) -> Self {
+        use std::sync::Arc;
+
+        // Update the state with the new config
+        self.state.trino_authz_config = Some(Arc::new(trino_authz_config));
+
+        // Recreate the app with the updated state
+        self.app = create_app(self.state.clone()).await;
+
+        self
+    }
+
     /// Creates a new test fixture with custom configuration.
     ///
     /// This method creates a fixture and then allows modifying its config

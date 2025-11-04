@@ -6,6 +6,7 @@ use confique::Config;
 pub mod cache;
 pub mod horizon;
 pub mod opa;
+pub mod trino_authz;
 
 /// Main configuration structure for the PDP server
 #[derive(Debug, Config, Clone, Default)]
@@ -37,6 +38,13 @@ pub struct PDPConfig {
     /// Timeout in seconds for health checks (default: 3 second)
     #[config(env = "PDP_HEALTHCHECK_TIMEOUT", default = 3.0)]
     pub healthcheck_timeout: f64,
+
+    /// Path to Trino authorization configuration file (default: /app/config/trino-authz.yaml)
+    #[config(
+        env = "PDP_TRINO_AUTHZ_CONFIG_PATH",
+        default = "/app/config/trino-authz.yaml"
+    )]
+    pub trino_authz_config_path: String,
 
     /// Horizon service configuration
     #[config(nested)]
@@ -76,6 +84,7 @@ impl PDPConfig {
                 use_new_authorized_users: false,
                 allow_unauthenticated_trino: false,
                 healthcheck_timeout: 3.0,
+                trino_authz_config_path: "/tmp/trino-authz.yaml".to_string(),
                 horizon: HorizonConfig::builder()
                     .env()
                     .load()

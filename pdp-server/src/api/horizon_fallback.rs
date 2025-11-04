@@ -527,6 +527,7 @@ mod tests {
             use_new_authorized_users: false,
             allow_unauthenticated_trino: false,
             healthcheck_timeout: 1.0,
+            trino_authz_config_path: "/tmp/trino-authz.yaml".to_string(),
             // Point to a non-existent server with a reserved port
             horizon: crate::config::horizon::HorizonConfig {
                 host: "127.0.0.1".to_string(),
@@ -594,6 +595,7 @@ mod tests {
             use_new_authorized_users: false,
             allow_unauthenticated_trino: false,
             healthcheck_timeout: 1.0,
+            trino_authz_config_path: "/tmp/trino-authz.yaml".to_string(),
             horizon: crate::config::horizon::HorizonConfig {
                 host: horizon_mock.address().ip().to_string(),
                 port: horizon_mock.address().port(),
