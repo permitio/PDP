@@ -62,7 +62,7 @@ async fn check_trino_system_allowed(
 ) -> bool {
     let allowed = query_allowed_cached(
         state,
-        &build_allowed_query(query, "trino.sys"),
+        &build_allowed_query(query, "trino_sys"),
         cache_control,
     )
     .await;
