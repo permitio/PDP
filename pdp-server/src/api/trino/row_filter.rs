@@ -221,7 +221,10 @@ mod tests {
                 expression: "size = 'small'".to_string(),
             }],
         );
-        TrinoAuthzConfig { row_filters }
+        TrinoAuthzConfig {
+            row_filters,
+            column_masks: HashMap::new(),
+        }
     }
 
     #[tokio::test]
