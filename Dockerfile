@@ -50,7 +50,7 @@ RUN if [ -f /custom/custom_opa.tar.gz ]; \
   then \
     cd /custom && \
     tar xzf custom_opa.tar.gz && \
-    go build -ldflags="-extldflags=-static" -o /opa && \
+    CGO_ENABLED=0 go build -a -ldflags="-s -w -extldflags=-static" -tags netgo -installsuffix netgo -o /opa && \
     rm -rf /custom; \
   else \
     case $(uname -m) in \
