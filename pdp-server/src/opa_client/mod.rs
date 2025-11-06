@@ -7,6 +7,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value::{Bool, Object};
 use thiserror::Error;
+use utoipa::ToSchema;
 
 // Reexport modules
 pub mod allowed;
@@ -76,14 +77,14 @@ fn create_opa_request<T: Serialize>(
 
 /// A generic wrapper for OPA requests, wrapping the input data.
 /// https://www.openpolicyagent.org/docs/latest/integration/#named-policy-decisions
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, ToSchema)]
 pub struct OpaRequest<T> {
     pub input: T,
 }
 
 /// A generic wrapper for OPA responses, wrapping the result data.
 /// https://www.openpolicyagent.org/docs/latest/integration/#named-policy-decisions
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, ToSchema)]
 pub struct OpaResponse<T> {
     pub result: T,
 }

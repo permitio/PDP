@@ -1,4 +1,4 @@
-.PHONY: help build prepare build-amd64 build-arm64
+.PHONY: help build prepare build-amd64 build-arm64 cargo-run
 
 .DEFAULT_GOAL := help
 
@@ -28,8 +28,14 @@ build-arm64: prepare
 build: prepare
 	@docker buildx build -t permitio/pdp-v2:$(VERSION) . --load
 
+build-latest: prepare
+	@docker buildx build -t permitio/pdp-v2:latest . --load
+
 run: run-prepare
 	@docker run -it --rm -p 7766:7000 --env PDP_API_KEY=$(API_KEY) --env PDP_DEBUG=true permitio/pdp-v2:$(VERSION)
 
 run-on-background: run-prepare
 	@docker run -it --rm -d -p 7766:7000  --env PDP_API_KEY=$(API_KEY) --env PDP_DEBUG=true permitio/pdp-v2:$(VERSION)
+
+cargo-run:
+	cargo run --bin pdp-server --package pdp-server -- --port 7766
