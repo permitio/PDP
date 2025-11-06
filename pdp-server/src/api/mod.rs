@@ -15,6 +15,7 @@ pub(super) fn router(state: &AppState) -> Router<AppState> {
     let mut root = Router::new().merge(health::router());
 
     if state.config.allow_unauthenticated_trino {
+        log::warn!("[NOTICE] Unauthenticated Trino routes are enabled");
         root = root.merge(trino::router());
     }
 
