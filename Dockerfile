@@ -58,6 +58,17 @@ FROM golang:bullseye AS opa_build
 COPY custom* /custom
 
 # Build OPA binary if custom_opa.tar.gz is provided
+
+# Fix for ARM64 compatibility issue (#289): Build fully static binary to avoid dynamic linking issues
+# Problem: Dynamic linking creates dependencies on system libc (glibc), but Alpine Linux uses musl libc
+# Result: Binary fails with "/lib/ld-musl-aarch64.so.1: /app/bin/opa: Not a valid dynamic program"
+# Solution: Build a truly static binary with no external libc dependencies
+# - CGO_ENABLED=0: Disables CGO to ensure pure Go compilation (eliminates glibc dependency)
+# - -a: Forces rebuilding of all packages to ensure clean static build
+# - -tags netgo: Uses pure Go network stack instead of C-based libc resolver
+# - -s -w: Strips debug info and symbol table to reduce binary size
+# - -extldflags=-static: Ensures static linking if CGO were enabled (defense in depth)
+
 # Use BuildKit cache mounts for Go modules and build cache for MUCH faster incremental builds
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
@@ -65,7 +76,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
   then \
     cd /custom && \
     tar xzf custom_opa.tar.gz && \
-    go build -ldflags="-extldflags=-static" -o /opa && \
+    CGO_ENABLED=0 go build -a -ldflags="-s -w -extldflags=-static" -tags netgo -installsuffix netgo -o /opa && \
     rm -rf /custom; \
   else \
     case $(uname -m) in \
