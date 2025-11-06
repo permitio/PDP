@@ -152,7 +152,7 @@ async fn get_row_filter_expressions(
         query.context.identity.user,
         expressions
             .iter()
-            .map(|e| e.expression.clone())
+            .map(|e| format!("({})", e.expression.clone()))
             .collect::<Vec<String>>()
             .join(" AND ")
     );
