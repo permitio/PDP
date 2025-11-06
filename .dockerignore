@@ -1,17 +1,55 @@
+# Version control
 .git/
-helm/
-.venv/
-.github/
+.gitignore
+
+# Build artifacts
 target/
+.cargo/
 **/*.rs.bk
 **/*.pdb
 Cargo.lock
-.cargo/
-.dockerignore
-.gitignore
+
+# Documentation
 README.md
 docs/
-**/tests/
+*.md
+!requirements.md
+
+# CI/CD and deployment
+.github/
+helm/
+.dockerignore
+
+# Python artifacts
+.venv/
 **/__pycache__/
 **/*.pyc
-**/.DS_Store
+**/*.pyo
+**/.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Test files
+**/tests/
+**/*_test.rs
+**/*_test.go
+**/test_*.py
+
+# Logs and temp files
+*.log
+tmp/
+temp/
+.tmp/
+
+# Local development
+.env
+.env.local
+*.local

@@ -58,6 +58,7 @@ FROM golang:bullseye AS opa_build
 COPY custom* /custom
 
 # Build OPA binary if custom_opa.tar.gz is provided
+
 # Fix for ARM64 compatibility issue (#289): Build fully static binary to avoid dynamic linking issues
 # Problem: Dynamic linking creates dependencies on system libc (glibc), but Alpine Linux uses musl libc
 # Result: Binary fails with "/lib/ld-musl-aarch64.so.1: /app/bin/opa: Not a valid dynamic program"
@@ -67,7 +68,8 @@ COPY custom* /custom
 # - -tags netgo: Uses pure Go network stack instead of C-based libc resolver
 # - -s -w: Strips debug info and symbol table to reduce binary size
 # - -extldflags=-static: Ensures static linking if CGO were enabled (defense in depth)
-# Use BuildKit cache mounts for Go modules and build cache for faster incremental builds
+
+# Use BuildKit cache mounts for Go modules and build cache for MUCH faster incremental builds
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     if [ -f /custom/custom_opa.tar.gz ]; \
