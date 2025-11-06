@@ -13,7 +13,10 @@ WORKDIR /app
 ENV PKGCONFIG_SYSROOTDIR=/
 RUN apk add --no-cache musl-dev openssl-dev zig pkgconf perl make
 
-RUN cargo install --locked cargo-zigbuild cargo-chef
+# Cache cargo installations
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    cargo install --locked cargo-zigbuild cargo-chef
 RUN rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
 
 # (2) nothing changed
@@ -25,17 +28,26 @@ RUN cargo chef prepare --recipe-path recipe.json
 FROM rust_chef AS rust_builder
 COPY --from=rust_planner /app/recipe.json recipe.json
 ENV OPENSSL_DIR=/usr
-RUN cargo chef cook --recipe-path recipe.json --release --zigbuild \
-  --target x86_64-unknown-linux-musl --target aarch64-unknown-linux-musl
+# Enable incremental compilation and use cache mounts
+ENV CARGO_INCREMENTAL=1
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/app/target \
+    cargo chef cook --recipe-path recipe.json --release --zigbuild \
+    --target x86_64-unknown-linux-musl --target aarch64-unknown-linux-musl
 
-# (4) actuall project build for all targets
+# (4) actual project build for all targets
 # binary renamed to easier copy in runtime stage
 COPY . .
-RUN cargo zigbuild -r --target x86_64-unknown-linux-musl --target aarch64-unknown-linux-musl && \
-  mkdir -p /app/linux/arm64/ && \
-  mkdir -p /app/linux/amd64/ && \
-  cp target/aarch64-unknown-linux-musl/release/pdp-server /app/linux/arm64/pdp && \
-  cp target/x86_64-unknown-linux-musl/release/pdp-server /app/linux/amd64/pdp
+# Use cache mounts for incremental builds - this is the key optimization!
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/app/target \
+    cargo zigbuild -r --target x86_64-unknown-linux-musl --target aarch64-unknown-linux-musl && \
+    mkdir -p /app/linux/arm64/ && \
+    mkdir -p /app/linux/amd64/ && \
+    cp target/aarch64-unknown-linux-musl/release/pdp-server /app/linux/arm64/pdp && \
+    cp target/x86_64-unknown-linux-musl/release/pdp-server /app/linux/amd64/pdp
 
 
 # OPA BUILD STAGE -----------------------------------
@@ -55,7 +67,10 @@ COPY custom* /custom
 # - -tags netgo: Uses pure Go network stack instead of C-based libc resolver
 # - -s -w: Strips debug info and symbol table to reduce binary size
 # - -extldflags=-static: Ensures static linking if CGO were enabled (defense in depth)
-RUN if [ -f /custom/custom_opa.tar.gz ]; \
+# Use BuildKit cache mounts for Go modules and build cache for faster incremental builds
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    if [ -f /custom/custom_opa.tar.gz ]; \
   then \
     cd /custom && \
     tar xzf custom_opa.tar.gz && \
@@ -84,9 +99,12 @@ RUN addgroup -S permit -g 1001 && \
 RUN mkdir -p /app/backup && chmod -R 777 /app/backup
 
 # Install necessary libraries and delete SQLite in a single RUN command
-RUN apk update && \
+# Use cache mount for apk to speed up package downloads
+RUN --mount=type=cache,target=/var/cache/apk \
+    ln -s /var/cache/apk /etc/apk/cache && \
+    apk update && \
     apk upgrade && \
-    apk add --no-cache bash build-base libffi-dev libressl-dev musl-dev zlib-dev gcompat wget && \
+    apk add bash build-base libffi-dev libressl-dev musl-dev zlib-dev gcompat wget && \
     apk del sqlite
 
 
@@ -115,8 +133,10 @@ COPY kong_routes.json /config/kong_routes.json
 USER root
 
 # Install python dependencies in one command to optimize layer size
+# Use cache mount for pip to speed up incremental builds
 COPY ./requirements.txt ./requirements.txt
-RUN pip install --upgrade pip setuptools && \
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade pip setuptools && \
     pip install -r requirements.txt && \
     python -m pip uninstall -y pip setuptools && \
     rm -r /usr/local/lib/python3.10/ensurepip
