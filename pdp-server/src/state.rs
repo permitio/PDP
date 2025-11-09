@@ -1,6 +1,6 @@
 use crate::{
     cache::{create_cache, Cache},
-    config::PDPConfig,
+    config::{trino_authz::TrinoAuthzConfig, PDPConfig},
 };
 use http::header::{AUTHORIZATION, CONTENT_TYPE};
 use http::{HeaderMap, HeaderValue};
@@ -21,6 +21,7 @@ pub struct AppState {
     pub watchdog: Option<Arc<ServiceWatchdog>>,
     pub opa_client: Arc<Client>,
     pub horizon_client: Arc<Client>,
+    pub trino_authz_config: Option<Arc<TrinoAuthzConfig>>,
 }
 
 impl AppState {
@@ -32,6 +33,10 @@ impl AppState {
                 .await
                 .map_err(|e| std::io::Error::other(format!("Failed to create cache: {e}")))?,
         );
+
+        // Load Trino authz config if available
+        let trino_authz_config =
+            TrinoAuthzConfig::load_from_file(&config.trino_authz_config_path).map(Arc::new);
 
         Ok(Self {
             config: Arc::new(config.clone()),
@@ -45,6 +50,7 @@ impl AppState {
                 config.api_key.clone(),
                 config.horizon.client_timeout,
             )),
+            trino_authz_config,
         })
     }
 
@@ -54,6 +60,10 @@ impl AppState {
         cache: Cache,
     ) -> Result<Self, std::io::Error> {
         let watchdog = Self::setup_horizon_watchdog(config).await;
+
+        // Load Trino authz config if available
+        let trino_authz_config =
+            TrinoAuthzConfig::load_from_file(&config.trino_authz_config_path).map(Arc::new);
 
         Ok(Self {
             config: Arc::new(config.clone()),
@@ -67,6 +77,7 @@ impl AppState {
                 config.api_key.clone(),
                 config.horizon.client_timeout,
             )),
+            trino_authz_config,
         })
     }
 
@@ -85,6 +96,7 @@ impl AppState {
                 config.api_key.clone(),
                 config.horizon.client_timeout,
             )),
+            trino_authz_config: None,
         }
     }
 
@@ -170,6 +182,7 @@ mod tests {
             use_new_authorized_users: false,
             allow_unauthenticated_trino: false,
             healthcheck_timeout: 1.0,
+            trino_authz_config_path: "/tmp/trino-authz.yaml".to_string(),
             horizon: crate::config::horizon::HorizonConfig {
                 host: "localhost".to_string(),
                 port: 3000,

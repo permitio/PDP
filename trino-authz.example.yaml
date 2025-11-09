@@ -1,0 +1,69 @@
+# Example Trino Authorization Configuration
+# This file configures row-level security filters for Trino tables
+
+rowFilters:
+  # Define filters for the postgres.public.projects table
+  trino_table_postgres_public_projects:
+    - action: only_public
+      expression: "is_public = TRUE"
+    - action: small_projects
+      expression: "size = 'small'"
+
+  # Define filters for the postgres.public.users table
+  trino_table_postgres_public_users:
+    - action: view_active
+      expression: "status = 'active'"
+    - action: view_own_data
+      expression: "user_id = current_user"
+
+  # Define filters for the analytics.sales.transactions table
+  trino_table_analytics_sales_transactions:
+    - action: current_year_only
+      expression: "YEAR(transaction_date) = YEAR(CURRENT_DATE)"
+    - action: region_us
+      expression: "region = 'US'"
+    - action: high_value
+      expression: "amount > 1000"
+
+# Note:
+# - The resource name follows the format: trino_table_{catalog}_{schema}_{table}
+# - The 'action' corresponds to the action in your Permit policy
+# - The 'expression' is the SQL WHERE clause that will be applied to queries
+# - Multiple filters can be defined per table
+# - If a user has permission for multiple actions, all corresponding expressions will be returned
+
+# Column Masking Configuration
+columnMasking:
+  # Define column masks for the postgres.public.users table
+  trino_table_postgres_public_users:
+    action: AddColumnMask  # Default action for all columns (optional, defaults to "AddColumnMask")
+    columns:
+      - column_name: ssn
+        view_expression: "'***-**-****'"
+      - column_name: email
+        view_expression: "CONCAT(SUBSTRING(email, 1, 2), '***@***.com')"
+        identity: admin  # Optional: evaluate expression as a different user
+      - column_name: phone
+        view_expression: "'XXX-XXX-XXXX'"
+        action: ViewPhone  # Optional: override the default action for this column
+
+  # Define column masks for the analytics.sales.transactions table
+  trino_table_analytics_sales_transactions:
+    action: ViewSensitiveData
+    columns:
+      - column_name: credit_card
+        view_expression: "CONCAT('****-****-****-', SUBSTRING(credit_card, -4))"
+      - column_name: customer_name
+        view_expression: "CONCAT(SUBSTRING(customer_name, 1, 1), '***')"
+        action: ViewCustomerPII  # Custom action for customer PII
+
+# Note for Column Masking:
+# - The resource name follows the same format as row filters: trino_table_{catalog}_{schema}_{table}
+# - The 'action' at the table level is the default action for all columns
+# - Each column can optionally override the action
+# - The 'view_expression' is the SQL expression that will be used to mask the column
+# - Optional 'identity' field allows evaluating the expression as a different user
+# - Column masks are applied based on permissions:
+#   * Table-level permission: user has 'action' permission on the table resource
+#   * Column-level permission: user has 'action' permission on the specific column resource
+#   * A mask is applied if EITHER table-level OR column-level permission is granted

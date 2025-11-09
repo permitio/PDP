@@ -183,6 +183,7 @@ mod tests {
             horizon_client: Arc::new(Client::new()),
             cache: Arc::new(Cache::Null(NullCache::new())),
             watchdog: None,
+            trino_authz_config: None,
         }
     }
 
