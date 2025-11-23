@@ -14,28 +14,6 @@ jobs:
     uses: ./.github/workflows/tests.yml
     secrets: inherit
 
-  build-and-push-pdp-vanilla:
-    needs: pdp-tests
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Set up QEMU
-      uses: docker/setup-qemu-action@v3
-
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
-
-    - name: Login to Docker Hub
-      uses: docker/login-action@v3
-      with:
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-    - name: Pre build - for PDP-Vanilla
-      run: echo "${{ github.event.release.tag_name }}" | cut -d '-' -f 1 > permit_pdp_version
-
   build-and-push-pdp:
     needs: pdp-tests
     runs-on: ubuntu-latest
