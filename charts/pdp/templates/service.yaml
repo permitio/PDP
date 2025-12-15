@@ -14,11 +14,13 @@ spec:
   selector:
     {{- include "pdp.selectorLabels" . | nindent 4 }}
   ports:
-    - name: pdp
-      port: {{ .Values.pdp.pdpPort }}
+    - name: http
+      protocol: TCP
+      port: {{ .Values.pdp.port }}
       targetPort: 7000
+    {{- range .Values.pdp.additionalPorts }}
+    - name: {{ .name }}
+      port: {{ .port }}
+      targetPort: {{ .targetPort }}
       protocol: TCP
-    - name: opa
-      port: {{ .Values.pdp.opaPort }}
-      targetPort: 8181
-      protocol: TCP
+    {{- end }}
