@@ -13,7 +13,15 @@ pdp:
   # existingApiKeySecret:
   #   name: "my-existing-secret"
   #   key: "api-key"
-  port: 7766
+  # Ports to expose on the service and container
+  # Available container ports: 7000 (PDP API), 8181 (OPA)
+  ports:
+    - name: pdp
+      port: 7766
+      targetPort: 7000
+    - name: opa
+      port: 8181
+      targetPort: 8181
   replicas: 1
   image:
     repository: permitio/pdp-v2

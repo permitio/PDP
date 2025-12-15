@@ -14,6 +14,9 @@ spec:
   selector:
     {{- include "pdp.selectorLabels" . | nindent 4 }}
   ports:
-    - protocol: TCP
-      port: {{ .Values.pdp.port }}
-      targetPort: 7000
+    {{- range .Values.pdp.ports }}
+    - name: {{ .name }}
+      port: {{ .port }}
+      targetPort: {{ .targetPort | default .port }}
+      protocol: TCP
+    {{- end }}
