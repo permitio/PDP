@@ -44,10 +44,10 @@ spec:
               type: RuntimeDefault
           {{- end }}
           ports:
-            {{- range .Values.pdp.ports }}
-            - name: {{ .name }}
-              containerPort: {{ .targetPort | default .port }}
-            {{- end }}
+            - name: pdp
+              containerPort: 7000
+            - name: opa
+              containerPort: 8181
           env:
             - name: PDP_API_KEY
               valueFrom:
