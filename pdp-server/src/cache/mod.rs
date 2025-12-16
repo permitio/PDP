@@ -1,4 +1,3 @@
-use log::error;
 use serde::{de::DeserializeOwned, Serialize};
 use thiserror::Error;
 
