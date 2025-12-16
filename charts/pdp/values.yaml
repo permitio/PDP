@@ -6,6 +6,10 @@ pdp:
     []
     # - name: custom_env
     #   value: "custom_env"
+    #
+    # Example - enable Envoy gRPC ext_authz on port 9191 (requires PDP >= 0.9.10):
+    # - name: PDP_OPA_PLUGINS
+    #   value: '{"permit_graph":{},"envoy_ext_authz_grpc":{"addr":":9191","path":"permit/root"}}'
   ApiKey: "<your PDP API Key>"
 
   # Use an existing secret for the API key instead of creating one
@@ -14,6 +18,12 @@ pdp:
   #   name: "my-existing-secret"
   #   key: "api-key"
   port: 7766
+  # Example - expose Envoy gRPC ext_authz port (requires PDP_OPA_PLUGINS env var above):
+  #   additionalPorts:
+  #     - name: grpc
+  #       port: 9191
+  #       targetPort: 9191
+  additionalPorts: []
   replicas: 1
   image:
     repository: permitio/pdp-v2

@@ -45,6 +45,10 @@ spec:
           {{- end }}
           ports:
             - containerPort: {{ .Values.pdp.port }}
+            {{- range .Values.pdp.additionalPorts }}
+            - name: {{ .name }}
+              containerPort: {{ .targetPort }}
+            {{- end }}
           env:
             - name: PDP_API_KEY
               valueFrom:
