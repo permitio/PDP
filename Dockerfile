@@ -8,7 +8,7 @@ ARG OPA_BUILD=permit
 # couldn't get this to work without the help of those two sources
 # (1) this stage will be run always on current arch
 # zigbuild & Cargo targets added
-FROM --platform=$BUILDPLATFORM rust:1.85-alpine AS rust_chef
+FROM --platform=$BUILDPLATFORM rust:1.88-alpine AS rust_chef
 WORKDIR /app
 ENV PKGCONFIG_SYSROOTDIR=/
 RUN apk add --no-cache musl-dev openssl-dev zig pkgconf perl make
