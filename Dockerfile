@@ -140,7 +140,7 @@ COPY ./requirements.txt ./requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip setuptools && \
     pip install -r requirements.txt && \
-    python -m pip uninstall -y pip setuptools && \
+    python -m pip uninstall -y pip setuptools wheel && \
     rm -r /usr/local/lib/python3.10/ensurepip
 
 USER permit
