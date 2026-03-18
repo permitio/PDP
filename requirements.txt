@@ -1,9 +1,9 @@
-aiohttp>=3.12.14,<4
+aiohttp>=3.13.3,<4
 fastapi>=0.115.6,<1
 Jinja2>=3.1.2,<4
 pydantic[email]>=1.9.1,<2
 requests>=2.32.4,<3
-urllib3>=2.5.0,<3
+urllib3>=2.6.3,<3
 gunicorn>=23.0.0,<24
 tenacity>=8.0.1,<9
 typer>=0.4.1,<1
@@ -15,6 +15,7 @@ scalar-fastapi==1.0.3
 httpx>=0.27.0,<1
 # TODO: change to use re2 in the future, currently not supported in alpine due to c++ library issues
 # google-re2 # use re2 instead of re for regex matching because it's simiplier and safer for user inputted regexes
-protobuf>=3.20.2 # not directly required, pinned by Snyk to avoid a vulnerability
+protobuf>=6.33.5 # pinned to avoid CVE-2026-0994
+cryptography>=46.0.5,<47 # pinned to avoid CVE-2026-26007
 opal-common==0.8.3
 opal-client==0.8.3

@@ -8,6 +8,7 @@ ARG OPA_BUILD=permit
 # couldn't get this to work without the help of those two sources
 # (1) this stage will be run always on current arch
 # zigbuild & Cargo targets added
+
 FROM --platform=$BUILDPLATFORM rust:1.94-alpine AS rust_chef
 WORKDIR /app
 ENV PKGCONFIG_SYSROOTDIR=/
@@ -140,7 +141,7 @@ COPY ./requirements.txt ./requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip setuptools && \
     pip install -r requirements.txt && \
-    python -m pip uninstall -y pip setuptools && \
+    python -m pip uninstall -y pip setuptools wheel && \
     rm -r /usr/local/lib/python3.10/ensurepip
 
 USER permit
