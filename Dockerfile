@@ -54,7 +54,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # OPA BUILD STAGE -----------------------------------
 # Build OPA from source or download precompiled binary
 # ---------------------------------------------------
-FROM golang:bullseye AS opa_build
+FROM golang:1.25-bookworm AS opa_build
 
 COPY custom* /custom
 
