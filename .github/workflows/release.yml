@@ -13,6 +13,10 @@ jobs:
     # Call the reusable tests workflow.
     uses: ./.github/workflows/tests.yml
     secrets: inherit
+    permissions:
+      contents: read
+      pull-requests: write
+      security-events: write
 
   build-and-push-pdp:
     needs: pdp-tests
