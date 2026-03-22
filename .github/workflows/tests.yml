@@ -154,6 +154,8 @@ jobs:
       # required to create a pull request comment with the SARIF report
       pull-requests: write
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
       - name: Download Docker image artifact
         uses: actions/download-artifact@v4
         with:
