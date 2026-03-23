@@ -170,15 +170,22 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Docker Scout CVE scan
+      - name: Docker Scout CVE report (all severities)
+        uses: docker/scout-action@v1
+        with:
+          command: cves
+          image: local://permitio/pdp-v2:next
+          exit-code: false
+          sarif-file: scout-results.sarif
+          summary: true
+
+      - name: Docker Scout CVE gate (high and critical)
         uses: docker/scout-action@v1
         with:
           command: cves
           image: local://permitio/pdp-v2:next
           only-severities: critical,high
           exit-code: true
-          sarif-file: scout-results.sarif
-          summary: true
 
       - name: Upload SARIF report
         if: always()
