@@ -108,7 +108,7 @@ RUN --mount=type=cache,target=/var/cache/apk \
     ln -s /var/cache/apk /etc/apk/cache && \
     apk update && \
     apk upgrade && \
-    apk add bash libffi libressl gcompat wget && \
+    apk add bash libffi libressl gcompat && \
     apk del sqlite
 
 
