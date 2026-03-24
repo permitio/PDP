@@ -101,13 +101,14 @@ RUN addgroup -S permit -g 1001 && \
 # Create backup directory with permissions
 RUN mkdir -p /app/backup && chmod -R 777 /app/backup
 
-# Install necessary libraries and delete SQLite in a single RUN command
-# Use cache mount for apk to speed up package downloads
+# Install runtime libraries and delete SQLite
+# Build deps (build-base, *-dev) are installed and removed in the pip install
+# layer to avoid persisting binutils CVEs (CVE-2025-69649, CVE-2025-69650)
 RUN --mount=type=cache,target=/var/cache/apk \
     ln -s /var/cache/apk /etc/apk/cache && \
     apk update && \
     apk upgrade && \
-    apk add bash build-base libffi-dev libressl-dev musl-dev zlib-dev gcompat wget && \
+    apk add bash libffi libressl gcompat && \
     apk del sqlite
 
 
@@ -139,10 +140,12 @@ USER root
 # Use cache mount for pip to speed up incremental builds
 COPY ./requirements.txt ./requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
+    apk add --no-cache --virtual .build-deps build-base libffi-dev libressl-dev musl-dev zlib-dev && \
     pip install --upgrade pip setuptools && \
     pip install -r requirements.txt && \
     python -m pip uninstall -y pip setuptools wheel && \
-    rm -r /usr/local/lib/python3.10/ensurepip
+    rm -r /usr/local/lib/python3.10/ensurepip && \
+    apk del .build-deps
 
 USER permit
 

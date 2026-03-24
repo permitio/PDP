@@ -35,7 +35,7 @@ jobs:
           pip install ".[dev]"
           pytest -s --cache-clear horizon/tests/
 
-  pdp-tester:
+  build-pdp-image:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -73,6 +73,28 @@ jobs:
           tags: permitio/pdp-v2:next
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Save Docker image as artifact
+        run: docker save permitio/pdp-v2:next -o pdp-image.tar
+
+      - name: Upload Docker image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdp-image
+          path: pdp-image.tar
+          retention-days: 1
+
+  pdp-tester:
+    runs-on: ubuntu-latest
+    needs: build-pdp-image
+    steps:
+      - name: Download Docker image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: pdp-image
+
+      - name: Load Docker image
+        run: docker load -i pdp-image.tar
 
       # Checkout the pdp-tester repository
       - name: Checkout pdp-tester repository
@@ -119,6 +141,57 @@ jobs:
             echo "========================================"
             echo ""
           done
+
+  docker-scout:
+    runs-on: ubuntu-latest
+    needs: build-pdp-image
+    if: github.event_name == 'pull_request'
+    permissions:
+      # required to upload the SARIF report
+      security-events: write
+      # required to download the Docker image artifact
+      contents: read
+      # required to create a pull request comment with the SARIF report
+      pull-requests: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Download Docker image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: pdp-image
+
+      - name: Load Docker image
+        run: docker load -i pdp-image.tar
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker Scout CVE report (all severities)
+        uses: docker/scout-action@v1
+        with:
+          command: cves
+          image: local://permitio/pdp-v2:next
+          exit-code: false
+          sarif-file: scout-results.sarif
+          summary: true
+
+      - name: Docker Scout CVE gate (high and critical)
+        uses: docker/scout-action@v1
+        with:
+          command: cves
+          image: local://permitio/pdp-v2:next
+          only-severities: critical,high
+          exit-code: true
+
+      - name: Upload SARIF report
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: scout-results.sarif
 
   rust-ci:
     name: Rust CI
