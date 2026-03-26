@@ -27,6 +27,7 @@ from scalar_fastapi import get_scalar_api_reference
 
 from horizon.authentication import enforce_pdp_token
 from horizon.config import MOCK_API_KEY, sidecar_config
+from horizon.connectivity.api import init_connectivity_router
 from horizon.enforcer.api import init_enforcer_api_router, stats_manager
 from horizon.enforcer.opa.config_maker import (
     get_opa_authz_policy_file_path,
@@ -148,6 +149,7 @@ class PermitPDP:
 
         self._configure_opal_data_updater()
         self._configure_opal_offline_mode()
+        self._configure_opal_server_connectivity()
 
         if sidecar_config.PRINT_CONFIG_ON_STARTUP:
             logger.info(
@@ -326,6 +328,16 @@ class PermitPDP:
             Path(sidecar_config.OFFLINE_MODE_BACKUP_DIR) / sidecar_config.OFFLINE_MODE_POLICY_BACKUP_FILENAME
         )
 
+    def _configure_opal_server_connectivity(self):
+        """
+        configure control plane connectivity when offline mode is enabled.
+        When both offline mode and connectivity disabled are set, the PDP starts
+        disconnected from the control plane and serves from a local backup.
+        """
+        opal_client_config.DEFAULT_OPAL_SERVER_CONNECTIVITY_DISABLED = (
+            sidecar_config.ENABLE_OFFLINE_MODE and sidecar_config.CONTROL_PLANE_CONNECTIVITY_DISABLED
+        )
+
     def _fix_data_topics(self) -> list[str]:
         """
         This is a worksaround for the following issue:
@@ -409,6 +421,12 @@ class PermitPDP:
             prefix="/v2/facts/{proj_id}/{env_id}",
             tags=["Local Facts API (compat)"],
             include_in_schema=False,
+            dependencies=[Depends(enforce_pdp_token)],
+        )
+        connectivity_router = init_connectivity_router(self._opal)
+        app.include_router(
+            connectivity_router,
+            tags=["Control Plane Connectivity"],
             dependencies=[Depends(enforce_pdp_token)],
         )
 
