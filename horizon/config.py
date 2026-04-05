@@ -131,6 +131,13 @@ class SidecarConfig(Confi):
         description="Filename for offline mode's policy backup (OPAL's offline mode backup)",
     )
 
+    CONTROL_PLANE_CONNECTIVITY_DISABLED = confi.bool(
+        "CONTROL_PLANE_CONNECTIVITY_DISABLED",
+        False,
+        description="When true (and ENABLE_OFFLINE_MODE is true), the PDP starts disconnected from the control plane "
+        "and serves from a local backup. Can be toggled at runtime via the /control-plane/connectivity endpoints.",
+    )
+
     CONFIG_FETCH_MAX_RETRIES = confi.int(
         "CONFIG_FETCH_MAX_RETRIES",
         6,
