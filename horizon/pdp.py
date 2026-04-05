@@ -423,12 +423,13 @@ class PermitPDP:
             include_in_schema=False,
             dependencies=[Depends(enforce_pdp_token)],
         )
-        connectivity_router = init_connectivity_router(self._opal)
-        app.include_router(
-            connectivity_router,
-            tags=["Control Plane Connectivity"],
-            dependencies=[Depends(enforce_pdp_token)],
-        )
+        if sidecar_config.ENABLE_OFFLINE_MODE:
+            connectivity_router = init_connectivity_router(self._opal)
+            app.include_router(
+                connectivity_router,
+                tags=["Control Plane Connectivity"],
+                dependencies=[Depends(enforce_pdp_token)],
+            )
 
         # TODO: remove this when clients update sdk version (legacy routes)
         @app.post(
