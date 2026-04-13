@@ -26,8 +26,8 @@ def test_consistent_update_header_constant():
 
 
 @pytest.mark.asyncio
-async def test_build_forward_request_adds_consistent_update_header():
-    """Every forwarded request should carry the X-Permit-Consistent-Update: true header."""
+async def test_build_forward_request_adds_header_when_consistent_update():
+    """When is_consistent_update=True, request should carry the X-Permit-Consistent-Update header."""
     client = FactsClient()
 
     mock_remote_config = MagicMock()
@@ -38,6 +38,24 @@ async def test_build_forward_request_adds_consistent_update_header():
         patch("horizon.facts.client.get_env_api_key", return_value="test_api_key"),
     ):
         request = _make_request(headers={"authorization": "Bearer user_token", "content-type": "application/json"})
-        forward_request = await client.build_forward_request(request, "/users")
+        forward_request = await client.build_forward_request(request, "/users", is_consistent_update=True)
 
         assert forward_request.headers.get(CONSISTENT_UPDATE_HEADER) == "true"
+
+
+@pytest.mark.asyncio
+async def test_build_forward_request_omits_header_by_default():
+    """By default (fallback proxy path), the request should NOT carry the consistent-update header."""
+    client = FactsClient()
+
+    mock_remote_config = MagicMock()
+    mock_remote_config.context = {"project_id": "proj1", "env_id": "env1"}
+
+    with (
+        patch("horizon.facts.client.get_remote_config", return_value=mock_remote_config),
+        patch("horizon.facts.client.get_env_api_key", return_value="test_api_key"),
+    ):
+        request = _make_request(headers={"authorization": "Bearer user_token", "content-type": "application/json"})
+        forward_request = await client.build_forward_request(request, "/anything")
+
+        assert forward_request.headers.get(CONSISTENT_UPDATE_HEADER) is None

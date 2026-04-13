@@ -40,17 +40,21 @@ class FactsClient:
         path: str,
         *,
         query_params: dict[str, Any] | None = None,
+        is_consistent_update: bool = False,
     ) -> HttpxRequest:
         """
         Build an HTTPX request from a FastAPI request to forward to the facts service.
         :param request: FastAPI request
         :param path: Backend facts service path to forward to
+        :param is_consistent_update: if True, marks the request as a consistent update so the
+            backend skips the control-plane delta update (the PDP handles propagation locally).
         :return: HTTPX request
         """
         forward_headers = {
             key: value for key, value in request.headers.items() if key.lower() in {"authorization", "content-type"}
         }
-        forward_headers[CONSISTENT_UPDATE_HEADER] = "true"
+        if is_consistent_update:
+            forward_headers[CONSISTENT_UPDATE_HEADER] = "true"
         remote_config = get_remote_config()
         project_id = remote_config.context.get("project_id")
         environment_id = remote_config.context.get("env_id")
@@ -80,14 +84,18 @@ class FactsClient:
         path: str,
         *,
         query_params: dict[str, Any] | None = None,
+        is_consistent_update: bool = False,
     ) -> HttpxResponse:
         """
         Send a forward request to the facts service.
         :param request: FastAPI request
         :param path: Backend facts service path to forward to
+        :param is_consistent_update: see build_forward_request.
         :return: HTTPX response
         """
-        forward_request = await self.build_forward_request(request, path, query_params=query_params)
+        forward_request = await self.build_forward_request(
+            request, path, query_params=query_params, is_consistent_update=is_consistent_update
+        )
         return await self.send(forward_request)
 
     @staticmethod
