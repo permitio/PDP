@@ -15,6 +15,8 @@ from horizon.config import sidecar_config
 from horizon.startup.api_keys import get_env_api_key
 from horizon.startup.remote_config import get_remote_config
 
+CONSISTENT_UPDATE_HEADER = "X-Permit-Consistent-Update"
+
 
 class FactsClient:
     def __init__(self):
@@ -48,6 +50,7 @@ class FactsClient:
         forward_headers = {
             key: value for key, value in request.headers.items() if key.lower() in {"authorization", "content-type"}
         }
+        forward_headers[CONSISTENT_UPDATE_HEADER] = "true"
         remote_config = get_remote_config()
         project_id = remote_config.context.get("project_id")
         environment_id = remote_config.context.get("env_id")
