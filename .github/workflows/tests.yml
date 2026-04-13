@@ -146,7 +146,7 @@ jobs:
             --set image.pullPolicy=Never \
             --set pdp.image=permitio/pdp-v2 \
             --set 'pdp.localTags[0]=next' \
-            --set 'pdp.includeTags={}' \
+            --set 'pdp.includeTags=' \
             --set tests.skipGenerate=true \
             --set tests.startTimeout=180 \
             --set namespace.create=false \
