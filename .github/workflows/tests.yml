@@ -104,43 +104,81 @@ jobs:
           token: ${{ secrets.CLONE_REPO_TOKEN }}
           path: './pdp-tester'
 
-      # Setup Python environment
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      # Start k3d cluster for Kubernetes-based pdp-tester
+      - name: Start k3d cluster
+        uses: AbsaOSS/k3d-action@v2.4.0
         with:
-          python-version: "3.12"
+          cluster-name: pdp-tester
+          args: --k3s-arg "--disable=traefik@server:0"
 
-      # Install dependencies for pdp-tester
-      - name: Install pdp-tester dependencies
+      # Import PDP image into k3d with 'next' tag (locally built)
+      - name: Import PDP image into k3d
+        run: k3d image import permitio/pdp-v2:next -c pdp-tester
+
+      # Build pdp-tester image and import into k3d
+      - name: Build and import pdp-tester image
         working-directory: ./pdp-tester
         run: |
-          pip install -r requirements.txt
+          docker build -t pdp-tester:ci .
+          k3d image import pdp-tester:ci -c pdp-tester
 
-      # Run pdp-tester
-      - name: Run pdp-tester
-        working-directory: ./pdp-tester
+      # Create namespace and secrets
+      - name: Create secrets
         env:
-          TOKEN: ${{ secrets.PDP_TESTER_API_KEY }}
-          LOCAL_TAGS: '["next"]'
-          INCLUDE_TAGS: '[]'
-          AUTO_REMOVE: "False"
-          SKIP_GENERATE: "True"
-          ENABLE_APM: "False"
+          PERMIT_TOKEN: ${{ secrets.PDP_TESTER_API_KEY }}
         run: |
-          python -m pdp_tester.main
+          kubectl create namespace pdp-tester || true
+          kubectl create secret generic pdp-tester-credentials \
+            -n pdp-tester \
+            --from-literal=token="${PERMIT_TOKEN}" \
+            --dry-run=client -o yaml | kubectl apply -f -
 
-      - name: Print Docker container logs
+      # Deploy pdp-tester via Helm with the "next" PDP image
+      - name: Deploy pdp-tester via Helm
+        working-directory: ./pdp-tester
+        run: |
+          helm install pdp-tester ./deploy/helm/pdp-tester \
+            --set mode=job \
+            --set permit.existingSecret=pdp-tester-credentials \
+            --set permit.apiUrl=https://permitio.api.stg.permit.io \
+            --set image.repository=pdp-tester \
+            --set image.tag=ci \
+            --set image.pullPolicy=Never \
+            --set pdp.image=permitio/pdp-v2 \
+            --set 'pdp.localTags[0]=next' \
+            --set 'pdp.includeTags=' \
+            --set tests.skipGenerate=true \
+            --set tests.startTimeout=180 \
+            --set namespace.create=false \
+            --set logJson=false
+
+      - name: Wait for Job completion
+        run: |
+          kubectl wait --for=condition=complete job/pdp-tester \
+            -n pdp-tester --timeout=600s
+
+      - name: Check test results
+        run: |
+          LOGS=$(kubectl logs job/pdp-tester -n pdp-tester)
+          echo "$LOGS" | tail -30
+          if echo "$LOGS" | grep -q "test cases failed"; then
+            echo "::error::Some test cases failed!"
+            exit 1
+          fi
+
+      - name: Print tester logs
         if: always()
         run: |
-          echo "Fetching logs for all Docker containers..."
-          for container in $(docker ps -aq); do
-            echo "========================================"
-            echo "Logs for container: $container"
-            echo "----------------------------------------"
-            docker logs "$container" || true
-            echo "========================================"
-            echo ""
-          done
+          echo "=== PDP Tester logs ==="
+          kubectl logs job/pdp-tester -n pdp-tester --tail=200 || true
+          echo ""
+          echo "=== PDP Pod logs ==="
+          kubectl logs -l pdp-tester.permit.io/managed-by=pdp-tester \
+            -n pdp-tester --tail=50 || true
+
+      - name: Teardown k3d cluster
+        if: always()
+        run: k3d cluster delete pdp-tester || true
 
   docker-scout:
     runs-on: ubuntu-latest
