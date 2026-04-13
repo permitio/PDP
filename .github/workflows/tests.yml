@@ -111,12 +111,9 @@ jobs:
           cluster-name: pdp-tester
           args: --k3s-arg "--disable=traefik@server:0"
 
-      # Tag and import PDP image into k3d
-      # Tag as 'latest' so pdp-tester's default includeTags picks it up
+      # Import PDP image into k3d with 'next' tag (locally built)
       - name: Import PDP image into k3d
-        run: |
-          docker tag permitio/pdp-v2:next permitio/pdp-v2:latest
-          k3d image import permitio/pdp-v2:latest -c pdp-tester
+        run: k3d image import permitio/pdp-v2:next -c pdp-tester
 
       # Build pdp-tester image and import into k3d
       - name: Build and import pdp-tester image
@@ -148,6 +145,8 @@ jobs:
             --set image.tag=ci \
             --set image.pullPolicy=Never \
             --set pdp.image=permitio/pdp-v2 \
+            --set 'pdp.localTags[0]=next' \
+            --set 'pdp.includeTags={}' \
             --set tests.skipGenerate=true \
             --set namespace.create=false \
             --set logJson=false
