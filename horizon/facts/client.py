@@ -16,6 +16,8 @@ from horizon.startup.api_keys import get_env_api_key
 from horizon.startup.remote_config import get_remote_config
 
 CONSISTENT_UPDATE_HEADER = "X-Permit-Consistent-Update"
+# Backend compares this value case-sensitively (`value == "true"`); keep coupled to the header name.
+CONSISTENT_UPDATE_HEADER_VALUE = "true"
 
 
 class FactsClient:
@@ -54,7 +56,7 @@ class FactsClient:
             key: value for key, value in request.headers.items() if key.lower() in {"authorization", "content-type"}
         }
         if is_consistent_update:
-            forward_headers[CONSISTENT_UPDATE_HEADER] = "true"
+            forward_headers[CONSISTENT_UPDATE_HEADER] = CONSISTENT_UPDATE_HEADER_VALUE
         remote_config = get_remote_config()
         project_id = remote_config.context.get("project_id")
         environment_id = remote_config.context.get("env_id")
