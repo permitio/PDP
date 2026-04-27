@@ -353,7 +353,7 @@ async def forward_request_then_wait_for_update(
     query_params: dict[str, Any] | None = None,
 ) -> Response:
     _update_id = update_id or uuid4()
-    response = await client.send_forward_request(request, path, query_params=query_params)
+    response = await client.send_forward_request(request, path, query_params=query_params, is_consistent_update=True)
     body = client.extract_body(response)
     if body is None:
         return client.convert_response(response)
