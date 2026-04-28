@@ -17,5 +17,5 @@ httpx>=0.27.0,<1
 # google-re2 # use re2 instead of re for regex matching because it's simiplier and safer for user inputted regexes
 protobuf>=6.33.5 # pinned to avoid CVE-2026-0994
 cryptography>=46.0.5,<47 # pinned to avoid CVE-2026-26007
-opal-common==0.9.4
-opal-client==0.9.4
+opal-common==0.9.5
+opal-client==0.9.5
