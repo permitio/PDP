@@ -205,7 +205,7 @@ async def post_to_opa(request: Request, path: str, data: dict | None):
     exc = None
     _set_use_debugger(data)
     try:
-        logger.debug(f"calling OPA at '{url}' with input: {data}")
+        logger.info(f"calling OPA at '{url}' with input: {data}")
         async with aiohttp.ClientSession(trust_env=True) as session:  # noqa: SIM117
             async with session.post(
                 url,
@@ -251,7 +251,8 @@ def _set_use_debugger(data: dict | None) -> None:
 async def _is_allowed(query: BaseSchema, request: Request, policy_package: str):
     opa_input = {"input": query.dict()}
     path = policy_package.replace(".", "/")
-    return await post_to_opa(request, path, opa_input)
+    opa_response = await post_to_opa(request, path, opa_input)
+    return opa_response
 
 
 def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noqa: C901
@@ -369,6 +370,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
         request: Request,
         query: UserPermissionsQuery,
     ):
+        logger.info("user-permissions request: {}", query.json())
         response = await _is_allowed(query, request, USER_PERMISSIONS_POLICY_PACKAGE)
         log_query_result(query, response)
         try:
