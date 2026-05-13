@@ -90,7 +90,9 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # MAIN IMAGE ----------------------------------------
 # Main image setup (optimized)
 # ---------------------------------------------------
-FROM python:3.10-alpine3.22 AS main
+# Alpine 3.23+ ships sqlite-libs >= 3.51.2 which fixes CVE-2025-70873
+# (info disclosure in SQLite zipfile extension's zipfileInflate).
+FROM python:3.10-alpine3.23 AS main
 
 WORKDIR /app
 
