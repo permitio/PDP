@@ -67,7 +67,11 @@ class FactsClient:
             )
 
         full_path = urljoin(f"/v2/facts/{project_id}/{environment_id}/", path.removeprefix("/"))
-        _query_params = {**request.query_params, **(query_params or {})}
+        _query_params = list(request.query_params.multi_items())
+        if query_params:
+            override_keys = set(query_params)
+            _query_params = [(key, value) for key, value in _query_params if key not in override_keys]
+            _query_params.extend(query_params.items())
         return self.client.build_request(
             method=request.method,
             url=full_path,

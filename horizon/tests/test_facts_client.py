@@ -5,13 +5,13 @@ from horizon.facts.client import CONSISTENT_UPDATE_HEADER, FactsClient
 from starlette.requests import Request as FastApiRequest
 
 
-def _make_request(headers: dict[str, str] | None = None) -> FastApiRequest:
+def _make_request(headers: dict[str, str] | None = None, query_string: bytes = b"") -> FastApiRequest:
     scope = {
         "type": "http",
         "method": "POST",
         "path": "/facts/users",
         "raw_path": b"/facts/users",
-        "query_string": b"",
+        "query_string": query_string,
         "headers": [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()],
     }
 
@@ -57,6 +57,46 @@ async def test_build_forward_request_omits_header_by_default():
         forward_request = await client.build_forward_request(request, "/anything")
 
         assert forward_request.headers.get(CONSISTENT_UPDATE_HEADER) is None
+
+
+@pytest.mark.asyncio
+async def test_build_forward_request_preserves_repeated_query_params():
+    client = FactsClient()
+
+    mock_remote_config = MagicMock()
+    mock_remote_config.context = {"project_id": "proj1", "env_id": "env1"}
+
+    with (
+        patch("horizon.facts.client.get_remote_config", return_value=mock_remote_config),
+        patch("horizon.facts.client.get_env_api_key", return_value="test_api_key"),
+    ):
+        request = _make_request(query_string=b"tenant=tenant_id&user=user_1&user=user_2")
+        forward_request = await client.build_forward_request(request, "/role_assignments")
+
+        assert forward_request.url.params.get_list("user") == ["user_1", "user_2"]
+        assert forward_request.url.params["tenant"] == "tenant_id"
+
+
+@pytest.mark.asyncio
+async def test_build_forward_request_query_param_overrides_replace_existing_values():
+    client = FactsClient()
+
+    mock_remote_config = MagicMock()
+    mock_remote_config.context = {"project_id": "proj1", "env_id": "env1"}
+
+    with (
+        patch("horizon.facts.client.get_remote_config", return_value=mock_remote_config),
+        patch("horizon.facts.client.get_env_api_key", return_value="test_api_key"),
+    ):
+        request = _make_request(query_string=b"return_deleted=false&user=user_1&user=user_2")
+        forward_request = await client.build_forward_request(
+            request,
+            "/role_assignments",
+            query_params={"return_deleted": True},
+        )
+
+        assert forward_request.url.params.get_list("user") == ["user_1", "user_2"]
+        assert forward_request.url.params["return_deleted"] == "true"
 
 
 @pytest.mark.asyncio
