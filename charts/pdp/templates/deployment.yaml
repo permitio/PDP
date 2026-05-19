@@ -50,11 +50,13 @@ spec:
               containerPort: {{ .targetPort }}
             {{- end }}
           env:
+            {{- if not .Values.pdp.userProvidedSecret }}
             - name: PDP_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ include "pdp.secretName" . }}
                   key: {{ include "pdp.secretKey" . }}
+            {{- end }}
             {{- if .Values.pdp.pdpEnvs }}
             {{- range .Values.pdp.pdpEnvs }}
             - name: {{ .name }}
