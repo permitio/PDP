@@ -16,7 +16,7 @@ from opal_client.utils import proxy_response
 from pydantic import parse_obj_as
 from starlette.responses import JSONResponse
 
-from horizon.authentication import enforce_pdp_token
+from horizon.authentication import enforce_pdp_token, extract_pdp_api_key
 from horizon.config import sidecar_config
 from horizon.enforcer.schemas import (
     AllTenantsAuthorizationResult,
@@ -60,20 +60,6 @@ stats_manager = StatisticsManager(
     interval_seconds=sidecar_config.OPA_CLIENT_FAILURE_THRESHOLD_INTERVAL,
     failures_threshold_percentage=sidecar_config.OPA_CLIENT_FAILURE_THRESHOLD_PERCENTAGE,
 )
-
-
-def extract_pdp_api_key(request: Request) -> str:
-    authorization: str = request.headers.get(AUTHZ_HEADER, "")
-    parts = authorization.split(" ")
-    if len(parts) != 2:
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED,
-            detail=f"bad authz header: {authorization}",
-        )
-    schema, token = parts
-    if schema.strip().lower() != "bearer":
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid PDP token")
-    return token
 
 
 def transform_headers(request: Request) -> dict:

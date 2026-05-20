@@ -11,6 +11,7 @@ from opal_client.utils import proxy_response
 from opal_common.logger import logger
 from pydantic import BaseModel, Field, parse_obj_as
 
+from horizon.authentication import get_pdp_authorization_header
 from horizon.config import sidecar_config
 
 HTTP_GET = "GET"
@@ -174,13 +175,7 @@ async def proxy_request_to_cloud_service(
     additional_headers: dict[str, str],
     timeout: int = sidecar_config.CONTROL_PLANE_TIMEOUT,
 ) -> Response:
-    auth_header = request.headers.get("Authorization")
-    if auth_header is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Must provide a bearer token!",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    auth_header = get_pdp_authorization_header(request)
     path = f"{cloud_service_url}/{path}"
     params = dict(request.query_params) or {}
 
@@ -191,6 +186,7 @@ async def proxy_request_to_cloud_service(
     for header_name in REQUIRED_HTTP_HEADERS:
         if header_name in original_headers:
             headers[header_name] = original_headers[header_name]
+    headers["authorization"] = auth_header
 
     # override host header (required by k8s ingress)
     try:

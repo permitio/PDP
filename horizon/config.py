@@ -74,6 +74,13 @@ class SidecarConfig(Confi):
         description="set this to your environment's API key if you prefer to use the environment level API key.",
     )
 
+    # request header used to authenticate PDP API calls
+    AUTH_HEADER = confi.str(
+        "AUTH_HEADER",
+        "Authorization",
+        description="HTTP header used to read the PDP bearer token from incoming API calls.",
+    )
+
     # access token to your organization
     ORG_API_KEY = confi.str(
         "ORG_API_KEY",

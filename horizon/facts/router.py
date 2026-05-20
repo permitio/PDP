@@ -15,7 +15,7 @@ from fastapi import (
 from loguru import logger
 from opal_common.schemas.data import DataSourceEntry
 
-from horizon.authentication import enforce_pdp_token
+from horizon.authentication import enforce_pdp_token, get_pdp_authorization_header
 from horizon.facts.client import FactsClient, FactsClientDependency
 from horizon.facts.dependencies import (
     DataUpdateSubscriberDependency,
@@ -51,7 +51,7 @@ async def create_user(
                 obj_type="users",
                 obj_id=body["id"],
                 obj_key=body["key"],
-                authorization_header=r.headers.get("Authorization"),
+                authorization_header=get_pdp_authorization_header(r),
                 update_id=update_id,
             )
         ],
@@ -78,7 +78,7 @@ async def create_tenant(
                 obj_type="tenants",
                 obj_id=body["id"],
                 obj_key=body["key"],
-                authorization_header=r.headers.get("Authorization"),
+                authorization_header=get_pdp_authorization_header(r),
                 update_id=update_id,
             )
         ],
@@ -106,7 +106,7 @@ async def sync_user(
                 obj_type="users",
                 obj_id=body["id"],
                 obj_key=body["key"],
-                authorization_header=r.headers.get("Authorization"),
+                authorization_header=get_pdp_authorization_header(r),
                 update_id=update_id,
             )
         ],
@@ -134,7 +134,7 @@ async def update_user(
                 obj_type="users",
                 obj_id=body["id"],
                 obj_key=body["key"],
-                authorization_header=r.headers.get("Authorization"),
+                authorization_header=get_pdp_authorization_header(r),
                 update_id=update_id,
             )
         ],
@@ -150,14 +150,14 @@ def create_role_assignment_data_entries(
             obj_type="role_assignments",
             obj_id=body["user_id"],
             obj_key=f"user:{body['user']}",
-            authorization_header=request.headers.get("Authorization"),
+            authorization_header=get_pdp_authorization_header(request),
             update_id=update_id,
         )
         yield create_data_source_entry(
             obj_type="users",
             obj_id=body["user_id"],
             obj_key=body["user"],
-            authorization_header=request.headers.get("Authorization"),
+            authorization_header=get_pdp_authorization_header(request),
             update_id=update_id,
         )
     else:
@@ -167,7 +167,7 @@ def create_role_assignment_data_entries(
             obj_type="role_assignments",
             obj_id=body["user_id"],
             obj_key=f"user:{body['user']}",
-            authorization_header=request.headers.get("Authorization"),
+            authorization_header=get_pdp_authorization_header(request),
             update_id=update_id,
         )
 
@@ -271,7 +271,7 @@ async def create_resource_instance(
                 obj_type="resource_instances",
                 obj_id=body["id"],
                 obj_key=f"{body['resource']}:{body['key']}",
-                authorization_header=r.headers.get("Authorization"),
+                authorization_header=get_pdp_authorization_header(r),
                 update_id=update_id,
             ),
         ],
@@ -299,7 +299,7 @@ async def update_resource_instance(
                 obj_type="resource_instances",
                 obj_id=body["id"],
                 obj_key=f"{body['resource']}:{body['key']}",
-                authorization_header=r.headers.get("Authorization"),
+                authorization_header=get_pdp_authorization_header(r),
                 update_id=update_id,
             ),
         ],
@@ -326,7 +326,7 @@ async def create_relationship_tuple(
                 obj_type="relationships",
                 obj_id=body["object_id"],
                 obj_key=body["object"],
-                authorization_header=r.headers.get("Authorization"),
+                authorization_header=get_pdp_authorization_header(r),
                 update_id=update_id,
             ),
         ],
