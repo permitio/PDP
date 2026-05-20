@@ -11,6 +11,7 @@ from starlette.requests import Request as FastApiRequest
 from starlette.responses import Response as FastApiResponse
 from starlette.responses import StreamingResponse
 
+from horizon.authentication import get_pdp_authorization_header
 from horizon.config import sidecar_config
 from horizon.startup.api_keys import get_env_api_key
 from horizon.startup.remote_config import get_remote_config
@@ -53,8 +54,9 @@ class FactsClient:
         :return: HTTPX request
         """
         forward_headers = {
-            key: value for key, value in request.headers.items() if key.lower() in {"authorization", "content-type"}
+            key: value for key, value in request.headers.items() if key.lower() == "content-type"
         }
+        forward_headers["Authorization"] = get_pdp_authorization_header(request)
         if is_consistent_update:
             forward_headers[CONSISTENT_UPDATE_HEADER] = CONSISTENT_UPDATE_HEADER_VALUE
         remote_config = get_remote_config()
