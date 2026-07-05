@@ -109,6 +109,9 @@ jobs:
         uses: AbsaOSS/k3d-action@v2.4.0
         with:
           cluster-name: pdp-tester
+          # the action's default k3d (v5.4.6) predates release checksums.txt assets,
+          # which the k3d install script now requires, so its download 404s
+          k3d-version: v5.9.0
           args: --k3s-arg "--disable=traefik@server:0"
 
       # Import PDP image into k3d with 'next' tag (locally built)
