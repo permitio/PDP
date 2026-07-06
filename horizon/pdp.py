@@ -438,6 +438,7 @@ class PermitPDP:
             dependencies=[Depends(enforce_pdp_token)],
         )
         async def legacy_trigger_policy_update():
+            logger.info("triggered policy update from api (legacy route)")
             await self._opal.policy_updater.trigger_update_policy(force_full_update=True)
             return {"status": "ok"}
 
@@ -448,6 +449,7 @@ class PermitPDP:
             dependencies=[Depends(enforce_pdp_token)],
         )
         async def legacy_trigger_data_update():
+            logger.info("triggered policy data update from api (legacy route)")
             if self._opal.data_updater is None:
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
