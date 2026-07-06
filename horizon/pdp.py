@@ -35,6 +35,7 @@ from horizon.enforcer.opa.config_maker import (
 )
 from horizon.facts.router import facts_router
 from horizon.local.api import init_local_cache_api_router
+from horizon.middleware.default_deny import install_default_deny
 from horizon.opal_relay_api import OpalRelayAPIClient
 from horizon.proxy.api import router as proxy_router
 from horizon.startup.api_keys import get_env_api_key
@@ -451,6 +452,11 @@ class PermitPDP:
         async def legacy_trigger_data_update():
             response = RedirectResponse(url="/data-updater/trigger")
             return response
+
+        # Install the default-deny auth middleware last, so it wraps every route -
+        # including the OPAL trigger routers mounted before the PDP took over and
+        # any route above that forgot its own auth dependency.
+        install_default_deny(app)
 
     @property
     def app(self):
