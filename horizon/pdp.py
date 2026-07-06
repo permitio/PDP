@@ -4,8 +4,7 @@ import sys
 from pathlib import Path
 from uuid import UUID, uuid4
 
-from fastapi import Depends, FastAPI, status
-from fastapi.responses import RedirectResponse
+from fastapi import Depends, FastAPI, HTTPException, status
 from loguru import logger
 from logzio.handler import LogzioHandler
 from opal_client.client import OpalClient
@@ -439,8 +438,8 @@ class PermitPDP:
             dependencies=[Depends(enforce_pdp_token)],
         )
         async def legacy_trigger_policy_update():
-            response = RedirectResponse(url="/policy-updater/trigger")
-            return response
+            await self._opal.policy_updater.trigger_update_policy(force_full_update=True)
+            return {"status": "ok"}
 
         @app.post(
             "/update_policy_data",
@@ -449,8 +448,13 @@ class PermitPDP:
             dependencies=[Depends(enforce_pdp_token)],
         )
         async def legacy_trigger_data_update():
-            response = RedirectResponse(url="/data-updater/trigger")
-            return response
+            if self._opal.data_updater is None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Data Updater is currently disabled. Dynamic data updates are not available.",
+                )
+            await self._opal.data_updater.get_base_policy_data(data_fetch_reason="request from sdk (legacy alias)")
+            return {"status": "ok"}
 
     @property
     def app(self):
