@@ -132,9 +132,17 @@ jobs:
           AUTO_REMOVE: "false"
         run: |
           set -o pipefail
-          python -m pdp_tester --docker --local --tag next --skip-generate 2>&1 | tee /tmp/tester.log
+          # The default GitHub Actions shell runs with `-e`, so capture the
+          # tester's exit status explicitly (via `|| status=$?`) instead of
+          # letting a non-zero exit abort the step before the log is parsed.
+          status=0
+          python -m pdp_tester --docker --local --tag next --skip-generate 2>&1 | tee /tmp/tester.log || status=$?
           if grep -q "test cases failed" /tmp/tester.log; then
             echo "::error::Some test cases failed!"
+            exit 1
+          fi
+          if [ "$status" -ne 0 ]; then
+            echo "::error::pdp-tester exited with a non-zero status (${status})"
             exit 1
           fi
 
