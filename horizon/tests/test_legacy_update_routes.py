@@ -60,6 +60,8 @@ def test_update_policy_data_returns_503_when_updater_disabled(pdp: MockPermitPDP
     response = TestClient(pdp._app).post("/update_policy_data", headers=auth, follow_redirects=False)
 
     assert response.status_code == 503
+    # Exact parity with the canonical data route (opal_client/data/api.py).
+    assert response.json()["detail"] == "Data Updater is currently disabled. Dynamic data updates are not available."
 
 
 def test_update_policy_data_rejects_unauthenticated(pdp: MockPermitPDP, monkeypatch):
@@ -74,11 +76,12 @@ def test_update_policy_data_rejects_unauthenticated(pdp: MockPermitPDP, monkeypa
 
 
 def test_legacy_routes_do_not_redirect(pdp: MockPermitPDP, auth: dict[str, str], monkeypatch):
-    # Lock in the fix: the aliases must call the updaters directly, never 307
-    # to the canonical routes (which strips Authorization on redirect).
+    # Lock in the fix: the aliases must call the updaters directly, never redirect
+    # to the canonical routes. Clients drop Authorization on any redirect code
+    # (301/302/303/307/308), so assert none is returned, not just != 307.
     monkeypatch.setattr(pdp._opal.policy_updater, "trigger_update_policy", AsyncMock())
     monkeypatch.setattr(pdp._opal.data_updater, "get_base_policy_data", AsyncMock())
     client = TestClient(pdp._app)
 
-    assert client.post("/update_policy", headers=auth, follow_redirects=False).status_code != 307
-    assert client.post("/update_policy_data", headers=auth, follow_redirects=False).status_code != 307
+    assert not client.post("/update_policy", headers=auth, follow_redirects=False).is_redirect
+    assert not client.post("/update_policy_data", headers=auth, follow_redirects=False).is_redirect
