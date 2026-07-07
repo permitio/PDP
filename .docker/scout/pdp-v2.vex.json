@@ -1,9 +1,9 @@
 {
   "@context": "https://openvex.dev/ns/v0.2.0",
-  "@id": "https://openvex.dev/docs/permitio-pdp/vex-oras-go-cve-2026-50163",
+  "@id": "https://openvex.dev/docs/permitio-pdp/pdp-v2-cve-waivers",
   "author": "Permit.io",
   "timestamp": "2026-07-07T00:00:00Z",
-  "version": 1,
+  "version": 2,
   "statements": [
     {
       "vulnerability": {
@@ -20,6 +20,38 @@
       "status": "not_affected",
       "justification": "vulnerable_code_not_in_execute_path",
       "impact_statement": "The PDP runs OPA in inline mode via OPAL over OPA's REST API and never pulls OCI artifacts, so oras-go's tar/hardlink extraction (the vulnerable code path in CVE-2026-50163) is never executed. oras-go is an indirect dependency of the bundled OPA (built from permitio/permit-opa); no fixed release exists yet (all versions <= 2.6.1 are affected, upstream fix expected ~2026-07-15). This waiver is temporary and must be removed once permit-opa bumps oras-go to the patched release. Tracked under PER-15358."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-48818"
+      },
+      "products": [
+        {
+          "@id": "pkg:docker/permitio/pdp-v2@next",
+          "subcomponents": [
+            { "@id": "pkg:pypi/starlette@0.50.0" }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "CVE-2026-48818 is an SSRF / NTLM credential-theft issue in starlette.staticfiles that only triggers on Windows, via UNC-path resolution when serving a StaticFiles mount. The PDP runs exclusively on Linux (Alpine) and mounts no StaticFiles anywhere in the app (only API routers are mounted), so the vulnerable code path is never present or executed. The fix lands only in starlette >= 1.1.0, but opal-common/opal-client 0.9.6 cap starlette<1, so the PDP is pinned to 0.50.0 (see requirements.txt). This waiver is temporary and must be removed once OPAL relaxes its starlette<1 bound and starlette is upgraded to >= 1.3.1. Tracked under PER-15358."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-54283"
+      },
+      "products": [
+        {
+          "@id": "pkg:docker/permitio/pdp-v2@next",
+          "subcomponents": [
+            { "@id": "pkg:pypi/starlette@0.50.0" }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "CVE-2026-54283 causes request.form() size limits to be silently ignored for application/x-www-form-urlencoded bodies, enabling a memory-exhaustion DoS. The PDP is a JSON-only API: it never calls request.form(), does not depend on python-multipart, and parses no form-encoded or multipart request bodies, so the vulnerable form-parsing path is never executed. The fix lands only in starlette >= 1.3.1, but opal-common/opal-client 0.9.6 cap starlette<1, so the PDP is pinned to 0.50.0 (see requirements.txt). This waiver is temporary and must be removed once OPAL relaxes its starlette<1 bound and starlette is upgraded to >= 1.3.1. Tracked under PER-15358."
     }
   ]
 }
