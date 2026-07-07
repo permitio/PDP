@@ -12,8 +12,9 @@ from test_enforcer_api import MockPermitPDP
 
 @pytest.fixture
 def pdp() -> MockPermitPDP:
-    # Fresh instance per test so AsyncMock / None mutations don't leak across
-    # modules via the shared `sidecar` singleton in test_enforcer_api.
+    # Fresh instance per test: keeps these tests independent of the shared
+    # module-level `sidecar` singleton in test_enforcer_api (cheap defensive
+    # isolation; monkeypatch already reverts this file's mutations at teardown).
     return MockPermitPDP()
 
 
@@ -87,8 +88,8 @@ def test_update_policy_data_rejects_unauthenticated(pdp: MockPermitPDP, monkeypa
 
 def test_legacy_routes_do_not_redirect(pdp: MockPermitPDP, auth: dict[str, str], monkeypatch):
     # Lock in the fix: the aliases must call the updaters directly, never redirect
-    # to the canonical routes. Clients drop Authorization on any redirect code
-    # (301/302/303/307/308), so assert none is returned, not just != 307.
+    # to the canonical routes. Clients drop Authorization on redirects, and
+    # httpx's is_redirect flags any 3xx — stronger than asserting != 307 alone.
     monkeypatch.setattr(pdp._opal.policy_updater, "trigger_update_policy", AsyncMock())
     monkeypatch.setattr(pdp._opal.data_updater, "get_base_policy_data", AsyncMock())
     client = TestClient(pdp._app)
