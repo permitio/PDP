@@ -89,6 +89,19 @@ def _bearer(token: str) -> dict:
     return {"authorization": f"Bearer {token}"}
 
 
+def _is_middleware_401(resp) -> bool:
+    """True iff the response is the default-deny middleware's own 401.
+
+    Lets tests assert "the middleware did/didn't block" without coupling to whatever
+    status a deferred/downstream handler happens to return.
+    """
+    return (
+        resp.status_code == 401
+        and resp.headers.get("www-authenticate") == "Bearer"
+        and resp.json() == {"detail": "Missing or invalid PDP token"}
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Pure-unit tests for the matching / token helpers
 # --------------------------------------------------------------------------- #
@@ -143,6 +156,8 @@ def test_has_valid_pdp_token(monkeypatch):
     assert _has_valid_pdp_token(_http_scope({})) is False  # missing
     assert _has_valid_pdp_token(_http_scope({"authorization": "garbage"})) is False  # malformed, no space
     assert _has_valid_pdp_token(_http_scope({"authorization": f"Basic {VALID_TOKEN}"})) is False  # wrong scheme
+    # Non-ASCII token must return False, not raise (hmac.compare_digest TypeError on str).
+    assert _has_valid_pdp_token(_http_scope({"authorization": "Bearer café"})) is False
 
 
 # --------------------------------------------------------------------------- #
@@ -177,6 +192,9 @@ def test_enforce_allows_valid_token(valid_token, client, method, path):
 def test_enforce_malformed_header_is_401_not_500(client, bad_header):
     # The route's own enforce_pdp_token does an unguarded split(" ") that would 500;
     # the middleware must reject malformed headers with 401 before the route runs.
+    # (Non-ASCII tokens - which would make hmac.compare_digest raise TypeError - can't
+    # be sent through httpx, so that regression is covered at the unit level in
+    # test_has_valid_pdp_token, exercising the latin-1 scope uvicorn would produce.)
     resp = client.post("/policy-updater/trigger", headers={"authorization": bad_header})
     assert resp.status_code == 401
 
@@ -221,11 +239,12 @@ def test_enforce_protected_non_tier2_route_blocked(client):
 
 @pytest.mark.usefixtures("enforce")
 def test_enforce_tier2_defers_to_own_auth_policy_store(client):
-    # Middleware steps aside; the route's own dependency handles it (here it resolves
-    # to 200 because the mock has no OPAL JWT verifier configured). The point is the
-    # middleware did NOT emit its 401 - the request reached the route's own auth.
+    # Middleware steps aside; the route's own dependency handles it. What we assert is
+    # only that the middleware did NOT emit *its* 401 - the request reached the route's
+    # own auth. We avoid asserting a specific downstream status so the test is not
+    # coupled to OPAL's current (no-verifier) policy-store behavior.
     resp = client.get("/policy-store/config")
-    assert resp.status_code == 200
+    assert not _is_middleware_401(resp)
 
 
 @pytest.mark.usefixtures("enforce")
@@ -237,11 +256,22 @@ def test_enforce_tier2_defers_to_own_auth_exit(client):
 
 
 @pytest.mark.usefixtures("enforce")
-def test_enforce_options_preflight_bypassed(client):
-    # OPTIONS must never be blocked by the middleware (CORS preflight). The route has
-    # no OPTIONS handler, so it 405s - crucially not a middleware 401.
+def test_enforce_cors_preflight_bypassed(client):
+    # A genuine CORS preflight (carries Access-Control-Request-Method) is never blocked,
+    # so the browser handshake to a protected route still works.
+    resp = client.options(
+        "/policy-updater/trigger",
+        headers={"Origin": "https://example.com", "Access-Control-Request-Method": "POST"},
+    )
+    assert not _is_middleware_401(resp)
+
+
+@pytest.mark.usefixtures("enforce")
+def test_enforce_non_preflight_options_is_gated(client):
+    # A bare OPTIONS (not a CORS preflight) to a protected route is still subject to the
+    # default-deny check, so a future custom OPTIONS handler cannot be reached unauthed.
     resp = client.options("/policy-updater/trigger")
-    assert resp.status_code != 401
+    assert _is_middleware_401(resp)
 
 
 # --------------------------------------------------------------------------- #
@@ -252,7 +282,7 @@ def test_enforce_options_preflight_bypassed(client):
 @pytest.mark.usefixtures("audit")
 def test_audit_allows_and_logs_would_block(client, audit_logs):
     resp = client.post("/policy-updater/trigger")
-    assert resp.status_code == 200  # allowed through in audit mode
+    assert not _is_middleware_401(resp)  # allowed through (not blocked) in audit mode
 
     blocked = [str(r) for r in audit_logs if "default-deny audit" in str(r)]
     assert len(blocked) == 1
@@ -265,7 +295,7 @@ def test_audit_allows_and_logs_would_block(client, audit_logs):
 @pytest.mark.usefixtures("audit")
 def test_audit_valid_token_does_not_log(valid_token, client, audit_logs):
     resp = client.post("/policy-updater/trigger", headers=_bearer(valid_token))
-    assert resp.status_code == 200
+    assert not _is_middleware_401(resp)
     assert not [r for r in audit_logs if "default-deny audit" in str(r)]
 
 
@@ -273,7 +303,7 @@ def test_audit_valid_token_does_not_log(valid_token, client, audit_logs):
 def test_audit_never_logs_token_material(client, audit_logs):
     secret = "super-secret-invalid-token-value"
     resp = client.post("/policy-updater/trigger", headers=_bearer(secret))
-    assert resp.status_code == 200
+    assert not _is_middleware_401(resp)
     combined = "".join(str(r) for r in audit_logs)
     assert "default-deny audit" in combined  # it WAS a would-block
     assert secret not in combined  # ...but the token value was never logged
@@ -287,7 +317,7 @@ def test_audit_hostile_user_agent_does_not_drop_log(client, audit_logs):
         "/policy-updater/trigger",
         headers={"user-agent": "{oops} {0} {malformed"},
     )
-    assert resp.status_code == 200
+    assert not _is_middleware_401(resp)
     blocked = [str(r) for r in audit_logs if "default-deny audit" in str(r)]
     assert len(blocked) == 1
     assert "user_agent={oops} {0} {malformed" in blocked[0]

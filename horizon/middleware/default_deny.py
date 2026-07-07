@@ -94,13 +94,34 @@ def _has_valid_pdp_token(scope: Scope) -> bool:
     schema, token = parts
     if schema.strip().lower() != "bearer":
         return False
-    # Constant-time compare - this is now the front door for every request.
-    return hmac.compare_digest(token.strip(), get_env_api_key())
+    try:
+        # Constant-time compare - this is now the front door for every request.
+        # Compare as bytes: header values are latin-1 decoded, so a non-ASCII token
+        # (e.g. "Bearer café") would make hmac.compare_digest raise TypeError on str
+        # inputs. Any unexpected error resolving/comparing the token is treated as an
+        # invalid token (401), never surfaced as a 500 - this middleware runs outside
+        # Starlette's ExceptionMiddleware. (A SystemExit from get_env_api_key on a
+        # fatally-misconfigured PDP is a BaseException, deliberately not caught here,
+        # matching the existing enforce_pdp_token behavior.)
+        return hmac.compare_digest(token.strip().encode("utf-8"), get_env_api_key().encode("utf-8"))
+    except Exception:  # noqa: BLE001 - fail closed on any comparison error
+        return False
 
 
 def _client_ip(scope: Scope) -> str:
     client = scope.get("client")
     return client[0] if client else "unknown"
+
+
+def _is_cors_preflight(scope: Scope) -> bool:
+    """True only for a genuine CORS preflight request.
+
+    Starlette's CORSMiddleware treats an ``OPTIONS`` request as a preflight only when
+    it carries ``Access-Control-Request-Method``. We bypass exactly those, so a future
+    route that registers its own (non-preflight) ``OPTIONS`` handler stays subject to
+    the default-deny check instead of being silently unauthenticated.
+    """
+    return Headers(scope=scope).get("access-control-request-method") is not None
 
 
 def _log_would_block(scope: Scope, path: str, method: str) -> None:
@@ -142,8 +163,10 @@ class DefaultDenyAuthMiddleware:
         method: str = scope["method"]
         path = _normalize_path(scope["path"])
 
-        # Bypass CORS preflight and allowlisted (public / defer-to-own-auth) routes.
-        if method == "OPTIONS" or _is_allowlisted(path):
+        # Bypass genuine CORS preflight and allowlisted (public / defer-to-own-auth)
+        # routes. Only real preflight OPTIONS are bypassed, not every OPTIONS, so a
+        # future custom OPTIONS handler is not left unauthenticated.
+        if (method == "OPTIONS" and _is_cors_preflight(scope)) or _is_allowlisted(path):
             await self.app(scope, receive, send)
             return
 
