@@ -196,6 +196,12 @@ jobs:
           image: local://permitio/pdp-v2:next
           only-severities: critical,high
           exit-code: true
+          # Accept CVEs marked not_affected in the OpenVEX doc (see
+          # .docker/scout/pdp-v2.vex.json) so the gate does not fail on
+          # vulnerabilities whose code path the PDP never executes and for which
+          # no upstream fix is yet available (currently oras-go CVE-2026-50163).
+          vex-location: .docker/scout
+          only-vex-affected: true
 
       - name: Upload SARIF report
         if: always()

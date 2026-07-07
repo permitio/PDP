@@ -1,0 +1,25 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://openvex.dev/docs/permitio-pdp/vex-oras-go-cve-2026-50163",
+  "author": "Permit.io",
+  "timestamp": "2026-07-07T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-50163"
+      },
+      "products": [
+        {
+          "@id": "pkg:docker/permitio/pdp-v2@next",
+          "subcomponents": [
+            { "@id": "pkg:golang/oras.land/oras-go/v2@2.6.1" }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "The PDP runs OPA in inline mode via OPAL over OPA's REST API and never pulls OCI artifacts, so oras-go's tar/hardlink extraction (the vulnerable code path in CVE-2026-50163) is never executed. oras-go is an indirect dependency of the bundled OPA (built from permitio/permit-opa); no fixed release exists yet (all versions <= 2.6.1 are affected, upstream fix expected ~2026-07-15). This waiver is temporary and must be removed once permit-opa bumps oras-go to the patched release. Tracked under PER-15358."
+    }
+  ]
+}
