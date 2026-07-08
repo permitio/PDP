@@ -16,7 +16,6 @@ from opal_client.utils import proxy_response
 from pydantic import parse_obj_as
 from starlette.responses import JSONResponse
 
-from horizon.authentication import enforce_pdp_token
 from horizon.config import sidecar_config
 from horizon.enforcer.schemas import (
     AllTenantsAuthorizationResult,
@@ -254,14 +253,13 @@ async def _is_allowed(query: BaseSchema, request: Request, policy_package: str):
     return await post_to_opa(request, path, opa_input)
 
 
-def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noqa: C901
-    policy_store = policy_store or DEFAULT_POLICY_STORE_GETTER()
+def init_enforcer_health_router():
+    """
+    The health check route lives on its own router, mounted without authentication:
+    k8s/LB liveness probes cannot attach the PDP token, so it must not be part of the
+    enforcer router, which requires the PDP token at include time.
+    """
     router = APIRouter()
-    if sidecar_config.KONG_INTEGRATION:
-        with Path(KONG_ROUTES_TABLE_FILE).open() as f:
-            kong_routes_table_raw = json.load(f)
-        kong_routes_table = [(re.compile(regex), resource) for regex, resource in kong_routes_table_raw]
-        logger.info(f"Kong integration: Loaded {len(kong_routes_table)} translation rules.")
 
     @router.get("/health", status_code=status.HTTP_200_OK, include_in_schema=False)
     async def health():
@@ -273,12 +271,23 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
 
         return JSONResponse(status_code=status.HTTP_200_OK, content={"status": "ok"})
 
+    return router
+
+
+def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noqa: C901
+    policy_store = policy_store or DEFAULT_POLICY_STORE_GETTER()
+    router = APIRouter()
+    if sidecar_config.KONG_INTEGRATION:
+        with Path(KONG_ROUTES_TABLE_FILE).open() as f:
+            kong_routes_table_raw = json.load(f)
+        kong_routes_table = [(re.compile(regex), resource) for regex, resource in kong_routes_table_raw]
+        logger.info(f"Kong integration: Loaded {len(kong_routes_table)} translation rules.")
+
     @router.post(
         "/authorized_users",
         response_model=AuthorizedUsersResult,
         status_code=status.HTTP_200_OK,
         response_model_exclude_none=True,
-        dependencies=[Depends(enforce_pdp_token)],
     )
     async def authorized_users(request: Request, query: AuthorizedUsersAuthorizationQuery):
         response = await _is_allowed(query, request, AUTHORIZED_USERS_POLICY_PACKAGE)
@@ -302,7 +311,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
         response_model=AuthorizationResult,
         status_code=status.HTTP_200_OK,
         response_model_exclude_none=True,
-        dependencies=[Depends(enforce_pdp_token), Depends(notify_seen_sdk)],
+        dependencies=[Depends(notify_seen_sdk)],
     )
     async def is_allowed_url(
         request: Request,
@@ -363,7 +372,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
         name="Get User Permissions",
         status_code=status.HTTP_200_OK,
         response_model_exclude_none=True,
-        dependencies=[Depends(enforce_pdp_token), Depends(notify_seen_sdk)],
+        dependencies=[Depends(notify_seen_sdk)],
     )
     async def user_permissions(
         request: Request,
@@ -386,7 +395,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
         name="Get User Tenants",
         status_code=status.HTTP_200_OK,
         response_model_exclude_none=True,
-        dependencies=[Depends(enforce_pdp_token), Depends(notify_seen_sdk)],
+        dependencies=[Depends(notify_seen_sdk)],
     )
     async def user_tenants(
         request: Request,
@@ -415,7 +424,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
         response_model=AllTenantsAuthorizationResult,
         status_code=status.HTTP_200_OK,
         response_model_exclude_none=True,
-        dependencies=[Depends(enforce_pdp_token), Depends(notify_seen_sdk)],
+        dependencies=[Depends(notify_seen_sdk)],
     )
     async def is_allowed_all_tenants(
         request: Request,
@@ -439,7 +448,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
         response_model=BulkAuthorizationResult,
         status_code=status.HTTP_200_OK,
         response_model_exclude_none=True,
-        dependencies=[Depends(enforce_pdp_token), Depends(notify_seen_sdk)],
+        dependencies=[Depends(notify_seen_sdk)],
     )
     async def is_allowed_bulk(
         request: Request,
@@ -466,7 +475,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
         response_model=AuthorizationResult,
         status_code=status.HTTP_200_OK,
         response_model_exclude_none=True,
-        dependencies=[Depends(enforce_pdp_token), Depends(notify_seen_sdk)],
+        dependencies=[Depends(notify_seen_sdk)],
     )
     async def is_allowed(
         request: Request,
@@ -503,7 +512,6 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
         response_model=AuthorizationResult,
         status_code=status.HTTP_200_OK,
         response_model_exclude_none=True,
-        dependencies=[Depends(enforce_pdp_token)],
     )
     async def is_allowed_nginx(
         request: Request,

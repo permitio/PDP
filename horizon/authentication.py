@@ -6,7 +6,7 @@ from horizon.config import MOCK_API_KEY, sidecar_config
 from horizon.startup.api_keys import get_env_api_key
 
 
-def enforce_pdp_token(authorization: Annotated[str | None, Header()]):
+def enforce_pdp_token(authorization: Annotated[str | None, Header()] = None):
     if authorization is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Missing Authorization header")
     schema, token = authorization.split(" ")
