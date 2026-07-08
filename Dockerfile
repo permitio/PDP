@@ -101,15 +101,25 @@ RUN addgroup -S permit -g 1001 && \
 # Create backup directory with permissions
 RUN mkdir -p /app/backup && chmod -R 777 /app/backup
 
-# Install runtime libraries and delete SQLite
+# Install runtime libraries and remove sqlite-libs.
 # Build deps (build-base, *-dev) are installed and removed in the pip install
-# layer to avoid persisting binutils CVEs (CVE-2025-69649, CVE-2025-69650)
+# layer to avoid persisting binutils CVEs (CVE-2025-69649, CVE-2025-69650).
+#
+# The PDP never uses SQLite, but its FTS5/zipfile CVEs (CVE-2026-11822,
+# CVE-2026-11824, CVE-2025-70873) are still reported against sqlite-libs, which
+# the official python:alpine image pins via the .python-rundeps virtual package.
+# A plain `apk del sqlite-libs` is refused (that pin), and deleting the virtual
+# cascade-purges the whole python runtime. So re-pin every OTHER python runtime
+# shared object under a fresh virtual (derived dynamically, so it is
+# arch-agnostic), then drop the original pin together with sqlite-libs.
 RUN --mount=type=cache,target=/var/cache/apk \
     ln -s /var/cache/apk /etc/apk/cache && \
     apk update && \
     apk upgrade && \
     apk add bash libffi libressl gcompat && \
-    apk del sqlite
+    apk add --no-cache --virtual .python-rundeps-nosqlite \
+        $(apk info -qR .python-rundeps | grep '^so:' | grep -v 'libsqlite3') && \
+    apk del .python-rundeps sqlite-libs
 
 
 # Copy OPA binary from the build stage
