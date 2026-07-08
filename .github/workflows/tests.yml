@@ -204,6 +204,12 @@ jobs:
           # starlette >=1.x, which OPAL's starlette<1 cap forbids). See PER-15358.
           vex-location: .docker/scout
           only-vex-affected: true
+          # REQUIRED: docker scout only *applies* VEX statements whose author
+          # matches its accept-list, which defaults to `<.*@docker.com>`. Without
+          # this, our Permit.io-authored statements are matched and displayed
+          # ("VEX: not affected") but NOT suppressed, so the gate still fails on
+          # the waived CVEs. Must match the `author` field in pdp-v2.vex.json.
+          vex-author: Permit.io
 
       - name: Upload SARIF report
         if: always()
