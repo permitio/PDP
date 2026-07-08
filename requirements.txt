@@ -16,6 +16,16 @@ httpx>=0.27.0,<1
 # TODO: change to use re2 in the future, currently not supported in alpine due to c++ library issues
 # google-re2 # use re2 instead of re for regex matching because it's simiplier and safer for user inputted regexes
 protobuf>=6.33.5 # pinned to avoid CVE-2026-0994
-cryptography>=46.0.5,<47 # pinned to avoid CVE-2026-26007
+cryptography>=48.0.1,<49 # pinned to avoid GHSA-537c-gmf6-5ccf (and CVE-2026-26007)
+# starlette is capped <1 by opal-common/opal-client 0.9.6 (and further to <0.51.0 via
+# fastapi-utils -> fastapi 0.125.0). The two starlette High CVEs (CVE-2026-54283 fixed
+# in 1.3.1, CVE-2026-48818 fixed in 1.1.0) have no <1 backport, so they cannot be
+# upgraded away while OPAL caps starlette<1. Both are waived in
+# .docker/scout/pdp-v2.vex.json as not_affected (unreachable code paths: JSON-only API
+# with no request.form(); Linux with no StaticFiles). Pinned exactly so the waiver
+# PURLs stay bound (the image build has no lockfile, so an unpinned starlette could
+# drift to a new 0.x and silently break the match). Remove this pin + both waivers and
+# upgrade starlette>=1.3.1 once OPAL relaxes its starlette<1 bound. See PER-15358.
+starlette==0.50.0
 opal-common==0.9.6
 opal-client==0.9.6

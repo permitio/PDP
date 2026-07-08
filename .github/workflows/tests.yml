@@ -104,81 +104,53 @@ jobs:
           token: ${{ secrets.CLONE_REPO_TOKEN }}
           path: './pdp-tester'
 
-      # Start k3d cluster for Kubernetes-based pdp-tester
-      - name: Start k3d cluster
-        uses: AbsaOSS/k3d-action@v2.4.0
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          cluster-name: pdp-tester
-          args: --k3s-arg "--disable=traefik@server:0"
+          python-version: "3.12"
 
-      # Import PDP image into k3d with 'next' tag (locally built)
-      - name: Import PDP image into k3d
-        run: k3d image import permitio/pdp-v2:next -c pdp-tester
-
-      # Build pdp-tester image and import into k3d
-      - name: Build and import pdp-tester image
+      # Docker runtime backend: launch the PDP as a local container via aiodocker
+      # (no k3d/Helm/kubectl). This is the runtime the pdp-tester maintainers
+      # recommend for CI and sidesteps the AbsaOSS/k3d-action download breakage
+      # (its default k3d v5.4.6 has no checksums.txt, so install.sh now 404s).
+      - name: Install pdp-tester (docker extra)
         working-directory: ./pdp-tester
-        run: |
-          docker build -t pdp-tester:ci .
-          k3d image import pdp-tester:ci -c pdp-tester
+        run: pip install -e ".[docker]"
 
-      # Create namespace and secrets
-      - name: Create secrets
+      - name: Run PDP tester against the local Docker PDP image
+        working-directory: ./pdp-tester
         env:
-          PERMIT_TOKEN: ${{ secrets.PDP_TESTER_API_KEY }}
+          TOKEN: ${{ secrets.PDP_TESTER_API_KEY }}
+          API_URL: https://permitio.api.stg.permit.io
+          # Test the locally built image (loaded above) instead of pulling from
+          # Docker Hub. LOCAL_IMAGE forces the runtime's local-only tag path, so
+          # only permitio/pdp-v2:next is launched.
+          LOCAL_IMAGE: permitio/pdp-v2
+          # Preserve the previous Helm startTimeout, and keep crashed containers
+          # around so the post-mortem step below can read their logs.
+          START_TIMEOUT: "180"
+          AUTO_REMOVE: "false"
         run: |
-          kubectl create namespace pdp-tester || true
-          kubectl create secret generic pdp-tester-credentials \
-            -n pdp-tester \
-            --from-literal=token="${PERMIT_TOKEN}" \
-            --dry-run=client -o yaml | kubectl apply -f -
-
-      # Deploy pdp-tester via Helm with the "next" PDP image
-      - name: Deploy pdp-tester via Helm
-        working-directory: ./pdp-tester
-        run: |
-          helm install pdp-tester ./deploy/helm/pdp-tester \
-            --set mode=job \
-            --set permit.existingSecret=pdp-tester-credentials \
-            --set permit.apiUrl=https://permitio.api.stg.permit.io \
-            --set image.repository=pdp-tester \
-            --set image.tag=ci \
-            --set image.pullPolicy=Never \
-            --set pdp.image=permitio/pdp-v2 \
-            --set 'pdp.localTags[0]=next' \
-            --set 'pdp.includeTags=' \
-            --set tests.skipGenerate=true \
-            --set tests.startTimeout=180 \
-            --set namespace.create=false \
-            --set logJson=false
-
-      - name: Wait for Job completion
-        run: |
-          kubectl wait --for=condition=complete job/pdp-tester \
-            -n pdp-tester --timeout=600s
-
-      - name: Check test results
-        run: |
-          LOGS=$(kubectl logs job/pdp-tester -n pdp-tester)
-          echo "$LOGS" | tail -30
-          if echo "$LOGS" | grep -q "test cases failed"; then
+          set -o pipefail
+          python -m pdp_tester --docker --local --tag next --skip-generate 2>&1 | tee /tmp/tester.log
+          if grep -q "test cases failed" /tmp/tester.log; then
             echo "::error::Some test cases failed!"
             exit 1
           fi
 
-      - name: Print tester logs
+      - name: Capture PDP container state and logs
         if: always()
         run: |
-          echo "=== PDP Tester logs ==="
-          kubectl logs job/pdp-tester -n pdp-tester --tail=200 || true
+          echo "=== PDP containers (all states) ==="
+          docker ps -a --filter "label=pdp-tester.permit.io/managed-by=pdp-tester" \
+            --format '{{.Names}}\t{{.Status}}' || true
           echo ""
-          echo "=== PDP Pod logs ==="
-          kubectl logs -l pdp-tester.permit.io/managed-by=pdp-tester \
-            -n pdp-tester --tail=50 || true
-
-      - name: Teardown k3d cluster
-        if: always()
-        run: k3d cluster delete pdp-tester || true
+          echo "=== PDP container logs ==="
+          for c in $(docker ps -aq --filter "label=pdp-tester.permit.io/managed-by=pdp-tester"); do
+            name=$(docker inspect --format '{{.Name}}' "$c" | sed 's#^/##')
+            echo "--- ${name} ---"
+            docker logs "$c" 2>&1 | tail -200 || true
+          done
 
   docker-scout:
     runs-on: ubuntu-latest
@@ -224,6 +196,20 @@ jobs:
           image: local://permitio/pdp-v2:next
           only-severities: critical,high
           exit-code: true
+          # Accept CVEs marked not_affected in the OpenVEX doc (see
+          # .docker/scout/pdp-v2.vex.json) so the gate does not fail on
+          # vulnerabilities whose code path the PDP never executes and for which
+          # no usable fix is available: oras-go CVE-2026-50163 (no upstream fix
+          # yet) and starlette CVE-2026-48818 / CVE-2026-54283 (fixed only in
+          # starlette >=1.x, which OPAL's starlette<1 cap forbids). See PER-15358.
+          vex-location: .docker/scout
+          only-vex-affected: true
+          # REQUIRED: docker scout only *applies* VEX statements whose author
+          # matches its accept-list, which defaults to `<.*@docker.com>`. Without
+          # this, our Permit.io-authored statements are matched and displayed
+          # ("VEX: not affected") but NOT suppressed, so the gate still fails on
+          # the waived CVEs. Must match the `author` field in pdp-v2.vex.json.
+          vex-author: Permit.io
 
       - name: Upload SARIF report
         if: always()
