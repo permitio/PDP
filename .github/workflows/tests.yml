@@ -87,6 +87,11 @@ jobs:
   pdp-tester:
     runs-on: ubuntu-latest
     needs: build-pdp-image
+    # Cap the run so a hung tester fails fast instead of holding the runner
+    # until GitHub's 360-minute default. The old k3d path was bounded by
+    # `kubectl wait --timeout=600s`; the tester's own max_running_time only
+    # applies in interval mode, not the run-once mode CI uses.
+    timeout-minutes: 15
     steps:
       - name: Download Docker image artifact
         uses: actions/download-artifact@v4
@@ -108,6 +113,10 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          # Cache pdp-tester's deps so each run doesn't re-resolve/re-download
+          # from PyPI (faster, and resilient to transient PyPI outages).
+          cache: "pip"
+          cache-dependency-path: pdp-tester/pyproject.toml
 
       # Docker runtime backend: launch the PDP as a local container via aiodocker
       # (no k3d/Helm/kubectl). This is the runtime the pdp-tester maintainers
@@ -132,24 +141,31 @@ jobs:
           AUTO_REMOVE: "false"
         run: |
           set -o pipefail
-          python -m pdp_tester --docker --local --tag next --skip-generate 2>&1 | tee /tmp/tester.log
+          # The default GitHub Actions shell runs with `-e`, so capture the
+          # tester's exit status explicitly (via `|| status=$?`) instead of
+          # letting a non-zero exit abort the step before the log is parsed.
+          status=0
+          python -m pdp_tester --docker --local --tag next --skip-generate 2>&1 | tee /tmp/tester.log || status=$?
           if grep -q "test cases failed" /tmp/tester.log; then
             echo "::error::Some test cases failed!"
+            exit 1
+          fi
+          if [ "$status" -ne 0 ]; then
+            echo "::error::pdp-tester exited with a non-zero status (${status})"
             exit 1
           fi
 
       - name: Capture PDP container state and logs
         if: always()
         run: |
+          filter="label=pdp-tester.permit.io/managed-by=pdp-tester"
           echo "=== PDP containers (all states) ==="
-          docker ps -a --filter "label=pdp-tester.permit.io/managed-by=pdp-tester" \
-            --format '{{.Names}}\t{{.Status}}' || true
+          docker ps -a --filter "$filter" --format '{{.Names}}\t{{.Status}}' || true
           echo ""
           echo "=== PDP container logs ==="
-          for c in $(docker ps -aq --filter "label=pdp-tester.permit.io/managed-by=pdp-tester"); do
-            name=$(docker inspect --format '{{.Name}}' "$c" | sed 's#^/##')
+          for name in $(docker ps -a --filter "$filter" --format '{{.Names}}'); do
             echo "--- ${name} ---"
-            docker logs "$c" 2>&1 | tail -200 || true
+            docker logs --tail 200 "$name" 2>&1 || true
           done
 
   docker-scout:
