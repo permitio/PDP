@@ -28,7 +28,7 @@ from scalar_fastapi import get_scalar_api_reference
 from horizon.authentication import enforce_pdp_token
 from horizon.config import MOCK_API_KEY, sidecar_config
 from horizon.connectivity.api import init_connectivity_router
-from horizon.enforcer.api import init_enforcer_api_router, stats_manager
+from horizon.enforcer.api import init_enforcer_api_router, init_enforcer_health_router, stats_manager
 from horizon.enforcer.opa.config_maker import (
     get_opa_authz_policy_file_path,
     get_opa_config_file_path,
@@ -385,15 +385,19 @@ class PermitPDP:
         app.on_event("startup")(stats_manager.run)
         app.on_event("shutdown")(stats_manager.stop_tasks)
 
+        enforcer_health_router = init_enforcer_health_router()
         enforcer_router = init_enforcer_api_router(policy_store=self._opal.policy_store)
         local_router = init_local_cache_api_router(policy_store=self._opal.policy_store)
         # Init system router
         system_router = init_system_api_router()
 
         # include the api routes
+        # health stays public: k8s/LB liveness probes cannot attach the PDP token
+        app.include_router(enforcer_health_router)
         app.include_router(
             enforcer_router,
             tags=["Authorization API"],
+            dependencies=[Depends(enforce_pdp_token)],
         )
 
         app.include_router(
