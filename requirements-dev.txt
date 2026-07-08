@@ -2,6 +2,3 @@ pytest
 pytest-asyncio
 ruff
 aioresponses
-# aioresponses 0.7.x cannot mock aiohttp>=3.14 (ClientResponse gained a required
-# stream_writer argument); keep the test env on 3.13.x until aioresponses catches up
-aiohttp<3.14

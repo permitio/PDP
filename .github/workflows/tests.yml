@@ -93,13 +93,10 @@ jobs:
         with:
           name: pdp-image
 
-      # Load the PR-built PDP image into the runner's Docker daemon. The tester's
-      # Docker runtime launches it directly by name:tag (no pull — see LOCAL_IMAGE).
       - name: Load Docker image
         run: docker load -i pdp-image.tar
 
-      # Checkout the pdp-tester repository (installed and run as a plain Python
-      # process — the Docker runtime backend needs no k3d/Helm/Tilt).
+      # Checkout the pdp-tester repository
       - name: Checkout pdp-tester repository
         uses: actions/checkout@v4
         with:
@@ -112,28 +109,30 @@ jobs:
         with:
           python-version: "3.12"
 
+      # Docker runtime backend: launch the PDP as a local container via aiodocker
+      # (no k3d/Helm/kubectl). This is the runtime the pdp-tester maintainers
+      # recommend for CI and sidesteps the AbsaOSS/k3d-action download breakage
+      # (its default k3d v5.4.6 has no checksums.txt, so install.sh now 404s).
       - name: Install pdp-tester (docker extra)
         working-directory: ./pdp-tester
         run: pip install -e ".[docker]"
 
-      # Run the tester with the Docker runtime against the locally-built PDP image.
-      # LOCAL_IMAGE + LOCAL_TAGS make the runtime launch permitio/pdp-v2:next from
-      # the local daemon directly, skipping registry tag discovery. AUTO_REMOVE=false
-      # keeps crashed PDP containers around so the capture step below can read their
-      # logs. In run-once mode the tester does not exit non-zero on test failures,
-      # so the grep for "test cases failed" is the failure signal (mirrors the
-      # pdp-tester repo's own CI).
-      - name: Run PDP tester against the locally-built PDP image (Docker runtime)
+      - name: Run PDP tester against the local Docker PDP image
         working-directory: ./pdp-tester
         env:
           TOKEN: ${{ secrets.PDP_TESTER_API_KEY }}
           API_URL: https://permitio.api.stg.permit.io
+          # Test the locally built image (loaded above) instead of pulling from
+          # Docker Hub. LOCAL_IMAGE forces the runtime's local-only tag path, so
+          # only permitio/pdp-v2:next is launched.
           LOCAL_IMAGE: permitio/pdp-v2
-          LOCAL_TAGS: '["next"]'
+          # Preserve the previous Helm startTimeout, and keep crashed containers
+          # around so the post-mortem step below can read their logs.
+          START_TIMEOUT: "180"
           AUTO_REMOVE: "false"
         run: |
           set -o pipefail
-          python -m pdp_tester --docker --skip-generate 2>&1 | tee /tmp/tester.log
+          python -m pdp_tester --docker --local --tag next --skip-generate 2>&1 | tee /tmp/tester.log
           if grep -q "test cases failed" /tmp/tester.log; then
             echo "::error::Some test cases failed!"
             exit 1
@@ -197,6 +196,20 @@ jobs:
           image: local://permitio/pdp-v2:next
           only-severities: critical,high
           exit-code: true
+          # Accept CVEs marked not_affected in the OpenVEX doc (see
+          # .docker/scout/pdp-v2.vex.json) so the gate does not fail on
+          # vulnerabilities whose code path the PDP never executes and for which
+          # no usable fix is available: oras-go CVE-2026-50163 (no upstream fix
+          # yet) and starlette CVE-2026-48818 / CVE-2026-54283 (fixed only in
+          # starlette >=1.x, which OPAL's starlette<1 cap forbids). See PER-15358.
+          vex-location: .docker/scout
+          only-vex-affected: true
+          # REQUIRED: docker scout only *applies* VEX statements whose author
+          # matches its accept-list, which defaults to `<.*@docker.com>`. Without
+          # this, our Permit.io-authored statements are matched and displayed
+          # ("VEX: not affected") but NOT suppressed, so the gate still fails on
+          # the waived CVEs. Must match the `author` field in pdp-v2.vex.json.
+          vex-author: Permit.io
 
       - name: Upload SARIF report
         if: always()
