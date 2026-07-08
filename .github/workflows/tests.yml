@@ -196,6 +196,20 @@ jobs:
           image: local://permitio/pdp-v2:next
           only-severities: critical,high
           exit-code: true
+          # Accept CVEs marked not_affected in the OpenVEX doc (see
+          # .docker/scout/pdp-v2.vex.json) so the gate does not fail on
+          # vulnerabilities whose code path the PDP never executes and for which
+          # no usable fix is available: oras-go CVE-2026-50163 (no upstream fix
+          # yet) and starlette CVE-2026-48818 / CVE-2026-54283 (fixed only in
+          # starlette >=1.x, which OPAL's starlette<1 cap forbids). See PER-15358.
+          vex-location: .docker/scout
+          only-vex-affected: true
+          # REQUIRED: docker scout only *applies* VEX statements whose author
+          # matches its accept-list, which defaults to `<.*@docker.com>`. Without
+          # this, our Permit.io-authored statements are matched and displayed
+          # ("VEX: not affected") but NOT suppressed, so the gate still fails on
+          # the waived CVEs. Must match the `author` field in pdp-v2.vex.json.
+          vex-author: Permit.io
 
       - name: Upload SARIF report
         if: always()
