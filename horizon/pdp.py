@@ -5,7 +5,9 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, status
+from fastapi.dependencies.utils import get_parameterless_sub_dependant
 from fastapi.responses import RedirectResponse
+from fastapi.routing import APIRoute
 from loguru import logger
 from logzio.handler import LogzioHandler
 from opal_client.client import OpalClient
@@ -35,7 +37,6 @@ from horizon.enforcer.opa.config_maker import (
 )
 from horizon.facts.router import facts_router
 from horizon.local.api import init_local_cache_api_router
-from horizon.middleware.default_deny import install_default_deny
 from horizon.opal_relay_api import OpalRelayAPIClient
 from horizon.proxy.api import router as proxy_router
 from horizon.startup.api_keys import get_env_api_key
@@ -98,6 +99,67 @@ def apply_config(overrides_dict: dict, config_object: Confi):
             logger.info(f"Overriden config key: {prefixed_key}")
             continue
         logger.warning(f"Ignored non-existing config key: {prefixed_key}")
+
+
+# The OPAL client mounts these trigger routes before PermitPDP gains control, so they
+# cannot be gated by an include_router-level dependency - they are secured post-hoc by
+# _gate_opal_trigger_routes instead. Kept as a frozenset so the route-audit test can
+# assert both are present and authenticated.
+OPAL_TRIGGER_ROUTE_PATHS: frozenset[str] = frozenset({"/policy-updater/trigger", "/data-updater/trigger"})
+
+
+def _gate_opal_trigger_routes(app: FastAPI) -> None:
+    """Inject ``Depends(enforce_pdp_token)`` into the OPAL-mounted trigger routes.
+
+    OpalClient mounts ``POST /policy-updater/trigger`` and ``POST /data-updater/trigger``
+    on the app before ``PermitPDP`` gains control (opal_client.client._configure_api_routes),
+    so the include_router-level dependencies used for every PDP-owned router cannot reach
+    them. We inject the standard PDP-token dependency into the already-mounted route objects
+    instead, mirroring what FastAPI itself does at ``APIRoute.__init__`` (fastapi/routing.py):
+    insert a parameterless sub-dependant at the head of ``route.dependant.dependencies``.
+
+    The Dependant is mutated IN PLACE - the route's request handler closes over that exact
+    object, so the check is enforced on every request; do NOT reassign ``route.dependant``.
+    ``enforce_pdp_token`` only reads a header, so the route's body field needs no rebuild.
+
+    Fails loud if a target route is missing (e.g. an OPAL upgrade renamed it): a silently
+    skipped injection would leave an update-trigger endpoint unauthenticated.
+    """
+    gated: set[str] = set()
+    for route in app.routes:
+        if isinstance(route, APIRoute) and route.path in OPAL_TRIGGER_ROUTE_PATHS:
+            route.dependant.dependencies.insert(
+                0,
+                get_parameterless_sub_dependant(depends=Depends(enforce_pdp_token), path=route.path_format),
+            )
+            gated.add(route.path)
+
+    missing = OPAL_TRIGGER_ROUTE_PATHS - gated
+    if missing:
+        logger.critical(
+            "Could not secure OPAL trigger route(s) {} - not found on the app. Refusing to "
+            "start with potentially unauthenticated update-trigger endpoints.",
+            ", ".join(sorted(missing)),
+        )
+        raise SystemExit(GUNICORN_EXIT_APP)
+
+
+def _warn_if_opal_verifier_disabled(opal_client: OpalClient) -> None:
+    """Warn loudly when the OPAL-authenticated routes are effectively open.
+
+    ``/policy-store``, ``/callbacks`` and ``/opal-server`` defer to OPAL's own JWT verifier,
+    but when ``OPAL_AUTH_PUBLIC_KEY`` is unset the verifier is disabled and admits every
+    request - leaving those routes unauthenticated. Expected in local/dev; a managed PDP
+    must set the key. Accessed defensively so an OPAL API change degrades to silence, not a
+    crash.
+    """
+    enabled = getattr(getattr(opal_client, "verifier", None), "enabled", None)
+    if enabled is False:
+        logger.warning(
+            "The OPAL JWT verifier is DISABLED (OPAL_AUTH_PUBLIC_KEY unset). The OPAL-authenticated "
+            "routes /policy-store, /callbacks and /opal-server are effectively UNAUTHENTICATED. This "
+            "is expected in local/dev but must never happen in a managed PDP - set OPAL_AUTH_PUBLIC_KEY."
+        )
 
 
 class PermitPDP:
@@ -457,10 +519,13 @@ class PermitPDP:
             response = RedirectResponse(url="/data-updater/trigger")
             return response
 
-        # Install the default-deny auth middleware last, so it wraps every route -
-        # including the OPAL trigger routers mounted before the PDP took over and
-        # any route above that forgot its own auth dependency.
-        install_default_deny(app)
+        # The OPAL trigger routers were mounted by OpalClient before the PDP took over, so
+        # the include_router-level dependencies above cannot reach them. Inject the PDP
+        # token dependency into those two routes directly.
+        _gate_opal_trigger_routes(app)
+        # High-signal warning if the OPAL-authenticated routes are left open by a disabled
+        # verifier (must never happen in a managed PDP).
+        _warn_if_opal_verifier_disabled(self._opal)
 
     @property
     def app(self):

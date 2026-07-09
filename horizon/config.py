@@ -1,4 +1,3 @@
-from enum import Enum
 from typing import Any
 
 from opal_common.confi import Confi, confi
@@ -13,16 +12,6 @@ class ApiKeyLevel(str):
     ORGANIZATION = "organization"
     PROJECT = "project"
     ENVIRONMENT = "environment"
-
-
-class AuthEnforcement(str, Enum):
-    """Rollout mode for the default-deny authentication middleware."""
-
-    # would-be-rejected requests are logged (WARN) and then allowed through -
-    # used to instrument the fleet before turning on real enforcement.
-    AUDIT = "audit"
-    # real default-deny behavior: unauthenticated requests get 401.
-    ENFORCE = "enforce"
 
 
 class SidecarConfig(Confi):
@@ -317,16 +306,6 @@ class SidecarConfig(Confi):
         "IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS",
         [],
         description="List of callbacks urls to be ignored even if they are registered in the control plane",
-    )
-
-    AUTH_ENFORCEMENT: AuthEnforcement = confi.enum(
-        "AUTH_ENFORCEMENT",
-        AuthEnforcement,
-        AuthEnforcement.AUDIT,
-        description="Rollout mode for the default-deny authentication middleware. "
-        "'audit' logs would-be-rejected requests and allows them through (used to instrument the "
-        "fleet before enforcing); 'enforce' rejects unauthenticated requests with 401. "
-        "Defaults to 'audit' so a fresh deploy is non-breaking during the rollout window.",
     )
 
     # non configurable values -------------------------------------------------
