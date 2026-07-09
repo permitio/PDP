@@ -104,7 +104,7 @@ pub async fn search_action_handler(
     // Extract permissions and roles from all results
     let mut all_permissions = Vec::new();
 
-    for (_, result) in permissions_map.iter() {
+    for result in permissions_map.values() {
         all_permissions.extend(result.permissions.clone());
     }
 
