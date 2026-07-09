@@ -14,13 +14,12 @@ call asserts only that it is not blocked (status != 401), not that the handler s
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from loguru import logger
-from opal_client.client import OpalClient
-from starlette import status
-
 from horizon.config import sidecar_config
 from horizon.enforcer.api import stats_manager
 from horizon.pdp import PermitPDP, _warn_if_opal_verifier_disabled
+from loguru import logger
+from opal_client.client import OpalClient
+from starlette import status
 
 VALID_TOKEN = "mock_api_key"
 TRIGGER_ROUTES = ["/policy-updater/trigger", "/data-updater/trigger"]
