@@ -128,6 +128,8 @@ def test_warn_if_opal_verifier_disabled_silent_when_enabled(capture_loguru):
 @pytest.fixture
 def capture_loguru():
     records: list[str] = []
-    sink_id = logger.add(lambda message: records.append(message), level="WARNING")
+    # loguru hands the sink a Message (a str subclass); str() pins the type so the list stays
+    # list[str] and the substring checks below don't rely on Message being str-compatible.
+    sink_id = logger.add(lambda message: records.append(str(message)), level="WARNING")
     yield records
     logger.remove(sink_id)
