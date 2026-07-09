@@ -4,9 +4,8 @@ import sys
 from pathlib import Path
 from uuid import UUID, uuid4
 
-from fastapi import Depends, FastAPI, status
+from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.dependencies.utils import get_parameterless_sub_dependant
-from fastapi.responses import RedirectResponse
 from fastapi.routing import APIRoute
 from loguru import logger
 from logzio.handler import LogzioHandler
@@ -506,8 +505,11 @@ class PermitPDP:
             dependencies=[Depends(enforce_pdp_token)],
         )
         async def legacy_trigger_policy_update():
-            response = RedirectResponse(url="/policy-updater/trigger")
-            return response
+            logger.info("triggered policy update from api (legacy route)")
+            # deliberately no None-guard: exact parity with the canonical (unguarded)
+            # /policy-updater/trigger handler; the PDP never disables the policy updater
+            await self._opal.policy_updater.trigger_update_policy(force_full_update=True)
+            return {"status": "ok"}
 
         @app.post(
             "/update_policy_data",
@@ -516,8 +518,14 @@ class PermitPDP:
             dependencies=[Depends(enforce_pdp_token)],
         )
         async def legacy_trigger_data_update():
-            response = RedirectResponse(url="/data-updater/trigger")
-            return response
+            logger.info("triggered policy data update from api (legacy route)")
+            if self._opal.data_updater is None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Data Updater is currently disabled. Dynamic data updates are not available.",
+                )
+            await self._opal.data_updater.get_base_policy_data(data_fetch_reason="request from sdk (legacy alias)")
+            return {"status": "ok"}
 
         # The OPAL trigger routers were mounted by OpalClient before the PDP took over, so
         # the include_router-level dependencies above cannot reach them. Inject the PDP
