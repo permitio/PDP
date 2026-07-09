@@ -20,7 +20,8 @@ Design notes (see ``.claude/per-15245-implementation-plan.md``):
   response itself. It also parses the ``Authorization`` header defensively so a
   malformed header yields 401, never a 500.
 * It sits *outside* ``CORSMiddleware`` (OPAL registers CORS before routes, and
-  ``add_middleware`` prepends), so ``OPTIONS`` preflight is bypassed unconditionally.
+  ``add_middleware`` prepends), so a genuine CORS preflight (``OPTIONS`` carrying
+  ``Access-Control-Request-Method``) is bypassed; any other ``OPTIONS`` is gated.
 """
 
 import hmac
@@ -34,6 +35,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from horizon.config import AuthEnforcement, sidecar_config
 from horizon.startup.api_keys import get_env_api_key
+from horizon.system.consts import GUNICORN_EXIT_APP
 
 # Tier 1 - genuinely public. EXACT match only, never a prefix: e.g. a
 # ``startswith("/health")`` shortcut would wrongly expose the gated
@@ -67,12 +69,14 @@ DEFER_AUTH_PREFIXES: tuple[str, ...] = (
 
 
 def _normalize_path(path: str) -> str:
-    """Collapse a single trailing slash for allowlist comparison.
+    """Strip trailing slashes for allowlist comparison (``/`` maps to itself).
 
     Starlette's ``redirect_slashes`` runs at the router, i.e. *after* this
     middleware, so we see the raw ``/health/`` here. Normalizing keeps a
     trailing-slash liveness probe from spuriously getting 401 while staying
-    consistent with (never more permissive than) the router's matching.
+    consistent with (never more permissive than) the router's matching -
+    stripping trailing slashes can only make an already-public path match or
+    produce a router 404, never turn a protected path into an allowlisted one.
     """
     return path.rstrip("/") or "/"
 
@@ -95,16 +99,21 @@ def _has_valid_pdp_token(scope: Scope) -> bool:
     if schema.strip().lower() != "bearer":
         return False
     try:
-        # Constant-time compare - this is now the front door for every request.
-        # Compare as bytes: header values are latin-1 decoded, so a non-ASCII token
-        # (e.g. "Bearer café") would make hmac.compare_digest raise TypeError on str
-        # inputs. Any unexpected error resolving/comparing the token is treated as an
-        # invalid token (401), never surfaced as a 500 - this middleware runs outside
-        # Starlette's ExceptionMiddleware. (A SystemExit from get_env_api_key on a
-        # fatally-misconfigured PDP is a BaseException, deliberately not caught here,
-        # matching the existing enforce_pdp_token behavior.)
+        # Constant-time compare. The operands are pre-encoded to bytes, which is what
+        # keeps a non-ASCII token (e.g. "Bearer café", possible because header values
+        # are latin-1 decoded) safe: hmac.compare_digest raises TypeError on non-ASCII
+        # *str* inputs, but never on bytes. Do NOT drop the .encode() - the except below
+        # is a last-resort net for genuinely unexpected errors, not the non-ASCII guard.
+        # Any such error is treated as an invalid token (401), never surfaced as a 500,
+        # since this middleware runs outside Starlette's ExceptionMiddleware. (A
+        # SystemExit from get_env_api_key on a fatally-misconfigured PDP is a
+        # BaseException, deliberately not caught here, matching enforce_pdp_token.)
         return hmac.compare_digest(token.strip().encode("utf-8"), get_env_api_key().encode("utf-8"))
-    except Exception:  # noqa: BLE001 - fail closed on any comparison error
+    except Exception as exc:  # noqa: BLE001 - fail closed on any comparison error
+        # Log the error class only (never the token) so an unexpected failure is not silent.
+        logger.error(
+            "default-deny: unexpected error validating PDP token ({}); treating as invalid", type(exc).__name__
+        )
         return False
 
 
@@ -190,6 +199,29 @@ class DefaultDenyAuthMiddleware:
         await self.app(scope, receive, send)
 
 
+def _warn_if_opal_verifier_disabled(app: FastAPI) -> None:
+    """Warn (loudly) if tier-2 routes defer to an OPAL verifier that is turned off.
+
+    The middleware steps aside for ``/policy-store`` / ``/callbacks`` / ``/opal-server``,
+    trusting OPAL's own JWT auth. But OPAL's ``verify_logged_in`` allows every request
+    through when the verifier is disabled (``OPAL_AUTH_PUBLIC_KEY`` unset), which would
+    leave those routes fully unauthenticated. A managed PDP always has the verifier
+    enabled; local/dev PDPs legitimately run without it - so this is a high-signal WARN
+    (alert on it in prod), not a hard failure that would break dev.
+
+    Accessed defensively: ``app.state.opal_client`` is only set by the real
+    ``PermitPDP.__init__``; test fixtures don't set it, so an unknown state stays silent.
+    """
+    enabled = getattr(getattr(getattr(app.state, "opal_client", None), "verifier", None), "enabled", None)
+    if enabled is False:
+        logger.warning(
+            "Default-deny middleware: the OPAL JWT verifier is DISABLED, but the tier-2 "
+            "routes /policy-store, /callbacks and /opal-server defer to it for auth - those "
+            "routes are effectively UNAUTHENTICATED. Expected in local/dev; this must never "
+            "appear in a managed PDP (set OPAL_AUTH_PUBLIC_KEY)."
+        )
+
+
 def install_default_deny(app: FastAPI) -> None:
     """Install the default-deny middleware on the app.
 
@@ -197,6 +229,19 @@ def install_default_deny(app: FastAPI) -> None:
     production app and the ``MockPermitPDP`` test fixture pick it up. Safe to call
     during construction: the middleware stack is built lazily on the first request.
     """
+    # Resolve the PDP token once, here, so the per-request check is a guaranteed O(1)
+    # cache hit and can never degrade to on-loop blocking network I/O or a per-request
+    # SystemExit on a cold cache. get_env_api_key() caches only truthy values and the
+    # ENVIRONMENT path returns PDP_API_KEY verbatim with no non-empty guard, so also
+    # fail loud here on an empty/unresolved key rather than silently re-resolving forever.
+    if not get_env_api_key():
+        logger.critical(
+            "Default-deny middleware: the PDP API key is empty/unresolved; refusing to start. Set a valid PDP_API_KEY."
+        )
+        raise SystemExit(GUNICORN_EXIT_APP)
+
+    _warn_if_opal_verifier_disabled(app)
+
     app.add_middleware(DefaultDenyAuthMiddleware)
 
     if sidecar_config.AUTH_ENFORCEMENT == AuthEnforcement.ENFORCE:

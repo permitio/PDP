@@ -8,17 +8,22 @@ before the PDP takes over - the ``/policy-updater/trigger`` /
 
 import horizon.middleware.default_deny as default_deny
 import pytest
-from fastapi import FastAPI
+from cryptography.hazmat.primitives.asymmetric import rsa
+from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 from horizon.config import AuthEnforcement, sidecar_config
 from horizon.middleware.default_deny import (
     _has_valid_pdp_token,
     _is_allowlisted,
     _normalize_path,
+    install_default_deny,
 )
 from horizon.pdp import PermitPDP
 from loguru import logger
 from opal_client.client import OpalClient
+from opal_common.authentication.deps import JWTAuthenticator
+from opal_common.authentication.types import JWTAlgorithm
+from opal_common.authentication.verifier import JWTVerifier
 
 VALID_TOKEN = "test-pdp-token-do-not-log"
 
@@ -184,7 +189,10 @@ def test_enforce_blocks_unauthenticated(client, method, path):
 @pytest.mark.parametrize("method, path", PROTECTED_NO_OWN_AUTH)
 def test_enforce_allows_valid_token(valid_token, client, method, path):
     resp = getattr(client, method)(path, headers=_bearer(valid_token))
-    assert resp.status_code != 401
+    # A valid token must not be blocked by the middleware's 401 (the route itself may
+    # still 500 offline). Use the precise helper so a middleware block with any status
+    # would fail the test.
+    assert not _is_middleware_401(resp)
 
 
 @pytest.mark.usefixtures("enforce")
@@ -209,7 +217,7 @@ def test_enforce_wrong_token_is_401(client):
 @pytest.mark.parametrize("path", ["/", "/health", "/healthy", "/docs", "/openapi.json"])
 def test_enforce_public_routes_need_no_token(client, path):
     resp = client.get(path)
-    assert resp.status_code != 401
+    assert not _is_middleware_401(resp)
 
 
 @pytest.mark.usefixtures("enforce")
@@ -217,7 +225,7 @@ def test_enforce_public_route_trailing_slash(client):
     # /health/ -> normalized to /health (public); router then 307s to /health, which
     # the TestClient follows -> final 200, never a middleware 401.
     resp = client.get("/health/")
-    assert resp.status_code != 401
+    assert not _is_middleware_401(resp)
 
 
 @pytest.mark.usefixtures("enforce")
@@ -321,3 +329,66 @@ def test_audit_hostile_user_agent_does_not_drop_log(client, audit_logs):
     blocked = [str(r) for r in audit_logs if "default-deny audit" in str(r)]
     assert len(blocked) == 1
     assert "user_agent={oops} {0} {malformed" in blocked[0]
+
+
+# --------------------------------------------------------------------------- #
+# Install-time startup guards
+# --------------------------------------------------------------------------- #
+
+
+def _enabled_verifier() -> JWTVerifier:
+    # A non-None public key makes verifier.enabled == True; verify_logged_in then
+    # rejects a missing token with 401 (no need to sign a valid JWT).
+    public_key = rsa.generate_private_key(public_exponent=65537, key_size=2048).public_key()
+    return JWTVerifier(public_key=public_key, algorithm=JWTAlgorithm.RS256, audience="test", issuer="test")
+
+
+class _StubOpalClient:
+    """Minimal stand-in for app.state.opal_client exposing verifier.enabled."""
+
+    def __init__(self, *, verifier_enabled: bool):
+        self.verifier = type("_V", (), {"enabled": verifier_enabled})()
+
+
+def test_install_fails_loud_on_empty_key(monkeypatch):
+    # A cold/empty resolved key must fail loudly at install, not degrade to blocking
+    # I/O or a per-request SystemExit on the hot path.
+    monkeypatch.setattr(default_deny, "get_env_api_key", lambda: "")
+    with pytest.raises(SystemExit):
+        install_default_deny(FastAPI())
+
+
+@pytest.mark.usefixtures("enforce")
+def test_tier2_route_rejects_without_token_when_verifier_enabled():
+    # Proves the tier-2 deferral is actually safe: with the OPAL verifier ENABLED, a
+    # tier-2 route the middleware steps aside for returns a real 401 from its own auth,
+    # distinct from the middleware's 401.
+    verifier = _enabled_verifier()
+    assert verifier.enabled
+    app = FastAPI()
+    authenticator = JWTAuthenticator(verifier)
+
+    @app.get("/policy-store/config", dependencies=[Depends(authenticator)])
+    async def _cfg():  # pragma: no cover - the dependency 401s before the body runs
+        return {"ok": True}
+
+    install_default_deny(app)
+    resp = TestClient(app, raise_server_exceptions=False).get("/policy-store/config")
+    assert resp.status_code == 401
+    assert not _is_middleware_401(resp)
+
+
+def test_install_warns_when_opal_verifier_disabled(audit_logs):
+    app = FastAPI()
+    app.state.opal_client = _StubOpalClient(verifier_enabled=False)
+    install_default_deny(app)
+    combined = "".join(str(r) for r in audit_logs)
+    assert "OPAL JWT verifier is DISABLED" in combined
+
+
+def test_install_silent_when_opal_verifier_enabled(audit_logs):
+    app = FastAPI()
+    app.state.opal_client = _StubOpalClient(verifier_enabled=True)
+    install_default_deny(app)
+    combined = "".join(str(r) for r in audit_logs)
+    assert "verifier is DISABLED" not in combined
