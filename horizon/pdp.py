@@ -443,6 +443,8 @@ class PermitPDP:
         )
         async def legacy_trigger_policy_update():
             logger.info("triggered policy update from api (legacy route)")
+            # deliberately no None-guard: exact parity with the canonical (unguarded)
+            # /policy-updater/trigger handler; the PDP never disables the policy updater
             await self._opal.policy_updater.trigger_update_policy(force_full_update=True)
             return {"status": "ok"}
 
