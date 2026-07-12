@@ -1,4 +1,6 @@
 import hmac
+import threading
+import time
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, status
@@ -66,6 +68,47 @@ def enforce_pdp_token(credentials: PdpCredentials = None):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid PDP token")
 
 
+# Rate-limit for the warn-and-allow path of enforce_pdp_token_operational. While
+# ENFORCE_OPERATIONAL_ROUTE_AUTH is off, every unauthenticated request to a governed route would
+# otherwise emit one WARNING - which on the high-QPS /kong decision endpoint floods the synchronous
+# stdout log sink (and adds a blocking write to the request path). Instead we coalesce to one line
+# per route per interval that reports how many would-be rejections were allowed; that count is also
+# the rollout signal - watch it fall to zero, then flip the flag on. The gate runs in a threadpool
+# (it is a sync dependency), so the shared counters are guarded by a plain threading.Lock.
+_OPERATIONAL_WARN_INTERVAL_SECONDS = 60.0
+_operational_warn_lock = threading.Lock()
+# path -> (would-be rejections accumulated since the last emitted line, monotonic time of that emit)
+_operational_warn_state: dict[str, tuple[int, float]] = {}
+
+
+def reset_operational_warn_throttle() -> None:
+    """Clear the throttle state. For tests, whose asserted warnings must not be suppressed by a prior test."""
+    with _operational_warn_lock:
+        _operational_warn_state.clear()
+
+
+def _operational_warn_should_emit(path: str) -> tuple[bool, int]:
+    """Decide whether to emit the warn-and-allow line for ``path`` now, coalescing bursts.
+
+    Returns ``(emit_now, count_since_last_emit)``. Every call counts as one would-be rejection; a
+    line is emitted on the first hit for a path and then at most once per
+    ``_OPERATIONAL_WARN_INTERVAL_SECONDS``, carrying the number of rejections coalesced into it.
+    """
+    now = time.monotonic()
+    with _operational_warn_lock:
+        state = _operational_warn_state.get(path)
+        if state is None:
+            _operational_warn_state[path] = (0, now)
+            return True, 1
+        pending, last_emit = state
+        pending += 1
+        if now - last_emit >= _OPERATIONAL_WARN_INTERVAL_SECONDS:
+            _operational_warn_state[path] = (0, now)
+            return True, pending
+        _operational_warn_state[path] = (pending, last_emit)
+        return False, pending
+
+
 def enforce_pdp_token_operational(request: Request, credentials: PdpCredentials = None):
     """PDP-token gate for the operational routes hardened by PER-15244/PER-15245, with a rollout default.
 
@@ -81,20 +124,25 @@ def enforce_pdp_token_operational(request: Request, credentials: PdpCredentials 
     """
     # Reuse enforce_pdp_token's exact reject logic in one place. When the flag is on, a rejection is
     # honoured (re-raised). When it is off - the rollout default - the rejection is downgraded to
-    # warn-and-allow so no caller breaks while every would-be rejection is still flagged.
+    # warn-and-allow so no caller breaks; every would-be rejection is still counted, and surfaced in a
+    # per-route coalesced warning (see _operational_warn_should_emit) rather than one line per request.
     try:
         enforce_pdp_token(credentials)
     except HTTPException as exc:
         if sidecar_config.ENFORCE_OPERATIONAL_ROUTE_AUTH:
             raise
-        logger.warning(
-            "ENFORCE_OPERATIONAL_ROUTE_AUTH is off: allowing {method} {path} unauthenticated - it would "
-            "otherwise be rejected ({detail}). Set ENFORCE_OPERATIONAL_ROUTE_AUTH=true to enforce the PDP "
-            "token on this route.",
-            method=request.method,
-            path=request.url.path,
-            detail=exc.detail,
-        )
+        emit, coalesced = _operational_warn_should_emit(request.url.path)
+        if emit:
+            logger.warning(
+                "ENFORCE_OPERATIONAL_ROUTE_AUTH is off: allowed {count} unauthenticated request(s) to "
+                "{method} {path} in the last ~{interval}s that would otherwise be rejected (e.g. {detail}). "
+                "Set ENFORCE_OPERATIONAL_ROUTE_AUTH=true to enforce the PDP token on this route.",
+                count=coalesced,
+                method=request.method,
+                path=request.url.path,
+                interval=int(_OPERATIONAL_WARN_INTERVAL_SECONDS),
+                detail=exc.detail,
+            )
 
 
 def enforce_pdp_control_key(credentials: PdpCredentials = None):

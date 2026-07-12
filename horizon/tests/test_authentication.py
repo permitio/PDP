@@ -7,6 +7,7 @@ constant-time token comparison, the 401/503 contract of the two dependencies, an
 public-route allowlist that the route-audit test relies on.
 """
 
+import time
 from types import SimpleNamespace
 
 import horizon.authentication as auth
@@ -130,6 +131,28 @@ class TestEnforcePdpTokenOperational:
         # A caller that already sends the token is not flagged - only would-be rejections warn.
         assert enforce_pdp_token_operational(_fake_request(), credentials=_creds(VALID_TOKEN)) is None
         assert not any(self.WARN_SUBSTRING in record for record in capture_loguru)
+
+    @pytest.mark.usefixtures("enforce_off")
+    def test_enforce_off_coalesces_repeated_warnings(self, capture_loguru):
+        # The warn-and-allow path must not log once per request (that floods the hot /kong endpoint):
+        # a burst of would-be rejections on one route collapses to a single warning line.
+        for _ in range(50):
+            assert enforce_pdp_token_operational(_fake_request(path="/kong"), credentials=None) is None
+        assert sum(self.WARN_SUBSTRING in record for record in capture_loguru) == 1
+
+
+def test_operational_warn_throttle_coalesces_count():
+    # First hit for a path emits immediately (count 1); further hits within the interval are counted
+    # but suppressed; once the interval elapses the next hit emits carrying the coalesced total.
+    auth.reset_operational_warn_throttle()
+    assert auth._operational_warn_should_emit("/kong") == (True, 1)
+    for _ in range(4):
+        emit, _count = auth._operational_warn_should_emit("/kong")
+        assert emit is False
+    # Simulate the interval having elapsed without waiting on the wall clock.
+    pending, _last = auth._operational_warn_state["/kong"]
+    auth._operational_warn_state["/kong"] = (pending, time.monotonic() - (auth._OPERATIONAL_WARN_INTERVAL_SECONDS + 1))
+    assert auth._operational_warn_should_emit("/kong") == (True, 5)
 
 
 @pytest.fixture
