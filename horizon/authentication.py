@@ -5,7 +5,7 @@ from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from opal_client.logger import logger
+from loguru import logger
 
 from horizon.config import MOCK_API_KEY, sidecar_config
 from horizon.startup.api_keys import get_env_api_key
@@ -134,9 +134,10 @@ def enforce_pdp_token_operational(request: Request, credentials: PdpCredentials 
         emit, coalesced = _operational_warn_should_emit(request.url.path)
         if emit:
             logger.warning(
-                "ENFORCE_OPERATIONAL_ROUTE_AUTH is off: allowed {count} unauthenticated request(s) to "
-                "{method} {path} in the last ~{interval}s that would otherwise be rejected (e.g. {detail}). "
-                "Set ENFORCE_OPERATIONAL_ROUTE_AUTH=true to enforce the PDP token on this route.",
+                "ENFORCE_OPERATIONAL_ROUTE_AUTH is off: allowed {count} request(s) without a valid PDP token "
+                "(missing or invalid) to {method} {path} in the last ~{interval}s that would otherwise be "
+                "rejected (e.g. {detail}). Set ENFORCE_OPERATIONAL_ROUTE_AUTH=true to enforce the PDP token "
+                "on this route.",
                 count=coalesced,
                 method=request.method,
                 path=request.url.path,

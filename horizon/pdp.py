@@ -158,9 +158,9 @@ def _warn_if_operational_route_auth_disabled() -> None:
     if not sidecar_config.ENFORCE_OPERATIONAL_ROUTE_AUTH:
         logger.warning(
             "ENFORCE_OPERATIONAL_ROUTE_AUTH is OFF: the update-trigger routes (/policy-updater/trigger, "
-            "/data-updater/trigger, /update_policy, /update_policy_data) and /kong accept UNAUTHENTICATED "
-            "requests - would-be rejections are only logged. This is the safe fleet-rollout default; set "
-            "ENFORCE_OPERATIONAL_ROUTE_AUTH=true to enforce the PDP token on these routes."
+            "/data-updater/trigger, /update_policy, /update_policy_data) and /kong accept requests WITHOUT "
+            "a valid PDP token (missing or invalid) - would-be rejections are only logged. This is the safe "
+            "fleet-rollout default; set ENFORCE_OPERATIONAL_ROUTE_AUTH=true to enforce the PDP token on these routes."
         )
 
 
