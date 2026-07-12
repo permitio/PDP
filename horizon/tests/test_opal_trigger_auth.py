@@ -16,13 +16,16 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from horizon.config import sidecar_config
 from horizon.enforcer.api import stats_manager
-from horizon.pdp import PermitPDP, _warn_if_opal_verifier_disabled
+from horizon.pdp import PermitPDP, _warn_if_opal_verifier_disabled, _warn_if_operational_route_auth_disabled
 from loguru import logger
 from opal_client.client import OpalClient
 from starlette import status
 
 VALID_TOKEN = "mock_api_key"
 TRIGGER_ROUTES = ["/policy-updater/trigger", "/data-updater/trigger"]
+# The legacy SDK aliases of the two trigger routes; gated with the same operational wrapper.
+LEGACY_TRIGGER_ROUTES = ["/update_policy", "/update_policy_data"]
+OPERATIONAL_UPDATE_ROUTES = TRIGGER_ROUTES + LEGACY_TRIGGER_ROUTES
 
 
 class MockPermitPDP(PermitPDP):
@@ -49,7 +52,18 @@ def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+@pytest.fixture
+def enforce_on(monkeypatch):
+    """Turn ENFORCE_OPERATIONAL_ROUTE_AUTH on (read per-request by the gate) so these routes reject."""
+    monkeypatch.setattr(sidecar_config, "ENFORCE_OPERATIONAL_ROUTE_AUTH", True)
+
+
+# The trigger-route enforcement tests below assert the reject behaviour, which is now opt-in
+# (ENFORCE_OPERATIONAL_ROUTE_AUTH defaults to off for a safe fleet rollout), so they enable it.
+
+
 @pytest.mark.parametrize("path", TRIGGER_ROUTES)
+@pytest.mark.usefixtures("enforce_on")
 def test_trigger_route_without_token_is_401(client: TestClient, path: str):
     # The actual vulnerability: OPAL-mounted trigger routes were callable unauthenticated.
     resp = client.post(path)
@@ -59,12 +73,14 @@ def test_trigger_route_without_token_is_401(client: TestClient, path: str):
 
 @pytest.mark.parametrize("path", TRIGGER_ROUTES)
 def test_trigger_route_with_valid_token_is_not_blocked(client: TestClient, path: str):
-    # The dependency passes; the handler may 500 offline, but it must not be a 401.
+    # The dependency passes; the handler may 500 offline, but it must not be a 401. True in both
+    # enforcement modes, so left flag-agnostic.
     resp = client.post(path, headers=_auth(VALID_TOKEN))
     assert resp.status_code != status.HTTP_401_UNAUTHORIZED
 
 
 @pytest.mark.parametrize("path", TRIGGER_ROUTES)
+@pytest.mark.usefixtures("enforce_on")
 def test_trigger_route_with_wrong_token_is_401(client: TestClient, path: str):
     resp = client.post(path, headers=_auth("wrong-token"))
     assert resp.status_code == status.HTTP_401_UNAUTHORIZED
@@ -73,6 +89,7 @@ def test_trigger_route_with_wrong_token_is_401(client: TestClient, path: str):
 
 @pytest.mark.parametrize("path", TRIGGER_ROUTES)
 @pytest.mark.parametrize("value", ["garbage", "Bearer", "Bearer ", "Bearer a b c"])
+@pytest.mark.usefixtures("enforce_on")
 def test_trigger_route_malformed_header_is_401_not_500(client: TestClient, path: str, value: str):
     # Regression for the unguarded split(" ") -> ValueError -> 500 footgun.
     resp = client.post(path, headers={"Authorization": value})
@@ -106,6 +123,44 @@ def test_exit_without_header_is_503_when_control_key_unset(client: TestClient):
     # Control key is unset in tests, so enforce_pdp_control_key short-circuits to 503
     # (before any header check) - now reachable because the header param defaults to None.
     assert client.post("/_exit").status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+
+
+@pytest.mark.parametrize("path", OPERATIONAL_UPDATE_ROUTES)
+@pytest.mark.usefixtures("enforce_on")
+def test_update_route_without_token_is_401_when_enforced(client: TestClient, path: str):
+    # With enforcement on, the update-trigger + legacy routes reject a tokenless call.
+    assert client.post(path).status_code == status.HTTP_401_UNAUTHORIZED
+
+
+@pytest.mark.parametrize("path", OPERATIONAL_UPDATE_ROUTES)
+def test_update_route_without_token_is_allowed_by_default(client: TestClient, path: str):
+    # Rollout default (enforcement off, no flag set here): a tokenless call is not blocked. It may
+    # 500 on real offline I/O once it reaches the handler, but it must not be the auth 401 - which
+    # proves the gate allowed it through.
+    assert client.post(path).status_code != status.HTTP_401_UNAUTHORIZED
+
+
+@pytest.mark.parametrize("path", OPERATIONAL_UPDATE_ROUTES)
+def test_update_route_wrong_token_is_allowed_by_default(client: TestClient, path: str):
+    assert client.post(path, headers=_auth("wrong-token")).status_code != status.HTTP_401_UNAUTHORIZED
+
+
+def test_default_permissive_logs_would_be_rejection(client: TestClient, capture_loguru):
+    # The escape hatch is observable: each would-be rejection is logged so lagging callers surface.
+    client.post("/policy-updater/trigger")
+    assert any("ENFORCE_OPERATIONAL_ROUTE_AUTH is off" in record for record in capture_loguru)
+
+
+def test_warn_if_operational_route_auth_disabled_fires_when_off(monkeypatch, capture_loguru):
+    monkeypatch.setattr(sidecar_config, "ENFORCE_OPERATIONAL_ROUTE_AUTH", False)
+    _warn_if_operational_route_auth_disabled()
+    assert any("ENFORCE_OPERATIONAL_ROUTE_AUTH is OFF" in record for record in capture_loguru)
+
+
+def test_warn_if_operational_route_auth_disabled_silent_when_on(monkeypatch, capture_loguru):
+    monkeypatch.setattr(sidecar_config, "ENFORCE_OPERATIONAL_ROUTE_AUTH", True)
+    _warn_if_operational_route_auth_disabled()
+    assert not any("ENFORCE_OPERATIONAL_ROUTE_AUTH is OFF" in record for record in capture_loguru)
 
 
 def test_warn_if_opal_verifier_disabled_fires(capture_loguru):

@@ -35,6 +35,10 @@ from starlette.routing import Route
 AUTH_GATE_CALLABLES: frozenset[str] = frozenset(
     {
         "enforce_pdp_token",
+        # ENFORCE_OPERATIONAL_ROUTE_AUTH rollout wrapper on the update-trigger and /kong routes. This
+        # audit is structural: it asserts a gate is attached, not that the gate rejects at runtime
+        # (that gate warns-and-allows while enforcement is off, the rollout default).
+        "enforce_pdp_token_operational",
         "enforce_pdp_control_key",
         "JWTAuthenticator",
         "require_listener_token",
@@ -102,10 +106,15 @@ def test_no_route_is_unprotected():
 
 @pytest.mark.parametrize("path", sorted(OPAL_TRIGGER_ROUTE_PATHS))
 def test_opal_trigger_route_is_pdp_gated(path: str):
-    """Regression guard for the actual fix: the OPAL-mounted trigger routes require the PDP token."""
+    """Regression guard for the actual fix: the OPAL-mounted trigger routes carry the PDP-token gate.
+
+    They are gated with the operational wrapper (enforce_pdp_token_operational) so
+    ENFORCE_OPERATIONAL_ROUTE_AUTH governs them during a rollout; with the flag on the wrapper enforces
+    the token identically to enforce_pdp_token. This asserts the gate is attached, not its runtime mode.
+    """
     by_path = {route.path: route for route in _sidecar._app.routes if isinstance(route, APIRoute)}
     assert path in by_path, f"{path} is no longer mounted (OPAL rename?) - _gate_opal_trigger_routes must be updated"
-    assert "enforce_pdp_token" in _route_auth_gates(by_path[path])
+    assert "enforce_pdp_token_operational" in _route_auth_gates(by_path[path])
 
 
 def test_audit_detects_a_bare_ungated_route():

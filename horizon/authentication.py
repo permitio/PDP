@@ -1,8 +1,9 @@
 import hmac
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from opal_client.logger import logger
 
 from horizon.config import MOCK_API_KEY, sidecar_config
 from horizon.startup.api_keys import get_env_api_key
@@ -63,6 +64,37 @@ def enforce_pdp_token(credentials: PdpCredentials = None):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Missing Authorization header")
     if not _token_matches(credentials, get_env_api_key()):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid PDP token")
+
+
+def enforce_pdp_token_operational(request: Request, credentials: PdpCredentials = None):
+    """PDP-token gate for the operational routes hardened by PER-15244/PER-15245, with a rollout default.
+
+    Governed by ``ENFORCE_OPERATIONAL_ROUTE_AUTH``. When it is true this is exactly ``enforce_pdp_token``.
+    When it is false - the default, for a safe fleet rollout - a request that would be rejected is allowed
+    through but logged, so callers that don't yet send the PDP token keep working while the logs surface
+    them before enforcement is switched on.
+
+    The flag is read per-request (never captured at import) so a cloud control-plane override takes
+    effect and tests can toggle it. Kept as a distinct, named module-level function because the
+    fail-closed route audit recognises auth gates by callable name - a bare ``enforce_pdp_token`` here
+    could not carry the conditional behaviour, and an inline lambda would be invisible to the audit.
+    """
+    if sidecar_config.ENFORCE_OPERATIONAL_ROUTE_AUTH:
+        enforce_pdp_token(credentials)
+        return
+    # Permissive rollout default: reuse enforce_pdp_token's exact reject logic, but downgrade a
+    # rejection to warn-and-allow so no caller breaks while every would-be rejection is still flagged.
+    try:
+        enforce_pdp_token(credentials)
+    except HTTPException as exc:
+        logger.warning(
+            "ENFORCE_OPERATIONAL_ROUTE_AUTH is off: allowing {method} {path} unauthenticated - it would "
+            "otherwise be rejected ({detail}). Set ENFORCE_OPERATIONAL_ROUTE_AUTH=true to enforce the PDP "
+            "token on this route.",
+            method=request.method,
+            path=request.url.path,
+            detail=exc.detail,
+        )
 
 
 def enforce_pdp_control_key(credentials: PdpCredentials = None):
