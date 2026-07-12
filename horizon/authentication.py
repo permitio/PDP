@@ -79,14 +79,14 @@ def enforce_pdp_token_operational(request: Request, credentials: PdpCredentials 
     fail-closed route audit recognises auth gates by callable name - a bare ``enforce_pdp_token`` here
     could not carry the conditional behaviour, and an inline lambda would be invisible to the audit.
     """
-    if sidecar_config.ENFORCE_OPERATIONAL_ROUTE_AUTH:
-        enforce_pdp_token(credentials)
-        return
-    # Permissive rollout default: reuse enforce_pdp_token's exact reject logic, but downgrade a
-    # rejection to warn-and-allow so no caller breaks while every would-be rejection is still flagged.
+    # Reuse enforce_pdp_token's exact reject logic in one place. When the flag is on, a rejection is
+    # honoured (re-raised). When it is off - the rollout default - the rejection is downgraded to
+    # warn-and-allow so no caller breaks while every would-be rejection is still flagged.
     try:
         enforce_pdp_token(credentials)
     except HTTPException as exc:
+        if sidecar_config.ENFORCE_OPERATIONAL_ROUTE_AUTH:
+            raise
         logger.warning(
             "ENFORCE_OPERATIONAL_ROUTE_AUTH is off: allowing {method} {path} unauthenticated - it would "
             "otherwise be rejected ({detail}). Set ENFORCE_OPERATIONAL_ROUTE_AUTH=true to enforce the PDP "
