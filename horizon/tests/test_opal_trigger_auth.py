@@ -7,9 +7,12 @@ dependency injection on the two routes OpalClient mounts before the PDP gets con
 The TestClient is used WITHOUT a context manager, so the app lifespan never runs (no OPAL
 policy/data fetch, no OPA process, no control-plane connection). ``raise_server_exceptions
 =False`` means a request the auth dependency *allows* through but which then fails on real
-offline I/O surfaces as a 500 response instead of raising - so an authenticated trigger
-call asserts only that it is not blocked (status != 401), not that the handler succeeds.
+offline I/O surfaces as a 500 response instead of raising. Valid-token tests boundary-mock
+the real (unstarted) updater instances hanging off ``_sidecar._opal`` with an ``AsyncMock``,
+so the handler runs to completion and the test asserts an actual 200, not just ``!= 401``.
 """
+
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI
@@ -57,11 +60,26 @@ def test_trigger_route_without_token_is_401(client: TestClient, path: str):
     assert resp.json()["detail"] == "Missing Authorization header"
 
 
-@pytest.mark.parametrize("path", TRIGGER_ROUTES)
-def test_trigger_route_with_valid_token_is_not_blocked(client: TestClient, path: str):
-    # The dependency passes; the handler may 500 offline, but it must not be a 401.
-    resp = client.post(path, headers=_auth(VALID_TOKEN))
-    assert resp.status_code != status.HTTP_401_UNAUTHORIZED
+def test_policy_updater_trigger_route_with_valid_token_returns_200(client: TestClient, monkeypatch):
+    trigger = AsyncMock()
+    monkeypatch.setattr(_sidecar._opal.policy_updater, "trigger_update_policy", trigger)
+
+    resp = client.post("/policy-updater/trigger", headers=_auth(VALID_TOKEN))
+
+    assert resp.status_code == status.HTTP_200_OK
+    assert resp.json() == {"status": "ok"}
+    trigger.assert_awaited_once_with(force_full_update=True)
+
+
+def test_data_updater_trigger_route_with_valid_token_returns_200(client: TestClient, monkeypatch):
+    get_base = AsyncMock()
+    monkeypatch.setattr(_sidecar._opal.data_updater, "get_base_policy_data", get_base)
+
+    resp = client.post("/data-updater/trigger", headers=_auth(VALID_TOKEN))
+
+    assert resp.status_code == status.HTTP_200_OK
+    assert resp.json() == {"status": "ok"}
+    get_base.assert_awaited_once_with(data_fetch_reason="request from sdk")
 
 
 @pytest.mark.parametrize("path", TRIGGER_ROUTES)

@@ -97,6 +97,14 @@ def test_enforcer_endpoint_invalid_token_returns_401(endpoint):
     assert response.json()["detail"] == "Invalid PDP token"
 
 
+@pytest.mark.parametrize("endpoint", PROTECTED_ENFORCER_ENDPOINTS)
+@pytest.mark.parametrize("value", ["garbage", "Bearer", "Bearer ", "Bearer a b c"])
+def test_enforcer_endpoint_malformed_header_is_401_not_500(endpoint, value):
+    client = TestClient(sidecar._app)
+    response = client.post(endpoint, headers={"authorization": value}, json={})
+    assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+
 def test_health_endpoint_is_public(monkeypatch):
     monkeypatch.setattr(stats_manager, "_had_failure", False)
     client = TestClient(sidecar._app)

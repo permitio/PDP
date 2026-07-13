@@ -39,16 +39,23 @@ def test_update_policy_rejects_unauthenticated(pdp: MockPermitPDP, monkeypatch):
     monkeypatch.setattr(pdp._opal.policy_updater, "trigger_update_policy", trigger)
     client = TestClient(pdp._app)
 
-    # A missing header is rejected before the handler runs: 422 while the
-    # `authorization` param has no default (FastAPI required-param validation),
-    # 401 once enforce_pdp_token gains `= None` (PER-15244 / #317). Accept both
-    # so this survives either merge order, while still failing on an accidental
-    # 200 (auth bypass) or 500. An invalid token is 401 in both regimes, and the
-    # updater must never run for an unauthenticated caller either way.
     missing = client.post("/update_policy", follow_redirects=False)
-    assert missing.status_code in (401, 422)
+    assert missing.status_code == 401
+    assert missing.json()["detail"] == "Missing Authorization header"
     invalid = client.post("/update_policy", headers={"authorization": "Bearer wrong"}, follow_redirects=False)
     assert invalid.status_code == 401
+    trigger.assert_not_awaited()
+
+
+@pytest.mark.parametrize("value", ["garbage", "Bearer", "Bearer ", "Bearer a b c"])
+def test_update_policy_malformed_header_is_401_not_500(pdp: MockPermitPDP, monkeypatch, value: str):
+    trigger = AsyncMock()
+    monkeypatch.setattr(pdp._opal.policy_updater, "trigger_update_policy", trigger)
+    client = TestClient(pdp._app)
+
+    response = client.post("/update_policy", headers={"authorization": value}, follow_redirects=False)
+
+    assert response.status_code == 401
     trigger.assert_not_awaited()
 
 
@@ -78,11 +85,23 @@ def test_update_policy_data_rejects_unauthenticated(pdp: MockPermitPDP, monkeypa
     monkeypatch.setattr(pdp._opal.data_updater, "get_base_policy_data", get_base)
     client = TestClient(pdp._app)
 
-    # See test_update_policy_rejects_unauthenticated for the 401/422 dual regime.
     missing = client.post("/update_policy_data", follow_redirects=False)
-    assert missing.status_code in (401, 422)
+    assert missing.status_code == 401
+    assert missing.json()["detail"] == "Missing Authorization header"
     invalid = client.post("/update_policy_data", headers={"authorization": "Bearer wrong"}, follow_redirects=False)
     assert invalid.status_code == 401
+    get_base.assert_not_awaited()
+
+
+@pytest.mark.parametrize("value", ["garbage", "Bearer", "Bearer ", "Bearer a b c"])
+def test_update_policy_data_malformed_header_is_401_not_500(pdp: MockPermitPDP, monkeypatch, value: str):
+    get_base = AsyncMock()
+    monkeypatch.setattr(pdp._opal.data_updater, "get_base_policy_data", get_base)
+    client = TestClient(pdp._app)
+
+    response = client.post("/update_policy_data", headers={"authorization": value}, follow_redirects=False)
+
+    assert response.status_code == 401
     get_base.assert_not_awaited()
 
 
