@@ -38,6 +38,7 @@ def _reset_operational_warn_throttle():
     _authentication.reset_operational_warn_throttle()
     yield
 
+
 if "stream_writer" in inspect.signature(_ClientResponse.__init__).parameters:
 
     class _StreamWriterCompatClientResponse(_ClientResponse):
