@@ -5,7 +5,6 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, status
-from fastapi.dependencies.utils import get_parameterless_sub_dependant
 from fastapi.routing import APIRoute
 from loguru import logger
 from logzio.handler import LogzioHandler
@@ -29,6 +28,7 @@ from scalar_fastapi import get_scalar_api_reference
 from horizon.authentication import enforce_pdp_token
 from horizon.config import MOCK_API_KEY, sidecar_config
 from horizon.connectivity.api import init_connectivity_router
+from horizon.debounce import DebouncedTrigger
 from horizon.enforcer.api import init_enforcer_api_router, init_enforcer_health_router, stats_manager
 from horizon.enforcer.opa.config_maker import (
     get_opa_authz_policy_file_path,
@@ -100,44 +100,44 @@ def apply_config(overrides_dict: dict, config_object: Confi):
         logger.warning(f"Ignored non-existing config key: {prefixed_key}")
 
 
-# The OPAL client mounts these trigger routes before PermitPDP gains control, so they
-# cannot be gated by an include_router-level dependency - they are secured post-hoc by
-# _gate_opal_trigger_routes instead. Kept as a frozenset so the route-audit test can
-# assert both are present and authenticated.
+# OpalClient mounts these two forced-reload trigger routes before PermitPDP gains control.
+# Their handlers are OPAL closures that force a FULL reload on every call with no damping, so
+# the PDP REPLACES them (see _remove_opal_trigger_routes + the replacements registered in
+# _configure_api_routes) with its own gated, debounced handlers at the same paths. Kept as a
+# frozenset so the route-audit test (test_route_auth_audit.py) can assert both remain present
+# and authenticated after the swap.
 OPAL_TRIGGER_ROUTE_PATHS: frozenset[str] = frozenset({"/policy-updater/trigger", "/data-updater/trigger"})
 
 
-def _gate_opal_trigger_routes(app: FastAPI) -> None:
-    """Inject ``Depends(enforce_pdp_token)`` into the OPAL-mounted trigger routes.
+def _remove_opal_trigger_routes(app: FastAPI) -> None:
+    """Remove the OPAL-mounted forced-reload trigger routes so the PDP can replace them.
 
-    OpalClient mounts ``POST /policy-updater/trigger`` and ``POST /data-updater/trigger``
-    on the app before ``PermitPDP`` gains control (opal_client.client._configure_api_routes),
-    so the include_router-level dependencies used for every PDP-owned router cannot reach
-    them. We inject the standard PDP-token dependency into the already-mounted route objects
-    instead, mirroring what FastAPI itself does at ``APIRoute.__init__`` (fastapi/routing.py):
-    insert a parameterless sub-dependant at the head of ``route.dependant.dependencies``.
+    OpalClient mounts ``POST /policy-updater/trigger`` and ``POST /data-updater/trigger`` on the
+    app before ``PermitPDP`` gains control (opal_client.client._configure_api_routes). Those
+    handlers are closures we cannot cleanly intercept, and a FastAPI dependency cannot
+    short-circuit a request to a 200 no-op (it can only raise) - so both gating AND debouncing
+    them requires OWNING the handler. We strip the OPAL routes here; the caller immediately
+    re-registers gated, debounced replacements at the same two paths.
 
-    The Dependant is mutated IN PLACE - the route's request handler closes over that exact
-    object, so the check is enforced on every request; do NOT reassign ``route.dependant``.
-    ``enforce_pdp_token`` only reads a header, so the route's body field needs no rebuild.
+    Remove-then-add, never add-only: Starlette matches routes first-match-wins, so a lingering
+    OPAL route would shadow the replacement AND stay ungated + un-debounced.
 
-    Fails loud if a target route is missing (e.g. an OPAL upgrade renamed it): a silently
-    skipped injection would leave an update-trigger endpoint unauthenticated.
+    Fails loud (``SystemExit``) if either path is missing - e.g. an OPAL upgrade renamed a route.
+    A silently-skipped removal would leave the original ungated, un-debounced OPAL handler in
+    place, reopening exactly the amplification/auth hole this replacement closes.
     """
-    gated: set[str] = set()
-    for route in app.routes:
+    removed: set[str] = set()
+    # Iterate over a copy: we mutate app.router.routes inside the loop.
+    for route in list(app.router.routes):
         if isinstance(route, APIRoute) and route.path in OPAL_TRIGGER_ROUTE_PATHS:
-            route.dependant.dependencies.insert(
-                0,
-                get_parameterless_sub_dependant(depends=Depends(enforce_pdp_token), path=route.path_format),
-            )
-            gated.add(route.path)
+            app.router.routes.remove(route)
+            removed.add(route.path)
 
-    missing = OPAL_TRIGGER_ROUTE_PATHS - gated
+    missing = OPAL_TRIGGER_ROUTE_PATHS - removed
     if missing:
         logger.critical(
-            "Could not secure OPAL trigger route(s) {} - not found on the app. Refusing to "
-            "start with potentially unauthenticated update-trigger endpoints.",
+            "Could not find OPAL trigger route(s) {} to replace - not found on the app. Refusing "
+            "to start with potentially unauthenticated, un-debounced update-trigger endpoints.",
             ", ".join(sorted(missing)),
         )
         raise SystemExit(GUNICORN_EXIT_APP)
@@ -497,7 +497,33 @@ class PermitPDP:
                 dependencies=[Depends(enforce_pdp_token)],
             )
 
-        # TODO: remove this when clients update sdk version (legacy routes)
+        # Forced-reload trigger routes (canonical OPAL routes replaced with debounced,
+        # PDP-gated handlers + their legacy aliases). Extracted to keep this method's
+        # cyclomatic complexity in check and to co-locate all trigger routes + debounce state.
+        self._configure_trigger_routes(app)
+
+        # High-signal warning if the OPAL-authenticated routes are left open by a disabled
+        # verifier (must never happen in a managed PDP).
+        _warn_if_opal_verifier_disabled(self._opal)
+
+    def _configure_trigger_routes(self, app: FastAPI):
+        """Mount the forced-reload trigger routes, debounced and PDP-gated.
+
+        OpalClient mounts ``POST /policy-updater/trigger`` / ``POST /data-updater/trigger`` with
+        ungated closures that force a FULL reload on every call. We remove those and register
+        PDP-owned replacements at the same paths, plus the two legacy ``/update_policy*`` aliases,
+        all routed through per-updater :class:`DebouncedTrigger`s so an authenticated hammer (or a
+        buggy SDK) cannot amplify load onto the shared control plane.
+        """
+        # Per-updater debounce state, owned by this PermitPDP instance (never module-global:
+        # production has exactly one instance, and per-instance scope gives each test's fresh
+        # MockPermitPDP its own clean state). Each debouncer is shared by a canonical route and
+        # its legacy alias (via the _reload helpers below) so an alternating hammer still
+        # coalesces into one forced reload.
+        self._policy_trigger_debounce = DebouncedTrigger("policy")
+        self._data_trigger_debounce = DebouncedTrigger("data")
+
+        # TODO: remove the two legacy aliases when clients update sdk version.
         @app.post(
             "/update_policy",
             status_code=status.HTTP_200_OK,
@@ -506,9 +532,7 @@ class PermitPDP:
         )
         async def legacy_trigger_policy_update():
             logger.info("triggered policy update from api (legacy route)")
-            # deliberately no None-guard: exact parity with the canonical (unguarded)
-            # /policy-updater/trigger handler; the PDP never disables the policy updater
-            await self._opal.policy_updater.trigger_update_policy(force_full_update=True)
+            await self._debounced_policy_reload()
             return {"status": "ok"}
 
         @app.post(
@@ -519,21 +543,86 @@ class PermitPDP:
         )
         async def legacy_trigger_data_update():
             logger.info("triggered policy data update from api (legacy route)")
-            if self._opal.data_updater is None:
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="Data Updater is currently disabled. Dynamic data updates are not available.",
-                )
-            await self._opal.data_updater.get_base_policy_data(data_fetch_reason="request from sdk (legacy alias)")
+            # Preserve the distinct legacy reason string - a test asserts it verbatim.
+            await self._debounced_data_reload("request from sdk (legacy alias)")
             return {"status": "ok"}
 
-        # The OPAL trigger routers were mounted by OpalClient before the PDP took over, so
-        # the include_router-level dependencies above cannot reach them. Inject the PDP
-        # token dependency into those two routes directly.
-        _gate_opal_trigger_routes(app)
-        # High-signal warning if the OPAL-authenticated routes are left open by a disabled
-        # verifier (must never happen in a managed PDP).
-        _warn_if_opal_verifier_disabled(self._opal)
+        # OpalClient mounted POST /policy-updater/trigger and POST /data-updater/trigger before
+        # the PDP took over; their closures force a FULL reload on every call with no damping.
+        # Remove them and re-register PDP-owned replacements at the same paths that (a) carry the
+        # normal Depends(enforce_pdp_token) gate and (b) route through the per-updater debouncers
+        # above. Remove-then-add order matters: Starlette is first-match-wins, so a surviving OPAL
+        # route would shadow the replacement and stay ungated/un-debounced.
+        _remove_opal_trigger_routes(app)
+
+        @app.post(
+            "/policy-updater/trigger",
+            status_code=status.HTTP_200_OK,
+            tags=["Policy Updater"],
+            dependencies=[Depends(enforce_pdp_token)],
+        )
+        async def trigger_policy_update():
+            """Force a full policy reload, debounced (replaces OpalClient's ungated handler).
+
+            Response parity with the route it replaces: always 200 ``{"status": "ok"}``. The policy
+            route already had fire-and-forget 200 semantics (the underlying call only *enqueues* an
+            update), so debouncing changes nothing observable here beyond collapsing redundant
+            triggers into one reload.
+            """
+            logger.info("triggered policy update from api")
+            await self._debounced_policy_reload()
+            return {"status": "ok"}
+
+        @app.post(
+            "/data-updater/trigger",
+            status_code=status.HTTP_200_OK,
+            tags=["Data Updater"],
+            dependencies=[Depends(enforce_pdp_token)],
+        )
+        async def trigger_data_update():
+            """Force a full base-data reload, debounced (replaces OpalClient's ungated handler).
+
+            SEMANTIC SHIFT worth calling out: with the OPAL route a 200 meant the inline base-data
+            fetch had actually COMPLETED. With debouncing a 200 now means "a recent or in-flight
+            forced pull already covers you" - the underlying get_base_policy_data may have been
+            coalesced and not re-run. The body stays exactly ``{"status": "ok"}`` either way so
+            SDKs polling this route never error-spiral. A disabled data updater still returns 503,
+            checked BEFORE the debouncer so a 503 never consumes the window.
+            """
+            logger.info("triggered policy data update from api")
+            await self._debounced_data_reload("request from sdk")
+            return {"status": "ok"}
+
+    async def _debounced_policy_reload(self) -> None:
+        """Force a full policy reload through the shared policy debouncer.
+
+        Backs both /policy-updater/trigger and the /update_policy legacy alias so they coalesce
+        against each other. No None-guard: the PDP never disables the policy updater.
+        """
+
+        async def _run() -> None:
+            await self._opal.policy_updater.trigger_update_policy(force_full_update=True)
+
+        await self._policy_trigger_debounce.trigger(run=_run, window_seconds=sidecar_config.TRIGGER_DEBOUNCE_SECONDS)
+
+    async def _debounced_data_reload(self, data_fetch_reason: str) -> None:
+        """Force a full base-data reload through the shared data debouncer.
+
+        Backs both /data-updater/trigger and the /update_policy_data legacy alias (the caller
+        passes the route-specific ``data_fetch_reason``). Raises 503 - exact OpalClient parity -
+        when the data updater is disabled, checked BEFORE the debouncer so a 503 never consumes
+        the window.
+        """
+        if self._opal.data_updater is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Data Updater is currently disabled. Dynamic data updates are not available.",
+            )
+
+        async def _run() -> None:
+            await self._opal.data_updater.get_base_policy_data(data_fetch_reason=data_fetch_reason)
+
+        await self._data_trigger_debounce.trigger(run=_run, window_seconds=sidecar_config.TRIGGER_DEBOUNCE_SECONDS)
 
     @property
     def app(self):

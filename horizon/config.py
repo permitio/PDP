@@ -288,6 +288,20 @@ class SidecarConfig(Confi):
         ),
     )
 
+    TRIGGER_DEBOUNCE_SECONDS = confi.float(
+        "TRIGGER_DEBOUNCE_SECONDS",
+        10.0,
+        description=(
+            "Minimum number of seconds between forced full reloads triggered via the API trigger "
+            "routes (/policy-updater/trigger, /data-updater/trigger and their legacy /update_policy* "
+            "aliases). Triggers arriving within the window - or while a forced reload is already in "
+            "flight - coalesce into the in-flight/most-recent pull instead of amplifying load onto the "
+            "control plane. Set to 0 to disable debouncing (every trigger forces a fresh reload). "
+            "Remote-config overridable fleet-wide, so ops can raise it (e.g. to 30-60s under a degraded "
+            "control plane) without shipping a release."
+        ),
+    )
+
     @staticmethod
     def parse_callbacks(value: Any) -> list[CallbackEntry]:
         if isinstance(value, str):

@@ -104,7 +104,10 @@ def test_no_route_is_unprotected():
 def test_opal_trigger_route_is_pdp_gated(path: str):
     """Regression guard for the actual fix: the OPAL-mounted trigger routes require the PDP token."""
     by_path = {route.path: route for route in _sidecar._app.routes if isinstance(route, APIRoute)}
-    assert path in by_path, f"{path} is no longer mounted (OPAL rename?) - _gate_opal_trigger_routes must be updated"
+    assert path in by_path, (
+        f"{path} is no longer mounted (OPAL rename?) - _remove_opal_trigger_routes / "
+        "_configure_trigger_routes must be updated"
+    )
     assert "enforce_pdp_token" in _route_auth_gates(by_path[path])
 
 

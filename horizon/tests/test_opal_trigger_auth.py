@@ -1,8 +1,10 @@
-"""Integration tests proving the OPAL-mounted trigger routes are now gated.
+"""Integration tests proving the OPAL-mounted trigger routes are gated.
 
-The app is built exactly like production via ``PermitPDP._configure_api_routes`` (which
-runs ``_gate_opal_trigger_routes``), so these tests directly exercise the post-hoc
-dependency injection on the two routes OpalClient mounts before the PDP gets control.
+The app is built exactly like production via ``PermitPDP._configure_api_routes``, which
+removes the two trigger routes OpalClient mounts before the PDP gets control and
+re-registers PDP-owned, debounced replacements at the same paths (see
+``_configure_trigger_routes`` / ``_remove_opal_trigger_routes``). These tests exercise the
+``Depends(enforce_pdp_token)`` gate those replacement routes carry.
 
 The TestClient is used WITHOUT a context manager, so the app lifespan never runs (no OPAL
 policy/data fetch, no OPA process, no control-plane connection). ``raise_server_exceptions
