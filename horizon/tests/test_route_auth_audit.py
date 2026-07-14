@@ -142,6 +142,13 @@ def test_audit_flags_a_mounted_subapp():
 # registered in ``PermitPDP.__init__`` *after* ``_configure_api_routes`` (see the comment
 # above PUBLIC_ROUTE_PATHS in horizon/authentication.py), so ``MockPermitPDP`` - which stops
 # at ``_configure_api_routes`` - never sees it, yet it is a real public route in production.
+#
+# TRADE-OFF (accepted): an entry listed here is exempted from the dead-entry check below, so
+# if its real route is ever deleted while the PUBLIC_ROUTE_PATHS entry stays, that now-dead
+# entry will NOT be flagged - and a later ungated route re-claiming the path would read as
+# public. Keep this set as small as possible. The exemption-free alternative is to make
+# MockPermitPDP mirror the post-_configure_api_routes registration so the path is really
+# mounted; we keep the exemption for now to stay test-only and not reshape production wiring.
 ALLOWLIST_ENTRIES_NOT_IN_AUDIT_APP: frozenset[str] = frozenset({"/scalar"})
 
 
@@ -156,8 +163,10 @@ def test_allowlist_has_no_dead_entries():
     mounted = {getattr(route, "path", None) for route in _sidecar._app.routes}
     dead = PUBLIC_ROUTE_PATHS - mounted - ALLOWLIST_ENTRIES_NOT_IN_AUDIT_APP
     assert dead == set(), (
-        "PUBLIC_ROUTE_PATHS entries that match no mounted route (remove them, or fix the "
-        f"path if a route was renamed): {sorted(dead)}"
+        f"PUBLIC_ROUTE_PATHS entries that match no route on the audit-built app: {sorted(dead)}. "
+        "Either the entry is dead (remove it, or fix the path if a route was renamed), or it is a "
+        "real route registered in PermitPDP.__init__ after _configure_api_routes (like /scalar) "
+        "that MockPermitPDP never reaches - in which case add it to ALLOWLIST_ENTRIES_NOT_IN_AUDIT_APP."
     )
     # Keep the exemption honest: if ``/scalar`` ever becomes visible to the audit-built app,
     # it no longer needs the special case and must be dropped from the set above.
@@ -178,13 +187,18 @@ def test_router_level_dependencies_surface_in_flat_dependant():
     fail for the wrong reason - so pin the assumption here, where the failure is legible.
     """
 
-    def fake_gate():
+    def fake_gate():  # router-level gate
+        pass
+
+    def inner_gate():  # reachable ONLY as wrapper's sub-dependency - see the assertion below
         pass
 
     # Annotated-Depends (the repo's own convention, see horizon/authentication.py) keeps the
     # sub-dependency in the annotation rather than the argument default - idiomatic FastAPI and
-    # B008-clean, while still nesting fake_gate one level down for the flattening assertion.
-    def wrapper(_: Annotated[None, Depends(fake_gate)] = None):
+    # B008-clean. inner_gate is nested one level under wrapper and attached nowhere else, so the
+    # nested-gated assertion genuinely exercises get_flat_dependant's recursion instead of
+    # passing on a directly-attached copy.
+    def wrapper(_: Annotated[None, Depends(inner_gate)] = None):
         pass
 
     router = APIRouter()
@@ -206,7 +220,10 @@ def test_router_level_dependencies_surface_in_flat_dependant():
         "route audit's gate detection is broken for router-level gates; review it before "
         "trusting a green run on this FastAPI version."
     )
-    assert {"fake_gate", "wrapper"} <= _route_auth_gates(by_path["/nested-gated"]), (
+    # inner_gate reaches this route ONLY through wrapper (wrapper is the route-level dep;
+    # fake_gate is router-level). If get_flat_dependant stops recursing into sub-dependencies,
+    # inner_gate drops out and this fails - the exact regression the assertion exists to pin.
+    assert {"wrapper", "inner_gate"} <= _route_auth_gates(by_path["/nested-gated"]), (
         "nested Depends() is no longer flattened by get_flat_dependant - closure-wrapped "
         "gates (e.g. OPAL's require_listener_token) would go undetected by the audit."
     )
