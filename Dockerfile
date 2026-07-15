@@ -77,7 +77,10 @@ RUN --mount=type=cache,target=/go/pkg/mod \
   then \
     cd /custom && \
     tar xzf custom_opa.tar.gz && \
-    CGO_ENABLED=0 go build -a -ldflags="-s -w -extldflags=-static" -tags netgo -installsuffix netgo -o /opa && \
+    # permit-opa moved its main package from the repo root to ./cmd/opa
+    # (cmd/ + pkg/ layout); build whichever location the tarball provides
+    if [ -d cmd/opa ]; then main_pkg=./cmd/opa; else main_pkg=.; fi && \
+    CGO_ENABLED=0 go build -a -ldflags="-s -w -extldflags=-static" -tags netgo -installsuffix netgo -o /opa $main_pkg && \
     rm -rf /custom; \
   else \
     case $(uname -m) in \
