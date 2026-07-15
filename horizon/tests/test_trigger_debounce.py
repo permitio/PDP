@@ -73,7 +73,7 @@ def test_data_triggers_within_window_coalesce(pdp: MockPermitPDP, auth: dict[str
 
 
 def test_canonical_and_legacy_policy_share_one_debouncer(pdp: MockPermitPDP, auth: dict[str, str], monkeypatch):
-    # Alternating canonical + legalias within the window must still collapse into one reload:
+    # Alternating canonical + legacy alias within the window must still collapse into one reload:
     # both routes hit the same policy debouncer instance.
     monkeypatch.setattr(sidecar_config, "TRIGGER_DEBOUNCE_SECONDS", WINDOW)
     trigger = AsyncMock()
