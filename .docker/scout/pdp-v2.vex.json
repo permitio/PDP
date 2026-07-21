@@ -68,6 +68,22 @@
       "status": "not_affected",
       "justification": "vulnerable_code_not_in_execute_path",
       "impact_statement": "CVE-2026-48817 is an unsafe-reflection issue in starlette.endpoints.HTTPEndpoint request dispatch: the HTTP method is lowercased and resolved with getattr against the endpoint instance without restricting the lookup to known HTTP verbs, letting an attacker invoke internal helper methods that bypass authorization. The PDP defines no HTTPEndpoint or WebSocketEndpoint subclass anywhere in the codebase - every route is registered through FastAPI APIRouter decorators with explicit HTTP methods - so the vulnerable dispatch class is never instantiated or reached. The fix lands only in starlette >= 1.1.0, but opal-common/opal-client 0.9.6 cap starlette<1, so the PDP is pinned to 0.50.0 (see requirements.txt). This waiver is temporary and must be removed once OPAL relaxes its starlette<1 bound and starlette is upgraded to >= 1.3.1. Tracked under PER-15358."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-50271"
+      },
+      "products": [
+        {
+          "@id": "pkg:docker/permitio/pdp-v2@next",
+          "subcomponents": [
+            { "@id": "pkg:pypi/ddtrace@3.19.8" }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "inline_mitigations_already_exist",
+      "impact_statement": "CVE-2026-50271 is a remote DoS in ddtrace's W3C baggage propagator: the extract path does not enforce DD_TRACE_BAGGAGE_MAX_ITEMS or DD_TRACE_BAGGAGE_MAX_BYTES, so an unauthenticated caller can drive unbounded CPU and memory use with an oversized baggage header. The PDP ships an inline mitigation that removes the vulnerable parser from the request path: the image sets DD_TRACE_PROPAGATION_STYLE_EXTRACT=datadog,tracecontext (see Dockerfile), dropping 'baggage' from ddtrace's default extract styles of 'datadog,tracecontext,baggage', so the unbounded baggage extractor is never invoked on inbound requests. Independently, ddtrace only reaches the inbound request path at all when PDP_ENABLE_MONITORING is true, which defaults to false (horizon/config.py); with the default configuration patch(fastapi=True) is never called and ddtrace instruments no incoming HTTP. Injection style is left at its default, so outbound baggage propagation is unchanged. The fix lands only in ddtrace >= 4.8.2, but opal-common 0.9.6 caps ddtrace<4, so the PDP is held at 3.x (see requirements.txt). This waiver and the Dockerfile mitigation are temporary and must both be removed once OPAL relaxes its ddtrace<4 bound and ddtrace is upgraded to >= 4.8.2. Tracked under PER-15358."
     }
   ]
 }
