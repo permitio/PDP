@@ -10,7 +10,10 @@ typer>=0.4.1,<1
 uvicorn[standard]>=0.17.6,<1
 logzio-python-handler
 ddtrace>=3.9.1,<4
-sqlparse==0.5.0
+# sqlparse is not imported anywhere in the codebase - it has only ever been carried as a
+# floor pin from past vulnerability sweeps (see f837d77). Bumped to 0.5.5 to clear
+# GHSA-27jp-wm6q-gp25 (fixed in 0.5.4). Candidate for outright removal - tracked separately.
+sqlparse==0.5.5
 scalar-fastapi==1.0.3
 httpx>=0.27.0,<1
 # TODO: change to use re2 in the future, currently not supported in alpine due to c++ library issues
@@ -18,14 +21,16 @@ httpx>=0.27.0,<1
 protobuf>=6.33.5 # pinned to avoid CVE-2026-0994
 cryptography>=48.0.1,<49 # pinned to avoid GHSA-537c-gmf6-5ccf (and CVE-2026-26007)
 # starlette is capped <1 by opal-common/opal-client 0.9.6 (and further to <0.51.0 via
-# fastapi-utils -> fastapi 0.125.0). The two starlette High CVEs (CVE-2026-54283 fixed
-# in 1.3.1, CVE-2026-48818 fixed in 1.1.0) have no <1 backport, so they cannot be
-# upgraded away while OPAL caps starlette<1. Both are waived in
-# .docker/scout/pdp-v2.vex.json as not_affected (unreachable code paths: JSON-only API
-# with no request.form(); Linux with no StaticFiles). Pinned exactly so the waiver
-# PURLs stay bound (the image build has no lockfile, so an unpinned starlette could
-# drift to a new 0.x and silently break the match). Remove this pin + both waivers and
-# upgrade starlette>=1.3.1 once OPAL relaxes its starlette<1 bound. See PER-15358.
+# fastapi-utils -> fastapi 0.125.0). Four starlette CVEs (CVE-2026-54283 fixed in 1.3.1,
+# CVE-2026-48817 fixed in 1.1.0, CVE-2026-48818 fixed in 1.1.0, CVE-2026-48710 fixed in
+# 1.0.1) have no <1 backport, so they cannot be upgraded away while OPAL caps
+# starlette<1. All four are waived in .docker/scout/pdp-v2.vex.json as not_affected
+# (unreachable code paths: JSON-only API with no request.form(); Linux with no
+# StaticFiles; no HTTPEndpoint subclasses; no security decision reads request.url).
+# Pinned exactly so the waiver PURLs stay bound (the image build has no lockfile, so an
+# unpinned starlette could drift to a new 0.x and silently break the match). Remove this
+# pin + all four waivers and upgrade starlette>=1.3.1 once OPAL relaxes its starlette<1
+# bound. See PER-15358.
 starlette==0.50.0
 opal-common==0.9.6
 opal-client==0.9.6
