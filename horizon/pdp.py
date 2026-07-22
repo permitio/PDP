@@ -26,7 +26,11 @@ from opal_common.fetcher.providers.http_fetch_provider import (
 from opal_common.logging_utils.formatter import Formatter
 from scalar_fastapi import get_scalar_api_reference
 
-from horizon.authentication import enforce_pdp_token, enforce_pdp_token_operational
+from horizon.authentication import (
+    enforce_pdp_token,
+    enforce_pdp_token_operational,
+    flush_operational_warn_residuals,
+)
 from horizon.config import MOCK_API_KEY, sidecar_config
 from horizon.connectivity.api import init_connectivity_router
 from horizon.enforcer.api import init_enforcer_api_router, init_enforcer_health_router, stats_manager
@@ -568,6 +572,11 @@ class PermitPDP:
         # High-signal warning while ENFORCE_OPERATIONAL_ROUTE_AUTH is off (the rollout default) and
         # the update-trigger and /kong routes accept unauthenticated requests.
         _warn_if_operational_route_auth_disabled()
+        # The per-request warn-and-allow throttle only flushes a route's coalesced would-be-rejection
+        # count when a later request arrives past the interval; flush any residual on a graceful drain
+        # so an idle route's tail is surfaced rather than stranded. Best-effort: an ungraceful exit
+        # (watchdog SIGKILL, /_exit's os._exit) skips this - see flush_operational_warn_residuals (PER-15243).
+        app.on_event("shutdown")(flush_operational_warn_residuals)
 
     @property
     def app(self):
