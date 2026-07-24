@@ -215,9 +215,11 @@ jobs:
           # Accept CVEs marked not_affected in the OpenVEX doc (see
           # .docker/scout/pdp-v2.vex.json) so the gate does not fail on
           # vulnerabilities whose code path the PDP never executes and for which
-          # no usable fix is available: oras-go CVE-2026-50163 (no upstream fix
-          # yet) and starlette CVE-2026-48818 / CVE-2026-54283 (fixed only in
-          # starlette >=1.x, which OPAL's starlette<1 cap forbids). See PER-15358.
+          # no usable fix is available: starlette CVE-2026-48710 / CVE-2026-48817 /
+          # CVE-2026-48818 / CVE-2026-54283, all fixed only in starlette >=1.x, which
+          # OPAL's starlette<1 cap forbids; and ddtrace CVE-2026-50271, fixed only in
+          # ddtrace >=4.8.2, which OPAL's ddtrace<4 cap forbids and which the Dockerfile
+          # mitigates by dropping "baggage" from the extract styles. See PER-15358.
           vex-location: .docker/scout
           only-vex-affected: true
           # REQUIRED: docker scout only *applies* VEX statements whose author
