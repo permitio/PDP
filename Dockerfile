@@ -181,6 +181,20 @@ ENV OPAL_LOG_MODULE_EXCLUDE_LIST="[]"
 ENV OPAL_INLINE_OPA_ENABLED="true"
 ENV OPAL_INLINE_OPA_LOG_FORMAT="http"
 
+# datadog / ddtrace configuration -------------------
+# Drop "baggage" from ddtrace's default extract styles ("datadog,tracecontext,baggage").
+# CVE-2026-50271: ddtrace's W3C baggage propagator does not enforce
+# DD_TRACE_BAGGAGE_MAX_ITEMS / DD_TRACE_BAGGAGE_MAX_BYTES on the *extract* path, so an
+# unauthenticated caller can force unbounded CPU/memory use with an oversized baggage
+# header. The fix is only in ddtrace >= 4.8.2, which opal-common's `ddtrace<4,>=3.0.0`
+# cap forbids, so we remove the vulnerable parser from the request path instead.
+#
+# This only matters when PDP_ENABLE_MONITORING=true (default false) - that is what calls
+# patch(fastapi=True) and puts ddtrace on the inbound request path at all. Injection is
+# left at its default, so outbound baggage propagation is unaffected. Remove this once
+# OPAL relaxes its ddtrace<4 bound and ddtrace moves to >= 4.8.2. See PER-15358.
+ENV DD_TRACE_PROPAGATION_STYLE_EXTRACT="datadog,tracecontext"
+
 # horizon configuration -----------------------------
 # by default, the backend is at port 8000 on the docker host
 # in prod, you must pass the correct url
