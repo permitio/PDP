@@ -93,7 +93,28 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # MAIN IMAGE ----------------------------------------
 # Main image setup (optimized)
 # ---------------------------------------------------
-FROM python:3.10-alpine3.22 AS main
+# Python 3.13 (>= 3.13.14) on Alpine 3.23. Moved off python:3.10-alpine3.22 to clear four
+# CPython CVEs a customer CPE scan raised against pdp-v2 0.9.14-rc1 (PER-15358):
+#   CVE-2026-6019  (http.cookies Morsel.js_output escaping) - fixed in 3.13.14
+#   CVE-2026-7210  (expat hash-flooding entropy)            - fixed in 3.13.14 AND needs
+#                                                             libexpat >= 2.8.0; this image
+#                                                             ships expat 2.8.1
+#   CVE-2023-36632 (email.utils.parseaddr recursion)        - DISPUTED by PSF and never
+#                                                             fixed, but its CPE range is
+#                                                             < 3.11.4, so 3.13 is out of it
+# PSF fixed these only on the 3.13/3.14/3.15 branches - there is no 3.10/3.11/3.12 backport -
+# so the vulnerable code really was present in 3.10.20 and an upgrade was the only fix.
+# CVE-2026-15308 (html.parser DoS) is NOT cleared by this bump: it is patched only in
+# 3.15.0b4 and NVD's range is < 3.15.0, so no released Python satisfies it. It is waived in
+# .docker/scout/pdp-v2.vex.json as unreachable (nothing in the image imports html.parser).
+#
+# The patch version floats deliberately (see the previous python:3.10-alpine3.22 base and
+# the rebuild-picks-it-up posture in PER-15532): when 3.13.15 ships it will clear
+# CVE-2026-15308 automatically and that waiver can then be dropped. Do not drop below
+# 3.13.14 - that is the floor for the fixes above.
+#
+# Python 3.10 also reaches end of life in October 2026, so this move was due regardless.
+FROM python:3.13-alpine3.23 AS main
 
 WORKDIR /app
 
@@ -157,7 +178,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip setuptools && \
     pip install -r requirements.txt && \
     python -m pip uninstall -y pip setuptools wheel && \
-    rm -r /usr/local/lib/python3.10/ensurepip && \
+    rm -r /usr/local/lib/python3.13/ensurepip && \
     apk del .build-deps
 
 USER permit

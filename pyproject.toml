@@ -1,6 +1,13 @@
 [tool.ruff]
 line-length = 120
 src = ["horizon"]
+# Deliberately still py310 even though the image now runs Python 3.13 (see Dockerfile).
+# This is a lint floor, not a runtime constraint - keeping it low only means ruff will not
+# push 3.11+ idioms, which is harmless. Raising it to py313 surfaces 5 findings that are
+# unrelated to the CVE work that prompted the interpreter bump (PER-15358): 3x ASYNC109
+# (rewrite `timeout` parameters as `asyncio.timeout()` context managers, a real behavioural
+# refactor of horizon/facts/update_subscriber.py and horizon/proxy/api.py), plus UP041 and
+# UP043. Raise this and land those separately.
 target-version = "py310"
 
 [tool.ruff.lint]
@@ -34,7 +41,8 @@ ignore = [
 ban-relative-imports = "all"
 
 [tool.mypy]
-python_version = "3.10"
+# Tracks the interpreter the image actually ships (Dockerfile: python:3.13-alpine3.23).
+python_version = "3.13"
 packages = ["horizon"]
 plugins = ["pydantic.v1.mypy"]
 
