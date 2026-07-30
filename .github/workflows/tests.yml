@@ -24,7 +24,12 @@ jobs:
       - name: Python setup
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11.8'
+          # Keep in lockstep with the interpreter the image actually ships
+          # (Dockerfile: python:3.13-alpine3.23). This job pinned 3.11.8 while the image
+          # ran 3.10, so the unit suite never executed on the shipped interpreter and a
+          # regression that only reproduces there could not fail CI. Patch version floats,
+          # matching the Dockerfile base. Bump both together. See PER-15358.
+          python-version: '3.13'
 
       - name: Checkout code
         uses: actions/checkout@v4
