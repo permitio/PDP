@@ -41,5 +41,16 @@ cryptography>=48.0.1,<49 # pinned to avoid GHSA-537c-gmf6-5ccf (and CVE-2026-260
 # pin + all four waivers and upgrade starlette>=1.3.1 once OPAL relaxes its starlette<1
 # bound. See PER-15358.
 starlette==0.50.0
+# websockets is pinned exactly because nothing else bounds it: opal-common/opal-client and
+# fastapi-websocket-rpc allow >=10.3, fastapi-websocket-pubsub >=14.0, uvicorn[standard]
+# >=13.0. With no lockfile, an unpinned build silently absorbs new MAJORS on the OPAL
+# pub/sub path. That is not hypothetical - it happened during review of #329: the CI build
+# that validated the Python 3.13 move shipped 16.1.1, and 17.0 published a few hours later,
+# so the next rebuild would have carried an unvalidated major straight to a release.
+# 17.0 is the version run 30533253549 actually validated (pdp-tester 24/24 e2e against the
+# built image, plus 118 unit tests on CPython 3.13.14). Bump this deliberately and let
+# pdp-tester run on the result - do not let a rebuild choose a major on its own. See
+# PER-15358.
+websockets==17.0
 opal-common==0.9.6
 opal-client==0.9.6
