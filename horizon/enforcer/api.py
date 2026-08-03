@@ -277,12 +277,6 @@ def init_enforcer_health_router():
 def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noqa: C901
     policy_store = policy_store or DEFAULT_POLICY_STORE_GETTER()
     router = APIRouter()
-    # /kong lives on its own router so it can be mounted under the ENFORCE_OPERATIONAL_ROUTE_AUTH-aware
-    # gate (enforce_pdp_token_operational) while every other enforcer route keeps the plain
-    # enforce_pdp_token gate. Same closure as the rest of the enforcer routes: /kong's handler closes
-    # over kong_routes_table and the nested _is_allowed helper, so a router split here avoids a much
-    # larger refactor. Mounted separately in PermitPDP._configure_api_routes.
-    kong_router = APIRouter()
     if sidecar_config.KONG_INTEGRATION:
         with Path(KONG_ROUTES_TABLE_FILE).open() as f:
             kong_routes_table_raw = json.load(f)
@@ -549,7 +543,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
             )
             return {"allow": False, "result": False}
 
-    @kong_router.post(
+    @router.post(
         "/kong",
         response_model=KongAuthorizationResult,
         status_code=status.HTTP_200_OK,
@@ -626,7 +620,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
             )
             return {"allow": False, "result": False}
 
-    return router, kong_router
+    return router
 
 
 def _extract_regex_attributes(pattern: str, url: str) -> dict:

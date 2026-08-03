@@ -81,18 +81,7 @@ KONG_QUERY = {
 }
 
 
-@pytest.fixture
-def enforce_operational_auth(monkeypatch):
-    """Enable ENFORCE_OPERATIONAL_ROUTE_AUTH so the conditionally-gated route (/kong) also rejects.
-
-    The 8 other endpoints in the sweep carry the plain enforce_pdp_token gate and reject regardless;
-    /kong defaults to permissive (rollout default), so the sweep turns enforcement on to cover it too.
-    """
-    monkeypatch.setattr(sidecar_config, "ENFORCE_OPERATIONAL_ROUTE_AUTH", True)
-
-
 @pytest.mark.parametrize("endpoint", PROTECTED_ENFORCER_ENDPOINTS)
-@pytest.mark.usefixtures("enforce_operational_auth")
 def test_enforcer_endpoint_missing_token_returns_401(endpoint):
     client = TestClient(sidecar._app)
     response = client.post(endpoint, json={})
@@ -101,7 +90,6 @@ def test_enforcer_endpoint_missing_token_returns_401(endpoint):
 
 
 @pytest.mark.parametrize("endpoint", PROTECTED_ENFORCER_ENDPOINTS)
-@pytest.mark.usefixtures("enforce_operational_auth")
 def test_enforcer_endpoint_invalid_token_returns_401(endpoint):
     client = TestClient(sidecar._app)
     response = client.post(endpoint, headers={"authorization": "Bearer wrong_token"}, json={})
@@ -127,22 +115,11 @@ def test_kong_endpoint_valid_token_integration_disabled_returns_503():
     assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
 
 
-def test_kong_endpoint_permissive_default_bypasses_auth():
-    # Rollout default (ENFORCE_OPERATIONAL_ROUTE_AUTH off): a tokenless /kong is no longer 401 - the
-    # gate lets it through to the handler, which then 503s because KONG_INTEGRATION is off. The 503
-    # (not 401) is the proof that the auth gate allowed it through.
-    client = TestClient(sidecar._app)
-    response = client.post("/kong", json=KONG_QUERY)
-    assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
-
-
 def test_kong_endpoint_enabled_integration_allowed_flow(tmp_path, monkeypatch):
     routes_file = tmp_path / "kong_routes.json"
     routes_file.write_text('[["^/resource1/.*$", "resource1"]]')
     monkeypatch.setattr("horizon.enforcer.api.KONG_ROUTES_TABLE_FILE", str(routes_file))
     monkeypatch.setattr(sidecar_config, "KONG_INTEGRATION", True)
-    # /kong defaults to permissive; enable enforcement so the tokenless call below is a clean 401.
-    monkeypatch.setattr(sidecar_config, "ENFORCE_OPERATIONAL_ROUTE_AUTH", True)
 
     class FakeStateHandler:
         async def seen_sdk(self, _sdk: str) -> None:

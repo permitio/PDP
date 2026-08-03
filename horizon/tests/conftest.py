@@ -22,22 +22,7 @@ import inspect
 from unittest.mock import Mock
 
 import aioresponses.core as _aioresponses_core
-import horizon.authentication as _authentication
-import pytest
 from aiohttp.client_reqrep import ClientResponse as _ClientResponse
-
-
-@pytest.fixture(autouse=True)
-def _reset_operational_warn_throttle():
-    """Give each test a clean warn-and-allow throttle window.
-
-    enforce_pdp_token_operational coalesces its "unauthenticated but allowed" warning to one line per
-    route per interval, and that state is process-global. Without this reset, a test that asserts the
-    warning could be silently suppressed by an earlier test that already logged for the same path.
-    """
-    _authentication.reset_operational_warn_throttle()
-    yield
-
 
 if "stream_writer" in inspect.signature(_ClientResponse.__init__).parameters:
 

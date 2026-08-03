@@ -262,18 +262,6 @@ class SidecarConfig(Confi):
     # enables debug ouptut for the Kong integration endpoint
     KONG_INTEGRATION_DEBUG = confi.bool("KONG_INTEGRATION_DEBUG", False)
 
-    ENFORCE_OPERATIONAL_ROUTE_AUTH = confi.bool(
-        "ENFORCE_OPERATIONAL_ROUTE_AUTH",
-        False,
-        description="When true, enforce the PDP token on the operational routes hardened by the auth-hardening "
-        "rollout: the update-trigger routes (/policy-updater/trigger, /data-updater/trigger, /update_policy, "
-        "/update_policy_data) and the /kong decision endpoint. Defaults to FALSE for a safe fleet rollout: those "
-        "routes accept unauthenticated requests and only LOG the ones that would be rejected, so callers that do not "
-        "yet send the token keep working while you watch the logs. Flip to true (per-fleet via the cloud control "
-        "plane, or PDP_ENFORCE_OPERATIONAL_ROUTE_AUTH) once every caller sends the token. Every other PDP route is "
-        "always enforced regardless of this flag.",
-    )
-
     LOCAL_FACTS_WAIT_TIMEOUT = confi.float(
         "LOCAL_FACTS_WAIT_TIMEOUT",
         10,
