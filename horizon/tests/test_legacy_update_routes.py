@@ -35,6 +35,9 @@ def test_update_policy_triggers_updater(pdp: MockPermitPDP, auth: dict[str, str]
 
 
 def test_update_policy_rejects_unauthenticated(pdp: MockPermitPDP, monkeypatch):
+    # Rejection on these routes is now opt-in (ENFORCE_OPERATIONAL_ROUTE_AUTH defaults off for a
+    # safe fleet rollout); enable enforcement to assert the reject behaviour.
+    monkeypatch.setattr(sidecar_config, "ENFORCE_OPERATIONAL_ROUTE_AUTH", True)
     trigger = AsyncMock()
     monkeypatch.setattr(pdp._opal.policy_updater, "trigger_update_policy", trigger)
     client = TestClient(pdp._app)
@@ -74,6 +77,8 @@ def test_update_policy_data_returns_503_when_updater_disabled(pdp: MockPermitPDP
 
 
 def test_update_policy_data_rejects_unauthenticated(pdp: MockPermitPDP, monkeypatch):
+    # Rejection is opt-in now (see test_update_policy_rejects_unauthenticated); enable enforcement.
+    monkeypatch.setattr(sidecar_config, "ENFORCE_OPERATIONAL_ROUTE_AUTH", True)
     get_base = AsyncMock()
     monkeypatch.setattr(pdp._opal.data_updater, "get_base_policy_data", get_base)
     client = TestClient(pdp._app)

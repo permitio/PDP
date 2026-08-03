@@ -26,7 +26,11 @@ from opal_common.fetcher.providers.http_fetch_provider import (
 from opal_common.logging_utils.formatter import Formatter
 from scalar_fastapi import get_scalar_api_reference
 
-from horizon.authentication import enforce_pdp_token
+from horizon.authentication import (
+    enforce_pdp_token,
+    enforce_pdp_token_operational,
+    flush_operational_warn_residuals,
+)
 from horizon.config import MOCK_API_KEY, sidecar_config
 from horizon.connectivity.api import init_connectivity_router
 from horizon.enforcer.api import init_enforcer_api_router, init_enforcer_health_router, stats_manager
@@ -108,28 +112,32 @@ OPAL_TRIGGER_ROUTE_PATHS: frozenset[str] = frozenset({"/policy-updater/trigger",
 
 
 def _gate_opal_trigger_routes(app: FastAPI) -> None:
-    """Inject ``Depends(enforce_pdp_token)`` into the OPAL-mounted trigger routes.
+    """Inject ``Depends(enforce_pdp_token_operational)`` into the OPAL-mounted trigger routes.
 
     OpalClient mounts ``POST /policy-updater/trigger`` and ``POST /data-updater/trigger``
     on the app before ``PermitPDP`` gains control (opal_client.client._configure_api_routes),
     so the include_router-level dependencies used for every PDP-owned router cannot reach
-    them. We inject the standard PDP-token dependency into the already-mounted route objects
-    instead, mirroring what FastAPI itself does at ``APIRoute.__init__`` (fastapi/routing.py):
-    insert a parameterless sub-dependant at the head of ``route.dependant.dependencies``.
+    them. We inject the PDP-token dependency into the already-mounted route objects instead,
+    mirroring what FastAPI itself does at ``APIRoute.__init__`` (fastapi/routing.py): insert a
+    parameterless sub-dependant at the head of ``route.dependant.dependencies``.
+
+    The gate is the operational wrapper, so ``ENFORCE_OPERATIONAL_ROUTE_AUTH`` governs these routes
+    like the sibling operational routes: unauthenticated-but-logged by default, enforced when set.
 
     The Dependant is mutated IN PLACE - the route's request handler closes over that exact
     object, so the check is enforced on every request; do NOT reassign ``route.dependant``.
-    ``enforce_pdp_token`` only reads a header, so the route's body field needs no rebuild.
+    ``enforce_pdp_token_operational`` only reads the header and request, so the route's body field
+    needs no rebuild.
 
     Fails loud if a target route is missing (e.g. an OPAL upgrade renamed it): a silently
-    skipped injection would leave an update-trigger endpoint unauthenticated.
+    skipped injection would leave an update-trigger endpoint ungated even when enforcement is on.
     """
     gated: set[str] = set()
     for route in app.routes:
         if isinstance(route, APIRoute) and route.path in OPAL_TRIGGER_ROUTE_PATHS:
             route.dependant.dependencies.insert(
                 0,
-                get_parameterless_sub_dependant(depends=Depends(enforce_pdp_token), path=route.path_format),
+                get_parameterless_sub_dependant(depends=Depends(enforce_pdp_token_operational), path=route.path_format),
             )
             gated.add(route.path)
 
@@ -141,6 +149,23 @@ def _gate_opal_trigger_routes(app: FastAPI) -> None:
             ", ".join(sorted(missing)),
         )
         raise SystemExit(GUNICORN_EXIT_APP)
+
+
+def _warn_if_operational_route_auth_disabled() -> None:
+    """Warn when ``ENFORCE_OPERATIONAL_ROUTE_AUTH`` is off and the operational routes accept unauthenticated calls.
+
+    This is the safe-rollout default (see SidecarConfig.ENFORCE_OPERATIONAL_ROUTE_AUTH): the token is not
+    enforced on the update-trigger routes or /kong, only logged. Surfaced at startup as well as per-request
+    so a fleet still in the permissive rollout phase stays visible; flip the flag on once every caller sends
+    the token.
+    """
+    if not sidecar_config.ENFORCE_OPERATIONAL_ROUTE_AUTH:
+        logger.warning(
+            "ENFORCE_OPERATIONAL_ROUTE_AUTH is OFF: the update-trigger routes (/policy-updater/trigger, "
+            "/data-updater/trigger, /update_policy, /update_policy_data) and /kong accept requests WITHOUT "
+            "a valid PDP token (missing or invalid) - would-be rejections are only logged. This is the safe "
+            "fleet-rollout default; set ENFORCE_OPERATIONAL_ROUTE_AUTH=true to enforce the PDP token on these routes."
+        )
 
 
 def _warn_if_opal_verifier_disabled(opal_client: OpalClient) -> None:
@@ -447,7 +472,7 @@ class PermitPDP:
         app.on_event("shutdown")(stats_manager.stop_tasks)
 
         enforcer_health_router = init_enforcer_health_router()
-        enforcer_router = init_enforcer_api_router(policy_store=self._opal.policy_store)
+        enforcer_router, kong_router = init_enforcer_api_router(policy_store=self._opal.policy_store)
         local_router = init_local_cache_api_router(policy_store=self._opal.policy_store)
         # Init system router
         system_router = init_system_api_router()
@@ -459,6 +484,14 @@ class PermitPDP:
             enforcer_router,
             tags=["Authorization API"],
             dependencies=[Depends(enforce_pdp_token)],
+        )
+        # /kong is gated with the operational wrapper so ENFORCE_OPERATIONAL_ROUTE_AUTH governs it
+        # during a fleet rollout (Kong's OPA plugin may not yet forward the PDP token) without
+        # touching the rest of the enforcer router.
+        app.include_router(
+            kong_router,
+            tags=["Authorization API"],
+            dependencies=[Depends(enforce_pdp_token_operational)],
         )
 
         app.include_router(
@@ -498,11 +531,13 @@ class PermitPDP:
             )
 
         # TODO: remove this when clients update sdk version (legacy routes)
+        # Gated with the operational wrapper: these are aliases of the OPAL trigger routes, so they
+        # follow the same ENFORCE_OPERATIONAL_ROUTE_AUTH rollout default.
         @app.post(
             "/update_policy",
             status_code=status.HTTP_200_OK,
             include_in_schema=False,
-            dependencies=[Depends(enforce_pdp_token)],
+            dependencies=[Depends(enforce_pdp_token_operational)],
         )
         async def legacy_trigger_policy_update():
             logger.info("triggered policy update from api (legacy route)")
@@ -515,7 +550,7 @@ class PermitPDP:
             "/update_policy_data",
             status_code=status.HTTP_200_OK,
             include_in_schema=False,
-            dependencies=[Depends(enforce_pdp_token)],
+            dependencies=[Depends(enforce_pdp_token_operational)],
         )
         async def legacy_trigger_data_update():
             logger.info("triggered policy data update from api (legacy route)")
@@ -534,6 +569,14 @@ class PermitPDP:
         # High-signal warning if the OPAL-authenticated routes are left open by a disabled
         # verifier (must never happen in a managed PDP).
         _warn_if_opal_verifier_disabled(self._opal)
+        # High-signal warning while ENFORCE_OPERATIONAL_ROUTE_AUTH is off (the rollout default) and
+        # the update-trigger and /kong routes accept unauthenticated requests.
+        _warn_if_operational_route_auth_disabled()
+        # The per-request warn-and-allow throttle only flushes a route's coalesced would-be-rejection
+        # count when a later request arrives past the interval; flush any residual on a graceful drain
+        # so an idle route's tail is surfaced rather than stranded. Best-effort: an ungraceful exit
+        # (watchdog SIGKILL, /_exit's os._exit) skips this - see flush_operational_warn_residuals (PER-15243).
+        app.on_event("shutdown")(flush_operational_warn_residuals)
 
     @property
     def app(self):
