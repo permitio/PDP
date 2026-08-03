@@ -2,8 +2,8 @@
   "@context": "https://openvex.dev/ns/v0.2.0",
   "@id": "https://openvex.dev/docs/permitio-pdp/pdp-v2-cve-waivers",
   "author": "Permit.io",
-  "timestamp": "2026-07-21T00:00:00Z",
-  "version": 3,
+  "timestamp": "2026-07-29T00:00:00Z",
+  "version": 4,
   "statements": [
     {
       "vulnerability": {
@@ -68,6 +68,22 @@
       "status": "not_affected",
       "justification": "vulnerable_code_not_in_execute_path",
       "impact_statement": "CVE-2026-48817 is an unsafe-reflection issue in starlette.endpoints.HTTPEndpoint request dispatch: the HTTP method is lowercased and resolved with getattr against the endpoint instance without restricting the lookup to known HTTP verbs, letting an attacker invoke internal helper methods that bypass authorization. The PDP defines no HTTPEndpoint or WebSocketEndpoint subclass anywhere in the codebase - every route is registered through FastAPI APIRouter decorators with explicit HTTP methods - so the vulnerable dispatch class is never instantiated or reached. The fix lands only in starlette >= 1.1.0, but opal-common/opal-client 0.9.6 cap starlette<1, so the PDP is pinned to 0.50.0 (see requirements.txt). This waiver is temporary and must be removed once OPAL relaxes its starlette<1 bound and starlette is upgraded to >= 1.3.1. Tracked under PER-15358."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-15308"
+      },
+      "products": [
+        {
+          "@id": "pkg:docker/permitio/pdp-v2@next",
+          "subcomponents": [
+            { "@id": "pkg:generic/python" }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "CVE-2026-15308 is a CPU denial-of-service in CPython's incremental HTML parser: html.parser.HTMLParser degrades to quadratic complexity on repeated unterminated markup declarations, so parsing attacker-controlled HTML can exhaust CPU. The PDP never parses HTML. Nothing imports html.parser - neither the PDP's own code (horizon/, pdp-server/) nor any package installed in the image; this was verified by scanning every .py file under site-packages, so the vulnerable class is never instantiated. Unlike the other CPython findings in this scan (CVE-2026-6019 and CVE-2026-7210, both cleared by moving the base image to Python 3.13.14), this one cannot be upgraded away: PSF fixed it only in 3.15.0b4 and NVD's CPE range is < 3.15.0, so no released Python satisfies it and every Python-based image in the world matches today. The Dockerfile intentionally floats the base image patch version (python:3.13-alpine3.23), so when 3.13.15 ships with the backport a rebuild will pick it up automatically. Remove this waiver at that point. Tracked under PER-15358."
     },
     {
       "vulnerability": {
