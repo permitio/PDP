@@ -292,13 +292,19 @@ class SidecarConfig(Confi):
         "TRIGGER_DEBOUNCE_SECONDS",
         10.0,
         description=(
-            "Minimum number of seconds between forced full reloads triggered via the API trigger "
-            "routes (/policy-updater/trigger, /data-updater/trigger and their legacy /update_policy* "
-            "aliases). Triggers arriving within the window - or while a forced reload is already in "
-            "flight - coalesce into the in-flight/most-recent pull instead of amplifying load onto the "
-            "control plane. Set to 0 to disable debouncing (every trigger forces a fresh reload). "
+            "Debounce window, in seconds, for forced full reloads triggered via the API trigger routes "
+            "(/policy-updater/trigger, /data-updater/trigger and their legacy /update_policy* aliases). "
+            "A trigger arriving within this many seconds of the last one - or while a forced reload is "
+            "already in flight - is coalesced instead of amplifying load onto the control plane, so data "
+            "served by this PDP may lag a forced trigger by up to this many seconds. Not a hard floor "
+            "between reloads: a trigger coalesced into an in-flight reload causes one immediate follow-up "
+            "reload once that one finishes, so a single request can dispatch at most two. Set to 0 to "
+            "disable the time window; concurrent triggers are still collapsed into a single in-flight "
+            "reload. Negative, non-numeric and non-finite values also disable it. Clamped to at most 300s; "
+            "the effective value is logged at startup whenever it differs from what was configured. "
             "Remote-config overridable fleet-wide, so ops can raise it (e.g. to 30-60s under a degraded "
-            "control plane) without shipping a release."
+            "control plane) without shipping a release - but the remote config is fetched once during "
+            "startup, so a change needs a PDP restart to take effect."
         ),
     )
 

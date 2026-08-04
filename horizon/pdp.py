@@ -28,7 +28,7 @@ from scalar_fastapi import get_scalar_api_reference
 from horizon.authentication import enforce_pdp_token
 from horizon.config import MOCK_API_KEY, sidecar_config
 from horizon.connectivity.api import init_connectivity_router
-from horizon.debounce import DebouncedTrigger
+from horizon.debounce import MAX_DEBOUNCE_SECONDS, DebouncedTrigger, clamp_window
 from horizon.enforcer.api import init_enforcer_api_router, init_enforcer_health_router, stats_manager
 from horizon.enforcer.opa.config_maker import (
     get_opa_authz_policy_file_path,
@@ -523,6 +523,22 @@ class PermitPDP:
         self._policy_trigger_debounce = DebouncedTrigger("policy")
         self._data_trigger_debounce = DebouncedTrigger("data")
 
+        # Log the EFFECTIVE window, not the configured one: the value is remote-config
+        # overridable and is clamped to [0, MAX_DEBOUNCE_SECONDS], so a fat-fingered override
+        # should be visible at startup rather than silently reinterpreted.
+        effective_window = clamp_window(sidecar_config.TRIGGER_DEBOUNCE_SECONDS)
+        if effective_window != sidecar_config.TRIGGER_DEBOUNCE_SECONDS:
+            logger.warning(
+                "PDP_TRIGGER_DEBOUNCE_SECONDS={} is out of range; clamped to {:g}s (max {:g}s).",
+                sidecar_config.TRIGGER_DEBOUNCE_SECONDS,
+                effective_window,
+                MAX_DEBOUNCE_SECONDS,
+            )
+        elif effective_window > 0:
+            logger.info("Forced-reload trigger routes are debounced with a {:g}s window.", effective_window)
+        else:
+            logger.warning("Forced-reload trigger debouncing is DISABLED (PDP_TRIGGER_DEBOUNCE_SECONDS=0).")
+
         # TODO: remove the two legacy aliases when clients update sdk version.
         @app.post(
             "/update_policy",
@@ -532,8 +548,8 @@ class PermitPDP:
         )
         async def legacy_trigger_policy_update():
             logger.info("triggered policy update from api (legacy route)")
-            await self._debounced_policy_reload()
-            return {"status": "ok"}
+            triggered = await self._debounced_policy_reload()
+            return {"status": "ok", "triggered": triggered}
 
         @app.post(
             "/update_policy_data",
@@ -544,8 +560,8 @@ class PermitPDP:
         async def legacy_trigger_data_update():
             logger.info("triggered policy data update from api (legacy route)")
             # Preserve the distinct legacy reason string - a test asserts it verbatim.
-            await self._debounced_data_reload("request from sdk (legacy alias)")
-            return {"status": "ok"}
+            triggered = await self._debounced_data_reload("request from sdk (legacy alias)")
+            return {"status": "ok", "triggered": triggered}
 
         # OpalClient mounted POST /policy-updater/trigger and POST /data-updater/trigger before
         # the PDP took over; their closures force a FULL reload on every call with no damping.
@@ -555,74 +571,101 @@ class PermitPDP:
         # route would shadow the replacement and stay ungated/un-debounced.
         _remove_opal_trigger_routes(app)
 
+        # NOTE: keep implementation notes in comments, never in these handlers' docstrings -
+        # FastAPI publishes a handler docstring as the operation `description` in the
+        # customer-facing /openapi.json and /scalar explorer. The explicit summary=/description=
+        # below win over the docstring and are written for that audience.
         @app.post(
             "/policy-updater/trigger",
             status_code=status.HTTP_200_OK,
             tags=["Policy Updater"],
             dependencies=[Depends(enforce_pdp_token)],
+            summary="Trigger a full policy reload",
+            description=(
+                "Requests a full policy reload from the control plane. Redundant triggers are "
+                "coalesced: if a reload was already requested within the debounce window, or one "
+                "is currently in flight, this call is absorbed into it. Returns 200 either way; "
+                "`triggered` reports whether this call started a reload (`true`) or was coalesced "
+                "into an existing one (`false`). **`false` is a success, not a failure - do not "
+                "retry on it.** It means a reload covering your request is already happening; "
+                "retrying only adds load to the control plane."
+            ),
         )
         async def trigger_policy_update():
-            """Force a full policy reload, debounced (replaces OpalClient's ungated handler).
-
-            Response parity with the route it replaces: always 200 ``{"status": "ok"}``. The policy
-            route already had fire-and-forget 200 semantics (the underlying call only *enqueues* an
-            update), so debouncing changes nothing observable here beyond collapsing redundant
-            triggers into one reload.
-            """
+            # The reload is dispatched, not awaited to completion: the underlying OPAL call only
+            # enqueues onto the policy updater's queue. That was already true of the handler this
+            # replaces, so a 200 means the same thing it always did.
             logger.info("triggered policy update from api")
-            await self._debounced_policy_reload()
-            return {"status": "ok"}
+            triggered = await self._debounced_policy_reload()
+            return {"status": "ok", "triggered": triggered}
 
         @app.post(
             "/data-updater/trigger",
             status_code=status.HTTP_200_OK,
             tags=["Data Updater"],
             dependencies=[Depends(enforce_pdp_token)],
+            summary="Trigger a full base-data reload",
+            description=(
+                "Requests a full reload of base policy data from the control plane. Redundant "
+                "triggers are coalesced: if a reload was already requested within the debounce "
+                "window, or one is currently in flight, this call is absorbed into it. Returns 200 "
+                "either way; `triggered` reports whether this call started a reload (`true`) or was "
+                "coalesced into an existing one (`false`). **`false` is a success, not a failure - "
+                "do not retry on it.** It means a reload covering your request is already happening; "
+                "retrying only adds load to the control plane. Returns 503 if the data updater is "
+                "disabled. This endpoint is a best-effort refresh, not a read-your-writes barrier - "
+                "use the facts API's `X-Wait-timeout` when you need to block on a specific write."
+            ),
         )
         async def trigger_data_update():
-            """Force a full base-data reload, debounced (replaces OpalClient's ungated handler).
-
-            SEMANTIC SHIFT worth calling out: with the OPAL route a 200 meant the inline base-data
-            fetch had actually COMPLETED. With debouncing a 200 now means "a recent or in-flight
-            forced pull already covers you" - the underlying get_base_policy_data may have been
-            coalesced and not re-run. The body stays exactly ``{"status": "ok"}`` either way so
-            SDKs polling this route never error-spiral. A disabled data updater still returns 503,
-            checked BEFORE the debouncer so a 503 never consumes the window.
-            """
+            # Like the policy route, this dispatches rather than completes: get_base_policy_data
+            # awaits the data-source config GET and then hands the per-entry fetches to a task
+            # pool. That was already true of the OPAL handler this replaces - a 200 never meant
+            # the data had landed. A disabled data updater still returns 503, checked BEFORE the
+            # debouncer so a 503 never consumes the window.
             logger.info("triggered policy data update from api")
-            await self._debounced_data_reload("request from sdk")
-            return {"status": "ok"}
+            triggered = await self._debounced_data_reload("request from sdk")
+            return {"status": "ok", "triggered": triggered}
 
-    async def _debounced_policy_reload(self) -> None:
-        """Force a full policy reload through the shared policy debouncer.
+    async def _debounced_policy_reload(self) -> bool:
+        """Dispatch a full policy reload through the shared policy debouncer.
 
         Backs both /policy-updater/trigger and the /update_policy legacy alias so they coalesce
         against each other. No None-guard: the PDP never disables the policy updater.
+
+        Returns True if this call dispatched a reload, False if it was coalesced.
         """
 
         async def _run() -> None:
             await self._opal.policy_updater.trigger_update_policy(force_full_update=True)
 
-        await self._policy_trigger_debounce.trigger(run=_run, window_seconds=sidecar_config.TRIGGER_DEBOUNCE_SECONDS)
+        return await self._policy_trigger_debounce.trigger(
+            run=_run, window_seconds=sidecar_config.TRIGGER_DEBOUNCE_SECONDS
+        )
 
-    async def _debounced_data_reload(self, data_fetch_reason: str) -> None:
-        """Force a full base-data reload through the shared data debouncer.
+    async def _debounced_data_reload(self, data_fetch_reason: str) -> bool:
+        """Dispatch a full base-data reload through the shared data debouncer.
 
         Backs both /data-updater/trigger and the /update_policy_data legacy alias (the caller
         passes the route-specific ``data_fetch_reason``). Raises 503 - exact OpalClient parity -
         when the data updater is disabled, checked BEFORE the debouncer so a 503 never consumes
         the window.
+
+        Returns True if this call dispatched a reload, False if it was coalesced.
         """
-        if self._opal.data_updater is None:
+        data_updater = self._opal.data_updater
+        if data_updater is None:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Data Updater is currently disabled. Dynamic data updates are not available.",
             )
 
         async def _run() -> None:
-            await self._opal.data_updater.get_base_policy_data(data_fetch_reason=data_fetch_reason)
+            await data_updater.get_base_policy_data(data_fetch_reason=data_fetch_reason)
 
-        await self._data_trigger_debounce.trigger(run=_run, window_seconds=sidecar_config.TRIGGER_DEBOUNCE_SECONDS)
+        return await self._data_trigger_debounce.trigger(
+            run=_run, window_seconds=sidecar_config.TRIGGER_DEBOUNCE_SECONDS
+        )
 
     @property
     def app(self):
