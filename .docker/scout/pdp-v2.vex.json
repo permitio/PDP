@@ -2,25 +2,9 @@
   "@context": "https://openvex.dev/ns/v0.2.0",
   "@id": "https://openvex.dev/docs/permitio-pdp/pdp-v2-cve-waivers",
   "author": "Permit.io",
-  "timestamp": "2026-07-07T00:00:00Z",
-  "version": 2,
+  "timestamp": "2026-07-29T00:00:00Z",
+  "version": 4,
   "statements": [
-    {
-      "vulnerability": {
-        "name": "CVE-2026-50163"
-      },
-      "products": [
-        {
-          "@id": "pkg:docker/permitio/pdp-v2@next",
-          "subcomponents": [
-            { "@id": "pkg:golang/oras.land/oras-go/v2@2.6.1" }
-          ]
-        }
-      ],
-      "status": "not_affected",
-      "justification": "vulnerable_code_not_in_execute_path",
-      "impact_statement": "The PDP runs OPA in inline mode via OPAL over OPA's REST API and never pulls OCI artifacts, so oras-go's tar/hardlink extraction (the vulnerable code path in CVE-2026-50163) is never executed. oras-go is an indirect dependency of the bundled OPA (built from permitio/permit-opa); no fixed release exists yet (all versions <= 2.6.1 are affected, upstream fix expected ~2026-07-15). This waiver is temporary and must be removed once permit-opa bumps oras-go to the patched release. Tracked under PER-15358."
-    },
     {
       "vulnerability": {
         "name": "CVE-2026-48818"
@@ -52,6 +36,70 @@
       "status": "not_affected",
       "justification": "vulnerable_code_not_in_execute_path",
       "impact_statement": "CVE-2026-54283 causes request.form() size limits to be silently ignored for application/x-www-form-urlencoded bodies, enabling a memory-exhaustion DoS. The PDP is a JSON-only API: it never calls request.form(), does not depend on python-multipart, and parses no form-encoded or multipart request bodies, so the vulnerable form-parsing path is never executed. The fix lands only in starlette >= 1.3.1, but opal-common/opal-client 0.9.6 cap starlette<1, so the PDP is pinned to 0.50.0 (see requirements.txt). This waiver is temporary and must be removed once OPAL relaxes its starlette<1 bound and starlette is upgraded to >= 1.3.1. Tracked under PER-15358."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-48710"
+      },
+      "products": [
+        {
+          "@id": "pkg:docker/permitio/pdp-v2@next",
+          "subcomponents": [
+            { "@id": "pkg:pypi/starlette@0.50.0" }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "CVE-2026-48710 lets a malformed HTTP Host header make request.url.path diverge from the path actually routed, so security checks that read request.url can be bypassed. The PDP performs no security decision on request.url: authentication is enforced per-route through FastAPI Depends security dependencies (HTTPBearer in horizon/authentication.py), not by path matching, and the app registers no add_middleware/BaseHTTPMiddleware and reads no raw ASGI scope paths. The one path-keyed authorization check - the write-route test in horizon/proxy/api.py cloud_proxy - reads request.path_params, which Starlette's router populates from the raw scope path and which this CVE explicitly leaves unaffected. The fix lands only in starlette >= 1.0.1, but opal-common/opal-client 0.9.6 cap starlette<1, so the PDP is pinned to 0.50.0 (see requirements.txt). This waiver is temporary and must be removed once OPAL relaxes its starlette<1 bound and starlette is upgraded to >= 1.3.1. Tracked under PER-15358."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-48817"
+      },
+      "products": [
+        {
+          "@id": "pkg:docker/permitio/pdp-v2@next",
+          "subcomponents": [
+            { "@id": "pkg:pypi/starlette@0.50.0" }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "CVE-2026-48817 is an unsafe-reflection issue in starlette.endpoints.HTTPEndpoint request dispatch: the HTTP method is lowercased and resolved with getattr against the endpoint instance without restricting the lookup to known HTTP verbs, letting an attacker invoke internal helper methods that bypass authorization. The PDP defines no HTTPEndpoint or WebSocketEndpoint subclass anywhere in the codebase - every route is registered through FastAPI APIRouter decorators with explicit HTTP methods - so the vulnerable dispatch class is never instantiated or reached. The fix lands only in starlette >= 1.1.0, but opal-common/opal-client 0.9.6 cap starlette<1, so the PDP is pinned to 0.50.0 (see requirements.txt). This waiver is temporary and must be removed once OPAL relaxes its starlette<1 bound and starlette is upgraded to >= 1.3.1. Tracked under PER-15358."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-15308"
+      },
+      "products": [
+        {
+          "@id": "pkg:docker/permitio/pdp-v2@next",
+          "subcomponents": [
+            { "@id": "pkg:generic/python" }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "CVE-2026-15308 is a CPU denial-of-service in CPython's incremental HTML parser: html.parser.HTMLParser degrades to quadratic complexity on repeated unterminated markup declarations, so parsing attacker-controlled HTML can exhaust CPU. The PDP never parses HTML. Nothing imports html.parser - neither the PDP's own code (horizon/, pdp-server/) nor any package installed in the image; this was verified by scanning every .py file under site-packages, so the vulnerable class is never instantiated. Unlike the other CPython findings in this scan (CVE-2026-6019 and CVE-2026-7210, both cleared by moving the base image to Python 3.13.14), this one cannot be upgraded away: PSF fixed it only in 3.15.0b4 and NVD's CPE range is < 3.15.0, so no released Python satisfies it and every Python-based image in the world matches today. The Dockerfile intentionally floats the base image patch version (python:3.13-alpine3.23), so when 3.13.15 ships with the backport a rebuild will pick it up automatically. Remove this waiver at that point. Tracked under PER-15358."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-50271"
+      },
+      "products": [
+        {
+          "@id": "pkg:docker/permitio/pdp-v2@next",
+          "subcomponents": [
+            { "@id": "pkg:pypi/ddtrace@3.19.8" }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "inline_mitigations_already_exist",
+      "impact_statement": "CVE-2026-50271 is a remote DoS in ddtrace's W3C baggage propagator: the extract path does not enforce DD_TRACE_BAGGAGE_MAX_ITEMS or DD_TRACE_BAGGAGE_MAX_BYTES, so an unauthenticated caller can drive unbounded CPU and memory use with an oversized baggage header. The PDP ships an inline mitigation that removes the vulnerable parser from the request path: the image sets DD_TRACE_PROPAGATION_STYLE_EXTRACT=datadog,tracecontext (see Dockerfile), dropping 'baggage' from ddtrace's default extract styles of 'datadog,tracecontext,baggage', so the unbounded baggage extractor is never invoked on inbound requests. Independently, ddtrace only reaches the inbound request path at all when PDP_ENABLE_MONITORING is true, which defaults to false (horizon/config.py); with the default configuration patch(fastapi=True) is never called and ddtrace instruments no incoming HTTP. Injection style is left at its default, so outbound baggage propagation is unchanged. The fix lands only in ddtrace >= 4.8.2, but opal-common 0.9.6 caps ddtrace<4, so the PDP is held at 3.x (see requirements.txt). This waiver and the Dockerfile mitigation are temporary and must both be removed once OPAL relaxes its ddtrace<4 bound and ddtrace is upgraded to >= 4.8.2. Tracked under PER-15358."
     }
   ]
 }
