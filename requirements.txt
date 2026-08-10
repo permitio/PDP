@@ -28,7 +28,15 @@ httpx>=0.27.0,<1
 # TODO: change to use re2 in the future, currently not supported in alpine due to c++ library issues
 # google-re2 # use re2 instead of re for regex matching because it's simiplier and safer for user inputted regexes
 protobuf>=6.33.5 # pinned to avoid CVE-2026-0994
-cryptography>=48.0.1,<49 # pinned to avoid GHSA-537c-gmf6-5ccf (and CVE-2026-26007)
+# Floor raised 48.0.1 -> 50.0.0 to clear two HIGH CVEs that Docker Scout began flagging on
+# 2026-08-04: CVE-2026-69249 (CVSS 8.7, fixed in 49.0.0) and CVE-2026-69247 (CVSS 8.2,
+# Observable Timing Discrepancy, affects >=44.0.0, fixed only in 50.0.0). The floor also
+# still covers the earlier GHSA-537c-gmf6-5ccf and CVE-2026-26007. Nothing else bounds
+# cryptography - opal-common 0.9.6 requires it unpinned and its pyjwt[crypto]<3,>=2.4.0
+# carries no upper bound - so the <51 cap is ours, to keep majors out of an image build
+# that has no lockfile. musllinux_1_2 cp311-abi3 wheels exist for x86_64 and aarch64, so
+# the alpine build stays prebuilt and needs no Rust toolchain.
+cryptography>=50.0.0,<51
 # starlette is capped <1 by opal-common/opal-client 0.9.6 (and further to <0.51.0 via
 # fastapi-utils -> fastapi 0.125.0). Four starlette CVEs (CVE-2026-54283 fixed in 1.3.1,
 # CVE-2026-48817 fixed in 1.1.0, CVE-2026-48818 fixed in 1.1.0, CVE-2026-48710 fixed in
