@@ -164,8 +164,33 @@ jobs:
           aws-region: ${{ matrix.region }}
           role-session-name: pdp-redeploy-${{ matrix.customer }}
 
+      # Read-only. Proves the role authenticates in this region and that the service
+      # exists under the name this matrix claims, without listing or mutating tasks.
+      - name: Preview target - no changes made
+        if: env.DRY_RUN == 'true'
+        env:
+          CL: ${{ matrix.cluster }}
+          SV: ${{ matrix.service }}
+        run: |
+          set -euo pipefail
+
+          SVC=$(aws ecs describe-services --cluster "$CL" --services "$SV" --output json)
+
+          if [ "$(jq -r '.services | length' <<<"$SVC")" != "1" ]; then
+            echo "::error::$SV not found in $CL - the matrix is out of sync with pdp-deployer"
+            jq -r '.failures[]? | "  \(.arn): \(.reason)"' <<<"$SVC"
+            exit 1
+          fi
+
+          jq -r '.services[0]
+            | "status=\(.status) desired=\(.desiredCount) running=\(.runningCount) taskDefinition=\(.taskDefinition)"' \
+            <<<"$SVC"
+
+          echo "::notice title=Dry run::Would force a new deployment of $SV in $CL"
+
       - name: Snapshot running tasks
         id: before
+        if: env.DRY_RUN != 'true'
         env:
           CL: ${{ matrix.cluster }}
           SV: ${{ matrix.service }}
@@ -175,9 +200,16 @@ jobs:
           ARNS=$(aws ecs list-tasks --cluster "$CL" --service-name "$SV" \
                    --desired-status RUNNING --query 'taskArns' --output json)
 
-          if [ "$(jq 'length' <<<"$ARNS")" -eq 0 ]; then
-            echo "::error::$SV has no running tasks - refusing to redeploy"
-            exit 1
+          # An empty baseline is not a reason to abort: a service sitting at
+          # desiredCount 0, or one whose tasks are already down, is precisely a case
+          # where forcing a new deployment is the right move. A wrong service name is
+          # caught by ServiceNotFoundException from the call above, not by this count.
+          COUNT=$(jq 'length' <<<"$ARNS")
+          if [ "$COUNT" -eq 0 ]; then
+            echo "::warning title=No running tasks::$SV has no running tasks - redeploying against an empty baseline"
+            echo "task_arns=[]" >> "$GITHUB_OUTPUT"
+            echo "digests=[]" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
           DIGESTS=$(aws ecs describe-tasks --cluster "$CL" \
@@ -189,11 +221,6 @@ jobs:
           echo "digests=$DIGESTS" >> "$GITHUB_OUTPUT"
           echo "Running tasks before: $(jq -c 'sort' <<<"$ARNS")"
           echo "Image digests before: $DIGESTS"
-
-      - name: Dry run - no changes made
-        if: env.DRY_RUN == 'true'
-        run: |
-          echo "::notice title=Dry run::Would force a new deployment of ${{ matrix.service }} in ${{ matrix.cluster }}"
 
       - name: Force new deployment
         id: deploy
@@ -226,6 +253,10 @@ jobs:
           SV: ${{ matrix.service }}
           DID: ${{ steps.deploy.outputs.deployment_id }}
         run: |
+          # Deliberately no `set -e`: a transient describe-services failure must be
+          # retried rather than abort the roll. Every failure path below is therefore
+          # handled explicitly, so an unreadable response can never degrade into a
+          # silent spin with empty fields.
           set -uo pipefail
 
           # `aws ecs wait services-stable` is hardcoded to 40 polls x 15s = 10 minutes.
@@ -233,38 +264,60 @@ jobs:
           # on the ALB, plus the target groups' default 300s deregistration_delay while
           # the old pair drains. 15 minutes leaves real headroom.
           DEADLINE=$(( $(date +%s) + 900 ))
+          CONSECUTIVE_ERRORS=0
 
           while :; do
-            SVC=$(aws ecs describe-services --cluster "$CL" --services "$SV" --output json)
+            if ! SVC=$(aws ecs describe-services --cluster "$CL" --services "$SV" --output json 2>&1); then
+              CONSECUTIVE_ERRORS=$(( CONSECUTIVE_ERRORS + 1 ))
+              echo "::warning::$SV - describe-services failed (attempt $CONSECUTIVE_ERRORS): $(head -1 <<<"$SVC")"
+              if [ "$CONSECUTIVE_ERRORS" -ge 10 ]; then
+                echo "::error::$SV - describe-services failed 10 times in a row, giving up"
+                exit 1
+              fi
 
-            read -r RUNNING DESIRED PENDING FAILED DEPLOYMENTS <<<"$(jq -r --arg d "$DID" '
-              .services[0] as $s
-              | ($s.deployments[] | select(.id == $d)) as $p
-              | [ $p.runningCount, $p.desiredCount, $p.pendingCount,
-                  ($p.failedTasks // 0), ($s.deployments | length) ] | @tsv' <<<"$SVC")"
-
-            echo "$SV running=$RUNNING/$DESIRED pending=$PENDING failedTasks=$FAILED deployments=$DEPLOYMENTS"
-
-            # Steady state: the new deployment is at desired count AND the old one has
-            # fully drained, leaving a single deployment on the service.
-            if [ "$RUNNING" = "$DESIRED" ] && [ "$DEPLOYMENTS" = "1" ]; then
-              echo "$SV reached steady state"
-              exit 0
-            fi
-
-            # The ECS deployment circuit breaker is not enabled on these services, so
-            # rolloutState is never populated - failedTasks is the signal that the new
-            # tasks cannot start. Old tasks keep serving throughout, so this is a stalled
-            # rollout rather than an outage, but it will retry forever if left alone.
-            if [ "$FAILED" -ge 3 ]; then
-              echo "::error::$SV rollout stalled - $FAILED failed task launches"
-              jq -r '.services[0].events[:10][].message' <<<"$SVC"
+            elif [ "$(jq -r '.services | length' <<<"$SVC" 2>/dev/null || echo 0)" != "1" ]; then
+              echo "::error::$SV - service disappeared from $CL mid-deployment"
               exit 1
+
+            # jq -e exits non-zero when the program yields no output, which is exactly
+            # the case where the deployment we started is no longer on the service -
+            # superseded by a concurrent update-service or a terraform apply.
+            elif ! STATE=$(jq -er --arg d "$DID" '
+                    .services[0] as $s
+                    | ($s.deployments[] | select(.id == $d)) as $p
+                    | [ $p.runningCount, $p.desiredCount, $p.pendingCount,
+                        ($p.failedTasks // 0), ($s.deployments | length) ] | @tsv' <<<"$SVC"); then
+              echo "::error::$SV - deployment $DID is no longer present on the service"
+              echo "It was most likely superseded by a concurrent deployment. Current deployments:"
+              jq -r '.services[0].deployments[]? | "  \(.id) status=\(.status) running=\(.runningCount)/\(.desiredCount)"' <<<"$SVC" || true
+              exit 1
+
+            else
+              CONSECUTIVE_ERRORS=0
+              read -r RUNNING DESIRED PENDING FAILED DEPLOYMENTS <<<"$STATE"
+              echo "$SV running=$RUNNING/$DESIRED pending=$PENDING failedTasks=$FAILED deployments=$DEPLOYMENTS"
+
+              # Steady state: the new deployment is at desired count AND the old one has
+              # fully drained, leaving a single deployment on the service.
+              if [ "$RUNNING" = "$DESIRED" ] && [ "$DEPLOYMENTS" = "1" ]; then
+                echo "$SV reached steady state"
+                exit 0
+              fi
+
+              # The ECS deployment circuit breaker is not enabled on these services, so
+              # rolloutState is never populated - failedTasks is the signal that the new
+              # tasks cannot start. Old tasks keep serving throughout, so this is a stalled
+              # rollout rather than an outage, but it will retry forever if left alone.
+              if [ "$FAILED" -ge 3 ]; then
+                echo "::error::$SV rollout stalled - $FAILED failed task launches"
+                jq -r '.services[0].events[:10][].message' <<<"$SVC"
+                exit 1
+              fi
             fi
 
             if [ "$(date +%s)" -ge "$DEADLINE" ]; then
               echo "::error::$SV did not reach steady state within 15 minutes"
-              jq -r '.services[0].events[:10][].message' <<<"$SVC"
+              jq -r '.services[0].events[:10][].message' <<<"$SVC" 2>/dev/null || true
               exit 1
             fi
 
