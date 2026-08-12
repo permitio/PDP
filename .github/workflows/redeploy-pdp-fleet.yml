@@ -1,0 +1,369 @@
+name: Redeploy PDP fleet
+
+# Forces every hosted (managed) PDP ECS service to re-pull permitio/pdp-v2:latest
+# after an official PDP release.
+#
+# Every hosted customer in permitio/pdp-deployer is pinned to image_tag = "latest",
+# so the tag string never changes and terraform plans an empty diff. Refreshing the
+# image used to mean flipping force_new_deployment = true in each customer's tfvars,
+# applying, and remembering to flip it back. `update-service --force-new-deployment`
+# re-runs the existing task definition instead: no new revision is registered and no
+# terraform-tracked attribute changes, so this produces zero terraform drift.
+#
+# This workflow is deliberately standalone - it does not modify release.yml. Because
+# it listens to the same `release: published` event as the image build, it cannot
+# assume the build has finished, so the preflight job waits until :latest actually
+# resolves to this release's tag before anything is deployed.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Enumerate the targets without deploying
+        type: boolean
+        default: true
+
+permissions:
+  id-token: write
+  contents: read
+
+# Never cancel-in-progress: cancelling mid-roll abandons a service with its old
+# tasks half drained.
+concurrency:
+  group: pdp-fleet-redeploy
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Wait for :latest to be this release
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    # Prereleases never push :latest, so they must never roll the fleet.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (!github.event.release.prerelease && !github.event.release.draft)
+    steps:
+      # Authenticated inspects avoid Docker Hub's anonymous rate limits.
+      - name: Login to Docker Hub
+        if: github.event_name == 'release'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Wait for the release image to become :latest
+        if: github.event_name == 'release'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          IMAGE: permitio/pdp-v2
+        run: |
+          set -uo pipefail
+
+          # The image build runs from release.yml on this same event, so :latest is
+          # still the previous release when this starts. Wait until :latest and the
+          # release tag resolve to the same manifest digest. This also guards the
+          # overlapping-release case, where an older run would otherwise redeploy the
+          # fleet onto a :latest that belongs to a newer release.
+          digest() {
+            docker buildx imagetools inspect "$IMAGE:$1" \
+              --format '{{ .Manifest.Digest }}' 2>/dev/null
+          }
+
+          DEADLINE=$(( $(date +%s) + 2400 ))   # 40 minutes: multi-arch build + tests
+          while :; do
+            TAG_DIGEST=$(digest "$TAG")
+            LATEST_DIGEST=$(digest latest)
+
+            if [ -n "$TAG_DIGEST" ] && [ "$TAG_DIGEST" = "$LATEST_DIGEST" ]; then
+              echo "::notice title=Image ready::$IMAGE:latest resolves to $TAG ($TAG_DIGEST)"
+              exit 0
+            fi
+
+            if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+              echo "::error::Timed out waiting for $IMAGE:latest to resolve to $TAG."
+              echo "  $IMAGE:$TAG    = ${TAG_DIGEST:-<not pushed>}"
+              echo "  $IMAGE:latest  = ${LATEST_DIGEST:-<unknown>}"
+              echo "The image build in release.yml most likely failed - the fleet was NOT redeployed."
+              exit 1
+            fi
+
+            echo "waiting: $TAG=${TAG_DIGEST:-<not pushed>} latest=${LATEST_DIGEST:-<unknown>}"
+            sleep 30
+          done
+
+  redeploy:
+    name: ${{ matrix.customer }}
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DRY_RUN: ${{ inputs.dry_run || 'false' }}
+    strategy:
+      # One customer failing must never cancel the other ten.
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        # Service names follow modules/pdp-deployment/main.tf:8 in permitio/pdp-deployer:
+        #   pdp-<customer_name>-service-<service_name_suffix>, or
+        #   pdp-<customer_name>-service when service_name_suffix is unset.
+        # aen-gems-prod is the one customer with no suffix.
+        #
+        # Keep this list in sync with terraform/customers/envs/*.tfvars.
+        include:
+          - customer: general-redoc
+            region: us-east-1
+            cluster: public-pdps-us-east-1
+            service: pdp-general-redoc-service-731a74c
+          - customer: aenetworks-dev
+            region: us-east-1
+            cluster: public-pdps-us-east-1
+            service: pdp-aenetworks-dev-service-1528a15
+          - customer: aenetworks-prod
+            region: us-east-1
+            cluster: public-pdps-us-east-1
+            service: pdp-aenetworks-prod-service-25b5bdb
+          - customer: aen-cw-prod
+            region: us-east-1
+            cluster: public-pdps-us-east-1
+            service: pdp-aen-cw-prod-service-356be56
+          - customer: aen-gems-prod
+            region: us-east-1
+            cluster: public-pdps-us-east-1
+            service: pdp-aen-gems-prod-service
+          - customer: getwingwork
+            region: us-east-1
+            cluster: public-pdps-us-east-1
+            service: pdp-getwingwork-service-e80cacb
+          - customer: wingwork
+            region: us-east-1
+            cluster: public-pdps-us-east-1
+            service: pdp-wingwork-service-a8ca8cc
+          - customer: inventa
+            region: us-east-1
+            cluster: public-pdps-us-east-1
+            service: pdp-inventa-service-6cc0a86
+          - customer: iofinnet
+            region: us-east-1
+            cluster: public-pdps-us-east-1
+            service: pdp-iofinnet-service-0d78325
+          - customer: allegion-test
+            region: us-east-2
+            cluster: public-pdps-us-east-2
+            service: pdp-allegion-test-service-4098aae
+          - customer: allegion-tam
+            region: us-east-2
+            cluster: public-pdps-us-east-2
+            service: pdp-allegion-tam-service-95a2d3e
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.PDP_CICD_AWS_ROLE }}
+          aws-region: ${{ matrix.region }}
+          role-session-name: pdp-redeploy-${{ matrix.customer }}
+
+      - name: Snapshot running tasks
+        id: before
+        env:
+          CL: ${{ matrix.cluster }}
+          SV: ${{ matrix.service }}
+        run: |
+          set -euo pipefail
+
+          ARNS=$(aws ecs list-tasks --cluster "$CL" --service-name "$SV" \
+                   --desired-status RUNNING --query 'taskArns' --output json)
+
+          if [ "$(jq 'length' <<<"$ARNS")" -eq 0 ]; then
+            echo "::error::$SV has no running tasks - refusing to redeploy"
+            exit 1
+          fi
+
+          DIGESTS=$(aws ecs describe-tasks --cluster "$CL" \
+                      --tasks $(jq -r '.[]' <<<"$ARNS") \
+                      --query 'tasks[].containers[].imageDigest' \
+                      --output json | jq -c 'unique')
+
+          echo "task_arns=$(jq -c 'sort' <<<"$ARNS")" >> "$GITHUB_OUTPUT"
+          echo "digests=$DIGESTS" >> "$GITHUB_OUTPUT"
+          echo "Running tasks before: $(jq -c 'sort' <<<"$ARNS")"
+          echo "Image digests before: $DIGESTS"
+
+      - name: Dry run - no changes made
+        if: env.DRY_RUN == 'true'
+        run: |
+          echo "::notice title=Dry run::Would force a new deployment of ${{ matrix.service }} in ${{ matrix.cluster }}"
+
+      - name: Force new deployment
+        id: deploy
+        if: env.DRY_RUN != 'true'
+        env:
+          CL: ${{ matrix.cluster }}
+          SV: ${{ matrix.service }}
+        run: |
+          set -euo pipefail
+
+          DEPLOYMENT_ID=$(aws ecs update-service \
+            --cluster "$CL" \
+            --service "$SV" \
+            --force-new-deployment \
+            --query 'service.deployments[?status==`PRIMARY`].id' \
+            --output text)
+
+          if [ -z "$DEPLOYMENT_ID" ]; then
+            echo "::error::$SV - could not determine the new deployment id"
+            exit 1
+          fi
+
+          echo "deployment_id=$DEPLOYMENT_ID" >> "$GITHUB_OUTPUT"
+          echo "Started deployment $DEPLOYMENT_ID for $SV"
+
+      - name: Wait for steady state
+        if: env.DRY_RUN != 'true'
+        env:
+          CL: ${{ matrix.cluster }}
+          SV: ${{ matrix.service }}
+          DID: ${{ steps.deploy.outputs.deployment_id }}
+        run: |
+          set -uo pipefail
+
+          # `aws ecs wait services-stable` is hardcoded to 40 polls x 15s = 10 minutes.
+          # These services need longer: task boot, plus healthy_threshold 2 x interval 30
+          # on the ALB, plus the target groups' default 300s deregistration_delay while
+          # the old pair drains. 15 minutes leaves real headroom.
+          DEADLINE=$(( $(date +%s) + 900 ))
+
+          while :; do
+            SVC=$(aws ecs describe-services --cluster "$CL" --services "$SV" --output json)
+
+            read -r RUNNING DESIRED PENDING FAILED DEPLOYMENTS <<<"$(jq -r --arg d "$DID" '
+              .services[0] as $s
+              | ($s.deployments[] | select(.id == $d)) as $p
+              | [ $p.runningCount, $p.desiredCount, $p.pendingCount,
+                  ($p.failedTasks // 0), ($s.deployments | length) ] | @tsv' <<<"$SVC")"
+
+            echo "$SV running=$RUNNING/$DESIRED pending=$PENDING failedTasks=$FAILED deployments=$DEPLOYMENTS"
+
+            # Steady state: the new deployment is at desired count AND the old one has
+            # fully drained, leaving a single deployment on the service.
+            if [ "$RUNNING" = "$DESIRED" ] && [ "$DEPLOYMENTS" = "1" ]; then
+              echo "$SV reached steady state"
+              exit 0
+            fi
+
+            # The ECS deployment circuit breaker is not enabled on these services, so
+            # rolloutState is never populated - failedTasks is the signal that the new
+            # tasks cannot start. Old tasks keep serving throughout, so this is a stalled
+            # rollout rather than an outage, but it will retry forever if left alone.
+            if [ "$FAILED" -ge 3 ]; then
+              echo "::error::$SV rollout stalled - $FAILED failed task launches"
+              jq -r '.services[0].events[:10][].message' <<<"$SVC"
+              exit 1
+            fi
+
+            if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+              echo "::error::$SV did not reach steady state within 15 minutes"
+              jq -r '.services[0].events[:10][].message' <<<"$SVC"
+              exit 1
+            fi
+
+            sleep 15
+          done
+
+      - name: Verify the tasks were replaced
+        if: env.DRY_RUN != 'true'
+        env:
+          CL: ${{ matrix.cluster }}
+          SV: ${{ matrix.service }}
+          OLD_ARNS: ${{ steps.before.outputs.task_arns }}
+          OLD_DIGESTS: ${{ steps.before.outputs.digests }}
+        run: |
+          set -euo pipefail
+
+          ARNS=$(aws ecs list-tasks --cluster "$CL" --service-name "$SV" \
+                   --desired-status RUNNING --query 'taskArns' --output json)
+          TASKS=$(aws ecs describe-tasks --cluster "$CL" \
+                    --tasks $(jq -r '.[]' <<<"$ARNS") --output json)
+
+          # Hard assertion: none of the pre-deploy task ARNs may still be running.
+          # Compared as a set rather than by startedAt - ECS returns that timestamp with
+          # a +00:00 offset that jq's fromdateiso8601 will not parse.
+          SURVIVORS=$(jq -n --argjson old "$OLD_ARNS" --argjson new "$ARNS" \
+            '[$old[] | select(. as $arn | $new | index($arn))] | length')
+
+          if [ "$SURVIVORS" != "0" ]; then
+            echo "::error::$SV still has $SURVIVORS pre-deploy task(s) running - the service did not fully roll"
+            exit 1
+          fi
+
+          # Advisory only: a rebuild that produces an identical image legitimately keeps
+          # the same digest, so this warns rather than fails.
+          DIGESTS=$(jq -c '[.tasks[].containers[].imageDigest] | unique' <<<"$TASKS")
+          echo "Image digests after: $DIGESTS"
+          if [ "$DIGESTS" = "$OLD_DIGESTS" ]; then
+            echo "::warning title=Digest unchanged::$SV is running the same image digest as before - :latest may not have moved"
+          fi
+
+          echo "$SV rolled onto $(jq -r 'length' <<<"$ARNS") new task(s)"
+
+      - name: Record result
+        if: always()
+        run: |
+          mkdir -p /tmp/results
+          jq -n \
+            --arg customer '${{ matrix.customer }}' \
+            --arg service '${{ matrix.service }}' \
+            --arg region '${{ matrix.region }}' \
+            --arg status '${{ job.status }}' \
+            '{customer: $customer, service: $service, region: $region, status: $status}' \
+            > "/tmp/results/${{ matrix.customer }}.json"
+
+      - name: Upload result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: redeploy-${{ matrix.customer }}
+          path: /tmp/results/*.json
+          retention-days: 14
+
+  report:
+    name: Report
+    needs: [preflight, redeploy]
+    if: always() && needs.preflight.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: redeploy-*
+          merge-multiple: true
+          path: /tmp/results
+
+      - name: Write job summary
+        run: |
+          set -euo pipefail
+
+          if ! compgen -G '/tmp/results/*.json' > /dev/null; then
+            echo "::warning::No per-service results were produced"
+            exit 0
+          fi
+
+          MODE=$([ "${{ inputs.dry_run || 'false' }}" = "true" ] && echo " (dry run)" || echo "")
+          {
+            echo "## PDP fleet redeploy${MODE}"
+            echo
+            echo "Release: \`${{ github.event.release.tag_name || 'manual dispatch' }}\`"
+            echo
+            echo "| Customer | Region | Service | Result |"
+            echo "|---|---|---|---|"
+            jq -r '"| \(.customer) | \(.region) | `\(.service)` | \(.status) |"' \
+              /tmp/results/*.json | sort
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          FAILED=$(jq -s '[.[] | select(.status != "success")] | length' /tmp/results/*.json)
+          if [ "$FAILED" != "0" ]; then
+            echo "::error::$FAILED service(s) failed to redeploy"
+            jq -sr '[.[] | select(.status != "success") | .customer] | join(", ")' /tmp/results/*.json
+            exit 1
+          fi
