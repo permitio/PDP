@@ -23,9 +23,12 @@ import asyncio
 import time
 from unittest.mock import AsyncMock
 
+import aiohttp
 import pytest
 from fastapi.testclient import TestClient
+from horizon import debounce
 from horizon.config import sidecar_config
+from horizon.debounce import DebouncedTrigger
 from httpx import ASGITransport, AsyncClient
 
 # Basename import (not horizon.tests.*): CI installs the package non-editably, so the wheel
@@ -40,6 +43,21 @@ TIMEOUT = 2.0
 # The two possible bodies. Naming them keeps every assertion below about WHICH one came back.
 DISPATCHED = {"status": "ok", "triggered": True}
 COALESCED = {"status": "ok", "triggered": False}
+
+
+async def _no_wait(_seconds: float) -> None:
+    """Patched over ``debounce._sleep``: fire the trailing run now instead of at window expiry.
+
+    Still yields, so the trailing run stays a genuinely separate scheduling step rather than
+    collapsing into its caller and hiding an ordering bug.
+    """
+    await asyncio.sleep(0)
+
+
+async def drain_trailing(trigger: DebouncedTrigger) -> None:
+    """Run every armed (and chained) trailing task to completion, bounded by ``TIMEOUT``."""
+    while (task := trigger._trailing_task) is not None:
+        await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), timeout=TIMEOUT)
 
 
 @pytest.fixture
@@ -70,8 +88,15 @@ def test_policy_triggers_within_window_coalesce(pdp: MockPermitPDP, auth: dict[s
     assert first.json() == DISPATCHED
     assert second.status_code == 200
     assert second.json() == COALESCED
-    # Second call coalesced: the updater was forced exactly once.
+    # Second call coalesced: the updater was forced exactly once *during these requests*.
     trigger.assert_awaited_once_with(force_full_update=True)
+    # The coalesced trigger was deferred rather than dropped - it armed a trailing reload - but
+    # that is deliberately NOT asserted here. A TestClient used without `with` runs each request
+    # on its own event loop and tears it down afterwards, so the background task is cancelled
+    # with the loop and the handle is cleared on a schedule this test cannot pin down. That is a
+    # property of the harness, not of the debouncer. The trailing edge is driven for real where
+    # a single loop spans the whole test: test_in_flight_guard_beats_an_elapsed_window below,
+    # and the trailing-edge tests in test_debounce_unit.py.
 
 
 def test_data_triggers_within_window_coalesce(pdp: MockPermitPDP, auth: dict[str, str], monkeypatch):
@@ -185,13 +210,23 @@ async def test_in_flight_guard_beats_an_elapsed_window(pdp: MockPermitPDP, auth:
     through, so anything that coalesces it must be the in-flight guard.
     """
     monkeypatch.setattr(sidecar_config, "TRIGGER_DEBOUNCE_SECONDS", WINDOW)
+    # The trailing run waits out the remainder of the window before firing. Skip the wait
+    # (without skipping the scheduling) so the test does not park on ten real seconds.
+    monkeypatch.setattr(debounce, "_sleep", _no_wait)
 
-    started = asyncio.Event()  # set once the second reload is genuinely running
-    release = asyncio.Event()  # keeps that reload in flight until the test releases it
+    # One gate per blocking reload: index 0 is the dispatch parked in flight, index 1 is the
+    # trailing run it arms. Keeping them separate is what lets the test prove the dispatching
+    # REQUEST was answered while the trailing run was still going.
+    started = [asyncio.Event(), asyncio.Event()]
+    release = [asyncio.Event(), asyncio.Event()]
+    blocking_calls = 0
 
     async def blocking(**_kwargs) -> None:
-        started.set()
-        await release.wait()
+        nonlocal blocking_calls
+        index = blocking_calls
+        blocking_calls += 1
+        started[index].set()
+        await release[index].wait()
 
     get_base = AsyncMock()
     monkeypatch.setattr(pdp._opal.data_updater, "get_base_policy_data", get_base)
@@ -210,7 +245,7 @@ async def test_in_flight_guard_beats_an_elapsed_window(pdp: MockPermitPDP, auth:
         get_base.side_effect = blocking
         second = asyncio.create_task(client.post("/data-updater/trigger", headers=auth))
         try:
-            await asyncio.wait_for(started.wait(), timeout=TIMEOUT)
+            await asyncio.wait_for(started[0].wait(), timeout=TIMEOUT)
             assert debouncer._in_flight is True
             assert time.monotonic() - debouncer._last_dispatched > WINDOW, (
                 "the window must be elapsed, otherwise the window guard could be doing the coalescing"
@@ -227,52 +262,100 @@ async def test_in_flight_guard_beats_an_elapsed_window(pdp: MockPermitPDP, auth:
             assert third.json() == COALESCED
             assert get_base.await_count == 2
 
-            release.set()
+            release[0].set()
             second_response = await asyncio.wait_for(second, timeout=TIMEOUT)
+            assert second_response.status_code == 200
+            assert second_response.json() == DISPATCHED
+
+            # 4. The trailing run that serves the third trigger is parked on release[1], which
+            #    nothing has set - and the dispatching REQUEST has already been answered above.
+            #    That is the proof it runs off the request path: inline, this caller would still
+            #    be blocked here, paying for a second full reload it never asked for (against
+            #    the 60s client timeout of the Rust server that fronts this app).
+            await asyncio.wait_for(started[1].wait(), timeout=TIMEOUT)
+            assert debouncer._trailing_task is not None
+            assert get_base.await_count == 3
+
+            release[1].set()
+            await drain_trailing(debouncer)
         finally:
-            # An assertion above failing must not leave the request task parked in `run`.
-            release.set()
+            # An assertion above failing must not leave a request task or a trailing run parked.
+            for gate in release:
+                gate.set()
             if not second.done():
                 second.cancel()
 
-        assert second_response.status_code == 200
-        assert second_response.json() == DISPATCHED
-        # The coalesced third trigger armed the trailing edge, so the in-flight dispatch re-ran
-        # exactly once after completing rather than dropping that trigger on the floor.
+        # The coalesced third trigger was served, not dropped - exactly once.
         assert get_base.await_count == 3
+        assert debouncer._trailing_task is None
 
 
-# --- case 5: a dispatch that RAISES propagates and does not consume the window ------------
+# --- case 5: a dispatch that RAISES consumes the window and answers with a gateway error ---
 
 
-def test_raising_dispatch_500s_and_does_not_consume_the_window(pdp: MockPermitPDP, auth: dict[str, str], monkeypatch):
-    """The narrow, honest version of the deleted "a failed pull does not burn the window" claim.
+def test_control_plane_failure_502s_and_consumes_the_window(pdp: MockPermitPDP, auth: dict[str, str], monkeypatch):
+    """A FAILING control plane must be damped harder than a healthy one, not left unthrottled.
 
-    ``_last_dispatched`` is assigned only after ``await run()`` RETURNS, so an exception raised
-    out of the dispatch skips it and an immediate retry still fires. But note how little that
-    covers: both updaters are fire-and-forget underneath (a queue put for policy; a config GET
-    plus a task hand-off for data), so a reload that is dispatched and then fails in the
-    background returns normally here and DOES consume the window. See
-    ``test_window_is_consumed_by_the_dispatch_not_by_the_reload_succeeding`` in
-    test_debounce_unit.py for that half of the contract.
+    ``get_policy_data_config`` raises ``ClientError`` on any non-200 from the control plane, so
+    a window consumed only by SUCCESSES would switch the mitigation off in exactly the degraded
+    conditions it exists for. ``_last_dispatched`` therefore records the ATTEMPT.
+
+    The status matters too: this used to escape as a bare 500 - the one code every SDK and
+    service mesh retries - so the failure mode recruited clients into a retry storm against an
+    already-struggling control plane. 502 attributes the failure upstream (matching
+    horizon/enforcer/api.py) and carries a `Retry-After` telling the client when a retry could
+    actually accomplish something.
     """
     monkeypatch.setattr(sidecar_config, "TRIGGER_DEBOUNCE_SECONDS", WINDOW)
-    get_base = AsyncMock(side_effect=RuntimeError("boom"))
+    get_base = AsyncMock(side_effect=aiohttp.ClientError("control plane said 503"))
     monkeypatch.setattr(pdp._opal.data_updater, "get_base_policy_data", get_base)
-    # raise_server_exceptions=False so the propagated error surfaces as a 500 response.
     client = TestClient(pdp._app, raise_server_exceptions=False)
 
     first = client.post("/data-updater/trigger", headers=auth, follow_redirects=False)
-    assert first.status_code == 500
-    assert pdp._data_trigger_debounce._last_dispatched is None
+    assert first.status_code == 502
+    # Never sooner than the window: the failed attempt just consumed it, so an earlier retry is
+    # guaranteed to be coalesced and would be a provably useless call.
+    assert first.headers["Retry-After"] == str(int(WINDOW))
+    assert pdp._data_trigger_debounce._last_dispatched is not None
     # The `finally` still clears the in-flight flag, so a raise cannot wedge the debouncer into
     # coalescing every future trigger.
     assert pdp._data_trigger_debounce._in_flight is False
 
-    # ...so an immediate retry within the window is not coalesced: it dispatches (and 500s again).
+    # An immediate retry within the window is coalesced instead of opening a second connection
+    # to the failing control plane - and it is not lost either: a trailing reload is armed.
     second = client.post("/data-updater/trigger", headers=auth, follow_redirects=False)
-    assert second.status_code == 500
-    assert get_base.await_count == 2
+    assert second.status_code == 200
+    assert second.json() == COALESCED
+    assert get_base.await_count == 1
+
+
+def test_control_plane_timeout_504s(pdp: MockPermitPDP, auth: dict[str, str], monkeypatch):
+    monkeypatch.setattr(sidecar_config, "TRIGGER_DEBOUNCE_SECONDS", WINDOW)
+    get_base = AsyncMock(side_effect=asyncio.TimeoutError())
+    monkeypatch.setattr(pdp._opal.data_updater, "get_base_policy_data", get_base)
+    client = TestClient(pdp._app, raise_server_exceptions=False)
+
+    response = client.post("/data-updater/trigger", headers=auth, follow_redirects=False)
+    assert response.status_code == 504
+    assert response.headers["Retry-After"] == str(int(WINDOW))
+
+
+def test_an_unexpected_error_is_still_a_500(pdp: MockPermitPDP, auth: dict[str, str], monkeypatch):
+    """Only *control-plane* failures are translated; a genuine bug must not be dressed up as one.
+
+    A 502/504 tells the caller "upstream is unwell, retry later". Mapping an internal
+    ``RuntimeError`` to that would send clients into a retry loop over a defect no amount of
+    retrying can clear, and would hide the bug from PDP-side alerting.
+    """
+    monkeypatch.setattr(sidecar_config, "TRIGGER_DEBOUNCE_SECONDS", WINDOW)
+    get_base = AsyncMock(side_effect=RuntimeError("boom"))
+    monkeypatch.setattr(pdp._opal.data_updater, "get_base_policy_data", get_base)
+    client = TestClient(pdp._app, raise_server_exceptions=False)
+
+    response = client.post("/data-updater/trigger", headers=auth, follow_redirects=False)
+    assert response.status_code == 500
+    # Still consumed the window: the attempt was made regardless of how it failed.
+    assert pdp._data_trigger_debounce._last_dispatched is not None
 
 
 # --- case 6: a disabled data updater 503s before the debouncer (window not consumed) -----
@@ -357,3 +440,46 @@ def test_replacement_route_still_rejects_missing_token(pdp: MockPermitPDP, monke
     resp = TestClient(pdp._app).post("/policy-updater/trigger", follow_redirects=False)
     assert resp.status_code == 401
     trigger.assert_not_awaited()
+
+
+# --- case 9: the published contract actually describes the body clients are told to read ---
+
+
+def test_openapi_declares_the_trigger_response_shape(pdp: MockPermitPDP):
+    """`triggered` must exist in the SCHEMA, not just in the prose that tells clients to use it.
+
+    The routes' customer-facing `description=` instructs integrators to branch on `triggered`.
+    Without a `response_model` FastAPI publishes an empty 200 schema, so that instruction would
+    reference a field no code generator or typed SDK can see.
+    """
+    spec = pdp._app.openapi()
+
+    for path in ("/policy-updater/trigger", "/data-updater/trigger"):
+        operation = spec["paths"][path]["post"]
+        schema = operation["responses"]["200"]["content"]["application/json"]["schema"]
+        assert schema == {"$ref": "#/components/schemas/TriggerResponse"}, path
+
+    trigger_response = spec["components"]["schemas"]["TriggerResponse"]
+    assert set(trigger_response["properties"]) == {"status", "triggered"}
+    assert trigger_response["properties"]["triggered"]["type"] == "boolean"
+
+    # The data route's documented failure modes are declared too, so a client can tell the
+    # permanent "updater disabled" 503 from the transient, Retry-After-carrying 502/504.
+    assert {"502", "503", "504"} <= set(spec["paths"]["/data-updater/trigger"]["post"]["responses"])
+
+    # The legacy aliases stay out of the published contract - they are compatibility shims.
+    assert not [path for path in spec["paths"] if "update_policy" in path]
+
+
+def test_disabled_data_updater_503_carries_no_retry_after(pdp: MockPermitPDP, auth: dict[str, str], monkeypatch):
+    """A disabled updater is a configuration state: retrying cannot help, so promise nothing.
+
+    This is why the control-plane failures map to 502/504 rather than joining this 503 - a
+    client must be able to tell "back off and retry" from "stop, this will never work".
+    """
+    monkeypatch.setattr(sidecar_config, "TRIGGER_DEBOUNCE_SECONDS", WINDOW)
+    monkeypatch.setattr(pdp._opal, "data_updater", None)
+
+    response = TestClient(pdp._app).post("/data-updater/trigger", headers=auth, follow_redirects=False)
+    assert response.status_code == 503
+    assert "Retry-After" not in response.headers

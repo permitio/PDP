@@ -1,9 +1,13 @@
+import asyncio
 import logging
+import math
 import os
 import sys
 from pathlib import Path
+from typing import ClassVar, Literal
 from uuid import UUID, uuid4
 
+import aiohttp
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.routing import APIRoute
 from loguru import logger
@@ -23,12 +27,13 @@ from opal_common.fetcher.providers.http_fetch_provider import (
     HttpMethods,
 )
 from opal_common.logging_utils.formatter import Formatter
+from pydantic import BaseModel, Field
 from scalar_fastapi import get_scalar_api_reference
 
 from horizon.authentication import enforce_pdp_token
 from horizon.config import MOCK_API_KEY, sidecar_config
 from horizon.connectivity.api import init_connectivity_router
-from horizon.debounce import MAX_DEBOUNCE_SECONDS, DebouncedTrigger, clamp_window
+from horizon.debounce import MAX_DEBOUNCE_SECONDS, DebouncedTrigger, clamp_window, resolve_window
 from horizon.enforcer.api import init_enforcer_api_router, init_enforcer_health_router, stats_manager
 from horizon.enforcer.opa.config_maker import (
     get_opa_authz_policy_file_path,
@@ -98,6 +103,36 @@ def apply_config(overrides_dict: dict, config_object: Confi):
             logger.info(f"Overriden config key: {prefixed_key}")
             continue
         logger.warning(f"Ignored non-existing config key: {prefixed_key}")
+
+
+# Declared as a ``response_model`` (rather than left as a bare dict) because the trigger routes'
+# customer-facing OpenAPI description tells integrators to branch on ``triggered``: without one,
+# FastAPI publishes an empty 200 schema, so the prose would reference a field the machine-readable
+# contract never describes and typed SDKs would have nothing to bind to. The two
+# ``include_in_schema=False`` legacy aliases use it too - not for docs, but because response_model
+# also validates at runtime, which is what keeps all four bodies in lockstep as they share one
+# debouncer.
+#
+# NOTE: the class docstring below is PUBLISHED as the schema description in /openapi.json and the
+# /scalar explorer - same rule as the route handlers further down. Implementation notes go in
+# comments like this one; the docstring is written for integrators.
+class TriggerResponse(BaseModel):
+    """The result of a forced-reload trigger."""
+
+    status: Literal["ok"] = Field(
+        "ok",
+        description="Always `ok`. Retained verbatim from the pre-debounce body so SDKs never error-spiral.",
+    )
+    triggered: bool = Field(
+        ...,
+        description=(
+            "`true` if this call dispatched a reload, `false` if it was coalesced into a recent or "
+            "in-flight one. `false` is a success - see the endpoint description."
+        ),
+    )
+
+    class Config:
+        schema_extra: ClassVar[dict] = {"example": {"status": "ok", "triggered": True}}
 
 
 # OpalClient mounts these two forced-reload trigger routes before PermitPDP gains control.
@@ -523,13 +558,29 @@ class PermitPDP:
         self._policy_trigger_debounce = DebouncedTrigger("policy")
         self._data_trigger_debounce = DebouncedTrigger("data")
 
+        # A trailing reload is a background task, so it has to be cancelled on the way down or
+        # it outlives the event loop as a "Task was destroyed but it is pending" warning.
+        app.on_event("shutdown")(self._policy_trigger_debounce.aclose)
+        app.on_event("shutdown")(self._data_trigger_debounce.aclose)
+
         # Log the EFFECTIVE window, not the configured one: the value is remote-config
-        # overridable and is clamped to [0, MAX_DEBOUNCE_SECONDS], so a fat-fingered override
-        # should be visible at startup rather than silently reinterpreted.
-        effective_window = clamp_window(sidecar_config.TRIGGER_DEBOUNCE_SECONDS)
-        if effective_window != sidecar_config.TRIGGER_DEBOUNCE_SECONDS:
+        # overridable, so a fat-fingered override should be visible at startup rather than
+        # silently reinterpreted. resolve_window reports WHY the value changed, which matters
+        # because the two cases warrant different messages and different severities - and
+        # because comparing the coerced float against the raw attribute (as this did before)
+        # reported a false "out of range" for a valid override delivered as the JSON string
+        # "30": confi's cast_from_json is no_cast, so remote overrides arrive uncast.
+        effective_window, problem = resolve_window(sidecar_config.TRIGGER_DEBOUNCE_SECONDS)
+        if problem == "unparseable":
+            logger.error(
+                "PDP_TRIGGER_DEBOUNCE_SECONDS={!r} is not a usable window; falling back to the default "
+                "{:g}s. Forced-reload trigger debouncing REMAINS ENABLED.",
+                sidecar_config.TRIGGER_DEBOUNCE_SECONDS,
+                effective_window,
+            )
+        elif problem == "clamped":
             logger.warning(
-                "PDP_TRIGGER_DEBOUNCE_SECONDS={} is out of range; clamped to {:g}s (max {:g}s).",
+                "PDP_TRIGGER_DEBOUNCE_SECONDS={!r} is out of range; clamped to {:g}s (allowed 0-{:g}s).",
                 sidecar_config.TRIGGER_DEBOUNCE_SECONDS,
                 effective_window,
                 MAX_DEBOUNCE_SECONDS,
@@ -543,25 +594,25 @@ class PermitPDP:
         @app.post(
             "/update_policy",
             status_code=status.HTTP_200_OK,
+            response_model=TriggerResponse,
             include_in_schema=False,
             dependencies=[Depends(enforce_pdp_token)],
         )
-        async def legacy_trigger_policy_update():
+        async def legacy_trigger_policy_update() -> TriggerResponse:
             logger.info("triggered policy update from api (legacy route)")
-            triggered = await self._debounced_policy_reload()
-            return {"status": "ok", "triggered": triggered}
+            return TriggerResponse(triggered=await self._debounced_policy_reload())
 
         @app.post(
             "/update_policy_data",
             status_code=status.HTTP_200_OK,
+            response_model=TriggerResponse,
             include_in_schema=False,
             dependencies=[Depends(enforce_pdp_token)],
         )
-        async def legacy_trigger_data_update():
+        async def legacy_trigger_data_update() -> TriggerResponse:
             logger.info("triggered policy data update from api (legacy route)")
             # Preserve the distinct legacy reason string - a test asserts it verbatim.
-            triggered = await self._debounced_data_reload("request from sdk (legacy alias)")
-            return {"status": "ok", "triggered": triggered}
+            return TriggerResponse(triggered=await self._debounced_data_reload("request from sdk (legacy alias)"))
 
         # OpalClient mounted POST /policy-updater/trigger and POST /data-updater/trigger before
         # the PDP took over; their closures force a FULL reload on every call with no damping.
@@ -578,54 +629,70 @@ class PermitPDP:
         @app.post(
             "/policy-updater/trigger",
             status_code=status.HTTP_200_OK,
+            response_model=TriggerResponse,
             tags=["Policy Updater"],
             dependencies=[Depends(enforce_pdp_token)],
             summary="Trigger a full policy reload",
             description=(
                 "Requests a full policy reload from the control plane. Redundant triggers are "
-                "coalesced: if a reload was already requested within the debounce window, or one "
-                "is currently in flight, this call is absorbed into it. Returns 200 either way; "
-                "`triggered` reports whether this call started a reload (`true`) or was coalesced "
-                "into an existing one (`false`). **`false` is a success, not a failure - do not "
-                "retry on it.** It means a reload covering your request is already happening; "
-                "retrying only adds load to the control plane."
+                "coalesced: if a reload is already in flight, or one was dispatched within the "
+                "debounce window, this call is absorbed into it. Returns 200 either way; "
+                "`triggered` reports whether this call dispatched a reload (`true`) or was "
+                "coalesced into another one (`false`).\n\n"
+                "**`false` is a success, not a failure - do not retry on it.** A coalesced trigger "
+                "is not dropped: the PDP schedules a follow-up reload that begins *after* your "
+                "call, within `PDP_TRIGGER_DEBOUNCE_SECONDS` (default 10s). Retrying sooner is "
+                "coalesced again and only adds load to the control plane.\n\n"
+                "This is a best-effort refresh, not a read-your-writes barrier: 200 means the "
+                "reload was dispatched, not that the new policy has been loaded."
             ),
         )
-        async def trigger_policy_update():
+        async def trigger_policy_update() -> TriggerResponse:
             # The reload is dispatched, not awaited to completion: the underlying OPAL call only
             # enqueues onto the policy updater's queue. That was already true of the handler this
             # replaces, so a 200 means the same thing it always did.
             logger.info("triggered policy update from api")
-            triggered = await self._debounced_policy_reload()
-            return {"status": "ok", "triggered": triggered}
+            return TriggerResponse(triggered=await self._debounced_policy_reload())
 
         @app.post(
             "/data-updater/trigger",
             status_code=status.HTTP_200_OK,
+            response_model=TriggerResponse,
+            responses={
+                502: {"description": "The control plane rejected or failed the data-source config request"},
+                503: {"description": "The data updater is disabled on this PDP"},
+                504: {"description": "The control plane did not answer the data-source config request in time"},
+            },
             tags=["Data Updater"],
             dependencies=[Depends(enforce_pdp_token)],
             summary="Trigger a full base-data reload",
             description=(
                 "Requests a full reload of base policy data from the control plane. Redundant "
-                "triggers are coalesced: if a reload was already requested within the debounce "
-                "window, or one is currently in flight, this call is absorbed into it. Returns 200 "
-                "either way; `triggered` reports whether this call started a reload (`true`) or was "
-                "coalesced into an existing one (`false`). **`false` is a success, not a failure - "
-                "do not retry on it.** It means a reload covering your request is already happening; "
-                "retrying only adds load to the control plane. Returns 503 if the data updater is "
-                "disabled. This endpoint is a best-effort refresh, not a read-your-writes barrier - "
-                "use the facts API's `X-Wait-timeout` when you need to block on a specific write."
+                "triggers are coalesced: if a reload is already in flight, or one was dispatched "
+                "within the debounce window, this call is absorbed into it. Returns 200 either "
+                "way; `triggered` reports whether this call dispatched a reload (`true`) or was "
+                "coalesced into another one (`false`).\n\n"
+                "**`false` is a success, not a failure - do not retry on it.** A coalesced trigger "
+                "is not dropped: the PDP schedules a follow-up reload that begins *after* your "
+                "call, within `PDP_TRIGGER_DEBOUNCE_SECONDS` (default 10s). Retrying sooner is "
+                "coalesced again and only adds load to the control plane.\n\n"
+                "This is a best-effort refresh, not a read-your-writes barrier: 200 means the "
+                "reload was dispatched, not that the new data has been loaded. Use the facts API's "
+                "`X-Wait-timeout` when you need to block on a specific write.\n\n"
+                "Returns 503 if the data updater is disabled on this PDP - a configuration state, "
+                "so retrying will not help. Returns 502 or 504 with a `Retry-After` header if the "
+                "control plane could not be reached; honour that header rather than retrying "
+                "immediately."
             ),
         )
-        async def trigger_data_update():
+        async def trigger_data_update() -> TriggerResponse:
             # Like the policy route, this dispatches rather than completes: get_base_policy_data
             # awaits the data-source config GET and then hands the per-entry fetches to a task
             # pool. That was already true of the OPAL handler this replaces - a 200 never meant
             # the data had landed. A disabled data updater still returns 503, checked BEFORE the
             # debouncer so a 503 never consumes the window.
             logger.info("triggered policy data update from api")
-            triggered = await self._debounced_data_reload("request from sdk")
-            return {"status": "ok", "triggered": triggered}
+            return TriggerResponse(triggered=await self._debounced_data_reload("request from sdk"))
 
     async def _debounced_policy_reload(self) -> bool:
         """Dispatch a full policy reload through the shared policy debouncer.
@@ -663,8 +730,42 @@ class PermitPDP:
         async def _run() -> None:
             await data_updater.get_base_policy_data(data_fetch_reason=data_fetch_reason)
 
-        return await self._data_trigger_debounce.trigger(
-            run=_run, window_seconds=sidecar_config.TRIGGER_DEBOUNCE_SECONDS
+        try:
+            return await self._data_trigger_debounce.trigger(
+                run=_run, window_seconds=sidecar_config.TRIGGER_DEBOUNCE_SECONDS
+            )
+        except asyncio.TimeoutError as exc:
+            raise self._control_plane_unreachable(status.HTTP_504_GATEWAY_TIMEOUT, "timed out", exc) from exc
+        except aiohttp.ClientError as exc:
+            raise self._control_plane_unreachable(status.HTTP_502_BAD_GATEWAY, "failed", exc) from exc
+
+    @staticmethod
+    def _control_plane_unreachable(status_code: int, verb: str, exc: BaseException) -> HTTPException:
+        """Translate a failed data-source config fetch into a gateway error with backoff advice.
+
+        ``get_policy_data_config`` raises ``ClientError`` on any non-200 from the control plane,
+        which used to escape the handler as a bare 500 with no body - the one status code SDK and
+        service-mesh retry logic always retries, so the failure mode actively recruited clients
+        into a retry storm against an already-degraded control plane.
+
+        502/504 rather than 503, for two reasons. It matches the mapping this codebase already
+        uses for an upstream failure (horizon/enforcer/api.py: "502 indicates server got an error
+        from another server"), and it keeps 503 meaning what it already means on this route -
+        "the data updater is disabled", a configuration state where retrying is pointless
+        indefinitely. Collapsing both into 503 would leave a client unable to tell "back off ten
+        seconds" from "stop forever".
+
+        ``Retry-After`` is the debounce window, because the failed attempt just consumed it: any
+        earlier retry is guaranteed to be coalesced, so a smaller value would be the server
+        instructing the client to make a provably useless call.
+        """
+        retry_after = max(1, math.ceil(clamp_window(sidecar_config.TRIGGER_DEBOUNCE_SECONDS)))
+        detail = f"Fetching base policy data from the control plane {verb}: {exc!s}"
+        logger.warning(detail)
+        return HTTPException(
+            status_code=status_code,
+            detail=detail,
+            headers={"Retry-After": str(retry_after)},
         )
 
     @property
