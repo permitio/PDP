@@ -25,7 +25,8 @@ from fastapi.dependencies.utils import get_flat_dependant
 from fastapi.routing import APIRoute
 from horizon.authentication import PUBLIC_ROUTE_PATHS, enforce_pdp_token
 from horizon.config import sidecar_config
-from horizon.pdp import OPAL_TRIGGER_ROUTE_PATHS, PermitPDP
+from horizon.pdp import OPAL_TRIGGER_ROUTE_PATHS, PermitPDP, _remove_opal_trigger_routes
+from horizon.system.consts import GUNICORN_EXIT_APP
 from opal_client.client import OpalClient
 from starlette.routing import Route
 
@@ -103,9 +104,50 @@ def test_no_route_is_unprotected():
 @pytest.mark.parametrize("path", sorted(OPAL_TRIGGER_ROUTE_PATHS))
 def test_opal_trigger_route_is_pdp_gated(path: str):
     """Regression guard for the actual fix: the OPAL-mounted trigger routes require the PDP token."""
-    by_path = {route.path: route for route in _sidecar._app.routes if isinstance(route, APIRoute)}
-    assert path in by_path, f"{path} is no longer mounted (OPAL rename?) - _gate_opal_trigger_routes must be updated"
-    assert "enforce_pdp_token" in _route_auth_gates(by_path[path])
+    # Collect ALL routes at this path rather than a dict keyed by path: a dict is last-wins and
+    # would happily hide a surviving OPAL duplicate behind the PDP replacement, which is the one
+    # failure mode this test exists to catch.
+    matches = [route for route in _sidecar._app.routes if isinstance(route, APIRoute) and route.path == path]
+    assert matches, (
+        f"{path} is no longer mounted (OPAL rename?) - _remove_opal_trigger_routes / "
+        "_configure_trigger_routes must be updated"
+    )
+    # Exactly one, because Starlette matches first-wins: a leftover OPAL route at the same path
+    # would SHADOW the replacement and stay ungated and un-debounced - the removal silently
+    # failing open is indistinguishable from success by any per-route assertion.
+    assert len(matches) == 1, f"{len(matches)} routes mounted at {path}; _remove_opal_trigger_routes missed one"
+
+    route = matches[0]
+    # ...and the survivor is the PDP's handler, not OPAL's (opal_client.policy.api /
+    # opal_client.data.api), so "gated" cannot be satisfied by an OPAL route that merely
+    # happens to carry a dependency.
+    assert route.endpoint.__module__ == "horizon.pdp", (
+        f"{path} is served by {route.endpoint.__module__}.{route.endpoint.__name__}, not horizon.pdp"
+    )
+    assert "enforce_pdp_token" in _route_auth_gates(route)
+
+
+@pytest.mark.parametrize("present", [(), ("/policy-updater/trigger",), ("/data-updater/trigger",)])
+def test_remove_opal_trigger_routes_exits_when_a_path_is_missing(present: tuple[str, ...]):
+    """Fail loud, never fail open: a trigger route the PDP cannot find must stop the process.
+
+    If OPAL renames or drops one of these paths, the removal silently no-ops and the caller
+    re-registers only its replacement - leaving OPAL's original ungated, un-debounced handler
+    mounted under the new name. That reopens exactly the auth + amplification hole this
+    replacement closes, so ``_remove_opal_trigger_routes`` exits instead (gunicorn's
+    "don't restart me" code, so the container fails rather than crash-loops silently).
+    """
+
+    async def _stub() -> dict:
+        return {}
+
+    app = FastAPI()
+    for path in present:
+        app.post(path)(_stub)
+
+    with pytest.raises(SystemExit) as exit_info:
+        _remove_opal_trigger_routes(app)
+    assert exit_info.value.code == GUNICORN_EXIT_APP
 
 
 def test_audit_detects_a_bare_ungated_route():

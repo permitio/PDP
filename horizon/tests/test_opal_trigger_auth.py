@@ -1,8 +1,10 @@
-"""Integration tests proving the OPAL-mounted trigger routes are now gated.
+"""Integration tests proving the OPAL-mounted trigger routes are gated.
 
-The app is built exactly like production via ``PermitPDP._configure_api_routes`` (which
-runs ``_gate_opal_trigger_routes``), so these tests directly exercise the post-hoc
-dependency injection on the two routes OpalClient mounts before the PDP gets control.
+The app is built exactly like production via ``PermitPDP._configure_api_routes``, which
+removes the two trigger routes OpalClient mounts before the PDP gets control and
+re-registers PDP-owned, debounced replacements at the same paths (see
+``_configure_trigger_routes`` / ``_remove_opal_trigger_routes``). These tests exercise the
+``Depends(enforce_pdp_token)`` gate those replacement routes carry.
 
 The TestClient is used WITHOUT a context manager, so the app lifespan never runs (no OPAL
 policy/data fetch, no OPA process, no control-plane connection). ``raise_server_exceptions
@@ -18,6 +20,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from horizon.config import sidecar_config
+from horizon.debounce import DebouncedTrigger
 from horizon.enforcer.api import stats_manager
 from horizon.pdp import PermitPDP, _warn_if_opal_verifier_disabled
 from loguru import logger
@@ -40,6 +43,26 @@ class MockPermitPDP(PermitPDP):
 
 
 _sidecar = MockPermitPDP()
+
+
+@pytest.fixture(autouse=True)
+def _reset_trigger_debouncers() -> None:
+    """Give every test in this module a clean debounce state.
+
+    ``_sidecar`` is module-level because building an OpalClient per test is slow, and since
+    PER-15248 a PermitPDP instance carries MUTABLE debounce state: a trigger that reaches the
+    handler records a dispatch, and for the next ``TRIGGER_DEBOUNCE_SECONDS`` (default 10)
+    every further trigger on that updater is coalesced into it and never touches the updater.
+
+    That turns this shared instance into an order-dependent trap. The policy trigger below
+    genuinely succeeds even offline (``trigger_update_policy`` is just a queue put), so a
+    second policy-triggering test added to this module would be silently coalesced and fail
+    with a baffling "Awaited 0 times" - or pass or fail depending on which test ran first.
+    Swapping in fresh DebouncedTriggers is far cheaper than a fresh PDP and keeps every test
+    here independent of the ones before it.
+    """
+    _sidecar._policy_trigger_debounce = DebouncedTrigger("policy")
+    _sidecar._data_trigger_debounce = DebouncedTrigger("data")
 
 
 @pytest.fixture
@@ -80,6 +103,16 @@ def test_data_updater_trigger_route_with_valid_token_returns_200(client: TestCli
     assert resp.status_code == status.HTTP_200_OK
     assert resp.json() == {"status": "ok"}
     get_base.assert_awaited_once_with(data_fetch_reason="request from sdk")
+
+
+def test_debounce_state_does_not_leak_between_tests():
+    """Teeth for the autouse reset above - this test runs *after* the trigger tests.
+
+    Without the reset, the policy trigger they just made would still be recorded here and the
+    next test to call that route would be coalesced instead of reaching the updater.
+    """
+    assert _sidecar._policy_trigger_debounce._last_dispatched is None
+    assert _sidecar._data_trigger_debounce._last_dispatched is None
 
 
 @pytest.mark.parametrize("path", TRIGGER_ROUTES)
