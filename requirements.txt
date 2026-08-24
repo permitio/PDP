@@ -19,10 +19,15 @@ logzio-python-handler
 # break the match. Remove this pin + the waiver + the Dockerfile ENV and upgrade
 # ddtrace>=4.8.2 once OPAL relaxes its ddtrace<4 bound. See PER-15358.
 ddtrace==3.19.8
-# sqlparse is not imported anywhere in the codebase - it has only ever been carried as a
-# floor pin from past vulnerability sweeps (see f837d77). Bumped to 0.5.5 to clear
-# GHSA-27jp-wm6q-gp25 (fixed in 0.5.4). Candidate for outright removal - tracked separately.
-sqlparse==0.5.5
+# sqlparse was removed, not bumped. It was added in f837d77 as a floor pin during a 2024
+# vulnerability sweep, back when ddtrace pulled it in transitively; ddtrace 3.19.8 declares
+# no sqlparse dependency and its wheel contains no reference to it, nothing else in the
+# resolved tree requires it, and no module under horizon/ or pdp-server/ imports it. It was
+# therefore shipping in the image purely as a dead direct pin, and its CVEs (CVE-2026-71491,
+# CVE-2026-54284, CVE-2026-59893, all HIGH, all fixed in 0.6.0) were failing the docker-scout
+# gate for a parser the PDP never runs. Dropping the package clears them at the source.
+# Do not re-add it in a future sweep: if a scanner flags sqlparse again, it is back as a
+# transitive dependency and belongs pinned next to whatever pulled it in. See PER-15358.
 scalar-fastapi==1.0.3
 httpx>=0.27.0,<1
 # TODO: change to use re2 in the future, currently not supported in alpine due to c++ library issues

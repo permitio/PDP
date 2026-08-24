@@ -30,7 +30,10 @@ def test_update_policy_triggers_updater(pdp: MockPermitPDP, auth: dict[str, str]
     response = TestClient(pdp._app).post("/update_policy", headers=auth, follow_redirects=False)
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    # `triggered` reports whether THIS call dispatched a reload; a fresh PDP has no recent
+    # dispatch to coalesce into, so the first call always dispatches. The coalescing cases
+    # (triggered=false) live in test_trigger_debounce.py.
+    assert response.json() == {"status": "ok", "triggered": True}
     trigger.assert_awaited_once_with(force_full_update=True)
 
 
@@ -59,7 +62,7 @@ def test_update_policy_data_triggers_updater(pdp: MockPermitPDP, auth: dict[str,
     response = TestClient(pdp._app).post("/update_policy_data", headers=auth, follow_redirects=False)
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    assert response.json() == {"status": "ok", "triggered": True}
     get_base.assert_awaited_once_with(data_fetch_reason="request from sdk (legacy alias)")
 
 
