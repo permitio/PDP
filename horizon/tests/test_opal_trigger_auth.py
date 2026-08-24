@@ -90,7 +90,7 @@ def test_policy_updater_trigger_route_with_valid_token_returns_200(client: TestC
     resp = client.post("/policy-updater/trigger", headers=_auth(VALID_TOKEN))
 
     assert resp.status_code == status.HTTP_200_OK
-    assert resp.json() == {"status": "ok"}
+    assert resp.json() == {"status": "ok", "triggered": True}
     trigger.assert_awaited_once_with(force_full_update=True)
 
 
@@ -101,7 +101,7 @@ def test_data_updater_trigger_route_with_valid_token_returns_200(client: TestCli
     resp = client.post("/data-updater/trigger", headers=_auth(VALID_TOKEN))
 
     assert resp.status_code == status.HTTP_200_OK
-    assert resp.json() == {"status": "ok"}
+    assert resp.json() == {"status": "ok", "triggered": True}
     get_base.assert_awaited_once_with(data_fetch_reason="request from sdk")
 
 
