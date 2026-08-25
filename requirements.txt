@@ -1,5 +1,16 @@
 aiohttp>=3.13.3,<4
-fastapi>=0.115.6,<1
+# Floor raised 0.115.6 -> 0.124.0 to match a contract the route-auth audit depends on, not a
+# CVE. get_flat_dependant only started propagating sub-dependants into
+# flat_dependant.dependencies in 0.124.0; on 0.115.6-0.123.x it builds the flat dependant from
+# path/query/header/cookie/body params and security requirements only and never populates
+# .dependencies. _route_auth_gates in horizon/tests/test_route_auth_audit.py reads exactly that
+# field, so under the old floor it returns an empty set for every route and the audit flags the
+# whole app. Fail-closed, but for the wrong reason - the floor now makes the assumption
+# resolver-enforced instead of merely documented. Verified by diffing the 0.123.0 and 0.124.0
+# sdists. Ceiling in practice is 0.125.0, the last release supporting pydantic v1 (0.126.0
+# requires pydantic>=2.7.0) - so while the `pydantic[email]<2` pin below stands, the usable
+# window is 0.124.0-0.125.0. See PER-15249.
+fastapi>=0.124.0,<1
 Jinja2>=3.1.2,<4
 pydantic[email]>=1.9.1,<2
 requests>=2.32.4,<3

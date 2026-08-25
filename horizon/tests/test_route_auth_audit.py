@@ -19,8 +19,10 @@ version bump that renames a route can't quietly slip past):
     concern (see ``_warn_if_opal_verifier_disabled`` in horizon/pdp.py).
 """
 
+from typing import Annotated
+
 import pytest
-from fastapi import Depends, FastAPI
+from fastapi import APIRouter, Depends, FastAPI
 from fastapi.dependencies.utils import get_flat_dependant
 from fastapi.routing import APIRoute
 from horizon.authentication import PUBLIC_ROUTE_PATHS, enforce_pdp_token
@@ -176,3 +178,83 @@ def test_audit_flags_a_mounted_subapp():
     app = FastAPI()
     app.mount("/sub", FastAPI())
     assert any("/sub" in row for row in _find_unprotected_routes(app))
+
+
+def test_allowlist_has_no_dead_entries():
+    """Every PUBLIC_ROUTE_PATHS entry must match a mounted route - no exemptions.
+
+    A dead allowlist entry is a pre-authorised hole: it exempts a path from the audit today
+    and silently waves through whatever route later claims that path. Matching by set
+    membership over ``getattr(route, "path", ...)`` covers the framework Swagger/OpenAPI
+    routes (plain starlette ``Route``s, not ``APIRoute``s) and paths shared across methods.
+
+    This check is only total because ``_configure_api_routes`` mounts *every* route,
+    ``/scalar`` included. If a route is ever registered outside it again, the honest fix is to
+    move that registration back in - not to re-introduce an exemption set here, which would
+    reopen the blind spot for the next route added beside it.
+    """
+    mounted = {getattr(route, "path", None) for route in _sidecar._app.routes}
+    dead = PUBLIC_ROUTE_PATHS - mounted
+    assert dead == set(), (
+        f"PUBLIC_ROUTE_PATHS entries that match no route on the audit-built app: {sorted(dead)}. "
+        "Either the entry is dead (remove it, or fix the path if a route was renamed), or its "
+        "route is registered outside PermitPDP._configure_api_routes - move the registration "
+        "into that method so the audit can see it."
+    )
+
+
+def test_router_level_dependencies_surface_in_flat_dependant():
+    """Empirical FastAPI contract the whole audit rests on (>=0.124.0; proven on 0.125.0).
+
+    The floor is real, not decorative: ``get_flat_dependant`` only began propagating
+    sub-dependants into ``flat_dependant.dependencies`` in 0.124.0, so requirements.txt pins
+    ``fastapi>=0.124.0`` and this test is what that pin protects.
+
+    The audit detects gates by walking ``get_flat_dependant(route.dependant)``. That only
+    works if a dependency attached at ``include_router(dependencies=[...])`` propagates into
+    each child route's dependant, and if nested sub-dependencies (e.g. OPAL's
+    ``require_listener_token`` wrapping the authenticator) are flattened. If a future FastAPI
+    bump changes that, router-gated routes would read as unprotected and every real run would
+    fail for the wrong reason - so pin the assumption here, where the failure is legible.
+    """
+
+    def fake_gate():  # router-level gate
+        pass
+
+    def inner_gate():  # reachable ONLY as wrapper's sub-dependency - see the assertion below
+        pass
+
+    # Annotated-Depends (the repo's own convention, see horizon/authentication.py) keeps the
+    # sub-dependency in the annotation rather than the argument default - idiomatic FastAPI and
+    # B008-clean. inner_gate is nested one level under wrapper and attached nowhere else, so the
+    # nested-gated assertion genuinely exercises get_flat_dependant's recursion instead of
+    # passing on a directly-attached copy.
+    def wrapper(_: Annotated[None, Depends(inner_gate)] = None):
+        pass
+
+    router = APIRouter()
+
+    @router.get("/router-gated")
+    async def _router_gated():
+        return {}
+
+    @router.get("/nested-gated", dependencies=[Depends(wrapper)])
+    async def _nested_gated():
+        return {}
+
+    app = FastAPI()
+    app.include_router(router, dependencies=[Depends(fake_gate)])
+    by_path = {route.path: route for route in app.routes if isinstance(route, APIRoute)}
+
+    assert "fake_gate" in _route_auth_gates(by_path["/router-gated"]), (
+        "include_router(dependencies=...) no longer surfaces in get_flat_dependant - the "
+        "route audit's gate detection is broken for router-level gates; review it before "
+        "trusting a green run on this FastAPI version."
+    )
+    # inner_gate reaches this route ONLY through wrapper (wrapper is the route-level dep;
+    # fake_gate is router-level). If get_flat_dependant stops recursing into sub-dependencies,
+    # inner_gate drops out and this fails - the exact regression the assertion exists to pin.
+    assert {"wrapper", "inner_gate"} <= _route_auth_gates(by_path["/nested-gated"]), (
+        "nested Depends() is no longer flattened by get_flat_dependant - closure-wrapped "
+        "gates (e.g. OPAL's require_listener_token) would go undetected by the audit."
+    )
