@@ -1,25 +1,37 @@
-"""Integration tests proving the OPAL-mounted trigger routes are now gated.
+"""Integration tests proving the OPAL-mounted trigger routes are gated.
 
-The app is built exactly like production via ``PermitPDP._configure_api_routes`` (which
-runs ``_gate_opal_trigger_routes``), so these tests directly exercise the post-hoc
-dependency injection on the two routes OpalClient mounts before the PDP gets control.
+The app is built exactly like production via ``PermitPDP._configure_api_routes``, which
+removes the two trigger routes OpalClient mounts before the PDP gets control and
+re-registers PDP-owned, debounced replacements at the same paths (see
+``_configure_trigger_routes`` / ``_remove_opal_trigger_routes``). These tests exercise the
+``Depends(enforce_pdp_token)`` gate those replacement routes carry.
 
 The TestClient is used WITHOUT a context manager, so the app lifespan never runs (no OPAL
 policy/data fetch, no OPA process, no control-plane connection). ``raise_server_exceptions
 =False`` means a request the auth dependency *allows* through but which then fails on real
-offline I/O surfaces as a 500 response instead of raising - so an authenticated trigger
-call asserts only that it is not blocked (status != 401), not that the handler succeeds.
+offline I/O surfaces as a 500 response instead of raising. Valid-token tests boundary-mock
+the real (unstarted) updater instances hanging off ``_sidecar._opal`` with an ``AsyncMock``,
+so the handler runs to completion and the test asserts an actual 200, not just ``!= 401``.
 """
+
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from horizon.config import sidecar_config
+from horizon.debounce import DebouncedTrigger
 from horizon.enforcer.api import stats_manager
 from horizon.pdp import PermitPDP, _warn_if_opal_verifier_disabled
 from loguru import logger
 from opal_client.client import OpalClient
 from starlette import status
+
+# Basename import (not horizon.tests.*): CI installs the package non-editably, so the
+# wheel ships no tests/ package; pytest's prepend import mode puts this directory on
+# sys.path and imports test modules by basename. Same convention as
+# test_legacy_update_routes.py.
+from test_enforcer_api import MALFORMED_AUTH_HEADERS
 
 VALID_TOKEN = "mock_api_key"
 TRIGGER_ROUTES = ["/policy-updater/trigger", "/data-updater/trigger"]
@@ -37,6 +49,26 @@ class MockPermitPDP(PermitPDP):
 
 
 _sidecar = MockPermitPDP()
+
+
+@pytest.fixture(autouse=True)
+def _reset_trigger_debouncers() -> None:
+    """Give every test in this module a clean debounce state.
+
+    ``_sidecar`` is module-level because building an OpalClient per test is slow, and since
+    PER-15248 a PermitPDP instance carries MUTABLE debounce state: a trigger that reaches the
+    handler records a dispatch, and for the next ``TRIGGER_DEBOUNCE_SECONDS`` (default 10)
+    every further trigger on that updater is coalesced into it and never touches the updater.
+
+    That turns this shared instance into an order-dependent trap. The policy trigger below
+    genuinely succeeds even offline (``trigger_update_policy`` is just a queue put), so a
+    second policy-triggering test added to this module would be silently coalesced and fail
+    with a baffling "Awaited 0 times" - or pass or fail depending on which test ran first.
+    Swapping in fresh DebouncedTriggers is far cheaper than a fresh PDP and keeps every test
+    here independent of the ones before it.
+    """
+    _sidecar._policy_trigger_debounce = DebouncedTrigger("policy")
+    _sidecar._data_trigger_debounce = DebouncedTrigger("data")
 
 
 @pytest.fixture
@@ -57,11 +89,36 @@ def test_trigger_route_without_token_is_401(client: TestClient, path: str):
     assert resp.json()["detail"] == "Missing Authorization header"
 
 
-@pytest.mark.parametrize("path", TRIGGER_ROUTES)
-def test_trigger_route_with_valid_token_is_not_blocked(client: TestClient, path: str):
-    # The dependency passes; the handler may 500 offline, but it must not be a 401.
-    resp = client.post(path, headers=_auth(VALID_TOKEN))
-    assert resp.status_code != status.HTTP_401_UNAUTHORIZED
+def test_policy_updater_trigger_route_with_valid_token_returns_200(client: TestClient, monkeypatch):
+    trigger = AsyncMock()
+    monkeypatch.setattr(_sidecar._opal.policy_updater, "trigger_update_policy", trigger)
+
+    resp = client.post("/policy-updater/trigger", headers=_auth(VALID_TOKEN))
+
+    assert resp.status_code == status.HTTP_200_OK
+    assert resp.json() == {"status": "ok", "triggered": True}
+    trigger.assert_awaited_once_with(force_full_update=True)
+
+
+def test_data_updater_trigger_route_with_valid_token_returns_200(client: TestClient, monkeypatch):
+    get_base = AsyncMock()
+    monkeypatch.setattr(_sidecar._opal.data_updater, "get_base_policy_data", get_base)
+
+    resp = client.post("/data-updater/trigger", headers=_auth(VALID_TOKEN))
+
+    assert resp.status_code == status.HTTP_200_OK
+    assert resp.json() == {"status": "ok", "triggered": True}
+    get_base.assert_awaited_once_with(data_fetch_reason="request from sdk")
+
+
+def test_debounce_state_does_not_leak_between_tests():
+    """Teeth for the autouse reset above - this test runs *after* the trigger tests.
+
+    Without the reset, the policy trigger they just made would still be recorded here and the
+    next test to call that route would be coalesced instead of reaching the updater.
+    """
+    assert _sidecar._policy_trigger_debounce._last_dispatched is None
+    assert _sidecar._data_trigger_debounce._last_dispatched is None
 
 
 @pytest.mark.parametrize("path", TRIGGER_ROUTES)
@@ -72,7 +129,7 @@ def test_trigger_route_with_wrong_token_is_401(client: TestClient, path: str):
 
 
 @pytest.mark.parametrize("path", TRIGGER_ROUTES)
-@pytest.mark.parametrize("value", ["garbage", "Bearer", "Bearer ", "Bearer a b c"])
+@pytest.mark.parametrize("value", MALFORMED_AUTH_HEADERS)
 def test_trigger_route_malformed_header_is_401_not_500(client: TestClient, path: str, value: str):
     # Regression for the unguarded split(" ") -> ValueError -> 500 footgun.
     resp = client.post(path, headers={"Authorization": value})

@@ -4,6 +4,11 @@ from opal_common.confi import Confi, confi
 from opal_common.schemas.data import CallbackEntry
 from pydantic import parse_obj_as, parse_raw_as
 
+# One-way import edge, config -> debounce: the default lives beside the clamp that falls back
+# to it, so a value this module declares and a value the debouncer substitutes can never drift.
+# horizon.debounce must never import this module back (it takes its window as a parameter).
+from horizon.debounce import DEFAULT_DEBOUNCE_SECONDS
+
 MOCK_API_KEY = "MUST BE DEFINED"
 
 
@@ -285,6 +290,28 @@ class SidecarConfig(Confi):
             "The niceness value for the PDP Horizon process (Python process). "
             "Niceness values range from -20 (highest priority) to 19 (lowest priority) with 0 is neutral. "
             "Adjusting this can help manage CPU resource allocation. "
+        ),
+    )
+
+    TRIGGER_DEBOUNCE_SECONDS = confi.float(
+        "TRIGGER_DEBOUNCE_SECONDS",
+        DEFAULT_DEBOUNCE_SECONDS,
+        description=(
+            "Debounce window, in seconds, for forced full reloads triggered via the API trigger routes "
+            "(/policy-updater/trigger, /data-updater/trigger and their legacy /update_policy* aliases). "
+            "A trigger arriving within this many seconds of the last one - or while a forced reload is "
+            "already in flight - is coalesced instead of amplifying load onto the control plane, so data "
+            "served by this PDP may lag a forced trigger by up to this many seconds. A coalesced trigger "
+            "is never dropped: the PDP arms a background trailing reload that runs once the window "
+            "expires, so staleness is bounded by this value rather than by whenever a client happens to "
+            "trigger again. Under a sustained hammer that converges to one reload per window. Set to 0 to "
+            "disable the time window; concurrent triggers are still collapsed into a single in-flight "
+            "reload. Clamped to at most 300s. Values that cannot be interpreted as a non-negative number "
+            "(null, a typo, a non-finite) FAIL SAFE to the default rather than disabling the mitigation - "
+            "only an explicit, parseable 0 disables it. The effective value is logged at startup whenever "
+            "it differs from what was configured. Remote-config overridable fleet-wide, so ops can raise "
+            "it (e.g. to 30-60s under a degraded control plane) without shipping a release - but the "
+            "remote config is fetched once during startup, so a change needs a PDP restart to take effect."
         ),
     )
 
