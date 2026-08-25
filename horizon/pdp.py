@@ -288,13 +288,6 @@ class PermitPDP:
         async def _initialize_opal_relay():
             await self._opal_relay.initialize()
 
-        @app.get("/scalar", include_in_schema=False)
-        async def scalar_html():
-            return get_scalar_api_reference(
-                openapi_url="/openapi.json",
-                title="Permit.io PDP API",
-            )
-
     def _setup_temp_logger(self):
         """
         until final config is set, we need to make sure sane defaults are in place
@@ -536,6 +529,21 @@ class PermitPDP:
         # PDP-gated handlers + their legacy aliases). Extracted to keep this method's
         # cyclomatic complexity in check and to co-locate all trigger routes + debounce state.
         self._configure_trigger_routes(app)
+
+        # Registered here, last, rather than in __init__ after this method returns: any route
+        # mounted outside _configure_api_routes is invisible to the route-auth audit
+        # (horizon/tests/test_route_auth_audit.py builds the app through this method alone), so
+        # that trailing block was a permanent blind spot in the guard PER-15249 exists to make
+        # airtight. Keep new route registrations inside this method for the same reason.
+        # Position is unchanged from the old __init__ registration - it still runs after every
+        # include_router above - so no earlier catch-all can shadow it (all three in the app are
+        # prefixed: /cloud, /sdk, /facts) and it shadows nothing.
+        @app.get("/scalar", include_in_schema=False)
+        async def scalar_html():
+            return get_scalar_api_reference(
+                openapi_url="/openapi.json",
+                title="Permit.io PDP API",
+            )
 
         # High-signal warning if the OPAL-authenticated routes are left open by a disabled
         # verifier (must never happen in a managed PDP).

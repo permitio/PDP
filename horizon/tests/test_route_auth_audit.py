@@ -180,46 +180,35 @@ def test_audit_flags_a_mounted_subapp():
     assert any("/sub" in row for row in _find_unprotected_routes(app))
 
 
-# PUBLIC_ROUTE_PATHS entries the audit-built app legitimately does not mount. ``/scalar`` is
-# registered in ``PermitPDP.__init__`` *after* ``_configure_api_routes`` (see the comment
-# above PUBLIC_ROUTE_PATHS in horizon/authentication.py), so ``MockPermitPDP`` - which stops
-# at ``_configure_api_routes`` - never sees it, yet it is a real public route in production.
-#
-# TRADE-OFF (accepted): an entry listed here is exempted from the dead-entry check below, so
-# if its real route is ever deleted while the PUBLIC_ROUTE_PATHS entry stays, that now-dead
-# entry will NOT be flagged - and a later ungated route re-claiming the path would read as
-# public. Keep this set as small as possible. The exemption-free alternative is to make
-# MockPermitPDP mirror the post-_configure_api_routes registration so the path is really
-# mounted; we keep the exemption for now to stay test-only and not reshape production wiring.
-ALLOWLIST_ENTRIES_NOT_IN_AUDIT_APP: frozenset[str] = frozenset({"/scalar"})
-
-
 def test_allowlist_has_no_dead_entries():
-    """Every PUBLIC_ROUTE_PATHS entry must match a mounted route.
+    """Every PUBLIC_ROUTE_PATHS entry must match a mounted route - no exemptions.
 
     A dead allowlist entry is a pre-authorised hole: it exempts a path from the audit today
     and silently waves through whatever route later claims that path. Matching by set
     membership over ``getattr(route, "path", ...)`` covers the framework Swagger/OpenAPI
     routes (plain starlette ``Route``s, not ``APIRoute``s) and paths shared across methods.
+
+    This check is only total because ``_configure_api_routes`` mounts *every* route,
+    ``/scalar`` included. If a route is ever registered outside it again, the honest fix is to
+    move that registration back in - not to re-introduce an exemption set here, which would
+    reopen the blind spot for the next route added beside it.
     """
     mounted = {getattr(route, "path", None) for route in _sidecar._app.routes}
-    dead = PUBLIC_ROUTE_PATHS - mounted - ALLOWLIST_ENTRIES_NOT_IN_AUDIT_APP
+    dead = PUBLIC_ROUTE_PATHS - mounted
     assert dead == set(), (
         f"PUBLIC_ROUTE_PATHS entries that match no route on the audit-built app: {sorted(dead)}. "
-        "Either the entry is dead (remove it, or fix the path if a route was renamed), or it is a "
-        "real route registered in PermitPDP.__init__ after _configure_api_routes (like /scalar) "
-        "that MockPermitPDP never reaches - in which case add it to ALLOWLIST_ENTRIES_NOT_IN_AUDIT_APP."
-    )
-    # Keep the exemption honest: if ``/scalar`` ever becomes visible to the audit-built app,
-    # it no longer needs the special case and must be dropped from the set above.
-    assert ALLOWLIST_ENTRIES_NOT_IN_AUDIT_APP & mounted == set(), (
-        "An ALLOWLIST_ENTRIES_NOT_IN_AUDIT_APP entry is now mounted on the audit app; drop "
-        "it from that set so it is covered by the dead-entry check like every other path."
+        "Either the entry is dead (remove it, or fix the path if a route was renamed), or its "
+        "route is registered outside PermitPDP._configure_api_routes - move the registration "
+        "into that method so the audit can see it."
     )
 
 
 def test_router_level_dependencies_surface_in_flat_dependant():
-    """Empirical FastAPI contract the whole audit rests on (proven on 0.125.0; pin is loose).
+    """Empirical FastAPI contract the whole audit rests on (>=0.124.0; proven on 0.125.0).
+
+    The floor is real, not decorative: ``get_flat_dependant`` only began propagating
+    sub-dependants into ``flat_dependant.dependencies`` in 0.124.0, so requirements.txt pins
+    ``fastapi>=0.124.0`` and this test is what that pin protects.
 
     The audit detects gates by walking ``get_flat_dependant(route.dependant)``. That only
     works if a dependency attached at ``include_router(dependencies=[...])`` propagates into

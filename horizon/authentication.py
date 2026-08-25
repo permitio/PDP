@@ -13,9 +13,9 @@ from horizon.startup.api_keys import get_env_api_key
 #
 # It must stay exact-match: a naive startswith("/health") check would wrongly expose the
 # gated "/healthchecks/opa/*" OPA proxy routes. "/docs/oauth2-redirect" is registered by
-# FastAPI by default and is needed for the Swagger "Authorize" flow. "/scalar" is
-# registered in PermitPDP.__init__ (after route configuration), so it is absent from the
-# app the audit builds - listing it here is harmless and keeps the set accurate for prod.
+# FastAPI by default and is needed for the Swagger "Authorize" flow. "/scalar" is the
+# API explorer, registered in _configure_api_routes like every other route so the audit
+# sees it - every entry here must match a route the audit-built app actually mounts.
 PUBLIC_ROUTE_PATHS: frozenset[str] = frozenset(
     {
         "/",
