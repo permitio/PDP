@@ -7,7 +7,7 @@ from horizon.config import sidecar_config
 # Basename import (not horizon.tests.*): CI installs the package non-editably, so
 # the wheel ships no tests/ package; pytest's prepend import mode puts this
 # directory on sys.path and imports test modules by basename.
-from test_enforcer_api import MockPermitPDP
+from test_enforcer_api import MALFORMED_AUTH_HEADERS, MockPermitPDP
 
 
 @pytest.fixture
@@ -50,7 +50,7 @@ def test_update_policy_rejects_unauthenticated(pdp: MockPermitPDP, monkeypatch):
     trigger.assert_not_awaited()
 
 
-@pytest.mark.parametrize("value", ["garbage", "Bearer", "Bearer ", "Bearer a b c"])
+@pytest.mark.parametrize("value", MALFORMED_AUTH_HEADERS)
 def test_update_policy_malformed_header_is_401_not_500(pdp: MockPermitPDP, monkeypatch, value: str):
     trigger = AsyncMock()
     monkeypatch.setattr(pdp._opal.policy_updater, "trigger_update_policy", trigger)
@@ -96,7 +96,7 @@ def test_update_policy_data_rejects_unauthenticated(pdp: MockPermitPDP, monkeypa
     get_base.assert_not_awaited()
 
 
-@pytest.mark.parametrize("value", ["garbage", "Bearer", "Bearer ", "Bearer a b c"])
+@pytest.mark.parametrize("value", MALFORMED_AUTH_HEADERS)
 def test_update_policy_data_malformed_header_is_401_not_500(pdp: MockPermitPDP, monkeypatch, value: str):
     get_base = AsyncMock()
     monkeypatch.setattr(pdp._opal.data_updater, "get_base_policy_data", get_base)

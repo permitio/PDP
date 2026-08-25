@@ -61,6 +61,24 @@ PROTECTED_ENFORCER_ENDPOINTS = [
     "/kong",
 ]
 
+# The malformed-Authorization matrix, shared by every gated router's parametrized 401 test
+# (this file, test_legacy_update_routes.py x2, test_opal_trigger_auth.py). Kept in one place
+# so a new variant lands once instead of four times and cannot silently diverge between
+# routers; the other modules pull it in by basename, same convention as MockPermitPDP.
+#
+# The two non-bearer entries carry the REAL API key, so they 401 *only* because HTTPBearer
+# rejects the scheme (horizon/authentication.py:37-38). Neuter that scheme comparison and
+# these are the entries that go red - the rest still 401 on an empty/wrong credential.
+# Interpolated below `sidecar = MockPermitPDP()`, which is what sets sidecar_config.API_KEY.
+MALFORMED_AUTH_HEADERS = [
+    "garbage",  # no scheme/credential split at all
+    "Bearer",  # scheme, no credential
+    "Bearer ",  # scheme, empty credential
+    "Bearer a b c",  # bearer scheme, credential containing spaces
+    f"Basic {sidecar_config.API_KEY}",  # right secret, wrong scheme -> must still 401
+    f"basic {sidecar_config.API_KEY}",  # ... and lowercasing the scheme must not help either
+]
+
 KONG_QUERY = {
     "input": {
         "request": {
@@ -98,7 +116,7 @@ def test_enforcer_endpoint_invalid_token_returns_401(endpoint):
 
 
 @pytest.mark.parametrize("endpoint", PROTECTED_ENFORCER_ENDPOINTS)
-@pytest.mark.parametrize("value", ["garbage", "Bearer", "Bearer ", "Bearer a b c"])
+@pytest.mark.parametrize("value", MALFORMED_AUTH_HEADERS)
 def test_enforcer_endpoint_malformed_header_is_401_not_500(endpoint, value):
     client = TestClient(sidecar._app)
     response = client.post(endpoint, headers={"authorization": value}, json={})

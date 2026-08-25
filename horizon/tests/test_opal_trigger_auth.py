@@ -27,6 +27,12 @@ from loguru import logger
 from opal_client.client import OpalClient
 from starlette import status
 
+# Basename import (not horizon.tests.*): CI installs the package non-editably, so the
+# wheel ships no tests/ package; pytest's prepend import mode puts this directory on
+# sys.path and imports test modules by basename. Same convention as
+# test_legacy_update_routes.py.
+from test_enforcer_api import MALFORMED_AUTH_HEADERS
+
 VALID_TOKEN = "mock_api_key"
 TRIGGER_ROUTES = ["/policy-updater/trigger", "/data-updater/trigger"]
 
@@ -123,7 +129,7 @@ def test_trigger_route_with_wrong_token_is_401(client: TestClient, path: str):
 
 
 @pytest.mark.parametrize("path", TRIGGER_ROUTES)
-@pytest.mark.parametrize("value", ["garbage", "Bearer", "Bearer ", "Bearer a b c"])
+@pytest.mark.parametrize("value", MALFORMED_AUTH_HEADERS)
 def test_trigger_route_malformed_header_is_401_not_500(client: TestClient, path: str, value: str):
     # Regression for the unguarded split(" ") -> ValueError -> 500 footgun.
     resp = client.post(path, headers={"Authorization": value})
