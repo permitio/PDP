@@ -17,11 +17,13 @@ use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio_util::sync::CancellationToken;
 
 mod health;
+mod output;
 mod service;
 mod stats;
 
 // Re-export health checkers and service watchdog
 pub use health::{HealthCheck, HttpHealthChecker};
+pub use output::{ChildOutputHandler, ChildStream, MAX_LINE_BYTES, TRUNCATION_MARKER};
 pub use service::{ServiceWatchdog, ServiceWatchdogOptions};
 
 #[derive(Debug, Clone)]
