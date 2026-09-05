@@ -10,7 +10,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::process::Command;
 use watchdog::{
-    CommandWatchdogOptions, HttpHealthChecker, ServiceWatchdog, ServiceWatchdogOptions,
+    ChildOutputHandler, ChildStream, CommandWatchdogOptions, HttpHealthChecker, ServiceWatchdog,
+    ServiceWatchdogOptions,
 };
 
 /// Represents the application state containing shared resources and configurations
@@ -22,6 +23,21 @@ pub struct AppState {
     pub opa_client: Arc<Client>,
     pub horizon_client: Arc<Client>,
     pub trino_authz_config: Option<Arc<TrinoAuthzConfig>>,
+}
+
+/// Re-emits the supervised Horizon child's output on this process's logger,
+/// tagged so a reader can tell the child's lines from the server's own.
+///
+/// Both streams are logged at `info`. Uvicorn writes its ordinary startup and
+/// access lines to stderr, so treating stderr as a warning would misreport
+/// every healthy line as a problem; the stream name is recorded instead and
+/// left for the reader to interpret.
+struct HorizonOutput;
+
+impl ChildOutputHandler for HorizonOutput {
+    fn on_line(&self, stream: ChildStream, line: &str) {
+        log::info!(target: "horizon", "[{stream}] {line}");
+    }
 }
 
 impl AppState {
@@ -137,6 +153,7 @@ impl AppState {
             command_options: CommandWatchdogOptions {
                 restart_interval: Duration::from_secs(config.horizon.restart_interval),
                 termination_timeout: Duration::from_secs(config.horizon.termination_timeout),
+                output_handler: Some(Arc::new(HorizonOutput)),
             },
         };
 
@@ -263,5 +280,23 @@ mod tests {
         // Verify the clone is valid
         assert!(Arc::ptr_eq(&state.config, &cloned_state.config));
         assert!(Arc::ptr_eq(&state.cache, &cloned_state.cache));
+    }
+
+    /// The handler must survive whatever the child writes: it runs on the task
+    /// that keeps the child's pipes drained, so a panic here stops the
+    /// draining and eventually blocks the child in `write`.
+    #[test]
+    fn horizon_output_handler_survives_hostile_lines() {
+        let handler = HorizonOutput;
+        for line in [
+            "",
+            "INFO:     Uvicorn running on http://0.0.0.0:7001",
+            "{\"not\":\"a log line\"}",
+            "  \t  ",
+            &"x".repeat(64 * 1024),
+        ] {
+            handler.on_line(ChildStream::Stdout, line);
+            handler.on_line(ChildStream::Stderr, line);
+        }
     }
 }
