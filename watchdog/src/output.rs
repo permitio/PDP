@@ -45,19 +45,27 @@ impl std::fmt::Display for ChildStream {
 /// switches the child from inheriting the parent's file descriptors to pipes
 /// the watchdog drains.
 ///
-/// # Implementations must not block
+/// # Bounded work is fine; unbounded blocking is not
 ///
-/// `on_line` is called from the task that keeps the child's pipe drained. A
-/// pipe that stops being read fills its kernel buffer (~64 KiB on Linux) and
-/// the child then blocks in `write` indefinitely — which presents as a hung
+/// `on_line` is called from the task that keeps the child's pipe drained.
+/// Bounded, synchronous work — a line-buffered write through a logger, which
+/// is the expected implementation — does not meaningfully stall this seam.
+/// What must not happen is `await`ing, an unbounded blocking call, or taking
+/// a lock some other task may hold for a long time: for as long as `on_line`
+/// has not returned, this task is not reading, and a pipe that stops being
+/// read fills its kernel buffer (~64 KiB on Linux) and the child then blocks
+/// in `write` for as long as the stall lasts — which presents as a hung
 /// process and, under [`ServiceWatchdog`](crate::ServiceWatchdog), a failed
-/// health check and a restart loop. Do no blocking I/O and take no contended
-/// lock here.
+/// health check and a restart loop.
 ///
 /// # Implementations must not panic
 ///
-/// A panic kills the reader task, which stops the draining, with the same
-/// consequence. Handle every malformed input rather than unwrapping.
+/// A panic kills the reader task outright, which is a different failure from
+/// a stall: the task ending drops the `BufReader` and the pipe handle it
+/// owns, closing the read end. A child that goes on writing to that fd no
+/// longer blocks — it takes `SIGPIPE` and dies, and the supervisor
+/// restart-loops it. Either way draining has stopped and the child is in
+/// trouble, so handle every malformed input rather than unwrapping.
 pub trait ChildOutputHandler: Send + Sync + 'static {
     fn on_line(&self, stream: ChildStream, line: &str);
 }
@@ -149,9 +157,14 @@ pub(crate) async fn pump<R: AsyncRead + Unpin>(
         buf.clear();
         let outcome = match read_line_bounded(&mut reader, &mut buf).await {
             Ok(outcome) => outcome,
-            // A read error on a child's pipe means the pipe is gone. There is
-            // nothing to recover and nowhere to report it that would not risk
-            // a loop, so stop draining this stream.
+            // `Interrupted` is transient (e.g. a delivered signal) and
+            // `BufReader::fill_buf` does not retry it internally — retry it
+            // here instead, so one signal does not permanently blind this
+            // stream.
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            // Any other read error on a child's pipe means the pipe is gone.
+            // There is nothing to recover and nowhere to report it that would
+            // not risk a loop, so stop draining this stream.
             Err(_) => return,
         };
         match outcome {
@@ -332,5 +345,61 @@ mod tests {
                 .expect("read"),
             ReadOutcome::Eof
         ));
+    }
+
+    /// `ErrorKind::Interrupted` is transient (e.g. a delivered signal), and
+    /// `AsyncBufReadExt::fill_buf` does not retry it internally. `pump` must,
+    /// so one signal cannot permanently blind the stream.
+    #[tokio::test]
+    async fn an_interrupted_read_is_retried_not_treated_as_fatal() {
+        use std::pin::Pin;
+        use std::task::{Context, Poll};
+        use tokio::io::ReadBuf;
+
+        /// An `AsyncRead` that fails once with `Interrupted`, then reads out
+        /// `data` normally.
+        struct FlakyOnce {
+            errored: bool,
+            data: &'static [u8],
+            pos: usize,
+        }
+
+        impl AsyncRead for FlakyOnce {
+            fn poll_read(
+                mut self: Pin<&mut Self>,
+                _cx: &mut Context<'_>,
+                buf: &mut ReadBuf<'_>,
+            ) -> Poll<std::io::Result<()>> {
+                if !self.errored {
+                    self.errored = true;
+                    return Poll::Ready(Err(std::io::Error::new(
+                        std::io::ErrorKind::Interrupted,
+                        "simulated signal",
+                    )));
+                }
+                let remaining = &self.data[self.pos..];
+                let n = remaining.len().min(buf.remaining());
+                buf.put_slice(&remaining[..n]);
+                self.pos += n;
+                Poll::Ready(Ok(()))
+            }
+        }
+
+        let collector = Arc::new(Collector::default());
+        pump(
+            FlakyOnce {
+                errored: false,
+                data: b"after the blip\n",
+                pos: 0,
+            },
+            ChildStream::Stdout,
+            collector.clone(),
+        )
+        .await;
+        assert_eq!(
+            collector.lines(),
+            vec![(ChildStream::Stdout, "after the blip".to_string())],
+            "a transient Interrupted error must not end the stream"
+        );
     }
 }

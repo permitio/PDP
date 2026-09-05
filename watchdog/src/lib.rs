@@ -54,9 +54,10 @@ pub struct CommandWatchdogOptions {
     /// line at a time to [`ChildOutputHandler::on_line`] — which is how a
     /// caller attributes a child's output to the process that produced it.
     ///
-    /// Note the obligations on the trait: the handler must neither block nor
-    /// panic, because it runs on the task that keeps the child's pipes
-    /// drained.
+    /// Note the obligations on the trait: the handler must not perform
+    /// unbounded blocking work or panic, because it runs on the task that
+    /// keeps the child's pipes drained. See [`ChildOutputHandler`]'s own doc
+    /// for what that does and does not rule out.
     pub output_handler: Option<Arc<dyn ChildOutputHandler>>,
 }
 
@@ -189,12 +190,15 @@ impl CommandWatchdog {
                 let mut child = match command.spawn() {
                     Ok(mut child) => {
                         // Attach a reader to each piped stream for THIS
-                        // generation. Both must always be read: a piped stream
-                        // nobody drains fills its kernel buffer and the child
-                        // then blocks in `write` forever, which looks exactly
-                        // like a hang. Each task ends at EOF — i.e. when this
-                        // generation exits — so nothing accumulates across
-                        // restarts.
+                        // generation. Both must always be read: once a piped
+                        // stream stops being drained, the child either blocks
+                        // in `write` on a full pipe (while the read end is
+                        // still open but nothing is taking from it) or, once
+                        // that read end actually closes, takes `SIGPIPE` and
+                        // dies — restart-looping either way, which looks
+                        // exactly like a hang until it does. Each reader task
+                        // ends at EOF — i.e. when this generation exits — so
+                        // nothing accumulates across restarts.
                         if let Some(handler) = opt.output_handler.clone() {
                             if let Some(stdout) = child.stdout.take() {
                                 tokio::spawn(crate::output::pump(

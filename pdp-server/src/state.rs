@@ -36,7 +36,12 @@ struct HorizonOutput;
 
 impl ChildOutputHandler for HorizonOutput {
     fn on_line(&self, stream: ChildStream, line: &str) {
-        log::info!(target: "horizon", "[{stream}] {line}");
+        // Under the crate's own module path, not a bare "horizon": a
+        // target-scoped directive such as `RUST_LOG=pdp_server=debug`
+        // matches a target by prefix, so a bare "horizon" falls outside it
+        // and this output would silently vanish whenever verbosity is scoped
+        // to the crate rather than left global.
+        log::info!(target: "pdp_server::horizon", "[{stream}] {line}");
     }
 }
 
@@ -283,8 +288,9 @@ mod tests {
     }
 
     /// The handler must survive whatever the child writes: it runs on the task
-    /// that keeps the child's pipes drained, so a panic here stops the
-    /// draining and eventually blocks the child in `write`.
+    /// that keeps the child's pipes drained, so a panic here ends that task —
+    /// the child then either blocks on a full pipe or, once the read end
+    /// closes, dies on `SIGPIPE` and restart-loops.
     #[test]
     fn horizon_output_handler_survives_hostile_lines() {
         let handler = HorizonOutput;
