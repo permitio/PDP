@@ -10,6 +10,7 @@ A Rust library for monitoring and automatically restarting services and processe
 - **Configurable**: Customizable retry intervals, health check thresholds, and startup delays
 - **Statistics**: Track health checks, failures, and restarts
 - **Graceful Termination**: Uses SIGTERM with a configurable timeout before SIGKILL
+- **Child Output Capture**: optionally capture a child's stdout/stderr and receive it line by line, so its output can be attributed to the process that produced it
 
 ## Usage
 
@@ -32,6 +33,36 @@ let watchdog = CommandWatchdog::start(cmd);
 // You can also manually restart the process
 watchdog.restart().await.expect("Failed to restart process");
 ```
+
+### Capturing child output
+
+By default a watched child inherits the parent's stdout and stderr, so its
+output is indistinguishable from the parent's. Supply a `ChildOutputHandler` to
+receive it line by line instead:
+
+```rust
+use std::sync::Arc;
+use watchdog::{ChildOutputHandler, ChildStream, CommandWatchdog, CommandWatchdogOptions};
+
+struct LogLines;
+
+impl ChildOutputHandler for LogLines {
+    fn on_line(&self, stream: ChildStream, line: &str) {
+        log::info!("[my-service {stream}] {line}");
+    }
+}
+
+let opt = CommandWatchdogOptions {
+    output_handler: Some(Arc::new(LogLines)),
+    ..Default::default()
+};
+let watchdog = CommandWatchdog::start_with_opt(cmd, opt);
+```
+
+The handler runs on the task that keeps the child's pipes drained, so it must
+neither block nor panic: a pipe that stops being read fills its kernel buffer
+and the child then blocks in `write`. Lines longer than `MAX_LINE_BYTES`
+(16 KiB) are delivered truncated with `TRUNCATION_MARKER` appended.
 
 ### ServiceWatchdog
 

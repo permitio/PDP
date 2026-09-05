@@ -79,9 +79,6 @@ pub const TRUNCATION_MARKER: &str = "…[truncated by watchdog]";
 ///
 /// `Eof` is distinct from an empty line: a child that writes a bare `\n`
 /// produced a line, and conflating the two would end the stream early.
-// Not yet called from outside `tests`: nothing routes a child's pipes through
-// this reader yet.
-#[allow(dead_code)]
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum ReadOutcome {
     Eof,
@@ -93,9 +90,6 @@ pub(crate) enum ReadOutcome {
 /// newline.
 ///
 /// The trailing `\n` is not appended. `out` is expected to be empty on entry.
-// Not yet called from outside `tests`: nothing routes a child's pipes through
-// this reader yet.
-#[allow(dead_code)]
 pub(crate) async fn read_line_bounded<R: AsyncBufRead + Unpin>(
     reader: &mut R,
     out: &mut Vec<u8>,
@@ -131,8 +125,6 @@ pub(crate) async fn read_line_bounded<R: AsyncBufRead + Unpin>(
 /// Append `chunk` to `out`, stopping at [`MAX_LINE_BYTES`] and setting
 /// `truncated` if anything had to be dropped. Bytes beyond the cap are
 /// discarded rather than buffered, which is what bounds memory.
-// Not yet called from outside `tests` (transitively, via `read_line_bounded`).
-#[allow(dead_code)]
 fn append_bounded(out: &mut Vec<u8>, chunk: &[u8], truncated: &mut bool) {
     let room = MAX_LINE_BYTES.saturating_sub(out.len());
     if chunk.len() > room {
@@ -146,9 +138,6 @@ fn append_bounded(out: &mut Vec<u8>, chunk: &[u8], truncated: &mut bool) {
 /// Returns when the stream ends, which for a child's pipe is when that
 /// generation of the child exits — so each spawn's reader task retires on its
 /// own and nothing accumulates across restarts.
-// Not yet called from outside `tests`: nothing spawns a reader task against
-// this function yet.
-#[allow(dead_code)]
 pub(crate) async fn pump<R: AsyncRead + Unpin>(
     reader: R,
     stream: ChildStream,
