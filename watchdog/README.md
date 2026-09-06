@@ -59,10 +59,17 @@ let opt = CommandWatchdogOptions {
 let watchdog = CommandWatchdog::start_with_opt(cmd, opt);
 ```
 
-The handler runs on the task that keeps the child's pipes drained, so it must
-neither block nor panic: a pipe that stops being read fills its kernel buffer
-and the child then blocks in `write`. Lines longer than `MAX_LINE_BYTES`
-(16 KiB) are delivered truncated with `TRUNCATION_MARKER` appended.
+The handler runs on the task that keeps the child's pipes drained. Bounded,
+synchronous work — a line-buffered write through a logger, as above — is fine.
+What must not happen is `await`ing, an unbounded blocking call, or taking a lock
+some other task may hold for a long time: for as long as `on_line` has not
+returned, that task is not reading, and a pipe that stops being read fills its
+kernel buffer and the child then blocks in `write`. Panicking is worse than
+stalling — it drops the pipe handle, closing the read end, so a child that goes
+on writing takes `SIGPIPE` and dies.
+
+Lines longer than `MAX_LINE_BYTES` (16 KiB read from the child) are delivered
+truncated with `TRUNCATION_MARKER` appended.
 
 ### ServiceWatchdog
 
