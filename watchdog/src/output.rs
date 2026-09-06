@@ -2,8 +2,8 @@
 //!
 //! By default a watched child inherits the parent's file descriptors, so its
 //! output goes straight to the parent's own stdout/stderr with nothing to say
-//! which process produced it. Supplying a
-//! [`ChildOutputHandler`](crate::CommandWatchdogOptions::output_handler)
+//! which process produced it. Supplying a [`ChildOutputHandler`] through
+//! [`CommandWatchdogOptions::output_handler`](crate::CommandWatchdogOptions::output_handler)
 //! switches those two streams to pipes that the watchdog drains, handing the
 //! caller one line at a time.
 //!

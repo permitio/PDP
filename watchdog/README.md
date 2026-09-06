@@ -10,7 +10,7 @@ A Rust library for monitoring and automatically restarting services and processe
 - **Configurable**: Customizable retry intervals, health check thresholds, and startup delays
 - **Statistics**: Track health checks, failures, and restarts
 - **Graceful Termination**: Uses SIGTERM with a configurable timeout before SIGKILL
-- **Child Output Capture**: optionally capture a child's stdout/stderr and receive it line by line, so its output can be attributed to the process that produced it
+- **Child Output Capture**: Optionally capture a child's stdout/stderr and receive it line by line, so its output can be attributed to the process that produced it
 
 ## Usage
 
