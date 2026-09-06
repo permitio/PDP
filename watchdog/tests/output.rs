@@ -1,4 +1,8 @@
 //! Child output capture, driven through real child processes.
+//!
+//! Unix-only: every test here drives a child through a POSIX shell, and the
+//! crate itself already forks its termination path on `cfg(unix)`.
+#![cfg(unix)]
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -27,9 +31,13 @@ impl Collector {
 }
 
 /// A shell command is used rather than a fixture binary so the test depends on
-/// nothing but a POSIX shell.
+/// nothing but a POSIX shell — no fixture to build, and no `awk` or other
+/// external the script would otherwise reach for.
+///
+/// `sh` is resolved through `PATH` rather than hard-coded to `/bin/sh`, which
+/// is not where every Unix keeps it (some Nix setups among them).
 fn sh(script: &str) -> Command {
-    let mut cmd = Command::new("/bin/sh");
+    let mut cmd = Command::new("sh");
     cmd.arg("-c").arg(script);
     cmd
 }
@@ -106,9 +114,14 @@ async fn an_over_long_child_line_is_truncated_and_the_stream_survives() {
         output_handler: Some(collector.clone()),
         ..Default::default()
     };
-    // 200_000 `x`, well past MAX_LINE_BYTES, then a normal line.
+    // 2^18 = 262_144 `x`, well past MAX_LINE_BYTES, then a normal line.
+    // Built by doubling rather than with `awk`: it keeps this file's only
+    // dependency a POSIX shell, and 18 doublings beat a 262k-iteration loop.
     let _watchdog = CommandWatchdog::start_with_opt(
-        sh("awk 'BEGIN { while (i++ < 200000) printf \"x\" ; print \"\" }'; echo after"),
+        sh(
+            "s=x; i=0; while [ $i -lt 18 ]; do s=$s$s; i=$((i+1)); done; \
+            printf '%s\\n' \"$s\"; echo after",
+        ),
         opt,
     );
 
