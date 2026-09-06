@@ -70,13 +70,20 @@ pub trait ChildOutputHandler: Send + Sync + 'static {
     fn on_line(&self, stream: ChildStream, line: &str);
 }
 
-/// Longest line handed to a [`ChildOutputHandler`], in bytes.
+/// Most bytes read from the child for a single line.
 ///
 /// A child is free to write a gigabyte without ever emitting a newline, and a
 /// reader that simply accumulated until one arrived would let it grow the
 /// supervising process's memory without limit. Lines longer than this are
 /// delivered truncated, marked with [`TRUNCATION_MARKER`], and the reader then
 /// resynchronises on the next newline.
+///
+/// This bounds the bytes taken off the pipe, which is not the same as the
+/// length of the `&str` the handler receives. Decoding is lossy, and each
+/// invalid byte becomes a U+FFFD costing three, so a line of entirely invalid
+/// UTF-8 arrives about three times this long. Memory stays bounded either way
+/// — one line at a time, at a fixed multiple of this constant — but a handler
+/// budgeting on the delivered length should budget for 3x.
 pub const MAX_LINE_BYTES: usize = 16 * 1024;
 
 /// Appended to a line that hit [`MAX_LINE_BYTES`], so a reader of the log can
