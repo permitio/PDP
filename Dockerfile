@@ -104,14 +104,14 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 #                                                             < 3.11.4, so 3.13 is out of it
 # PSF fixed these only on the 3.13/3.14/3.15 branches - there is no 3.10/3.11/3.12 backport -
 # so the vulnerable code really was present in 3.10.20 and an upgrade was the only fix.
-# CVE-2026-15308 (html.parser DoS) is NOT cleared by this bump: it is patched only in
-# 3.15.0b4 and NVD's range is < 3.15.0, so no released Python satisfies it. It is waived in
-# .docker/scout/pdp-v2.vex.json as unreachable (nothing in the image imports html.parser).
+# CVE-2026-15308 (html.parser DoS) was waived here as unreachable when this base was
+# python:3.13.14. That waiver has since been removed: the tag now resolves to 3.13.15 and
+# Scout no longer reports the CVE at any severity, which is exactly the outcome the
+# floating patch version was chosen to produce (the rebuild-picks-it-up posture in
+# PER-15532). Nothing to carry forward.
 #
-# The patch version floats deliberately (see the previous python:3.10-alpine3.22 base and
-# the rebuild-picks-it-up posture in PER-15532): when 3.13.15 ships it will clear
-# CVE-2026-15308 automatically and that waiver can then be dropped. Do not drop below
-# 3.13.14 - that is the floor for the fixes above.
+# Keep floating the patch version, and do not drop below 3.13.14 - that is still the floor
+# for the CVE-2026-6019 and CVE-2026-7210 fixes above.
 #
 # Python 3.10 also reaches end of life in October 2026, so this move was due regardless.
 FROM python:3.13-alpine3.23 AS main
@@ -210,10 +210,14 @@ ENV OPAL_INLINE_OPA_LOG_FORMAT="http"
 # header. The fix is only in ddtrace >= 4.8.2, which opal-common's `ddtrace<4,>=3.0.0`
 # cap forbids, so we remove the vulnerable parser from the request path instead.
 #
-# This only matters when PDP_ENABLE_MONITORING=true (default false) - that is what calls
-# patch(fastapi=True) and puts ddtrace on the inbound request path at all. Injection is
-# left at its default, so outbound baggage propagation is unaffected. Remove this once
-# OPAL relaxes its ddtrace<4 bound and ddtrace moves to >= 4.8.2. See PER-15358.
+# This ENV is the load-bearing mitigation and holds on its own. ddtrace only reaches the
+# inbound request path when PDP_ENABLE_MONITORING=true, which defaults to false - but do
+# NOT treat that flag as a second line of defence: horizon/pdp.py:239 applies the control
+# plane's remote config override BEFORE the check at :262, so monitoring can be switched
+# on remotely without a redeploy. Do not override this ENV (docker run -e, Helm pdpEnvs)
+# while the PDP is pinned to ddtrace 3.x - doing so re-exposes the CVE. Injection is left
+# at its default, so outbound baggage propagation is unaffected. Remove this once OPAL
+# relaxes its ddtrace<4 bound and ddtrace moves to >= 4.8.2. See PER-15358.
 ENV DD_TRACE_PROPAGATION_STYLE_EXTRACT="datadog,tracecontext"
 
 # horizon configuration -----------------------------

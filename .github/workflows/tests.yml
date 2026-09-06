@@ -176,7 +176,27 @@ jobs:
   docker-scout:
     runs-on: ubuntu-latest
     needs: build-pdp-image
-    if: github.event_name == 'pull_request'
+    # Deliberately unconditional. This job used to carry
+    # `if: github.event_name == 'pull_request'`, which meant the CVE gate ran on
+    # pull requests only - never on the artifact customers actually pull.
+    # release.yml calls this workflow with `uses:`, and inside a called workflow
+    # github.event_name is the CALLER'S event ("release"), so the condition was
+    # false on every release and the job was skipped. Verified on release
+    # v0.9.14 (run 30900950607): `pdp-tests / docker-scout  skipped`, while
+    # build-and-push-pdp went on to push :0.9.14 and :latest ungated. Pushes to
+    # main were skipped for the same reason.
+    #
+    # Adding 'workflow_call' to the condition would NOT have fixed it - that is
+    # not a value github.event_name ever takes. The trigger set in `on:` above
+    # is already exactly the set we want scanned, so the correct fix is to have
+    # no condition at all.
+    #
+    # This makes the gate release-blocking: release.yml has
+    # build-and-push-pdp: needs: pdp-tests, so a new HIGH published between
+    # merge and release cut now stops the Docker Hub push and the ECS redeploy.
+    # That is the intent (PER-15532: a customer scan of 0.9.14-rc1 found CVEs CI
+    # never flagged). Recovery is to fix the dependency or add a VEX statement
+    # and re-cut the release.
     permissions:
       # required to upload the SARIF report
       security-events: write
@@ -209,6 +229,11 @@ jobs:
           exit-code: false
           sarif-file: scout-results.sarif
           summary: true
+          # scout-action defaults write-comment to true. Now that this job also
+          # runs on release and push events, where there is no PR to comment on,
+          # gate it explicitly rather than relying on the action to work that
+          # out for itself.
+          write-comment: ${{ github.event_name == 'pull_request' }}
 
       - name: Docker Scout CVE gate (high and critical)
         uses: docker/scout-action@v1
@@ -217,20 +242,30 @@ jobs:
           image: local://permitio/pdp-v2:next
           only-severities: critical,high
           exit-code: true
+          # Only critical/high block. Medium and low are reported by the step
+          # above and surfaced through the SARIF upload, but are non-blocking by
+          # policy - they are triaged rather than gated. Live example: busybox
+          # CVE-2025-60876, a medium with no upstream fix available.
+          #
           # Accept CVEs marked not_affected in the OpenVEX doc (see
           # .docker/scout/pdp-v2.vex.json) so the gate does not fail on
           # vulnerabilities whose code path the PDP never executes and for which
           # no usable fix is available: starlette CVE-2026-48710 / CVE-2026-48817 /
           # CVE-2026-48818 / CVE-2026-54283, all fixed only in starlette >=1.x, which
-          # OPAL's starlette<1 cap forbids; ddtrace CVE-2026-50271, fixed only in
-          # ddtrace >=4.8.2, which OPAL's ddtrace<4 cap forbids and which the Dockerfile
-          # mitigates by dropping "baggage" from the extract styles; and CPython
-          # CVE-2026-15308 (html.parser DoS), which nothing in the image imports and which
-          # is fixed only in 3.15.0b4, so no released Python clears it yet. See PER-15358.
+          # OPAL's starlette<1 cap forbids; and ddtrace CVE-2026-50271, fixed only in
+          # ddtrace >=4.8.2, which OPAL's ddtrace<4 cap forbids and which the
+          # Dockerfile mitigates by dropping "baggage" from the extract styles.
+          # (The VEX doc also carries CVE-2026-54282, but that one is low severity
+          # and could never trip this gate - it is waived so the report step and any
+          # future severity re-rating stay accurate.) See PER-15358.
           #
           # NOTE: this gate reads packages, so it does not flag the CPython interpreter
           # itself the way a CPE-based scanner does - that blind spot is why four Python
           # CVEs reached a customer scan of 0.9.14-rc1 without failing CI (PER-15532).
+          #
+          # NOTE: the scanned image is the single-arch linux/amd64 build produced by
+          # build-pdp-image. The multi-arch artifact that release.yml publishes is not
+          # what is scanned here, so linux/arm64 is not covered by this gate.
           vex-location: .docker/scout
           only-vex-affected: true
           # REQUIRED: docker scout only *applies* VEX statements whose author
@@ -239,12 +274,29 @@ jobs:
           # ("VEX: not affected") but NOT suppressed, so the gate still fails on
           # the waived CVEs. Must match the `author` field in pdp-v2.vex.json.
           vex-author: Permit.io
+          # No PR to comment on for release/push events - see the report step.
+          write-comment: ${{ github.event_name == 'pull_request' }}
 
       - name: Upload SARIF report
-        if: always()
+        # The file guard suppresses a second, misleading error when an earlier
+        # step already failed the job and never produced the SARIF.
+        if: always() && hashFiles('scout-results.sarif') != ''
+        # This step is reporting, not gating - the gate is the step above. Now
+        # that this job blocks releases, do not let a code-scanning upload
+        # problem (processing error, API 5xx, size limit; upload-sarif defaults
+        # wait-for-processing: true) fail pdp-tests and with it the Docker Hub
+        # push and the ECS redeploy. A failed upload costs visibility, not
+        # safety.
+        continue-on-error: true
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: scout-results.sarif
+          # codeql-action keys an analysis by `${workflowPath}:${jobName}`, and
+          # resolves workflowPath from the run's own workflow. A release-triggered
+          # run would therefore key as release.yml:docker-scout while PR and push
+          # runs key as tests.yml:docker-scout, splitting the same job's results
+          # across two analyses. Pin the category so all three agree.
+          category: docker-scout
 
   rust-ci:
     name: Rust CI
