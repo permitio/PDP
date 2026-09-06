@@ -17,11 +17,13 @@ use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio_util::sync::CancellationToken;
 
 mod health;
+mod output;
 mod service;
 mod stats;
 
 // Re-export health checkers and service watchdog
 pub use health::{HealthCheck, HttpHealthChecker};
+pub use output::{ChildOutputHandler, ChildStream, MAX_LINE_BYTES, TRUNCATION_MARKER};
 pub use service::{ServiceWatchdog, ServiceWatchdogOptions};
 
 #[derive(Debug, Clone)]
@@ -38,12 +40,45 @@ pub struct CommandWatchdog {
     stats: Arc<CommandWatchdogStats>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct CommandWatchdogOptions {
     /// Maximum duration between restarts from exits or failed boot (default: 1 s)
     pub restart_interval: Duration,
     /// Maximum time to wait for a process to terminate after kill signal (default: 60 s)
     pub termination_timeout: Duration,
+    /// Where the child's stdout and stderr go.
+    ///
+    /// `None` (the default) leaves both streams inheriting the parent's file
+    /// descriptors, which is what a watched process has always done. Supplying
+    /// a handler switches both to pipes the watchdog drains, delivering one
+    /// line at a time to [`ChildOutputHandler::on_line`] — which is how a
+    /// caller attributes a child's output to the process that produced it.
+    ///
+    /// Note the obligations on the trait: the handler must not perform
+    /// unbounded blocking work or panic, because it runs on the task that
+    /// keeps the child's pipes drained. See [`ChildOutputHandler`]'s own doc
+    /// for what that does and does not rule out.
+    pub output_handler: Option<Arc<dyn ChildOutputHandler>>,
+}
+
+// Hand-written rather than derived: `Arc<dyn ChildOutputHandler>` is not
+// `Debug`, and requiring `Debug` of every implementor is a worse trade than
+// printing whether one is installed.
+impl std::fmt::Debug for CommandWatchdogOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CommandWatchdogOptions")
+            .field("restart_interval", &self.restart_interval)
+            .field("termination_timeout", &self.termination_timeout)
+            .field(
+                "output_handler",
+                &if self.output_handler.is_some() {
+                    "Some(<handler>)"
+                } else {
+                    "None"
+                },
+            )
+            .finish()
+    }
 }
 
 impl Default for CommandWatchdogOptions {
@@ -51,6 +86,7 @@ impl Default for CommandWatchdogOptions {
         Self {
             restart_interval: Duration::from_secs(1),
             termination_timeout: Duration::from_secs(60),
+            output_handler: None,
         }
     }
 }
@@ -78,6 +114,15 @@ impl CommandWatchdog {
     pub fn start_with_opt(mut command: Command, opt: CommandWatchdogOptions) -> Self {
         let shutdown_token = CancellationToken::new();
         command.kill_on_drop(true);
+
+        // Configure stdio ONCE, before the command is moved into the
+        // supervising task: the same `Command` is reused for every respawn, so
+        // this applies to each generation, and each `spawn()` creates its own
+        // fresh pair of pipes.
+        if opt.output_handler.is_some() {
+            command.stdout(std::process::Stdio::piped());
+            command.stderr(std::process::Stdio::piped());
+        }
 
         // For logging purposes, we extract the program name and command line string
         let program_name = command.as_std().get_program().to_string_lossy().to_string();
@@ -143,7 +188,35 @@ impl CommandWatchdog {
                 );
                 last_start_time = std::time::Instant::now();
                 let mut child = match command.spawn() {
-                    Ok(child) => child,
+                    Ok(mut child) => {
+                        // Attach a reader to each piped stream for THIS
+                        // generation. Both must always be read: once a piped
+                        // stream stops being drained, the child either blocks
+                        // in `write` on a full pipe (while the read end is
+                        // still open but nothing is taking from it) or, once
+                        // that read end actually closes, takes `SIGPIPE` and
+                        // dies — restart-looping either way, which looks
+                        // exactly like a hang until it does. Each reader task
+                        // ends at EOF — i.e. when this generation exits — so
+                        // nothing accumulates across restarts.
+                        if let Some(handler) = opt.output_handler.clone() {
+                            if let Some(stdout) = child.stdout.take() {
+                                tokio::spawn(crate::output::pump(
+                                    stdout,
+                                    crate::ChildStream::Stdout,
+                                    handler.clone(),
+                                ));
+                            }
+                            if let Some(stderr) = child.stderr.take() {
+                                tokio::spawn(crate::output::pump(
+                                    stderr,
+                                    crate::ChildStream::Stderr,
+                                    handler,
+                                ));
+                            }
+                        }
+                        child
+                    }
                     Err(e) => {
                         info!("Failed to start process '{program_name}': {e}");
                         tokio::time::sleep(opt.restart_interval).await;

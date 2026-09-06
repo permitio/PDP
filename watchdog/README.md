@@ -10,6 +10,7 @@ A Rust library for monitoring and automatically restarting services and processe
 - **Configurable**: Customizable retry intervals, health check thresholds, and startup delays
 - **Statistics**: Track health checks, failures, and restarts
 - **Graceful Termination**: Uses SIGTERM with a configurable timeout before SIGKILL
+- **Child Output Capture**: Optionally capture a child's stdout/stderr and receive it line by line, so its output can be attributed to the process that produced it
 
 ## Usage
 
@@ -32,6 +33,43 @@ let watchdog = CommandWatchdog::start(cmd);
 // You can also manually restart the process
 watchdog.restart().await.expect("Failed to restart process");
 ```
+
+### Capturing child output
+
+By default a watched child inherits the parent's stdout and stderr, so its
+output is indistinguishable from the parent's. Supply a `ChildOutputHandler` to
+receive it line by line instead:
+
+```rust
+use std::sync::Arc;
+use watchdog::{ChildOutputHandler, ChildStream, CommandWatchdog, CommandWatchdogOptions};
+
+struct LogLines;
+
+impl ChildOutputHandler for LogLines {
+    fn on_line(&self, stream: ChildStream, line: &str) {
+        log::info!("[my-service {stream}] {line}");
+    }
+}
+
+let opt = CommandWatchdogOptions {
+    output_handler: Some(Arc::new(LogLines)),
+    ..Default::default()
+};
+let watchdog = CommandWatchdog::start_with_opt(cmd, opt);
+```
+
+The handler runs on the task that keeps the child's pipes drained. Bounded,
+synchronous work — a line-buffered write through a logger, as above — is fine.
+What must not happen is `await`ing, an unbounded blocking call, or taking a lock
+some other task may hold for a long time: for as long as `on_line` has not
+returned, that task is not reading, and a pipe that stops being read fills its
+kernel buffer and the child then blocks in `write`. Panicking is worse than
+stalling — it drops the pipe handle, closing the read end, so a child that goes
+on writing takes `SIGPIPE` and dies.
+
+Lines longer than `MAX_LINE_BYTES` (16 KiB read from the child) are delivered
+truncated with `TRUNCATION_MARKER` appended.
 
 ### ServiceWatchdog
 
