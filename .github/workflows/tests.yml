@@ -144,6 +144,13 @@ jobs:
           # around so the post-mortem step below can read their logs.
           START_TIMEOUT: "180"
           AUTO_REMOVE: "false"
+          # pdp-tester's policy.* cases write policy SCHEMA -- roles, resource
+          # types and relations on the stock File/Folder types -- into the shared
+          # staging environment on every run, rather than only facts. This job
+          # checks pdp-tester out at main with no pinned ref and otherwise runs
+          # every case it discovers, so without this it would opt into that churn
+          # silently the moment those cases landed. See permitio/pdp-tester#152.
+          EXCLUDE_TESTS: '["policy.*"]'
         run: |
           set -o pipefail
           # The default GitHub Actions shell runs with `-e`, so capture the
