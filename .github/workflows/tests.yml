@@ -231,9 +231,7 @@ jobs:
           # CVE-2026-48818 / CVE-2026-54283, all fixed only in starlette >=1.x, which
           # OPAL's starlette<1 cap forbids; ddtrace CVE-2026-50271, fixed only in
           # ddtrace >=4.8.2, which OPAL's ddtrace<4 cap forbids and which the Dockerfile
-          # mitigates by dropping "baggage" from the extract styles; and CPython
-          # CVE-2026-15308 (html.parser DoS), which nothing in the image imports and which
-          # is fixed only in 3.15.0b4, so no released Python clears it yet. See PER-15358.
+          # mitigates by dropping "baggage" from the extract styles. See PER-15358.
           #
           # NOTE: this gate reads packages, so it does not flag the CPython interpreter
           # itself the way a CPE-based scanner does - that blind spot is why four Python
