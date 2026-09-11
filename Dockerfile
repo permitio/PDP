@@ -107,7 +107,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # CVE-2026-15308 (html.parser CPU-exhaustion DoS) is now cleared too: it was waived here as
 # unreachable while it was patched only in 3.15.0b4, but CPython backported the fix and it
 # landed in 3.13.15 (also 3.14.7). The base tag floats, so the current build resolves
-# 3.13.15 and the waiver has been REMOVED from .docker/scout/pdp-v2.vex.json (v4 -> v5).
+# 3.13.15 and the waiver has been REMOVED from .docker/scout/pdp-v2.vex.json.
 # Do not drop below 3.13.15 - that is the floor for every fix named above. Note what
 # enforces that floor now, because it is not this comment: removing the waiver IS the
 # enforcement. While CVE-2026-15308 was waived, a base that resolved below 3.13.15 still
