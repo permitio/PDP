@@ -108,7 +108,12 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # unreachable while it was patched only in 3.15.0b4, but CPython backported the fix and it
 # landed in 3.13.15 (also 3.14.7). The base tag floats, so the current build resolves
 # 3.13.15 and the waiver has been REMOVED from .docker/scout/pdp-v2.vex.json (v4 -> v5).
-# Do not drop below 3.13.15 - that is the floor for every fix named above.
+# Do not drop below 3.13.15 - that is the floor for every fix named above. Note what
+# enforces that floor now, because it is not this comment: removing the waiver IS the
+# enforcement. While CVE-2026-15308 was waived, a base that resolved below 3.13.15 still
+# sailed through the gate. With the waiver gone, the same regression is reported by Scout
+# with nothing to suppress it, so it FAILS the gate instead of shipping quietly. That is
+# a stricter posture than before, not a looser one.
 #
 # The patch version floats deliberately (see the previous python:3.10-alpine3.22 base and
 # the rebuild-picks-it-up posture in PER-15532). Note what that posture costs if nothing
@@ -145,12 +150,15 @@ RUN mkdir -p /app/backup && chmod -R 777 /app/backup
 #      `cache-from: type=gha`, and the cache key is this instruction text plus the parent
 #      layer - so a release cut months later could replay the 2026-08-04 apk layer and
 #      re-ship the exact packages a customer just flagged. release.yml therefore passes
-#      `no-cache-filter: main,opa_build` to force both to re-resolve on every release.
+#      `no-cache-filters: main` to force that stage to re-resolve on every release, and
+#      tests.yml passes the same value so the scanned image matches the published one.
 #   2. A tag that is never rebuilt rots on its own, and no build-time gate can catch that:
 #      the docker-scout gate in tests.yml runs only on pull_request, so it scanned this
 #      image in July and could not possibly have seen CVEs disclosed in September.
-#      Detecting drift therefore requires re-scanning the PUBLISHED tags on a schedule,
-#      which lives in its own workflow rather than here.
+#      Detecting drift therefore REQUIRES re-scanning the PUBLISHED tags on a schedule.
+#      Deliberately phrased as a requirement, not a description: no workflow in this repo
+#      has a `schedule:` trigger, so nothing here does it yet. That is the job of the
+#      companion change tracked under PER-15358.
 #
 # The PDP never uses SQLite, but its FTS5/zipfile CVEs (CVE-2026-11822,
 # CVE-2026-11824, CVE-2025-70873) are still reported against sqlite-libs, which

@@ -78,6 +78,18 @@ jobs:
           tags: permitio/pdp-v2:next
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # Must match release.yml. Without it the image that pdp-tester exercises and
+          # that docker-scout/Trivy gate is built from a possibly-stale cached `main`
+          # stage, while the released image re-resolves `apk upgrade` and `pip install`
+          # - so CI would be validating and scanning a DIFFERENT package set than the one
+          # customers pull. Two ways that bites: a gate that passes on cached packages
+          # while the release ships newer ones, and the reverse, a gate that fails on
+          # packages the release would not actually contain.
+          #
+          # Plural input on purpose - `no-cache-filter` is the buildx CLI flag, the action
+          # input is `no-cache-filters`, and an undeclared input is silently dropped.
+          # See PER-15358 and the long note in release.yml.
+          no-cache-filters: main
 
       - name: Save Docker image as artifact
         run: docker save permitio/pdp-v2:next -o pdp-image.tar
@@ -247,6 +259,15 @@ jobs:
           # this, our Permit.io-authored statements are matched and displayed
           # ("VEX: not affected") but NOT suppressed, so the gate still fails on
           # the waived CVEs. Must match the `author` field in pdp-v2.vex.json.
+          #
+          # SCOPE OF THE VEX DOC: every statement in pdp-v2.vex.json binds its product to
+          # `pkg:docker/permitio/pdp-v2@next`, which matches the `local://...:next` image
+          # scanned here and nothing else. That is correct precisely BECAUSE this gate is
+          # the only consumer of the OpenVEX doc - the scheduled re-scan of the published
+          # tags uses Trivy, which reads .trivyignore.yaml and keys on CVE id, so tag
+          # names never enter into it. If Scout is ever pointed at `:latest` or a release
+          # tag, every product @id here has to be extended first or all seven waivers
+          # stop suppressing and the run goes red on known non-issues.
           vex-author: Permit.io
 
       - name: Upload SARIF report
