@@ -195,7 +195,12 @@ jobs:
   docker-scout:
     runs-on: ubuntu-latest
     needs: build-pdp-image
-    if: github.event_name == 'pull_request'
+    # Deliberately NOT gated on `github.event_name == 'pull_request'` any more. release.yml
+    # reaches this workflow through `workflow_call`, where github.event_name is the caller's
+    # event ('release') - so the PR-only condition meant the CVE gate was skipped on exactly
+    # the runs that publish an image to Docker Hub. Releases went out ungated. Now that
+    # build-and-push-pdp `needs: pdp-tests`, a failing gate blocks the push.
+    # See PER-15358.
     permissions:
       # required to upload the SARIF report
       security-events: write
@@ -227,7 +232,8 @@ jobs:
           image: local://permitio/pdp-v2:next
           exit-code: false
           sarif-file: scout-results.sarif
-          summary: true
+          # Only a pull_request run has a PR to comment on.
+          summary: ${{ github.event_name == 'pull_request' }}
 
       - name: Docker Scout CVE gate (high and critical)
         uses: docker/scout-action@v1
@@ -269,6 +275,32 @@ jobs:
           # tag, every product @id here has to be extended first or all seven waivers
           # stop suppressing and the run goes red on known non-issues.
           vex-author: Permit.io
+
+      # SECOND SCANNER, on purpose. The Scout gate above reads the image's package
+      # manifests, which is why the NOTE on it says it cannot see the CPython interpreter
+      # itself the way a CPE-based scanner does - four Python CVEs reached a customer scan
+      # of 0.9.14-rc1 without failing this job (PER-15532). Trivy resolves the Alpine
+      # package DB and the Python/Go package trees independently and carries its own
+      # advisory feed, so the two disagree in useful ways: on the published 0.9.14 image
+      # Scout was clean while Trivy found 31 CRITICAL/HIGH, including a CRITICAL GitPython
+      # RCE (CVE-2026-78676) that the customer's own OS-only scan also missed.
+      #
+      # Waivers live in .trivyignore.yaml, which must stay in sync with the OpenVEX doc
+      # Scout reads. Both files change together or neither does.
+      - name: Trivy CVE gate (high and critical)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: permitio/pdp-v2:next
+          scanners: vuln
+          severity: CRITICAL,HIGH
+          pkg-types: os,library
+          trivyignores: .trivyignore.yaml
+          format: table
+          exit-code: '1'
+          # Report findings that have no fix yet, rather than hiding them. An unfixable
+          # CVE is the case that needs a human decision (bump, drop, or waive with a
+          # documented reachability argument), so it must not be silently dropped.
+          ignore-unfixed: false
 
       - name: Upload SARIF report
         if: always()

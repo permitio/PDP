@@ -1,0 +1,175 @@
+# Re-scans the PUBLISHED pdp-v2 tags on a schedule.
+#
+# WHY THIS EXISTS
+# The docker-scout gate in tests.yml is a BUILD-time gate. It can only ever see the CVEs
+# that were known on the day the image was built, and it is the last word on that tag
+# forever, because nothing rebuilds a released image. That blind spot is not theoretical:
+# permitio/pdp-v2:0.9.14 was built 2026-08-04 and passed its gate; Alpine then published
+# openssl 3.5.8-r0 and util-linux 2.41.6-r1; by 2026-09-09 a customer's own scan of that
+# unchanged tag reported 12 CVEs / 21 findings and we heard about it from the customer.
+# Not one of them was a source defect - a rebuild of the untouched Dockerfile scanned
+# clean. The image had simply rotted on the shelf. See PER-15358.
+#
+# So this workflow scans what customers actually pull, on a clock, and classifies what it
+# finds into the only two buckets that matter for triage:
+#
+#   REBUILD  - every finding has a FixedVersion, i.e. upstream already shipped the patch
+#              and `apk upgrade` / `pip install` would absorb it. Cut a release; no code
+#              change needed. This is what 0.9.14 was, and the whole 0.9.14 investigation
+#              was spent establishing it by hand.
+#   SOURCE   - at least one finding has NO FixedVersion, so a rebuild cannot help and the
+#              fix is a pin, a base-image move, a dependency drop, or a VEX waiver.
+#
+# Waivers come from .trivyignore.yaml, which mirrors .docker/scout/pdp-v2.vex.json.
+name: Published image CVE watch
+
+on:
+  schedule:
+    # Daily. New CVEs land continuously; a weekly cadence would have left 0.9.14 exposed
+    # for up to six more days after the OpenSSL advisories published.
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+    inputs:
+      tags:
+        description: 'Space-separated tags to scan (default: latest + newest release)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: image-scan-published
+  cancel-in-progress: false
+
+jobs:
+  resolve-tags:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - name: Resolve which published tags to scan
+        id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAGS: ${{ inputs.tags }}
+        run: |
+          set -euo pipefail
+          if [ -n "${INPUT_TAGS:-}" ]; then
+            tags="$INPUT_TAGS"
+          else
+            # `latest` is what an unpinned `docker pull` gets. The newest non-prerelease
+            # release tag is what a customer who pinned a version is running - 0.9.14 was
+            # reported by a customer pinned to a tag that was no longer `latest`, so
+            # scanning only `latest` would have missed it.
+            newest="$(gh release list --repo ${{ github.repository }} --limit 30 \
+                        --exclude-drafts --exclude-pre-releases \
+                        --json tagName --jq '.[0].tagName // empty')"
+            tags="latest ${newest}"
+          fi
+          matrix="$(printf '%s\n' $tags | sort -u | jq -R . | jq -cs '{tag: .}')"
+          echo "Scanning: $tags"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  scan:
+    needs: resolve-tags
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # required to upload the SARIF report to code scanning
+      security-events: write
+      # required to file / comment on the rolling tracking issue
+      issues: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.resolve-tags.outputs.matrix) }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Scans the published manifest, NOT a local build - that is the whole point.
+      # exit-code stays 0 here so the classify step below can produce a verdict; the
+      # workflow's pass/fail decision is made there.
+      - name: Trivy scan published image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: permitio/pdp-v2:${{ matrix.tag }}
+          scanners: vuln
+          severity: CRITICAL,HIGH
+          pkg-types: os,library
+          trivyignores: .trivyignore.yaml
+          format: json
+          output: trivy-${{ matrix.tag }}.json
+          exit-code: '0'
+
+      - name: Trivy scan published image (SARIF for code scanning)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: permitio/pdp-v2:${{ matrix.tag }}
+          scanners: vuln
+          severity: CRITICAL,HIGH
+          pkg-types: os,library
+          trivyignores: .trivyignore.yaml
+          format: sarif
+          output: trivy-${{ matrix.tag }}.sarif
+          exit-code: '0'
+          # The DB is already cached by the previous step in this job.
+          skip-setup-trivy: true
+
+      - name: Upload SARIF report
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-${{ matrix.tag }}.sarif
+          category: published-image-${{ matrix.tag }}
+
+      - name: Classify findings (REBUILD vs SOURCE)
+        id: classify
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/classify_image_cves.py \
+            --report "trivy-${{ matrix.tag }}.json" \
+            --tag "${{ matrix.tag }}" \
+            --summary "$GITHUB_STEP_SUMMARY" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Upload raw scan report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-report-${{ matrix.tag }}
+          path: trivy-${{ matrix.tag }}.json
+          retention-days: 30
+
+      - name: Open or update tracking issue
+        if: steps.classify.outputs.verdict != 'CLEAN'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ matrix.tag }}
+          VERDICT: ${{ steps.classify.outputs.verdict }}
+        run: |
+          set -euo pipefail
+          title="[image-cve] permitio/pdp-v2:${TAG} has CRITICAL/HIGH findings"
+          body="$(cat cve-issue-body.md)"
+          # One rolling issue per tag, so a daily schedule comments instead of filing a
+          # new issue every morning.
+          existing="$(gh issue list --repo "${{ github.repository }}" \
+                        --state open --search "\"$title\" in:title" \
+                        --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "${{ github.repository }}" --body "$body"
+            echo "Commented on existing issue #$existing"
+          else
+            # No --label: the repo has no `security` label and gh hard-fails on an
+            # unknown one. The "[image-cve]" title prefix is what the dedupe search
+            # above matches on, so it is the identifier that has to stay stable.
+            gh issue create --repo "${{ github.repository }}" \
+              --title "$title" --body "$body"
+            echo "Filed a new issue"
+          fi
+
+      - name: Fail if findings remain
+        if: steps.classify.outputs.verdict != 'CLEAN'
+        run: |
+          echo "::error::permitio/pdp-v2:${{ matrix.tag }} -> ${{ steps.classify.outputs.verdict }}. See the job summary."
+          exit 1
