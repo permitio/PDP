@@ -76,5 +76,21 @@ starlette==0.50.0
 # pdp-tester run on the result - do not let a rebuild choose a major on its own. See
 # PER-15358.
 websockets==17.0
+# GitPython is a TRANSITIVE dependency of opal-common (`gitpython<4,>=3.1.32`) and nothing
+# else bounds it, so with no lockfile the image build resolved whatever was current at build
+# time. permitio/pdp-v2:0.9.14 (built 2026-08-04) therefore shipped 3.1.57, which carries
+# CVE-2026-78676 - a CRITICAL (CVSS 3.1 9.8 / CVSS 4.0 9.3) argument-injection RCE: unsafe
+# re-serialization of a multi-line git-config value promotes a dormant quoted value into a
+# live directive such as core.hooksPath, giving arbitrary code execution through git's hook
+# mechanism on any unrelated GitConfigParser write. 3.1.59 also closes CVE-2026-78675 and
+# CVE-2026-78677, and 3.1.58 closes CVE-2026-76218 / CVE-2026-76219 / CVE-2026-76220 /
+# CVE-2026-76222 + GHSA-jm78-9fvv-mhgr (all HIGH) - seven advisories cleared by this floor.
+#
+# A rebuild alone would have picked up a fixed GitPython by chance, since the constraint was
+# open. That is exactly the failure mode the `websockets` note above describes, so the floor
+# is stated here to make the fix resolver-enforced rather than incidental. The <4 cap matches
+# opal-common's own bound and keeps a major out of a build that has no lockfile. Drop this
+# pin only once opal-common itself floors gitpython >= 3.1.59. See PER-15358.
+GitPython>=3.1.59,<4
 opal-common==0.9.6
 opal-client==0.9.6

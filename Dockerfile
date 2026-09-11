@@ -104,14 +104,15 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 #                                                             < 3.11.4, so 3.13 is out of it
 # PSF fixed these only on the 3.13/3.14/3.15 branches - there is no 3.10/3.11/3.12 backport -
 # so the vulnerable code really was present in 3.10.20 and an upgrade was the only fix.
-# CVE-2026-15308 (html.parser DoS) is NOT cleared by this bump: it is patched only in
-# 3.15.0b4 and NVD's range is < 3.15.0, so no released Python satisfies it. It is waived in
-# .docker/scout/pdp-v2.vex.json as unreachable (nothing in the image imports html.parser).
+# CVE-2026-15308 (html.parser CPU-exhaustion DoS) is now cleared too: it was waived here as
+# unreachable while it was patched only in 3.15.0b4, but CPython backported the fix and it
+# landed in 3.13.15 (also 3.14.7). The base tag floats, so the current build resolves
+# 3.13.15 and the waiver has been REMOVED from .docker/scout/pdp-v2.vex.json (v4 -> v5).
+# Do not drop below 3.13.15 - that is the floor for every fix named above.
 #
 # The patch version floats deliberately (see the previous python:3.10-alpine3.22 base and
-# the rebuild-picks-it-up posture in PER-15532): when 3.13.15 ships it will clear
-# CVE-2026-15308 automatically and that waiver can then be dropped. Do not drop below
-# 3.13.14 - that is the floor for the fixes above.
+# the rebuild-picks-it-up posture in PER-15532). Note what that posture costs if nothing
+# ever rebuilds: see the apk note below.
 #
 # Python 3.10 also reaches end of life in October 2026, so this move was due regardless.
 FROM python:3.13-alpine3.23 AS main
@@ -128,6 +129,28 @@ RUN mkdir -p /app/backup && chmod -R 777 /app/backup
 # Install runtime libraries and remove sqlite-libs.
 # Build deps (build-base, *-dev) are installed and removed in the pip install
 # layer to avoid persisting binutils CVEs (CVE-2025-69649, CVE-2025-69650).
+#
+# `apk upgrade` here is the ONLY thing that keeps the OS package set current, and it is
+# only as fresh as the build that ran it. permitio/pdp-v2:0.9.14 was built 2026-08-04 and
+# pinned libcrypto3/libssl3 3.5.7-r0 + libuuid 2.41.4-r0 at that moment. Alpine 3.23 later
+# published openssl 3.5.8-r0 and util-linux 2.41.6-r1, so by 2026-09-09 a customer CPE scan
+# of the UNCHANGED published tag reported 12 CVEs / 21 findings - nine OpenSSL
+# (CVE-2026-14456, CVE-2026-14457, CVE-2026-18798, CVE-2026-54874, CVE-2026-63072,
+# CVE-2026-63073, CVE-2026-63075, CVE-2026-63076, CVE-2026-75803) and three util-linux.
+# Not one of them was a source defect: this Dockerfile was already correct, and a rebuild
+# with no edits produces 0 findings. The image was simply never rebuilt. See PER-15358.
+#
+# Two consequences, both load-bearing:
+#   1. Release builds MUST NOT serve this layer from cache. release.yml uses
+#      `cache-from: type=gha`, and the cache key is this instruction text plus the parent
+#      layer - so a release cut months later could replay the 2026-08-04 apk layer and
+#      re-ship the exact packages a customer just flagged. release.yml therefore passes
+#      `no-cache-filter: main,opa_build` to force both to re-resolve on every release.
+#   2. A tag that is never rebuilt rots on its own, and no build-time gate can catch that:
+#      the docker-scout gate in tests.yml runs only on pull_request, so it scanned this
+#      image in July and could not possibly have seen CVEs disclosed in September.
+#      Detecting drift therefore requires re-scanning the PUBLISHED tags on a schedule,
+#      which lives in its own workflow rather than here.
 #
 # The PDP never uses SQLite, but its FTS5/zipfile CVEs (CVE-2026-11822,
 # CVE-2026-11824, CVE-2025-70873) are still reported against sqlite-libs, which
