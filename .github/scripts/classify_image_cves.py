@@ -169,8 +169,8 @@ def render(tag: str, findings: list[dict], verdict: str) -> str:
     if rebuildable:
         lines.append(
             f"- Cut a release to clear {len(rebuildable)} finding(s). `release.yml` passes "
-            "`no-cache-filter: main,opa_build`, so the build cannot replay stale `apk` / "
-            "`pip` layers from the GHA cache."
+            "`no-cache-filters: main`, so the build cannot replay stale `apk` / `pip` "
+            "layers from the GHA cache."
         )
     if opa:
         lines.append(
