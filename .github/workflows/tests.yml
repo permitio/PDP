@@ -10,6 +10,12 @@ on:
         required: true
       CLONE_REPO_TOKEN:
         required: true
+      # NOT declared here but still REQUIRED by the docker-scout job, which now runs on
+      # the workflow_call path too (it used to be skipped on releases): DOCKERHUB_USERNAME
+      # and DOCKERHUB_TOKEN. release.yml supplies them by calling this workflow with
+      # `secrets: inherit`, which is why it works. If a future caller passes secrets
+      # explicitly instead, the Docker Hub login fails and the CVE gate fails with it -
+      # add them to that caller, or declare them here. See PER-15358.
 
 jobs:
   pre-commit:
@@ -303,7 +309,12 @@ jobs:
           image-ref: permitio/pdp-v2:next
           scanners: vuln
           severity: CRITICAL,HIGH
-          pkg-types: os,library
+          # NOT `pkg-types`. The trivy CLI flag is `--pkg-types`, but the action's input
+          # is still called `vuln-type` (its action.yaml even carries a
+          # "# TODO: rename to pkg-types"), and it maps to TRIVY_PKG_TYPES internally.
+          # An undeclared input is dropped silently, so `pkg-types:` here would look
+          # deliberate and do nothing. Same trap as no-cache-filter(s) in release.yml.
+          vuln-type: os,library
           trivyignores: .trivyignore.yaml
           format: table
           exit-code: '1'

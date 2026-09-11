@@ -62,12 +62,21 @@ jobs:
             # release tag is what a customer who pinned a version is running - 0.9.14 was
             # reported by a customer pinned to a tag that was no longer `latest`, so
             # scanning only `latest` would have missed it.
-            newest="$(gh release list --repo ${{ github.repository }} --limit 30 \
+            newest="$(gh release list --repo "${{ github.repository }}" --limit 30 \
                         --exclude-drafts --exclude-pre-releases \
                         --json tagName --jq '.[0].tagName // empty')"
             tags="latest ${newest}"
           fi
-          matrix="$(printf '%s\n' $tags | sort -u | jq -R . | jq -cs '{tag: .}')"
+          # `read -a` splits on IFS without glob-expanding, which leaving $tags unquoted
+          # would do. `sed '/^$/d'` drops the empty field present when the repo has no
+          # non-prerelease release yet (newest="").
+          read -r -a tag_list <<< "$tags"
+          matrix="$(printf '%s\n' "${tag_list[@]}" | sed '/^$/d' \
+                      | sort -u | jq -R . | jq -cs '{tag: .}')"
+          if [ "$(printf '%s' "$matrix" | jq -r '.tag | length')" -eq 0 ]; then
+            echo "::error::no tags resolved to scan"
+            exit 1
+          fi
           echo "Scanning: $tags"
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
@@ -96,7 +105,12 @@ jobs:
           image-ref: permitio/pdp-v2:${{ matrix.tag }}
           scanners: vuln
           severity: CRITICAL,HIGH
-          pkg-types: os,library
+          # NOT `pkg-types`. The trivy CLI flag is `--pkg-types`, but the action's input
+          # is still called `vuln-type` (its action.yaml even carries a
+          # "# TODO: rename to pkg-types"), and it maps to TRIVY_PKG_TYPES internally.
+          # An undeclared input is dropped silently, so `pkg-types:` here would look
+          # deliberate and do nothing. Same trap as no-cache-filter(s) in release.yml.
+          vuln-type: os,library
           trivyignores: .trivyignore.yaml
           format: json
           output: trivy-${{ matrix.tag }}.json
@@ -108,7 +122,8 @@ jobs:
           image-ref: permitio/pdp-v2:${{ matrix.tag }}
           scanners: vuln
           severity: CRITICAL,HIGH
-          pkg-types: os,library
+          # See the note on the step above: the input is `vuln-type`.
+          vuln-type: os,library
           trivyignores: .trivyignore.yaml
           format: sarif
           output: trivy-${{ matrix.tag }}.sarif
