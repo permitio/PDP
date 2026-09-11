@@ -1,4 +1,10 @@
 # Version control
+# `.git/` alone anchors at the context root, so it does NOT exclude a nested checkout's
+# git dir. release.yml/tests.yml clone permitio/permit-opa to ./permit-opa, and its
+# .git/config can carry a credential - which `COPY . .` would then pull into the rust
+# stages, and `cache-to: mode=max` would export to the GHA cache. `**/.git/` closes that
+# regardless of where a checkout lands. See PER-15358.
+**/.git/
 .git/
 .gitignore
 

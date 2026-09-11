@@ -52,6 +52,10 @@ jobs:
           ref: main
           path: './permit-opa'
           token: ${{ secrets.CLONE_REPO_TOKEN }}
+          # Without this, checkout writes the token into permit-opa/.git/config as an
+          # http.extraheader and leaves it there. Nothing after this step talks to git -
+          # the tarball is built with find/tar - so there is nothing to persist it for.
+          persist-credentials: false
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
