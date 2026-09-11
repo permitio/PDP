@@ -231,7 +231,11 @@ jobs:
           # CVE-2026-48818 / CVE-2026-54283, all fixed only in starlette >=1.x, which
           # OPAL's starlette<1 cap forbids; ddtrace CVE-2026-50271, fixed only in
           # ddtrace >=4.8.2, which OPAL's ddtrace<4 cap forbids and which the Dockerfile
-          # mitigates by dropping "baggage" from the extract styles. See PER-15358.
+          # mitigates by dropping "baggage" from the extract styles; and x/crypto
+          # CVE-2026-78662 / CVE-2026-56855, which live in golang.org/x/crypto/ssh - a
+          # package `go list -deps ./cmd/opa` proves is not linked into /app/bin/opa - and
+          # which are fixed only in x/crypto >=0.56.0, a version that declares
+          # `go >= 1.26.0` while Go 1.26 is still unreleased. See PER-15358.
           #
           # NOTE: this gate reads packages, so it does not flag the CPython interpreter
           # itself the way a CPE-based scanner does - that blind spot is why four Python
