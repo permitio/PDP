@@ -9,7 +9,7 @@ ARG OPA_BUILD=permit
 # (1) this stage will be run always on current arch
 # zigbuild & Cargo targets added
 
-FROM --platform=$BUILDPLATFORM rust:1.94-alpine AS rust_chef
+FROM --platform=$BUILDPLATFORM rust:1.94-alpine@sha256:77237dd363a0b127bb5ef532c2d64c0deb380b738e43a9c4bdac73398d6d0a08 AS rust_chef
 WORKDIR /app
 ENV PKGCONFIG_SYSROOTDIR=/
 RUN apk add --no-cache musl-dev openssl-dev zig pkgconf perl make
@@ -54,7 +54,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # OPA BUILD STAGE -----------------------------------
 # Build OPA from source or download precompiled binary
 # ---------------------------------------------------
-FROM golang:1.25-bookworm AS opa_build
+FROM golang:1.25-bookworm@sha256:3b4a11519ad929d1e1d261a12cff056f0c85b735253d7d861346b9c6f8b36437 AS opa_build
 
 COPY custom* /custom
 
@@ -115,12 +115,30 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # with nothing to suppress it, so it FAILS the gate instead of shipping quietly. That is
 # a stricter posture than before, not a looser one.
 #
-# The patch version floats deliberately (see the previous python:3.10-alpine3.22 base and
-# the rebuild-picks-it-up posture in PER-15532). Note what that posture costs if nothing
-# ever rebuilds: see the apk note below.
+# The base tag USED to float its patch version (see the previous python:3.10-alpine3.22
+# base and the rebuild-picks-it-up posture in PER-15532). It no longer does - the digest
+# below is 3.13.15 - because "a rebuild will pick it up" only holds if something rebuilds,
+# and for five weeks nothing did. See the pinning note above.
 #
 # Python 3.10 also reaches end of life in October 2026, so this move was due regardless.
-FROM python:3.13-alpine3.23 AS main
+# Base images are pinned by DIGEST, and Dependabot's docker ecosystem
+# (.github/dependabot.yml, daily) bumps them. The digest is the manifest-LIST digest, so
+# multi-arch is preserved - `docker buildx imagetools inspect <tag>` reports it, and
+# pinning a per-arch digest instead would break the linux/amd64 + linux/arm64 build.
+#
+# Why pin at all, when floating the tag sounds strictly fresher: upstream rebuilds these
+# tags IN PLACE. `python:3.13-alpine3.23` silently gained a new digest with patched
+# OpenSSL between 0.9.14's build and the customer's scan, and because the tag string
+# never changed there was nothing for anyone - human or bot - to notice. A floating tag
+# is only fresh at the instant of a build, and nothing was triggering builds. Pinning
+# inverts that: the drift arrives as a digest-bump PR that CI validates before it ships,
+# which is the signal that was missing (PER-15358).
+#
+# Do NOT hand-edit these digests to chase a CVE. Let the Dependabot PR do it, so the
+# change is reviewed and tested. `apk upgrade` still floats the Alpine package set at
+# build time, so pinning costs no package freshness on a rebuild - only the base layer
+# becomes deterministic.
+FROM python:3.13-alpine3.23@sha256:75f27d686432419c9d42420b2b9ef605868c7a0682a6be10a6601fad46c2df01 AS main
 
 WORKDIR /app
 
