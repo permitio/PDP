@@ -287,7 +287,17 @@ jobs:
       #
       # Waivers live in .trivyignore.yaml, which must stay in sync with the OpenVEX doc
       # Scout reads. Both files change together or neither does.
+      #
+      # `if: !cancelled()` is REQUIRED, not defensive. A step with no `if:` is skipped as
+      # soon as an earlier step in the job fails, so without it this gate only ran when the
+      # Scout gate passed - the first CI run of this job reported "Docker Scout CVE gate:
+      # failure / Trivy CVE gate: skipped" and the second opinion was never collected. A
+      # run where Scout fails is exactly the run where it is most worth having. `!cancelled()`
+      # rather than `always()` so a cancelled workflow still stops promptly. The job still
+      # fails if either gate fails; both now report on every run. Guard any third scanner
+      # the same way.
       - name: Trivy CVE gate (high and critical)
+        if: ${{ !cancelled() }}
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: permitio/pdp-v2:next
