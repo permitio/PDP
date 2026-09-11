@@ -3,7 +3,7 @@
   "@id": "https://openvex.dev/docs/permitio-pdp/pdp-v2-cve-waivers",
   "author": "Permit.io",
   "timestamp": "2026-09-11T12:00:00Z",
-  "version": 6,
+  "version": 7,
   "statements": [
     {
       "vulnerability": {
@@ -13,13 +13,14 @@
         {
           "@id": "pkg:docker/permitio/pdp-v2@next",
           "subcomponents": [
-            { "@id": "pkg:golang/golang.org/x/crypto@v0.55.0" }
+            { "@id": "pkg:golang/golang.org/x/crypto@0.53.0" },
+            { "@id": "pkg:golang/golang.org/x/crypto@0.55.0" }
           ]
         }
       ],
       "status": "not_affected",
       "justification": "vulnerable_code_not_in_execute_path",
-      "impact_statement": "CVE-2026-78662 is a connection-deadlock DoS - a channel registered in the mux's chanList before it is established lets a malicious peer flood incomingRequests in golang.org/x/crypto/ssh. It reaches the pdp-v2 image only because /app/bin/opa is compiled from permitio/permit-opa, which carries x/crypto as an INDIRECT dependency. The vulnerable package is not present in the binary: `go list -deps ./cmd/opa` in permit-opa resolves exactly these x/crypto packages - cryptobyte(+asn1), chacha20, chacha20poly1305, internal/poly1305, internal/alias, pbkdf2, curve25519, blake2b, salsa20/salsa, nacl/box, nacl/secretbox, hkdf, sha3 - and golang.org/x/crypto/ssh is absent from that list, so the SSH transport code is never linked, let alone reachable. The PDP additionally speaks no SSH on any code path of its own. Both CVEs are fixed only in x/crypto >= 0.56.0, which declares `go >= 1.26.0`; Go 1.26 is not released (no golang:1.26 base image exists) and this image builds on golang:1.25-bookworm, so the upgrade is not available yet. permitio/permit-opa#49 raises the floor as far as Go 1.25 allows (0.55.0, which clears CVE-2026-56854) and bumps grpc to 1.83.2. Remove this waiver and move x/crypto to >= 0.56.0 once a Go 1.26 toolchain is available. Tracked under PER-15358."
+      "impact_statement": "CVE-2026-78662 is a connection-deadlock DoS - a channel registered in the mux's chanList before it is established lets a malicious peer flood incomingRequests in golang.org/x/crypto/ssh. It reaches the pdp-v2 image only because /app/bin/opa is compiled from permitio/permit-opa, which carries x/crypto as an INDIRECT dependency. The vulnerable package is not present in the binary: `go list -deps ./cmd/opa` in permit-opa resolves exactly these x/crypto packages - cryptobyte(+asn1), chacha20, chacha20poly1305, internal/poly1305, internal/alias, pbkdf2, curve25519, blake2b, salsa20/salsa, nacl/box, nacl/secretbox, hkdf, sha3 - and golang.org/x/crypto/ssh is absent from that list, so the SSH transport code is never linked, let alone reachable. The PDP additionally speaks no SSH on any code path of its own. Both CVEs are fixed only in x/crypto >= 0.56.0, which declares `go >= 1.26.0`; Go 1.26 is not released (no golang:1.26 base image exists) and this image builds on golang:1.25-bookworm, so the upgrade is not available yet. permitio/permit-opa#49 raises the floor as far as Go 1.25 allows (0.55.0, which clears CVE-2026-56854) and bumps grpc to 1.83.2. Two subcomponent PURLs are listed on purpose: 0.53.0 is what the build resolves until permit-opa#49 merges and 0.55.0 is what it resolves after, and docker scout matches VEX subcomponents on the FULL PURL string, so a statement naming only one of them silently stops suppressing the moment the version moves. Note also that scout emits Go PURLs WITHOUT the conventional `v` prefix (pkg:golang/golang.org/x/crypto@0.53.0, not @v0.53.0) - the first version of this waiver used @v0.55.0 and bound to nothing at all. Remove this waiver and move x/crypto to >= 0.56.0 once a Go 1.26 toolchain is available. Tracked under PER-15358."
     },
     {
       "vulnerability": {
@@ -29,13 +30,14 @@
         {
           "@id": "pkg:docker/permitio/pdp-v2@next",
           "subcomponents": [
-            { "@id": "pkg:golang/golang.org/x/crypto@v0.55.0" }
+            { "@id": "pkg:golang/golang.org/x/crypto@0.53.0" },
+            { "@id": "pkg:golang/golang.org/x/crypto@0.55.0" }
           ]
         }
       ],
       "status": "not_affected",
       "justification": "vulnerable_code_not_in_execute_path",
-      "impact_statement": "CVE-2026-56855 is a connection-deadlock DoS - crafted post-establishment channel messages are buffered instead of being treated as a protocol error in golang.org/x/crypto/ssh. It reaches the pdp-v2 image only because /app/bin/opa is compiled from permitio/permit-opa, which carries x/crypto as an INDIRECT dependency. The vulnerable package is not present in the binary: `go list -deps ./cmd/opa` in permit-opa resolves exactly these x/crypto packages - cryptobyte(+asn1), chacha20, chacha20poly1305, internal/poly1305, internal/alias, pbkdf2, curve25519, blake2b, salsa20/salsa, nacl/box, nacl/secretbox, hkdf, sha3 - and golang.org/x/crypto/ssh is absent from that list, so the SSH transport code is never linked, let alone reachable. The PDP additionally speaks no SSH on any code path of its own. Both CVEs are fixed only in x/crypto >= 0.56.0, which declares `go >= 1.26.0`; Go 1.26 is not released (no golang:1.26 base image exists) and this image builds on golang:1.25-bookworm, so the upgrade is not available yet. permitio/permit-opa#49 raises the floor as far as Go 1.25 allows (0.55.0, which clears CVE-2026-56854) and bumps grpc to 1.83.2. Remove this waiver and move x/crypto to >= 0.56.0 once a Go 1.26 toolchain is available. Tracked under PER-15358."
+      "impact_statement": "CVE-2026-56855 is a connection-deadlock DoS - crafted post-establishment channel messages are buffered instead of being treated as a protocol error in golang.org/x/crypto/ssh. It reaches the pdp-v2 image only because /app/bin/opa is compiled from permitio/permit-opa, which carries x/crypto as an INDIRECT dependency. The vulnerable package is not present in the binary: `go list -deps ./cmd/opa` in permit-opa resolves exactly these x/crypto packages - cryptobyte(+asn1), chacha20, chacha20poly1305, internal/poly1305, internal/alias, pbkdf2, curve25519, blake2b, salsa20/salsa, nacl/box, nacl/secretbox, hkdf, sha3 - and golang.org/x/crypto/ssh is absent from that list, so the SSH transport code is never linked, let alone reachable. The PDP additionally speaks no SSH on any code path of its own. Both CVEs are fixed only in x/crypto >= 0.56.0, which declares `go >= 1.26.0`; Go 1.26 is not released (no golang:1.26 base image exists) and this image builds on golang:1.25-bookworm, so the upgrade is not available yet. permitio/permit-opa#49 raises the floor as far as Go 1.25 allows (0.55.0, which clears CVE-2026-56854) and bumps grpc to 1.83.2. Two subcomponent PURLs are listed on purpose: 0.53.0 is what the build resolves until permit-opa#49 merges and 0.55.0 is what it resolves after, and docker scout matches VEX subcomponents on the FULL PURL string, so a statement naming only one of them silently stops suppressing the moment the version moves. Note also that scout emits Go PURLs WITHOUT the conventional `v` prefix (pkg:golang/golang.org/x/crypto@0.53.0, not @v0.53.0) - the first version of this waiver used @v0.55.0 and bound to nothing at all. Remove this waiver and move x/crypto to >= 0.56.0 once a Go 1.26 toolchain is available. Tracked under PER-15358."
     },
     {
       "vulnerability": {
