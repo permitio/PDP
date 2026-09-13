@@ -42,6 +42,9 @@ pdp:
       port: 443
       index: "<elasticsearch index>"
   debug_mode: false
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
 
 podDisruptionBudget:
   # Automatically enabled when replicas > 1
