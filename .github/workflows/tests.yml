@@ -238,8 +238,14 @@ jobs:
           image: local://permitio/pdp-v2:next
           exit-code: false
           sarif-file: scout-results.sarif
-          # Only a pull_request run has a PR to comment on.
-          summary: ${{ github.event_name == 'pull_request' }}
+          # `summary` publishes to the GitHub Action SUMMARY page, not to the PR - it is
+          # wanted on every run, releases especially, so it stays on (default true).
+          # `write-comment` is the one that needs a PR to exist, so that is what gets
+          # gated now this job runs on releases too. Getting these the wrong way round
+          # suppressed the release job summary while still attempting a PR comment with
+          # no PR. Same conclusion reached independently in #335.
+          summary: true
+          write-comment: ${{ github.event_name == 'pull_request' }}
 
       - name: Docker Scout CVE gate (high and critical)
         uses: docker/scout-action@v1
@@ -248,6 +254,9 @@ jobs:
           image: local://permitio/pdp-v2:next
           only-severities: critical,high
           exit-code: true
+          # Defaults are true for both; this step runs on releases now, where there is no
+          # PR to comment on. See the note on the report step above.
+          write-comment: ${{ github.event_name == 'pull_request' }}
           # Accept CVEs marked not_affected in the OpenVEX doc (see
           # .docker/scout/pdp-v2.vex.json) so the gate does not fail on
           # vulnerabilities whose code path the PDP never executes and for which
