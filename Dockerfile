@@ -108,12 +108,17 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # unreachable while it was patched only in 3.15.0b4, but CPython backported the fix and it
 # landed in 3.13.15 (also 3.14.7). The base tag floats, so the current build resolves
 # 3.13.15 and the waiver has been REMOVED from .docker/scout/pdp-v2.vex.json.
-# Do not drop below 3.13.15 - that is the floor for every fix named above. Note what
-# enforces that floor now, because it is not this comment: removing the waiver IS the
-# enforcement. While CVE-2026-15308 was waived, a base that resolved below 3.13.15 still
-# sailed through the gate. With the waiver gone, the same regression is reported by Scout
-# with nothing to suppress it, so it FAILS the gate instead of shipping quietly. That is
-# a stricter posture than before, not a looser one.
+# Do not drop below 3.13.15 - that is the floor for every fix named above. The apk layer
+# below asserts it (`sys.version_info >= (3,13,15)`), because nothing else does. Removing
+# the CVE-2026-15308 waiver is NOT what enforces it, for three independent reasons:
+# scout reads packages and never reports the CPython interpreter at all (see the NOTE in
+# tests.yml - run 34620527942 lists 15 findings across 6 packages, apk/golang/pypi, and no
+# CPython entry of any kind); the gate is `pull_request`-only, so a release never scans;
+# and the removed waiver bound its subcomponent to `pkg:generic/python`, which is not a
+# PURL scout emits, so it was almost certainly suppressing nothing to begin with. Catching
+# a stale interpreter through a scanner needs a CPE-based one - that is the companion
+# change under PER-15358. Until it lands, the assert is the control, and unlike the gate
+# it runs on every build path, releases included.
 #
 # The patch version floats deliberately (see the previous python:3.10-alpine3.22 base and
 # the rebuild-picks-it-up posture in PER-15532). Note what that posture costs if nothing
@@ -151,7 +156,12 @@ RUN mkdir -p /app/backup && chmod -R 777 /app/backup
 #      layer - so a release cut months later could replay the 2026-08-04 apk layer and
 #      re-ship the exact packages a customer just flagged. release.yml therefore passes
 #      `no-cache-filters: main` to force that stage to re-resolve on every release, and
-#      tests.yml passes the same value so the scanned image matches the published one.
+#      tests.yml passes the same value so the scanned image is not built on a stale
+#      package set either. That is the guarantee - NOT that the two images match. They
+#      are two independent fresh resolutions against the live Alpine/PyPI indexes,
+#      tests.yml builds linux/amd64 only while release.yml builds amd64+arm64, and the
+#      scout gate is `pull_request`-only so the release build is never the one scanned.
+#      Closing that last gap needs the gate to run on release events (PER-15358).
 #   2. A tag that is never rebuilt rots on its own, and no build-time gate can catch that:
 #      the docker-scout gate in tests.yml runs only on pull_request, so it scanned this
 #      image in July and could not possibly have seen CVEs disclosed in September.
@@ -174,7 +184,8 @@ RUN --mount=type=cache,target=/var/cache/apk \
     apk add bash libffi libressl gcompat && \
     apk add --no-cache --virtual .python-rundeps-nosqlite \
         $(apk info -qR .python-rundeps | grep '^so:' | grep -v 'libsqlite3') && \
-    apk del .python-rundeps sqlite-libs
+    apk del .python-rundeps sqlite-libs && \
+    python3 -c "import sys; assert sys.version_info[:3] >= (3, 13, 15), sys.version"
 
 
 # Copy OPA binary from the build stage

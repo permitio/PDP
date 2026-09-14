@@ -89,27 +89,46 @@ websockets==17.0
 # BE PRECISE ABOUT WHAT THIS LINE DOES, because it is easy to over-read: it changes no
 # resolution on any current build path. opal-common's `gitpython<4,>=3.1.32` is the only
 # other bound, nothing else constrains the package, and pip prefers the newest satisfying
-# version - so a fresh resolve lands on 3.1.62 with or without this line. A verification
-# build of the full image confirms exactly that. What actually cleared the CVE from the
-# image was the REBUILD; this line did not.
+# version - so a fresh resolve lands on 3.1.62 with or without this line. Verified by a
+# local --no-cache build of the base + apk + pip layers, which resolved 3.1.62 with the
+# floor already present; local rather than a CI run id, unlike the `websockets` note
+# above, because no CI job resolves this file in isolation. What actually cleared the CVE
+# from the image was the REBUILD; this line did not.
 #
-# Its job is to be a tripwire, not a fix. A floor only bites when something pushes the
-# resolver below it, and that is a real future: a narrower opal-common bound, a new
-# transitive cap, or the lockfile this build still lacks pinning an older version. Without
-# the floor any of those silently reintroduces a CVSS 9.8 RCE and the only thing standing
-# between it and a release is a scanner noticing. With it, the resolve fails loudly.
+# Its job is to be a tripwire, not a fix. The likeliest way it bites is a bump of the
+# opal-common pin below to a version whose gitpython cap drops under 3.1.59: opal-common
+# is exact-pinned, so pip has nothing to backtrack on, raises ResolutionImpossible, and
+# the image build fails at `pip install` - loudly, in front of whoever is doing the bump.
+# A cap arriving through a RANGED dependency instead resolves quietly, by backtracking
+# that package to an older version; the failure is silent, but GitPython still cannot land
+# below the floor, which is the part that matters. Without it, either case silently
+# reinstates a CVSS 9.8 RCE with only a scanner between it and a release.
+#
+# What the floor does NOT cover is a lockfile - the one case it is easy to assume it does.
+# Once a lockfile exists the lock is what gets installed and this file is not read at
+# install time at all, so a lock pinning 3.1.54 installs 3.1.54 and the floor is never
+# consulted. Its value moves upstream instead, and is arguably stronger there:
+# pip-compile/uv read this file as INPUT, so a lock generated from it cannot be produced
+# below 3.1.59 in the first place. The floor prevents the bad lock rather than catching it.
 #
 # Deliberately a floor and NOT an exact pin, unlike `websockets`/`ddtrace`/`starlette`
-# above. Those are pinned for reasons that do not apply here - to keep a VEX waiver PURL
-# bound to a known version, or to stop an unvalidated major landing on the OPAL pub/sub
-# path. GitPython has no waiver, sits on no hot path, and is a TRANSITIVE dependency:
-# pinning it exactly would make this repo the owner of an upstream's upgrade cadence for
-# no security gain. Keeping `<4` is not redundancy for its own sake either - it is our own
+# above - but NOT because those are direct and this one is transitive. All four are
+# top-level entries here that would also arrive transitively anyway (via opal-common/
+# opal-client, fastapi-websocket-{rpc,pubsub}, uvicorn, fastapi), so transitivity cannot
+# be what separates them. What separates them is the cost of drift: websockets drift puts
+# an unvalidated MAJOR on the live OPAL pub/sub path (#329), and ddtrace/starlette drift
+# unbinds a VEX waiver PURL and reds the scout gate. GitPython has neither - no waiver,
+# nothing first-party imports it, and `<4` caps its drift to a PATCH inside 3.1.x, which
+# is a normal posture. Pinning it exactly would make this repo the owner of an upstream's
+# cadence for no security gain, against a package that shipped eight releases in the seven
+# weeks to 3.1.62. Keeping `<4` is not redundancy for its own sake either - it is our own
 # bound, so it still holds if opal-common ever relaxes to allow a 4.x major.
 #
 # The real structural fix is a lockfile, which would make this whole transitive tree
-# explicit and reproducible; see docs/image-vulnerability-management.md. Drop this floor
-# once opal-common itself floors gitpython >= 3.1.59. See PER-15358.
+# explicit and reproducible. Not done here - tracked as the highest-value outstanding item
+# under PER-15358 (there is no docs/ directory in this repo yet; the write-up lands with
+# the companion change). Drop this floor once opal-common itself floors
+# gitpython >= 3.1.59. See PER-15358.
 GitPython>=3.1.59,<4
 opal-common==0.9.6
 opal-client==0.9.6

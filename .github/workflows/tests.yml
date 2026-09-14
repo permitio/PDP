@@ -79,7 +79,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           # Must match release.yml. Without it the image that pdp-tester exercises and
-          # that docker-scout/Trivy gate is built from a possibly-stale cached `main`
+          # that docker-scout gate is built from a possibly-stale cached `main`
           # stage, while the released image re-resolves `apk upgrade` and `pip install`
           # - so CI would be validating and scanning a DIFFERENT package set than the one
           # customers pull. Two ways that bites: a gate that passes on cached packages
@@ -246,8 +246,13 @@ jobs:
           # mitigates by dropping "baggage" from the extract styles; and x/crypto
           # CVE-2026-78662 / CVE-2026-56855, which live in golang.org/x/crypto/ssh - a
           # package `go list -deps ./cmd/opa` proves is not linked into /app/bin/opa - and
-          # which are fixed only in x/crypto >=0.56.0, a version that declares
-          # `go >= 1.26.0` while Go 1.26 is still unreleased. See PER-15358.
+          # which are fixed only in x/crypto >=0.56.0, whose go.mod declares `go 1.26.0`.
+          # Go 1.26 has been stable since 2026-02-10 (1.26.8 is current, and 1.27.0 is out)
+          # - the blocker is local, not upstream. The OPA builder is still
+          # golang:1.25-bookworm (Dockerfile:57) and permit-opa's go.mod is `go 1.25.0`,
+          # and the official golang images ship GOTOOLCHAIN=local so the toolchain cannot
+          # move implicitly. Gated on PDP#334 plus a matching permit-opa change, not on Go.
+          # See PER-15358.
           #
           # NOTE: this gate reads packages, so it does not flag the CPython interpreter
           # itself the way a CPE-based scanner does - that blind spot is why four Python
@@ -262,12 +267,13 @@ jobs:
           #
           # SCOPE OF THE VEX DOC: every statement in pdp-v2.vex.json binds its product to
           # `pkg:docker/permitio/pdp-v2@next`, which matches the `local://...:next` image
-          # scanned here and nothing else. That is correct precisely BECAUSE this gate is
-          # the only consumer of the OpenVEX doc - the scheduled re-scan of the published
-          # tags uses Trivy, which reads .trivyignore.yaml and keys on CVE id, so tag
-          # names never enter into it. If Scout is ever pointed at `:latest` or a release
-          # tag, every product @id here has to be extended first or all seven waivers
-          # stop suppressing and the run goes red on known non-issues.
+          # scanned here and nothing else. That is sound only while this gate is the ONLY
+          # consumer of the doc, which it is today - nothing re-scans the PUBLISHED tags
+          # yet (PER-15358), so read this as a gap, not as cover: those tags are matched by
+          # no waiver mechanism at all. When a published-tag scan does land it must either
+          # key on CVE id rather than PURL, or every product @id here has to be extended
+          # first, or all seven waivers stop suppressing and the run goes red on known
+          # non-issues.
           vex-author: Permit.io
 
       - name: Upload SARIF report
