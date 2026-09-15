@@ -84,7 +84,7 @@ websockets==17.0
 # live directive such as core.hooksPath, giving arbitrary code execution through git's hook
 # mechanism on any unrelated GitConfigParser write. 3.1.59 also closes CVE-2026-78675 and
 # CVE-2026-78677, and 3.1.58 closes CVE-2026-76218 / CVE-2026-76219 / CVE-2026-76220 /
-# CVE-2026-76222 + GHSA-jm78-9fvv-mhgr (all HIGH) - seven advisories cleared by this floor.
+# CVE-2026-76222 + GHSA-jm78-9fvv-mhgr (all HIGH) - eight advisories cleared by this floor.
 #
 # BE PRECISE ABOUT WHAT THIS LINE DOES, because it is easy to over-read: it changes no
 # resolution on any current build path. opal-common's `gitpython<4,>=3.1.32` is the only
@@ -118,8 +118,10 @@ websockets==17.0
 # be what separates them. What separates them is the cost of drift: websockets drift puts
 # an unvalidated MAJOR on the live OPAL pub/sub path (#329), and ddtrace/starlette drift
 # unbinds a VEX waiver PURL and reds the scout gate. GitPython has neither - no waiver,
-# nothing first-party imports it, and `<4` caps its drift to a PATCH inside 3.1.x, which
-# is a normal posture. Pinning it exactly would make this repo the owner of an upstream's
+# nothing first-party imports it. Be precise about what `<4` does bound: it admits 3.2.0
+# and anything else below 4.0, so it caps drift at a MAJOR, not at a patch inside 3.1.x -
+# verified with packaging's SpecifierSet. That is still the right posture for a package
+# nothing here calls; pinning it exactly would make this repo the owner of an upstream's
 # cadence for no security gain, against a package that shipped eight releases in the seven
 # weeks to 3.1.62. Keeping `<4` is not redundancy for its own sake either - it is our own
 # bound, so it still holds if opal-common ever relaxes to allow a 4.x major.

@@ -80,10 +80,19 @@ jobs:
         # the OPA binary's Go dependency versions, and it does not - those come from
         # permit-opa's go.sum (see permitio/permit-opa#49).
         #
-        # The Rust stages are untouched by this filter, which is not the same as saying
-        # they cache cleanly: `rust_planner`'s `COPY . .` also sees the regenerated
-        # tarball, so it and the final `cargo zigbuild` re-run every build regardless.
-        # What does still cache is `cargo chef cook`, keyed on recipe.json.
+        # The Rust stages are untouched by this filter, and in practice they barely cache at
+        # all: `rust_planner`'s `COPY . .` sees the regenerated tarball, so it and the final
+        # `cargo zigbuild` re-run every build. `cargo chef cook` re-runs too, despite being
+        # keyed on recipe.json - on run 34858998837 it was the single longest step at 404.6s.
+        # The likely cause is that no Cargo.lock is tracked (it is also .dockerignore'd), so
+        # `cargo chef prepare` resolves crates.io fresh each build and the lock embedded in
+        # recipe.json drifts. Do not budget this filter against a cached dependency compile.
+        #
+        # The only stage that DID cache on that run is `rust_chef` (#15-#17), whose
+        # `apk add musl-dev openssl-dev zig pkgconf perl make` is a package-resolving layer
+        # of exactly the class this filter exists to de-stale - outside the filter, and worth
+        # knowing about. Impact is limited because pdp-server vendors OpenSSL rather than
+        # linking that cached openssl-dev, so the staleness stays in the build toolchain.
         no-cache-filters: main
 
     - name: Build and push PDP image - (official release)

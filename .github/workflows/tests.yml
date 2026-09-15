@@ -87,7 +87,8 @@ jobs:
           # packages the release would not actually contain.
           #
           # Plural input on purpose - `no-cache-filter` is the buildx CLI flag, the action
-          # input is `no-cache-filters`, and an undeclared input is silently dropped.
+          # input is `no-cache-filters`, and an undeclared input is dropped (with an
+          # `Unexpected input(s)` warning annotation, which is easy to miss in a green run).
           # See PER-15358 and the long note in release.yml.
           no-cache-filters: main
 
@@ -249,7 +250,7 @@ jobs:
           # which are fixed only in x/crypto >=0.56.0, whose go.mod declares `go 1.26.0`.
           # Go 1.26 has been stable since 2026-02-10 (1.26.8 is current, and 1.27.0 is out)
           # - the blocker is local, not upstream. The OPA builder is still
-          # golang:1.25-bookworm (Dockerfile:57) and permit-opa's go.mod is `go 1.25.0`,
+          # golang:1.25-bookworm (the opa_build stage) and permit-opa's go.mod is `go 1.25.0`,
           # and the official golang images ship GOTOOLCHAIN=local so the toolchain cannot
           # move implicitly. Gated on PDP#334 plus a matching permit-opa change, not on Go.
           # See PER-15358.
