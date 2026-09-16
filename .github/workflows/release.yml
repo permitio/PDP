@@ -63,6 +63,47 @@ jobs:
         tags: permitio/pdp-v2:${{ github.event.release.tag_name }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
+        # Never serve the `main` stage from the GHA cache. Its cache key is the instruction
+        # text plus the parent layer, so when the base image digest has NOT moved but
+        # Alpine's package index has, a release cut later replays the old
+        # `apk update && apk upgrade` + `pip install` results and re-ships packages
+        # upstream has since patched. That is the shape of PER-15358: 0.9.14 froze
+        # libcrypto3 3.5.7-r0 on 2026-08-04 and Alpine published 3.5.8-r0 afterwards.
+        #
+        # NOTE the input is PLURAL. `no-cache-filter` (singular) is the buildx CLI flag;
+        # the action input is `no-cache-filters`, and an undeclared input is warned about
+        # and dropped - i.e. the singular spelling makes this silently inert.
+        #
+        # `opa_build` is deliberately NOT listed: `COPY custom* /custom` pulls in
+        # custom_opa.tar.gz, which the Pre-build step regenerates every run, so that stage
+        # already re-executes unconditionally. Listing it would imply this filter controls
+        # the OPA binary's Go dependency versions, and it does not - those come from
+        # permit-opa's go.sum (see permitio/permit-opa#49).
+        #
+        # The Rust stages are untouched by this filter, and in practice they barely cache at
+        # all: `rust_planner`'s `COPY . .` sees the regenerated tarball, so it and the final
+        # `cargo zigbuild` re-run every build. `cargo chef cook` re-runs too despite being
+        # keyed on recipe.json - 404.6s on tests.yml run 34858998837. The likely cause is
+        # that no Cargo.lock is tracked (it is also .dockerignore'd), so `cargo chef prepare`
+        # resolves crates.io fresh each build and the lock embedded in recipe.json drifts.
+        # Do not budget this filter against a cached dependency compile.
+        #
+        # READ THAT MEASUREMENT NARROWLY: it comes from a `pull_request` run of tests.yml
+        # built `--platform linux/amd64`. The rust stages are `--platform=$BUILDPLATFORM` so
+        # their cost carries over, but THIS step builds amd64+arm64, so opa_build and main
+        # are each built twice with the second leg under QEMU - and a tag ref restores
+        # different GHA caches than a PR ref. Do not read that run's cache profile, or any
+        # "longest step" ranking from it, as this step's.
+        #
+        # On that run `rust_chef` cached three of its four layers (#15-#17); #18
+        # `rustup target add` re-ran. Its `apk add musl-dev openssl-dev zig pkgconf perl make`
+        # is a package-resolving layer of exactly the class this filter exists to de-stale,
+        # sitting outside the filter. Impact is limited because pdp-server vendors OpenSSL
+        # (pdp-server/Cargo.toml) rather than linking that cached openssl-dev, so the
+        # staleness stays in the build toolchain and never reaches the shipped image. That
+        # also makes `openssl-dev` and `ENV OPENSSL_DIR=/usr` dead config; removing them is
+        # out of scope here and tracked separately under PER-15358.
+        no-cache-filters: main
 
     - name: Build and push PDP image - (official release)
       if: "!github.event.release.prerelease"
@@ -74,6 +115,10 @@ jobs:
         tags: permitio/pdp-v2:${{ github.event.release.tag_name }},permitio/pdp-v2:latest
         cache-from: type=gha
         cache-to: type=gha,mode=max
+        # See the pre-release step above: forces `apk upgrade` and `pip install` to
+        # re-resolve so a release can never republish a stale OS/dependency set.
+        # Plural input, and `main` only - both for the reasons documented there.
+        no-cache-filters: main
 
   update-pdp-api-ecs-service:
     needs: build-and-push-pdp

@@ -104,14 +104,47 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 #                                                             < 3.11.4, so 3.13 is out of it
 # PSF fixed these only on the 3.13/3.14/3.15 branches - there is no 3.10/3.11/3.12 backport -
 # so the vulnerable code really was present in 3.10.20 and an upgrade was the only fix.
-# CVE-2026-15308 (html.parser DoS) is NOT cleared by this bump: it is patched only in
-# 3.15.0b4 and NVD's range is < 3.15.0, so no released Python satisfies it. It is waived in
-# .docker/scout/pdp-v2.vex.json as unreachable (nothing in the image imports html.parser).
+# CVE-2026-15308 (html.parser CPU-exhaustion DoS) is now cleared too: it was waived here as
+# unreachable while it was patched only in 3.15.0b4, but CPython backported the fix and it
+# landed in 3.13.15 (also 3.14.7). The base tag floats, so the current build resolves
+# 3.13.15 and the waiver has been REMOVED from .docker/scout/pdp-v2.vex.json.
+# Do not drop below the patched floor for whichever branch the base resolves to: 3.13.15 on
+# the 3.13 line, 3.14.7 on 3.14. The apk layer below enforces exactly that, per branch -
+# a flat `>= (3,13,15)` would have passed 3.14.0 through 3.14.6, which are the versions the
+# line above says still lack the backport.
+#
+# Removing the CVE-2026-15308 waiver is NOT what enforces it. Scout indexes the interpreter
+# - `docker scout sbom` reports `pkg:generic/python@3.13.15` for this base - but it does not
+# match CPython advisories against it the way a CPE-based scanner does (see the NOTE in
+# tests.yml), and the gate is `pull_request`-only so a release never scans at all. Catching
+# a stale interpreter through a scanner needs a CPE-based one; that is the companion change
+# under PER-15358. The plain reason the waiver could go is simply that 3.13.15 carries the
+# fix.
+#
+# The check imports the C extension modules DIRECTLY - `_ssl`, `_hashlib`, `_decimal` and
+# friends rather than `ssl`, `hashlib`, `decimal` - and that is the point, not decoration.
+# `sys` is a builtin, so `import sys` alone loads no extension modules at all and a
+# version-only check would pass on an interpreter whose lib-dynload is unresolvable. But
+# the public wrappers are not reliable either: decimal.py and hashlib.py both fall back
+# silently to pure Python when their .so is missing, so importing them detects nothing,
+# while ssl/zlib/lzma/bz2/ctypes/pyexpat do propagate. Importing the underscore modules
+# removes that asymmetry. Between them these nine cover libssl, libcrypto, libz, liblzma,
+# libbz2, libffi, libuuid and lib-dynload itself - i.e. the `so:` deps the .python-rundeps
+# rework above could strip if its `grep '^so:'` list ever comes back short. Deliberately
+# NOT extended to readline/_curses/_gdbm: they guard libs the PDP never uses, and `_gdbm`
+# is absent from some perfectly good CPython builds, so requiring it would fail the build
+# for no security reason.
+#
+# It uses sys.exit rather than `assert`, which -O / PYTHONOPTIMIZE strips. A cached `main`
+# layer skips the check, but a cache hit implies an unchanged parent and so an unchanged
+# base digest, so the floor still holds; both workflows pass `no-cache-filters: main`
+# regardless. Note the check runs in this apk layer, before the `.build-deps` install and
+# removal around `pip install` further down - so it proves the interpreter survived the
+# sqlite surgery, not that it survives every later package mutation.
 #
 # The patch version floats deliberately (see the previous python:3.10-alpine3.22 base and
-# the rebuild-picks-it-up posture in PER-15532): when 3.13.15 ships it will clear
-# CVE-2026-15308 automatically and that waiver can then be dropped. Do not drop below
-# 3.13.14 - that is the floor for the fixes above.
+# the rebuild-picks-it-up posture in PER-15532). Note what that posture costs if nothing
+# ever rebuilds: see the apk note below.
 #
 # Python 3.10 also reaches end of life in October 2026, so this move was due regardless.
 FROM python:3.13-alpine3.23 AS main
@@ -129,6 +162,36 @@ RUN mkdir -p /app/backup && chmod -R 777 /app/backup
 # Build deps (build-base, *-dev) are installed and removed in the pip install
 # layer to avoid persisting binutils CVEs (CVE-2025-69649, CVE-2025-69650).
 #
+# `apk upgrade` here is the ONLY thing that keeps the OS package set current, and it is
+# only as fresh as the build that ran it. permitio/pdp-v2:0.9.14 was built 2026-08-04 and
+# pinned libcrypto3/libssl3 3.5.7-r0 + libuuid 2.41.4-r0 at that moment. Alpine 3.23 later
+# published openssl 3.5.8-r0 and util-linux 2.41.6-r1, so by 2026-09-09 a customer CPE scan
+# of the UNCHANGED published tag reported 12 CVEs / 21 findings - nine OpenSSL
+# (CVE-2026-14456, CVE-2026-14457, CVE-2026-18798, CVE-2026-54874, CVE-2026-63072,
+# CVE-2026-63073, CVE-2026-63075, CVE-2026-63076, CVE-2026-75803) and three util-linux.
+# Not one of them was a source defect: this Dockerfile was already correct, and a rebuild
+# with no edits produces 0 findings. The image was simply never rebuilt. See PER-15358.
+#
+# Two consequences, both load-bearing:
+#   1. Release builds MUST NOT serve this layer from cache. release.yml uses
+#      `cache-from: type=gha`, and the cache key is this instruction text plus the parent
+#      layer - so a release cut months later could replay the 2026-08-04 apk layer and
+#      re-ship the exact packages a customer just flagged. release.yml therefore passes
+#      `no-cache-filters: main` to force that stage to re-resolve on every release, and
+#      tests.yml passes the same value so the scanned image is not built on a stale
+#      package set either. That is the guarantee - NOT that the two images match. They
+#      are two independent fresh resolutions against the live Alpine/PyPI indexes,
+#      tests.yml builds linux/amd64 only while release.yml builds amd64+arm64, and the
+#      scout gate is `pull_request`-only so the release build is never the one scanned.
+#      Closing that last gap needs the gate to run on release events (PER-15358).
+#   2. A tag that is never rebuilt rots on its own, and no build-time gate can catch that:
+#      the docker-scout gate in tests.yml runs only on pull_request, so it scanned this
+#      image in July and could not possibly have seen CVEs disclosed in September.
+#      Detecting drift therefore REQUIRES re-scanning the PUBLISHED tags on a schedule.
+#      Deliberately phrased as a requirement, not a description: no workflow in this repo
+#      has a `schedule:` trigger, so nothing here does it yet. That is the job of the
+#      companion change tracked under PER-15358.
+#
 # The PDP never uses SQLite, but its FTS5/zipfile CVEs (CVE-2026-11822,
 # CVE-2026-11824, CVE-2025-70873) are still reported against sqlite-libs, which
 # the official python:alpine image pins via the .python-rundeps virtual package.
@@ -143,7 +206,8 @@ RUN --mount=type=cache,target=/var/cache/apk \
     apk add bash libffi libressl gcompat && \
     apk add --no-cache --virtual .python-rundeps-nosqlite \
         $(apk info -qR .python-rundeps | grep '^so:' | grep -v 'libsqlite3') && \
-    apk del .python-rundeps sqlite-libs
+    apk del .python-rundeps sqlite-libs && \
+    python3 -c "import sys, _ssl, _hashlib, _decimal, zlib, _lzma, _bz2, _ctypes, pyexpat, _uuid; v = sys.version_info[:3]; v >= {13: (3, 13, 15), 14: (3, 14, 7)}.get(v[1], (3, 15, 0)) or sys.exit('CPython %s is below the patched floor for its branch' % sys.version)"
 
 
 # Copy OPA binary from the build stage
