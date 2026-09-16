@@ -1,0 +1,154 @@
+# Dependabot version updates for the PDP.
+#
+# WHY: this repo had NO dependabot.yml at all. Dependabot *alerts* were on (and six of
+# them sat unread on main), but nothing was proposing upgrades, so every dependency and
+# every base image moved only when a human happened to touch it. That is the same
+# neglect that let permitio/pdp-v2:0.9.14 ship five-week-old OpenSSL to a customer
+# (PER-15358).
+#
+# Structure deliberately mirrors the agent-security repo's config - same schedule, same
+# cooldown/group/limit shape, same commit-message prefixes and labels - so the two repos
+# behave alike and reviewers do not have to learn two conventions.
+#
+# WHAT THIS DOES *NOT* DO, so nobody retires the image scanning on the strength of it:
+# Dependabot never looks inside a built image. It reads manifests. It cannot see the
+# `apk upgrade` package set, and it cannot tell you that an image ALREADY PUBLISHED has
+# picked up a CVE disclosed after its build - which is precisely how the 0.9.14 report
+# happened. That gap is covered by image-scan-published.yml, and the two are
+# complementary rather than alternatives. See docs/image-vulnerability-management.md.
+#
+# `cooldown` note: default-days is supported on all four ecosystems below, but the
+# semver-specific knobs (semver-major-days etc.) are only supported on semver-strict
+# ecosystems - pip and cargo here, NOT docker or github-actions. The cooldown is not
+# noise reduction, it is supply-chain defence: most malicious-release incidents are
+# caught within a week, and GitHub made a 3-day cooldown the platform default in July
+# 2026 for exactly that reason. Security updates are never delayed by cooldown.
+version: 2
+updates:
+  # Python dependencies (requirements.txt drives the image build)
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      # starlette and ddtrace are CAPPED BY OPAL, not by us: opal-common/opal-client
+      # 0.9.6 require `starlette<1` and `ddtrace<4,>=3.0.0`. Both are pinned exactly in
+      # requirements.txt so the OpenVEX/trivyignore waiver PURLs stay bound to a known
+      # version, and the CVEs that would be fixed by upgrading (starlette CVE-2026-48818
+      # / CVE-2026-54283, ddtrace CVE-2026-50271) are waived as unreachable instead.
+      #
+      # A Dependabot PR for either one is therefore unmergeable by construction - it
+      # would bump past OPAL's cap, break the resolve, and silently unbind the waivers.
+      # Ignoring them keeps the queue honest rather than accumulating PRs nobody can
+      # merge.
+      #
+      # Removal gate: drop these two entries the moment opal-common relaxes its caps.
+      # At that point also delete the exact pins in requirements.txt, the three
+      # .trivyignore.yaml entries, the matching OpenVEX statements, and the
+      # DD_TRACE_PROPAGATION_STYLE_EXTRACT override in the Dockerfile - they are one
+      # change, not five. See PER-15358.
+      - dependency-name: "starlette"
+      - dependency-name: "ddtrace"
+      # websockets is pinned exactly and bumped BY HAND on purpose. requirements.txt
+      # records why: during review of #329 the validated build shipped 16.1.1 and 17.0
+      # published hours later, so the next rebuild would have carried an unvalidated
+      # major straight into a release. The cooldown above narrows that window but does
+      # not close it, and this package sits on the OPAL pub/sub path that pdp-tester
+      # exercises end to end. Majors stay manual; minors and patches are fine.
+      - dependency-name: "websockets"
+        update-types: ["version-update:semver-major"]
+    commit-message:
+      prefix: "deps"
+      prefix-development: "deps-dev"
+    labels:
+      - "dependencies"
+
+  # Rust dependencies (pdp-server + watchdog workspace members)
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "deps"
+      prefix-development: "deps-dev"
+    labels:
+      - "dependencies"
+
+  # GitHub Actions versions
+  # Note: cooldown.semver-major-days is not supported for github-actions
+  # (Dependabot only supports it on semver-strict ecosystems like pip and cargo).
+  #
+  # There is real drift to clear here: release.yml pins actions/checkout@v3 two steps
+  # away from an actions/checkout@v4, and aws-actions/configure-aws-credentials@v1.6.1
+  # is several majors behind. Nothing was watching.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "deps"
+      prefix-development: "deps-dev"
+    labels:
+      - "dependencies"
+
+  # Docker base images
+  # Note: cooldown.semver-major-days is not supported for docker
+  # (Dependabot only supports it on semver-strict ecosystems like pip and cargo).
+  #
+  # This entry only earns its place because the Dockerfile now pins base images BY
+  # DIGEST. Against a floating tag like `python:3.13-alpine3.23`, Dependabot has
+  # nothing to propose when upstream rebuilds that tag in place - the tag string is
+  # already current - so the silent rebuild stays invisible. With `tag@sha256:...`,
+  # a rebuilt base becomes a digest-bump PR that CI actually validates. See the
+  # comment above the FROM lines in the Dockerfile.
+  #
+  # Daily, not weekly: this is the signal that was missing for 0.9.14, and a weekly
+  # cadence would have delayed it by up to six more days.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "daily"
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "deps"
+    labels:
+      - "dependencies"
+
+  # The offline-mode test image is built by hand, not by CI, so it rots unnoticed.
+  - package-ecosystem: "docker"
+    directory: "/test_offline_mode"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "deps"
+    labels:
+      - "dependencies"

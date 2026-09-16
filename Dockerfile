@@ -9,7 +9,7 @@ ARG OPA_BUILD=permit
 # (1) this stage will be run always on current arch
 # zigbuild & Cargo targets added
 
-FROM --platform=$BUILDPLATFORM rust:1.94-alpine AS rust_chef
+FROM --platform=$BUILDPLATFORM rust:1.94-alpine@sha256:77237dd363a0b127bb5ef532c2d64c0deb380b738e43a9c4bdac73398d6d0a08 AS rust_chef
 WORKDIR /app
 ENV PKGCONFIG_SYSROOTDIR=/
 RUN apk add --no-cache musl-dev openssl-dev zig pkgconf perl make
@@ -54,7 +54,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # OPA BUILD STAGE -----------------------------------
 # Build OPA from source or download precompiled binary
 # ---------------------------------------------------
-FROM golang:1.25-bookworm AS opa_build
+FROM golang:1.25-bookworm@sha256:3b4a11519ad929d1e1d261a12cff056f0c85b735253d7d861346b9c6f8b36437 AS opa_build
 
 COPY custom* /custom
 
@@ -106,8 +106,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # so the vulnerable code really was present in 3.10.20 and an upgrade was the only fix.
 # CVE-2026-15308 (html.parser CPU-exhaustion DoS) is now cleared too: it was waived here as
 # unreachable while it was patched only in 3.15.0b4, but CPython backported the fix and it
-# landed in 3.13.15 (also 3.14.7). The base tag floats, so the current build resolves
-# 3.13.15 and the waiver has been REMOVED from .docker/scout/pdp-v2.vex.json.
+# landed in 3.13.15 (also 3.14.7). The base digest below carries 3.13.15, so the waiver has
+# been REMOVED from .docker/scout/pdp-v2.vex.json.
 # Do not drop below the patched floor for whichever branch the base resolves to: 3.13.15 on
 # the 3.13 line, 3.14.7 on 3.14. The apk layer below enforces exactly that, per branch -
 # a flat `>= (3,13,15)` would have passed 3.14.0 through 3.14.6, which are the versions the
@@ -116,10 +116,10 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # Removing the CVE-2026-15308 waiver is NOT what enforces it. Scout indexes the interpreter
 # - `docker scout sbom` reports `pkg:generic/python@3.13.15` for this base - but it does not
 # match CPython advisories against it the way a CPE-based scanner does (see the NOTE in
-# tests.yml), and the gate is `pull_request`-only so a release never scans at all. Catching
-# a stale interpreter through a scanner needs a CPE-based one; that is the companion change
-# under PER-15358. The plain reason the waiver could go is simply that 3.13.15 carries the
-# fix.
+# tests.yml). The gate no longer skips releases - this change removes that condition - but
+# that closes a COVERAGE gap, not this one: catching a stale interpreter through a scanner
+# still needs a CPE-based one, which neither gate is. The plain reason the waiver could go
+# is simply that 3.13.15 carries the fix.
 #
 # The check imports the C extension modules DIRECTLY - `_ssl`, `_hashlib`, `_decimal` and
 # friends rather than `ssl`, `hashlib`, `decimal` - and that is the point, not decoration.
@@ -142,12 +142,30 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # removal around `pip install` further down - so it proves the interpreter survived the
 # sqlite surgery, not that it survives every later package mutation.
 #
-# The patch version floats deliberately (see the previous python:3.10-alpine3.22 base and
-# the rebuild-picks-it-up posture in PER-15532). Note what that posture costs if nothing
-# ever rebuilds: see the apk note below.
+# The patch version USED to float (see the previous python:3.10-alpine3.22 base and the
+# rebuild-picks-it-up posture in PER-15532). It no longer does - the digest below carries
+# 3.13.15 - because "a rebuild will pick it up" only holds if something rebuilds, and for
+# five weeks nothing did. See the pinning note below.
 #
 # Python 3.10 also reaches end of life in October 2026, so this move was due regardless.
-FROM python:3.13-alpine3.23 AS main
+# Base images are pinned by DIGEST, and Dependabot's docker ecosystem
+# (.github/dependabot.yml, daily) bumps them. The digest is the manifest-LIST digest, so
+# multi-arch is preserved - `docker buildx imagetools inspect <tag>` reports it, and
+# pinning a per-arch digest instead would break the linux/amd64 + linux/arm64 build.
+#
+# Why pin at all, when floating the tag sounds strictly fresher: upstream rebuilds these
+# tags IN PLACE. `python:3.13-alpine3.23` silently gained a new digest with patched
+# OpenSSL between 0.9.14's build and the customer's scan, and because the tag string
+# never changed there was nothing for anyone - human or bot - to notice. A floating tag
+# is only fresh at the instant of a build, and nothing was triggering builds. Pinning
+# inverts that: the drift arrives as a digest-bump PR that CI validates before it ships,
+# which is the signal that was missing (PER-15358).
+#
+# Do NOT hand-edit these digests to chase a CVE. Let the Dependabot PR do it, so the
+# change is reviewed and tested. `apk upgrade` still floats the Alpine package set at
+# build time, so pinning costs no package freshness on a rebuild - only the base layer
+# becomes deterministic.
+FROM python:3.13-alpine3.23@sha256:75f27d686432419c9d42420b2b9ef605868c7a0682a6be10a6601fad46c2df01 AS main
 
 WORKDIR /app
 
@@ -180,17 +198,17 @@ RUN mkdir -p /app/backup && chmod -R 777 /app/backup
 #      `no-cache-filters: main` to force that stage to re-resolve on every release, and
 #      tests.yml passes the same value so the scanned image is not built on a stale
 #      package set either. That is the guarantee - NOT that the two images match. They
-#      are two independent fresh resolutions against the live Alpine/PyPI indexes,
-#      tests.yml builds linux/amd64 only while release.yml builds amd64+arm64, and the
-#      scout gate is `pull_request`-only so the release build is never the one scanned.
-#      Closing that last gap needs the gate to run on release events (PER-15358).
+#      are two independent fresh resolutions against the live Alpine/PyPI indexes, and
+#      tests.yml builds linux/amd64 only while release.yml builds amd64+arm64. The gate
+#      now runs on release events too (this change removes the `pull_request`-only
+#      condition), so a release IS gated - but on that amd64 proxy build, not on the
+#      published multi-arch manifest. That residual gap is what the scheduled re-scan of
+#      the published tags covers (PER-15358).
 #   2. A tag that is never rebuilt rots on its own, and no build-time gate can catch that:
-#      the docker-scout gate in tests.yml runs only on pull_request, so it scanned this
-#      image in July and could not possibly have seen CVEs disclosed in September.
+#      the docker-scout gate scanned this image in July and could not possibly have seen
+#      CVEs disclosed in September, whatever events it runs on.
 #      Detecting drift therefore REQUIRES re-scanning the PUBLISHED tags on a schedule.
-#      Deliberately phrased as a requirement, not a description: no workflow in this repo
-#      has a `schedule:` trigger, so nothing here does it yet. That is the job of the
-#      companion change tracked under PER-15358.
+#      .github/workflows/image-scan-published.yml does that daily (PER-15358).
 #
 # The PDP never uses SQLite, but its FTS5/zipfile CVEs (CVE-2026-11822,
 # CVE-2026-11824, CVE-2025-70873) are still reported against sqlite-libs, which
