@@ -58,3 +58,17 @@ repos:
         pass_filenames: false
         types: [file, rust]
         language: system
+
+      - id: waiver-parity
+        name: Trivy/OpenVEX waiver parity
+        description: >-
+          .trivyignore.yaml and .docker/scout/pdp-v2.vex.json must waive the same CVEs,
+          and every Trivy waiver must carry an unexpired expired_at.
+        entry: python .github/scripts/check_waiver_parity.py
+        # `language: python` (not `system`): the script needs PyYAML, which a developer's
+        # system interpreter is not guaranteed to have. pre-commit builds an isolated env
+        # from additional_dependencies, so the hook works on a bare checkout.
+        language: python
+        additional_dependencies: ["pyyaml==6.0.3"]
+        pass_filenames: false
+        files: ^(\.trivyignore\.yaml|\.docker/scout/pdp-v2\.vex\.json)$

@@ -21,6 +21,23 @@
 #              fix is a pin, a base-image move, a dependency drop, or a VEX waiver.
 #
 # Waivers come from .trivyignore.yaml, which mirrors .docker/scout/pdp-v2.vex.json.
+#
+# TWO SCANNERS, TWO COVERAGE SETS
+# Trivy runs as a matrix over `latest` plus the newest release tag. Docker Scout runs in its
+# own `scout-latest` job over `latest` only. That asymmetry is deliberate and is forced by
+# how each tool waives: .trivyignore.yaml keys on CVE id, so it applies to any tag, while
+# .docker/scout/pdp-v2.vex.json binds every waiver to a product PURL and therefore only to
+# the tags it names. `latest` is a fixed string a static VEX doc can name; release tags
+# rotate with every release and cannot be. Scanning a release tag with Scout would drop all
+# seven waivers and paint the run red on documented non-issues, which is also why Scout is a
+# separate job rather than a third leg of the Trivy matrix.
+#
+# WHERE THE RESULT GOES
+# Code scanning gets the SARIF, the run goes red, and Slack gets ONE aggregated message
+# covering every tag - but only when something is not clean. A daily "all clear" ping is
+# how a channel gets muted, which is the same inattention PER-15358 was found through.
+# Scout reports on its own path, for the same reason a second scanner exists at all: the
+# two disagree, and an aggregate that waits for both is an alert that arrives late.
 name: Published image CVE watch
 
 on:
@@ -53,6 +70,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           INPUT_TAGS: ${{ inputs.tags }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           if [ -n "${INPUT_TAGS:-}" ]; then
@@ -62,7 +80,7 @@ jobs:
             # release tag is what a customer who pinned a version is running - 0.9.14 was
             # reported by a customer pinned to a tag that was no longer `latest`, so
             # scanning only `latest` would have missed it.
-            newest="$(gh release list --repo "${{ github.repository }}" --limit 30 \
+            newest="$(gh release list --repo "$REPO" --limit 30 \
                         --exclude-drafts --exclude-pre-releases \
                         --json tagName --jq '.[0].tagName // empty')"
             tags="latest ${newest}"
@@ -87,20 +105,27 @@ jobs:
       contents: read
       # required to upload the SARIF report to code scanning
       security-events: write
-      # required to file / comment on the rolling tracking issue
-      issues: write
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.resolve-tags.outputs.matrix) }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
 
       # Scans the published manifest, NOT a local build - that is the whole point.
       # exit-code stays 0 here so the classify step below can produce a verdict; the
       # workflow's pass/fail decision is made there.
+      #
+      # Deliberately WITHOUT `if: ${{ !cancelled() }}`, unlike every scan/report step after
+      # it. The only step that can precede it is the checkout, and running Trivy without a
+      # checkout means running it without .trivyignore.yaml - every waived CVE would come
+      # back as a finding and the tag would be classified on a report built from a
+      # half-configured scan. Skipping is the correct outcome there; the guards below exist
+      # to stop a failure of THIS step from silently swallowing the verdict.
       - name: Trivy scan published image
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: permitio/pdp-v2:${{ matrix.tag }}
           scanners: vuln
@@ -117,7 +142,11 @@ jobs:
           exit-code: '0'
 
       - name: Trivy scan published image (SARIF for code scanning)
-        uses: aquasecurity/trivy-action@v0.36.0
+        # Load-bearing, not defensive: a step with no `if:` is skipped once anything
+        # earlier in the job has failed, and a skipped SARIF upload leaves code scanning
+        # showing yesterday's answer for this tag.
+        if: ${{ !cancelled() }}
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: permitio/pdp-v2:${{ matrix.tag }}
           scanners: vuln
@@ -133,58 +162,356 @@ jobs:
 
       - name: Upload SARIF report
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@faaca9a8f6edddba5725ffe5adefdab6669a2eca # v3.38.0
         with:
           sarif_file: trivy-${{ matrix.tag }}.sarif
           category: published-image-${{ matrix.tag }}
 
+      # Exits 2 when the report is missing, empty or unparseable, which turns this job red
+      # instead of reading a zero-byte report as CLEAN. `--slack-output` is written on that
+      # path as well, so the digest job below always has something true to say.
       - name: Classify findings (REBUILD vs SOURCE)
         id: classify
+        # Same reason as the SARIF step above, and the more important half of it: with no
+        # guard, a failed Trivy step skips classify, which leaves steps.classify.outputs.
+        # verdict empty. The digest job reads an absent verdict as ERROR, so the run still
+        # goes red - but this tag loses its triage verdict and its Slack line entirely, and
+        # nobody learns whether it was REBUILD or SOURCE. Running here instead makes the
+        # script exit 2 on the unreadable report and say so out loud.
+        if: ${{ !cancelled() }}
+        env:
+          TAG: ${{ matrix.tag }}
         run: |
           set -euo pipefail
           python3 .github/scripts/classify_image_cves.py \
-            --report "trivy-${{ matrix.tag }}.json" \
-            --tag "${{ matrix.tag }}" \
+            --report "trivy-${TAG}.json" \
+            --tag "${TAG}" \
             --summary "$GITHUB_STEP_SUMMARY" \
-            --github-output "$GITHUB_OUTPUT"
+            --github-output "$GITHUB_OUTPUT" \
+            --slack-output "slack-${TAG}.txt"
 
-      - name: Upload raw scan report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: trivy-report-${{ matrix.tag }}
-          path: trivy-${{ matrix.tag }}.json
-          retention-days: 30
-
-      - name: Open or update tracking issue
-        if: steps.classify.outputs.verdict != 'CLEAN'
+      # Matrix legs cannot aggregate job outputs - each leg writes its own copy and the
+      # last one to finish wins - so every leg leaves its verdict on disk and the digest
+      # job downstream merges them into a single Slack message.
+      - name: Record this tag's verdict for the digest
+        if: ${{ !cancelled() }}
         env:
-          GH_TOKEN: ${{ github.token }}
           TAG: ${{ matrix.tag }}
           VERDICT: ${{ steps.classify.outputs.verdict }}
         run: |
           set -euo pipefail
-          title="[image-cve] permitio/pdp-v2:${TAG} has CRITICAL/HIGH findings"
-          body="$(cat cve-issue-body.md)"
-          # One rolling issue per tag, so a daily schedule comments instead of filing a
-          # new issue every morning.
-          existing="$(gh issue list --repo "${{ github.repository }}" \
-                        --state open --search "\"$title\" in:title" \
-                        --json number --jq '.[0].number // empty')"
-          if [ -n "$existing" ]; then
-            gh issue comment "$existing" --repo "${{ github.repository }}" --body "$body"
-            echo "Commented on existing issue #$existing"
-          else
-            # No --label: the repo has no `security` label and gh hard-fails on an
-            # unknown one. The "[image-cve]" title prefix is what the dedupe search
-            # above matches on, so it is the identifier that has to stay stable.
-            gh issue create --repo "${{ github.repository }}" \
-              --title "$title" --body "$body"
-            echo "Filed a new issue"
+          # An empty verdict means the classify step never got far enough to write one:
+          # the Trivy step failed, python blew up, the runner died. Fail closed - an
+          # absent verdict is ERROR, never CLEAN.
+          verdict="${VERDICT:-ERROR}"
+          line="slack-${TAG}.txt"
+          if [ ! -s "$line" ]; then
+            printf '%s' "permitio/pdp-v2:${TAG} -> ERROR (the scan produced no summary)" > "$line"
           fi
+          # Line 1 is the verdict token; every line after it is the Slack body.
+          {
+            printf '%s\n' "$verdict"
+            cat "$line"
+            printf '\n'
+          } > "verdict-${TAG}.txt"
+
+      - name: Upload raw scan report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: trivy-report-${{ matrix.tag }}
+          path: |
+            trivy-${{ matrix.tag }}.json
+            verdict-${{ matrix.tag }}.txt
+          retention-days: 30
 
       - name: Fail if findings remain
         if: steps.classify.outputs.verdict != 'CLEAN'
+        env:
+          TAG: ${{ matrix.tag }}
+          VERDICT: ${{ steps.classify.outputs.verdict }}
         run: |
-          echo "::error::permitio/pdp-v2:${{ matrix.tag }} -> ${{ steps.classify.outputs.verdict }}. See the job summary."
+          set -euo pipefail
+          echo "::error::permitio/pdp-v2:${TAG} -> ${VERDICT}. See the job summary."
           exit 1
+
+  digest:
+    # ONE message for the whole run, assembled from the per-tag verdict files, because
+    # `needs.scan.outputs.*` on a matrix job carries one arbitrary leg's values.
+    needs: scan
+    # Not `success()`: the run worth reporting is precisely the one where a leg went red.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      notify: ${{ steps.build.outputs.notify }}
+      status: ${{ steps.build.outputs.status }}
+      summary: ${{ steps.build.outputs.summary }}
+    steps:
+      - name: Download the per-tag verdicts
+        # A run where every scan leg died before uploading downloads nothing, and
+        # download-artifact treats "no artifact matched" as an error. That is not a
+        # failure of THIS job - it is the loudest outcome there is, and the step below
+        # turns the empty directory into a "nothing was cleared" notification.
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: trivy-report-*
+          merge-multiple: true
+          path: verdicts
+
+      - name: Build the aggregated digest
+        id: build
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(verdicts/verdict-*.txt)
+
+          clean=0
+          dirty=0
+          status=ok
+          bodies=""
+
+          if [ "${#files[@]}" -eq 0 ]; then
+            # Silence must never read as clean.
+            notify=true
+            status=fail
+            message='No per-tag verdict was produced, so NO published tag has been cleared. The scan job failed before it could classify anything.'
+          else
+            for file in "${files[@]}"; do
+              verdict="$(head -n 1 "$file")"
+              body="$(tail -n +2 "$file")"
+              case "$verdict" in
+                CLEAN)
+                  clean=$((clean + 1))
+                  ;;
+                REBUILD)
+                  # Answered by cutting a release, so it is a warning, not a failure.
+                  dirty=$((dirty + 1))
+                  if [ "$status" != fail ]; then
+                    status=warn
+                  fi
+                  ;;
+                *)
+                  # SOURCE needs a person; ERROR means we do not know. Both are failures.
+                  dirty=$((dirty + 1))
+                  status=fail
+                  ;;
+              esac
+              bodies="$(printf '%s\n• %s' "$bodies" "$body")"
+            done
+            if [ "$dirty" -gt 0 ]; then
+              notify=true
+            else
+              notify=false
+            fi
+            message="$(printf '%d published tag(s) scanned: %d clean, %d not clean.\n%s' \
+                         "${#files[@]}" "$clean" "$dirty" "$bodies")"
+          fi
+
+          echo "$message"
+
+          # Random heredoc delimiter: the body carries third-party text (CVE ids, package
+          # names), and a fixed delimiter appearing inside that text would let it forge
+          # step outputs.
+          delim="PDP_DIGEST_$(openssl rand -hex 16)"
+          {
+            printf 'notify=%s\n' "$notify"
+            printf 'status=%s\n' "$status"
+            printf 'summary<<%s\n%s\n%s\n' "$delim" "$message" "$delim"
+          } >> "$GITHUB_OUTPUT"
+
+  notify:
+    needs: digest
+    # Speak up when a tag is not clean, and when the digest job itself could not run - a
+    # missing digest is not evidence of a clean scan. A fully CLEAN run stays silent.
+    if: ${{ !cancelled() && (needs.digest.result != 'success' || needs.digest.outputs.notify == 'true') }}
+    uses: ./.github/workflows/notify-slack.yml
+    with:
+      subject: daily published-image scan
+      # `||` falls through on an empty string, which is what an unsuccessful digest job
+      # leaves behind. The notifier rejects an empty status outright, so these fallbacks
+      # are what keeps that path a message rather than a second failure.
+      status: ${{ needs.digest.outputs.status || 'fail' }}
+      summary: ${{ needs.digest.outputs.summary || 'The daily published-image scan produced no digest, so nothing has been cleared. See the run log.' }}
+    secrets:
+      # Named rather than `inherit`: the notifier needs exactly this one secret, and
+      # `inherit` hands a called workflow every secret the repo has. Naming a secret that
+      # does not exist yet is legal - it arrives as the empty string and the notifier is
+      # a green no-op until someone creates it.
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  # Docker Scout's periodic leg, mirroring the report+gate pair in tests.yml. It exists for
+  # the same reason the build-time job runs two scanners: on the published 0.9.14 image
+  # Scout was clean while Trivy found 31 CRITICAL/HIGH, and the failure modes run the other
+  # way too - Scout reads Docker's own advisory feed and applies the OpenVEX reachability
+  # statements, which Trivy cannot express.
+  #
+  # `latest` ONLY - see TWO SCANNERS, TWO COVERAGE SETS at the top of this file. Release
+  # tags stay with Trivy.
+  #
+  # It does NOT feed the aggregated digest below: that job merges per-tag Trivy verdicts,
+  # and a CRITICAL in the published image should reach Slack the moment either scanner sees
+  # it rather than waiting on the other to finish.
+  scout-latest:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # required to upload the SARIF report to code scanning
+      security-events: write
+    outputs:
+      summary: ${{ steps.summarise.outputs.summary }}
+    steps:
+      - name: Checkout code
+        # The OpenVEX doc the gate below reads lives in this repo, so the checkout is not
+        # optional here: without it `vex-location` resolves to nothing and all seven
+        # waivers stop suppressing.
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Login to Docker Hub
+        # Scout resolves advisories through the Docker Scout API, which wants a Docker Hub
+        # identity even for a public image - the same login tests.yml performs before its
+        # Scout steps. DOCKERHUB_USERNAME and DOCKERHUB_TOKEN are repository-level secrets,
+        # not environment-scoped, so a scheduled run receives them exactly as a PR run does.
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker Scout CVE report (all severities)
+        # Guarded for the same reason every scan/report step in this file is: a step with no
+        # `if:` is skipped once anything earlier in the job has failed, and a skipped report
+        # leaves code scanning showing yesterday's answer for this image.
+        if: ${{ !cancelled() }}
+        uses: docker/scout-action@7c6b6c3f7844478ace1ffd4e7aef649053d1f87d # v1.24.0
+        with:
+          command: cves
+          # `registry://`, NOT the `local://` that tests.yml uses. There is no local image
+          # store on a scheduled run - nothing was built or loaded - so `local://` cannot
+          # resolve, and the bare `image://` default would try the local store first and
+          # only then fall back. `registry://` says what is meant: read the published
+          # manifest that customers actually pull.
+          image: registry://permitio/pdp-v2:latest
+          exit-code: false
+          # All severities, NO VEX filtering, on purpose: this SARIF is what code scanning
+          # gets, where a waived CVE should still be visible as a tracked, explained alert.
+          # It is deliberately NOT the file the Slack summary reads - see the gate below.
+          sarif-file: scout-latest-report.sarif
+          summary: true
+          # There is no PR on a scheduled run.
+          write-comment: false
+
+      - name: Docker Scout CVE gate (critical and high)
+        id: scout-gate
+        # Load-bearing, not defensive. Without it a failed report step skips the gate, and a
+        # skipped gate is indistinguishable from a passing one at a glance - the absence of
+        # this guard has already cost this repo a silent miss.
+        if: ${{ !cancelled() }}
+        uses: docker/scout-action@7c6b6c3f7844478ace1ffd4e7aef649053d1f87d # v1.24.0
+        with:
+          command: cves
+          image: registry://permitio/pdp-v2:latest
+          only-severities: critical,high
+          exit-code: true
+          # THE file the summary step reads, and it has to be this one rather than the
+          # report SARIF above, because only this step applies the OpenVEX waivers: the
+          # report's SARIF still contains all seven waived CVEs at critical/high, so
+          # counting it would alert on known non-issues every single day.
+          sarif-file: scout-latest-gate.sarif
+          summary: true
+          write-comment: false
+          # Accept CVEs marked not_affected in .docker/scout/pdp-v2.vex.json. Every
+          # statement there names BOTH pkg:docker/permitio/pdp-v2@next and
+          # pkg:docker/permitio/pdp-v2@latest; scout matches products on the full PURL
+          # string, so pointing this step at any other tag without extending the doc first
+          # drops all seven waivers silently.
+          vex-location: .docker/scout
+          only-vex-affected: true
+          # REQUIRED: scout only *applies* VEX statements whose author matches its
+          # accept-list, which defaults to `<.*@docker.com>`. Without this our statements
+          # are displayed ("VEX: not affected") but NOT suppressed. Must match the `author`
+          # field in pdp-v2.vex.json.
+          vex-author: Permit.io
+
+      - name: Upload SARIF report
+        # `hashFiles` is empty when the report step produced no file at all. Handing
+        # upload-sarif a missing path fails the step, which would paint this job red for
+        # the wrong reason and bury whatever actually went wrong underneath it.
+        if: ${{ !cancelled() && hashFiles('scout-latest-report.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@faaca9a8f6edddba5725ffe5adefdab6669a2eca # v3.38.0
+        with:
+          sarif_file: scout-latest-report.sarif
+          # Distinct from the Trivy categories (`published-image-<tag>`), so the two
+          # scanners' alerts coexist in code scanning instead of overwriting each other.
+          category: published-image-scout-latest
+
+      - name: Summarise the Scout verdict for Slack
+        id: summarise
+        if: ${{ !cancelled() }}
+        env:
+          GATE_OUTCOME: ${{ steps.scout-gate.outcome }}
+          IMAGE: permitio/pdp-v2:latest
+        run: |
+          set -euo pipefail
+
+          findings=''
+          if jq -e . scout-latest-gate.sarif > /dev/null 2>&1; then
+            findings="$(jq '[.runs[].results[]?] | length' scout-latest-gate.sarif)"
+          fi
+
+          if [ -z "$findings" ]; then
+            # No parseable report. Fail closed - silence is not evidence of a clean image.
+            message="Docker Scout produced no readable report for ${IMAGE} (gate outcome: ${GATE_OUTCOME:-skipped}), so the published image has NOT been cleared. See the run log."
+          elif [ "$findings" -gt 0 ]; then
+            # Rule ids come from a third party. Keep only strings that look like a CVE or
+            # GHSA id, so nothing in the scan output can shape the Slack message or forge a
+            # step output below. `|| true` because grep exits 1 on no match and head can
+            # SIGPIPE it, either of which would kill the step under `pipefail`.
+            ids="$(jq -r '[.runs[].results[]?.ruleId] | unique | .[]' scout-latest-gate.sarif \
+                     | grep -E '^(CVE|GHSA)-[A-Za-z0-9.-]+$' | head -n 20 \
+                     | paste -sd ',' - | sed 's/,/, /g' || true)"
+            # The count is authoritative; the id list is deduplicated, filtered and capped,
+            # so it is named as a sample rather than presented as the whole finding set.
+            message="Docker Scout found ${findings} unwaived CRITICAL/HIGH finding(s) in ${IMAGE}. Up to 20 recognised ids: ${ids:-none recognised, see code scanning}. Fix by upgrading the package, or - only with a written reachability argument - waive the CVE in BOTH .trivyignore.yaml and .docker/scout/pdp-v2.vex.json. See docs/image-vulnerability-management.md."
+          elif [ "$GATE_OUTCOME" != 'success' ]; then
+            # Zero findings but a non-zero exit is not a pass: the gate failed for some
+            # other reason (registry, API, auth) and knows nothing about the image.
+            message="Docker Scout reported no finding for ${IMAGE} but its gate did not succeed (outcome: ${GATE_OUTCOME:-skipped}), so the published image has NOT been cleared. See the run log."
+          else
+            # Reached only when the gate itself passed. This summary is still sent when the
+            # job is red, because a later step can fail after the gate - and then this exact
+            # sentence is the useful one: it says the failure was not a CVE finding.
+            message="Docker Scout's CVE gate found no unwaived CRITICAL or HIGH CVE in ${IMAGE}; anything red in this run happened after the gate. See the run log."
+          fi
+
+          echo "$message"
+
+          # The message is built only from a count, fixed strings and ids filtered to
+          # ^(CVE|GHSA)-[A-Za-z0-9.-]+$, so it cannot contain a newline and needs no
+          # heredoc delimiter.
+          printf 'summary=%s\n' "$message" >> "$GITHUB_OUTPUT"
+
+  notify-scout:
+    needs: scout-latest
+    # Speak up as soon as Scout goes red, without waiting for the Trivy digest. A job that
+    # did not succeed is itself the alert, so a missing summary still sends a message.
+    if: ${{ !cancelled() && needs.scout-latest.result != 'success' }}
+    uses: ./.github/workflows/notify-slack.yml
+    with:
+      subject: published-image scan (Docker Scout, latest)
+      # Literal `fail`, not a value carried out of the job: this job only runs when
+      # scout-latest did NOT succeed, so there is no outcome it could report as `ok` or
+      # `warn`. The summary step exports the body and nothing else for exactly that reason
+      # - a status derived from the gate alone would say "ok" for a job that went red after
+      # the gate.
+      status: fail
+      summary: ${{ needs.scout-latest.outputs.summary || 'The Docker Scout scan of permitio/pdp-v2:latest produced no summary, so the published image has not been cleared. See the run log.' }}
+    secrets:
+      # Named rather than `inherit`, for the same reason as the Trivy `notify` job above
+      # and because zizmor's `secrets-inherit` audit flags the `inherit` form outright:
+      # this repo holds DOCKERHUB_TOKEN, CLONE_REPO_TOKEN, KUBE_CONFIG and the AWS role,
+      # none of which the notifier has any business seeing.
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
