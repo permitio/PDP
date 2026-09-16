@@ -108,24 +108,39 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # unreachable while it was patched only in 3.15.0b4, but CPython backported the fix and it
 # landed in 3.13.15 (also 3.14.7). The base tag floats, so the current build resolves
 # 3.13.15 and the waiver has been REMOVED from .docker/scout/pdp-v2.vex.json.
-# Do not drop below 3.13.15 - that is the floor for every fix named above. The apk layer
-# below enforces it, because nothing else does. Removing the CVE-2026-15308 waiver is NOT
-# what enforces it, for three independent reasons: scout reads packages and never reports
-# the CPython interpreter at all (see the NOTE in tests.yml - run 34620527942 lists 15
-# findings across 6 packages, apk/golang/pypi, and no CPython entry of any kind); the gate
-# is `pull_request`-only, so a release never scans; and the removed waiver bound its
-# subcomponent to `pkg:generic/python`, which is not a PURL scout emits, so it was almost
-# certainly suppressing nothing to begin with. Catching a stale interpreter through a
-# scanner needs a CPE-based one - that is the companion change under PER-15358.
+# Do not drop below the patched floor for whichever branch the base resolves to: 3.13.15 on
+# the 3.13 line, 3.14.7 on 3.14. The apk layer below enforces exactly that, per branch -
+# a flat `>= (3,13,15)` would have passed 3.14.0 through 3.14.6, which are the versions the
+# line above says still lack the backport.
 #
-# The check imports ssl/hashlib/zlib/lzma/bz2/ctypes/pyexpat/decimal BEFORE testing the
-# version, and that is the point, not decoration: `sys` is a builtin, so `import sys` alone
-# loads no extension modules at all and a version-only check would pass on an interpreter
-# whose entire lib-dynload is unresolvable - precisely what the .python-rundeps surgery
-# above produces if the `so:`-derived list ever comes back short. It uses sys.exit rather
-# than `assert`, which -O / PYTHONOPTIMIZE strips. A cached `main` layer skips the check,
-# but a cache hit implies an unchanged parent and so an unchanged base digest, so the floor
-# still holds; both workflows pass `no-cache-filters: main` regardless.
+# Removing the CVE-2026-15308 waiver is NOT what enforces it. Scout indexes the interpreter
+# - `docker scout sbom` reports `pkg:generic/python@3.13.15` for this base - but it does not
+# match CPython advisories against it the way a CPE-based scanner does (see the NOTE in
+# tests.yml), and the gate is `pull_request`-only so a release never scans at all. Catching
+# a stale interpreter through a scanner needs a CPE-based one; that is the companion change
+# under PER-15358. The plain reason the waiver could go is simply that 3.13.15 carries the
+# fix.
+#
+# The check imports the C extension modules DIRECTLY - `_ssl`, `_hashlib`, `_decimal` and
+# friends rather than `ssl`, `hashlib`, `decimal` - and that is the point, not decoration.
+# `sys` is a builtin, so `import sys` alone loads no extension modules at all and a
+# version-only check would pass on an interpreter whose lib-dynload is unresolvable. But
+# the public wrappers are not reliable either: decimal.py and hashlib.py both fall back
+# silently to pure Python when their .so is missing, so importing them detects nothing,
+# while ssl/zlib/lzma/bz2/ctypes/pyexpat do propagate. Importing the underscore modules
+# removes that asymmetry. Between them these nine cover libssl, libcrypto, libz, liblzma,
+# libbz2, libffi, libuuid and lib-dynload itself - i.e. the `so:` deps the .python-rundeps
+# rework above could strip if its `grep '^so:'` list ever comes back short. Deliberately
+# NOT extended to readline/_curses/_gdbm: they guard libs the PDP never uses, and `_gdbm`
+# is absent from some perfectly good CPython builds, so requiring it would fail the build
+# for no security reason.
+#
+# It uses sys.exit rather than `assert`, which -O / PYTHONOPTIMIZE strips. A cached `main`
+# layer skips the check, but a cache hit implies an unchanged parent and so an unchanged
+# base digest, so the floor still holds; both workflows pass `no-cache-filters: main`
+# regardless. Note the check runs in this apk layer, before the `.build-deps` install and
+# removal around `pip install` further down - so it proves the interpreter survived the
+# sqlite surgery, not that it survives every later package mutation.
 #
 # The patch version floats deliberately (see the previous python:3.10-alpine3.22 base and
 # the rebuild-picks-it-up posture in PER-15532). Note what that posture costs if nothing
@@ -192,7 +207,7 @@ RUN --mount=type=cache,target=/var/cache/apk \
     apk add --no-cache --virtual .python-rundeps-nosqlite \
         $(apk info -qR .python-rundeps | grep '^so:' | grep -v 'libsqlite3') && \
     apk del .python-rundeps sqlite-libs && \
-    python3 -c "import sys, ssl, hashlib, zlib, lzma, bz2, ctypes, pyexpat, decimal; sys.version_info[:3] >= (3, 13, 15) or sys.exit('CPython %s is below the 3.13.15 floor' % sys.version)"
+    python3 -c "import sys, _ssl, _hashlib, _decimal, zlib, _lzma, _bz2, _ctypes, pyexpat, _uuid; v = sys.version_info[:3]; v >= {13: (3, 13, 15), 14: (3, 14, 7)}.get(v[1], (3, 15, 0)) or sys.exit('CPython %s is below the patched floor for its branch' % sys.version)"
 
 
 # Copy OPA binary from the build stage
