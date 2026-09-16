@@ -23,19 +23,20 @@ vulnerabilities:
   # turn a documented non-issue into a surprise gate failure.
   - id: CVE-2026-78662
     statement: >-
-      not_affected / vulnerable_code_not_in_execute_path. SSH mux connection-deadlock
+      not_affected / vulnerable_code_not_present. SSH mux connection-deadlock
       DoS. golang.org/x/crypto/ssh is NOT linked into /app/bin/opa - `go list -deps
       ./cmd/opa` in permit-opa resolves only cryptobyte, chacha20(+poly1305), pbkdf2,
       curve25519, blake2b, salsa20, nacl/*, hkdf and sha3 - and the PDP speaks no SSH.
-      Fixed only in x/crypto >= 0.56.0, which requires go >= 1.26.0; Go 1.26 is not
-      released. See .docker/scout/pdp-v2.vex.json and permitio/permit-opa#49.
+      Fixed only in x/crypto >= 0.56.0, whose go.mod declares `go 1.26.0`; the blocker
+      is the golang:1.25-bookworm builder and permit-opa's own `go 1.25.0`, not Go
+      itself. See .docker/scout/pdp-v2.vex.json and permitio/permit-opa#49.
     expired_at: 2026-12-31
   - id: CVE-2026-56855
     statement: >-
-      not_affected / vulnerable_code_not_in_execute_path. Same package, same evidence
+      not_affected / vulnerable_code_not_present. Same package, same evidence
       as CVE-2026-78662: crafted post-establishment SSH channel messages deadlock the
       connection, in code that is never linked into the binary. Fixed only in
-      x/crypto >= 0.56.0 (requires go >= 1.26.0, unreleased).
+      x/crypto >= 0.56.0 (go.mod declares `go 1.26.0`; the blocker is local, not Go).
       See .docker/scout/pdp-v2.vex.json and permitio/permit-opa#49.
     expired_at: 2026-12-31
   # starlette is capped <1 by opal-common/opal-client 0.9.6 (and further to
