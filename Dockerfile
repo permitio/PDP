@@ -54,7 +54,26 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # OPA BUILD STAGE -----------------------------------
 # Build OPA from source or download precompiled binary
 # ---------------------------------------------------
-FROM golang:1.25-bookworm AS opa_build
+# Go 1.26 builder (was golang:1.25-bookworm), landing AHEAD of permit-opa moving its
+# `go` directive to 1.26. That move is forced by golang.org/x/crypto >= 0.56.0 - the
+# version that clears CVE-2026-78662 / CVE-2026-56855 (x/crypto/ssh), waived today in
+# .docker/scout/pdp-v2.vex.json - whose own go.mod declares `go 1.26.0`.
+#
+# The order only works one way. tests.yml and release.yml check out
+# permitio/permit-opa at `ref: main`, unpinned, so a permit-opa merge reaches the very
+# next PDP build. The official golang images set `ENV GOTOOLCHAIN=local`, so a 1.25
+# builder facing a `go 1.26` module does not fetch a newer toolchain - it hard-fails:
+#
+#   go: go.mod requires go >= 1.26.0 (running go 1.25.x; GOTOOLCHAIN=local)
+#
+# and build-pdp-image breaks on every PR, every push to main and every release until
+# this lands. A 1.26 builder compiling today's `go 1.25.0` module is forward-compatible.
+#
+# The patch version floats with the tag (it serves go1.26.8 today); don't pin below
+# 1.26.6, the first 1.26 release with the crypto/tls fix for GO-2026-6090. The binary
+# is CGO_ENABLED=0 (below), so the builder's glibc does not reach the image. PER-16045 (first proposed in the closed
+# PDP#334, PER-15358).
+FROM golang:1.26-bookworm AS opa_build
 
 COPY custom* /custom
 
