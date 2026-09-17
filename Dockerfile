@@ -55,25 +55,37 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # Build OPA from source or download precompiled binary
 # ---------------------------------------------------
 # Go 1.26 builder (was golang:1.25-bookworm), landing AHEAD of permit-opa moving its
-# `go` directive to 1.26. That move is forced by golang.org/x/crypto >= 0.56.0 - the
-# version that clears CVE-2026-78662 / CVE-2026-56855 (x/crypto/ssh), waived today in
-# .docker/scout/pdp-v2.vex.json - whose own go.mod declares `go 1.26.0`.
+# `go` directive to 1.26 (permitio/permit-opa#52, stacked on #51). That move is forced
+# by golang.org/x/crypto >= 0.56.0 - the version that clears CVE-2026-78662 /
+# CVE-2026-56855 (x/crypto/ssh), waived today in .docker/scout/pdp-v2.vex.json - whose
+# own go.mod declares `go 1.26.0`.
 #
 # The order only works one way. tests.yml and release.yml check out
 # permitio/permit-opa at `ref: main`, unpinned, so a permit-opa merge reaches the very
-# next PDP build. The official golang images set `ENV GOTOOLCHAIN=local`, so a 1.25
-# builder facing a `go 1.26` module does not fetch a newer toolchain - it hard-fails:
+# next PDP build. With GOTOOLCHAIN=local (set below; the official golang images set it
+# too), a 1.25 builder facing a `go 1.26` module does not fetch a newer toolchain - it
+# hard-fails:
 #
 #   go: go.mod requires go >= 1.26.0 (running go 1.25.x; GOTOOLCHAIN=local)
 #
 # and build-pdp-image breaks on every PR, every push to main and every release until
 # this lands. A 1.26 builder compiling today's `go 1.25.0` module is forward-compatible.
 #
-# The patch version floats with the tag (it serves go1.26.8 today); don't pin below
-# 1.26.6, the first 1.26 release with the crypto/tls fix for GO-2026-6090. The binary
-# is CGO_ENABLED=0 (below), so the builder's glibc does not reach the image. PER-16045 (first proposed in the closed
-# PDP#334, PER-15358).
+# What changes in /app/bin/opa: changes that come with the 1.26 toolchain land with
+# this builder (e.g. the Green Tea GC is on by default). GODEBUG-gated defaults do not:
+# they follow permit-opa's go.mod - its `go 1.25.0` today, and after permit-opa#52 a
+# `godebug default=go1.25` line. Removing that line in permit-opa changes this binary
+# on the next PDP build, with no change here.
+# The binary is CGO_ENABLED=0 (below), so the builder's glibc does not reach the image.
+#
+# The patch version floats with the tag (go1.26.8 today). The floor is go1.26.6, the
+# first 1.26 release with the crypto/tls fix for GO-2026-6090, and the RUN below fails
+# the build on anything older (e.g. a stale local image). PER-16045.
 FROM golang:1.26-bookworm AS opa_build
+ENV GOTOOLCHAIN=local
+RUN v=$(go env GOVERSION) && \
+    [ "$(printf '%s\n' go1.26.6 "$v" | sort -V | head -n1)" = go1.26.6 ] || \
+    { echo "opa_build: $v is below the go1.26.6 floor (GO-2026-6090)"; exit 1; }
 
 COPY custom* /custom
 
