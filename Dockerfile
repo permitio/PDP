@@ -78,9 +78,14 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # on the next PDP build, with no change here.
 # The binary is CGO_ENABLED=0 (below), so the builder's glibc does not reach the image.
 #
-# The patch version floats with the tag (go1.26.8 today). The floor is go1.26.6, the
-# first 1.26 release with the crypto/tls fix for GO-2026-6090, and the RUN below fails
-# the build on anything older (e.g. a stale local image). PER-16045.
+# The patch version floats with the tag (go1.26.8 today) on purpose: a Go security
+# release reaches the next build with no change here. The exact toolchain is recorded
+# in the binary's build info (`go version /app/bin/opa`), which is what image scanners
+# read. The floor is go1.26.6, the first 1.26 release with the crypto/tls fix for
+# GO-2026-6090, and the RUN below fails the build on anything older (e.g. a stale local
+# image). It caches on the base image digest, so it re-runs whenever the tag moves.
+# The floor binds only the branch below that compiles permit-opa (custom_opa.tar.gz
+# present); the fallback without the tarball downloads a prebuilt OPA. PER-16045.
 FROM golang:1.26-bookworm AS opa_build
 ENV GOTOOLCHAIN=local
 RUN v=$(go env GOVERSION) && \
@@ -280,8 +285,6 @@ USER permit
 
 # Copy the application code
 COPY ./horizon /app/horizon
-
-USER permit
 
 # Version file for the application
 COPY ./permit_pdp_version /app/permit_pdp_version
