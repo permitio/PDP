@@ -1,7 +1,11 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+  {{- if .Values.useStandardHelmNamingConventions }}
+  name: {{ include "pdp.fullname" . }}
+  {{- else }}
   name: permitio-pdp
+  {{- end }}
   labels:
     {{- include "pdp.labels" . | nindent 4 }}
   {{- with .Values.annotations }}
@@ -145,7 +149,7 @@ spec:
       {{- if .Values.pdp.logs_forwarder.enabled }}
         - name: fluent-bit-config
           configMap:
-            name: fluentbit-config
+            name: {{ include "pdp.fullname" . }}-fluentbit-config
         - name: logs
           emptyDir: {}
       {{- else if .Values.openshift.enabled }}
