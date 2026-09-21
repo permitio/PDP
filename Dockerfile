@@ -79,18 +79,41 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # The binary is CGO_ENABLED=0 (below), so the builder's glibc does not reach the image.
 #
 # The patch version floats with the tag (go1.26.8 today) on purpose: a Go security
-# release reaches the next build with no change here. The exact toolchain is recorded
-# in the binary's build info (`go version /app/bin/opa`), which is what image scanners
-# read. The floor is go1.26.6, the first 1.26 release with the crypto/tls fix for
+# release reaches the next build with no change here. PDP#338 digest-pins this line and
+# adds a daily Dependabot digest bump; once that lands, "with no change here" stops
+# being true and this paragraph should say "Dependabot moves the digest" instead.
+# The three builds of permit-opa differ deliberately: permit-opa's RELEASE assets pin
+# the toolchain exactly (go1.26.8, checked per binary - permit-opa#51), permit-opa's own
+# ECR image floats above this same floor, and so does this stage.
+#
+# Auditability: the toolchain is recorded in the binary's build info, survives `-s -w`,
+# and is readable with `go version` on an extracted copy - extracted, because the
+# runtime base is python:3.13-alpine3.23 and ships no Go. That is an after-the-fact
+# audit, not a gate. The only scanner in this repo is the docker-scout job, which is
+# `pull_request`-only and points at a local tag, so no published pdp-v2 tag is ever
+# re-scanned (tests.yml says so itself; PER-15358, PDP#338) - and the release build
+# re-resolves this tag weeks later, for both arches, with nothing reading either.
+#
+# The floor is go1.26.6, the first 1.26 release with the crypto/tls fix for
 # GO-2026-6090, and the RUN below fails the build on anything older (e.g. a stale local
-# image). It caches on the base image digest, so it re-runs whenever the tag moves.
+# image). It caches on the base image digest, so it re-runs whenever the tag moves - and
+# on that run it prints which 1.26.x it accepted, which is the cheapest answer there is
+# to "what compiled the opa binary in the image we released on the 3rd".
 # The floor binds only the branch below that compiles permit-opa (custom_opa.tar.gz
 # present); the fallback without the tarball downloads a prebuilt OPA. PER-16045.
+#
+# KEEP THE SHAPE OF THE FROM LINE: permit-opa's `pdp-builder` check (permit-opa#52)
+# fetches this Dockerfile from main and greps this line for a literal
+# `golang:<major>.<minor>` on a line ending in `AS opa_build`. Setting the version from
+# an ARG, splitting the FROM across lines or renaming the stage turns permit-opa's CI
+# red with "cannot compare go.mod's directive" - which is a fail-closed by design, but
+# it will look like an unrelated repo breaking for no reason.
 FROM golang:1.26-bookworm AS opa_build
 ENV GOTOOLCHAIN=local
 RUN v=$(go env GOVERSION) && \
     [ "$(printf '%s\n' go1.26.6 "$v" | sort -V | head -n1)" = go1.26.6 ] || \
-    { echo "opa_build: $v is below the go1.26.6 floor (GO-2026-6090)"; exit 1; }
+    { echo "opa_build: $v is below the go1.26.6 floor (GO-2026-6090)"; exit 1; } && \
+    echo "opa_build: building with $v"
 
 COPY custom* /custom
 
@@ -278,7 +301,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip setuptools && \
     pip install -r requirements.txt && \
     python -m pip uninstall -y pip setuptools wheel && \
-    rm -r /usr/local/lib/python3.13/ensurepip && \
+    rm -r "$(python3 -c 'import sysconfig; print(sysconfig.get_paths()["stdlib"])')/ensurepip" && \
     apk del .build-deps
 
 USER permit
