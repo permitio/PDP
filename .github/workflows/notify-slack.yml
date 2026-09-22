@@ -53,7 +53,7 @@ jobs:
     # this job is green even when delivery failed and no caller can see it in
     # `needs.notify.result`. Publishing the step's OUTCOME - which GitHub still reports
     # truthfully under continue-on-error - is what lets a caller whose only product is
-    # the message (daily-security-scan.yml) fail loudly on a dead webhook, while the
+    # the message (scheduled-security-scan.yml) fail loudly on a dead webhook, while the
     # scan callers, whose own red status already carries the signal, ignore it.
     # `skipped` here means the webhook secret is absent, which is not a delivery failure.
     outputs:

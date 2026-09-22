@@ -5,7 +5,7 @@ WHY A SCHEDULED POLL
 GitHub has no `dependabot_alert` workflow trigger, and Dependabot's own PR runs get a
 read-only GITHUB_TOKEN plus an empty Dependabot secret store, so a webhook is not
 reachable from there. The only way to turn an alert into a Slack message is to ask the
-REST API on a schedule, which is what daily-security-scan.yml does. This script is
+REST API on a schedule, which is what scheduled-security-scan.yml does. This script is
 the half that decides whether the answer is worth anybody's attention, and it never
 shells out to `gh`, so every decision it makes is unit-testable.
 
@@ -24,10 +24,15 @@ matched against it, and is REPORTED rather than dropped - being unable to check
 something is not the same as having checked it.
 
 WHY A TIME WINDOW
-`--new-since` keeps a daily cron from re-reporting the same unwaived alert forever. The
-default is 25 hours, one hour more than the schedule, so an alert opened between two
-runs cannot fall through the gap. `--all` drops the window for `workflow_dispatch` and
-for the weekly digest, which want the standing backlog rather than the delta.
+`--new-since` keeps a recurring cron from re-reporting the same unwaived alert forever.
+The default is 73 hours, one hour more than the 72-hour schedule, so an alert opened
+between two runs cannot fall through the gap. `--all` drops the window for
+`workflow_dispatch` and for the weekly digest, which want the standing backlog rather
+than the delta.
+
+A window is a delta and therefore never the whole answer: the caller also branches on
+`total_unwaived`, so a standing backlog - or an alert that landed during a run GitHub
+dropped - is still reported even once it has aged out of the window.
 
 A feed that cannot be read is NOT "nothing new": a missing or malformed alerts file
 exits non-zero with a message naming the file, and writes no counts at all.
@@ -54,8 +59,10 @@ EXIT_UNREADABLE_FEED = 2
 # Dependabot's severities arrive lower-case in the API payload.
 REPORTABLE_SEVERITIES = frozenset({"critical", "high"})
 
-# One hour of overlap on top of the daily schedule in daily-security-scan.yml.
-DEFAULT_WINDOW_HOURS = 25
+# One hour of overlap on top of the 72-hour schedule in scheduled-security-scan.yml, which
+# passes the same value explicitly. Keep the two in step: if that cron changes, this
+# default and the `--new-since` there both move with it.
+DEFAULT_WINDOW_HOURS = 73
 
 # Slack renders a wall of text as a wall of text. Past this the message is truncated and
 # the run link carries the rest.

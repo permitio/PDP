@@ -1,4 +1,4 @@
-# The daily security scan: Trivy and Docker Scout over the PUBLISHED pdp-v2 tags, and the
+# The scheduled security scan: Trivy and Docker Scout over the PUBLISHED pdp-v2 tags, and the
 # Dependabot alert feed, on one schedule, reporting through one Slack message.
 #
 # WHY THIS EXISTS
@@ -48,7 +48,7 @@
 #
 # WHERE THE RESULT GOES
 # Code scanning gets the SARIF, the run goes red, and Slack gets ONE message covering all
-# three scanners - but only when something is not clean. A daily "all clear" ping is how a
+# three scanners - but only when something is not clean. An "all clear" ping on every run is how a
 # channel gets muted, which is the same inattention PER-15358 was found through.
 #
 # ONE SCHEDULE, ONE MESSAGE, ON PURPOSE. Trivy, Scout and Dependabot previously ran on
@@ -57,21 +57,28 @@
 # other, which reads as three problems. They now run as parallel jobs under one trigger and
 # a single `digest` job merges their verdicts, so a reader gets one message and can see at a
 # glance whether the scanners agree. The cost is that the message waits for the slowest
-# scanner; that is minutes on a daily cadence, against a permanent reduction in noise.
-name: Daily security scan
+# scanner; that is minutes on a three-day cadence, against a permanent reduction in noise.
+name: Scheduled security scan
 
 on:
   schedule:
-    # Daily, and deliberately NOT on the hour: GitHub's docs say a scheduled run "can be
-    # delayed during periods of high loads", that "high load times include the start of
-    # every hour", and that queued jobs may be DROPPED rather than retried. That matters
-    # here because the `dependabot` job carries a --new-since window, so a dropped run
-    # would leave whatever landed that day outside the next run's window. (The
-    # total_unwaived branch in `digest` is the real backstop; this just makes it rarer.)
+    # Every third day. `*/3` in the DAY-OF-MONTH field means days 1, 4, 7, ... 31, so be
+    # precise about what that is and is not: it resets at each month boundary, so the gap
+    # from the 31st to the 1st is one day, not three, and February's 28th-to-1st gap is
+    # one day too. Cron has no true "every 72 hours". The consequences are bounded and
+    # both are handled: a SHORT gap only means the Dependabot window below overlaps and
+    # may repeat an alert once, and a LONG gap cannot happen at all.
     #
-    # Daily rather than weekly: new CVEs land continuously, and a weekly cadence would
-    # have left 0.9.14 exposed for up to six more days after the OpenSSL advisories.
-    - cron: '17 6 * * *'
+    # Deliberately NOT on the hour: GitHub's docs say a scheduled run "can be delayed
+    # during periods of high loads", that "high load times include the start of every
+    # hour", and that queued jobs may be DROPPED rather than retried. A dropped run costs
+    # more at this cadence than it did daily - the next one is three days away - which is
+    # why the `digest` job also branches on the standing backlog (total_unwaived) and not
+    # only on what is new in the window.
+    #
+    # Every third day rather than weekly: new CVEs land continuously, and a weekly cadence
+    # would have left 0.9.14 exposed for up to six more days after the OpenSSL advisories.
+    - cron: '17 6 */3 * *'
   workflow_dispatch:
     inputs:
       tags:
@@ -79,7 +86,7 @@ on:
         required: false
         type: string
       all_alerts:
-        description: 'Report the whole unwaived CRITICAL/HIGH Dependabot backlog, not just the last 25 hours.'
+        description: 'Report the whole unwaived CRITICAL/HIGH Dependabot backlog, not just the last 73 hours.'
         required: false
         type: boolean
         default: false
@@ -99,7 +106,7 @@ concurrency:
   # Queue rather than cancel: a manual workflow_dispatch and the schedule can race, and
   # cancelling the scheduled run would drop a day out of the Dependabot --new-since window
   # with nothing to say it happened.
-  group: daily-security-scan
+  group: scheduled-security-scan
   cancel-in-progress: false
 
 jobs:
@@ -349,10 +356,18 @@ jobs:
           watch() {
             # Exits non-zero only when the feed is unreadable, which must never be
             # mistaken for "nothing new" - `set -e` turns that into a red run.
+            #
+            # --new-since is passed EXPLICITLY, and 73 is not arbitrary: it is the 72-hour
+            # cron interval above plus one hour of overlap, so an alert opened between two
+            # runs cannot fall through the gap. It lives here rather than being left to the
+            # script's default because it is a function of the cron three lines of YAML
+            # away - change one and you must change the other, and the script's default is
+            # kept in step for anyone running it by hand.
             "$RUNNER_TEMP/alert-venv/bin/python" .github/scripts/check_dependabot_alerts.py \
               --alerts "$ALERTS_FILE" \
               --slack-output "$SLACK_FILE" \
               --github-output "$GITHUB_OUTPUT" \
+              --new-since 73 \
               "$@"
           }
 
@@ -547,12 +562,12 @@ jobs:
     if: ${{ !cancelled() && (needs.digest.result != 'success' || needs.digest.outputs.notify == 'true') }}
     uses: ./.github/workflows/notify-slack.yml
     with:
-      subject: daily security scan
+      subject: scheduled security scan
       # `||` falls through on an empty string, which is what an unsuccessful digest job
       # leaves behind. The notifier rejects an empty status outright, so these fallbacks
       # are what keeps that path a message rather than a second failure.
       status: ${{ needs.digest.outputs.status || 'fail' }}
-      summary: ${{ needs.digest.outputs.summary || 'The daily security scan produced no digest, so nothing has been cleared by any scanner. See the run log.' }}
+      summary: ${{ needs.digest.outputs.summary || 'The scheduled security scan produced no digest, so nothing has been cleared by any scanner. See the run log.' }}
     secrets:
       # Named rather than `inherit`: the notifier needs exactly this one secret, and
       # `inherit` hands a called workflow every secret the repo has. Naming a secret that
@@ -584,7 +599,7 @@ jobs:
           DELIVERED: ${{ needs.notify.outputs.delivered }}
         run: |
           set -euo pipefail
-          echo "::error::The daily security scan found something to report but the Slack notification failed to send (delivery outcome: ${DELIVERED}). Nobody was told. Check that SLACK_WEBHOOK_URL is still valid - an incoming webhook returns 410 Gone once it is revoked or its channel is archived."
+          echo "::error::The scheduled security scan found something to report but the Slack notification failed to send (delivery outcome: ${DELIVERED}). Nobody was told. Check that SLACK_WEBHOOK_URL is still valid - an incoming webhook returns 410 Gone once it is revoked or its channel is archived."
           exit 1
 
   # Docker Scout's periodic leg, mirroring the report+gate pair in tests.yml. It exists for

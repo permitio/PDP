@@ -10,7 +10,7 @@
 # is there anything security-shaped waiting on us?
 #
 # This is the roll-up, NOT the alerting path. CRITICAL/HIGH findings are reported the day
-# they appear by daily-security-scan.yml, which runs all three scanners - Trivy over the
+# they appear by scheduled-security-scan.yml, which runs all three scanners - Trivy over the
 # published tags, Docker Scout over `latest`, and the Dependabot alert feed - on one
 # schedule and reports them in ONE Slack message. Nothing security-shaped waits a week.
 #
@@ -154,7 +154,7 @@ jobs:
           scan_json=''
           gh_exit=0
           scan_json="$(gh run list --repo "$REPO" \
-                         --workflow daily-security-scan.yml \
+                         --workflow scheduled-security-scan.yml \
                          --status completed --limit 1 \
                          --json conclusion,createdAt,url --jq '.[0] // empty')" || gh_exit=$?
           if [ "$gh_exit" -ne 0 ]; then
