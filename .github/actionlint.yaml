@@ -11,13 +11,13 @@
 #
 # Removal gate: drop this block once actionlint's `AllPermissionScopes` includes
 # `vulnerability-alerts` — check with
-#   actionlint .github/workflows/dependabot-alert-watch.yml
+#   actionlint .github/workflows/daily-security-scan.yml
 # after an actionlint upgrade. If it passes, delete this file.
 #
 # Deliberately scoped to the one file and the one message. A blanket `permissions` ignore
 # would also hide a genuinely misspelled scope, which fails OPEN: an unrecognised scope is
 # not granted, the API call 403s, and the watcher reports zero alerts.
 paths:
-  .github/workflows/dependabot-alert-watch.yml:
+  .github/workflows/daily-security-scan.yml:
     ignore:
       - 'unknown permission scope "vulnerability-alerts"'

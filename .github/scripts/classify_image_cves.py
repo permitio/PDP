@@ -305,7 +305,7 @@ def slack_summary(tag: str, findings: list[dict], verdict: str, limit: int = 600
 def write_outputs(args: argparse.Namespace, verdict: str, findings: list[dict]) -> None:
     """Write the step outputs every consumer of this script reads.
 
-    `verdict` and `findings` are consumed by image-scan-published.yml; renaming either
+    `verdict` and `findings` are consumed by daily-security-scan.yml; renaming either
     breaks the daily scan. `critical`, `high` and `parse_ok` are additive.
     """
     if not args.github_output:

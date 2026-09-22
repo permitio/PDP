@@ -14,7 +14,7 @@
 # Dependabot never looks inside a built image. It reads manifests. It cannot see the
 # `apk upgrade` package set, and it cannot tell you that an image ALREADY PUBLISHED has
 # picked up a CVE disclosed after its build - which is precisely how the 0.9.14 report
-# happened. That gap is covered by image-scan-published.yml, and the two are
+# happened. That gap is covered by daily-security-scan.yml, and the two are
 # complementary rather than alternatives. See docs/image-vulnerability-management.md.
 #
 # `cooldown` note: default-days is supported on all four ecosystems below, but the

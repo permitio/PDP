@@ -5,7 +5,7 @@ WHY A SCHEDULED POLL
 GitHub has no `dependabot_alert` workflow trigger, and Dependabot's own PR runs get a
 read-only GITHUB_TOKEN plus an empty Dependabot secret store, so a webhook is not
 reachable from there. The only way to turn an alert into a Slack message is to ask the
-REST API on a schedule, which is what dependabot-alert-watch.yml does. This script is
+REST API on a schedule, which is what daily-security-scan.yml does. This script is
 the half that decides whether the answer is worth anybody's attention, and it never
 shells out to `gh`, so every decision it makes is unit-testable.
 
@@ -54,7 +54,7 @@ EXIT_UNREADABLE_FEED = 2
 # Dependabot's severities arrive lower-case in the API payload.
 REPORTABLE_SEVERITIES = frozenset({"critical", "high"})
 
-# One hour of overlap on top of the daily schedule in dependabot-alert-watch.yml.
+# One hour of overlap on top of the daily schedule in daily-security-scan.yml.
 DEFAULT_WINDOW_HOURS = 25
 
 # Slack renders a wall of text as a wall of text. Past this the message is truncated and
