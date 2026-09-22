@@ -68,8 +68,21 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 #
 #   go: go.mod requires go >= 1.26.0 (running go 1.25.x; GOTOOLCHAIN=local)
 #
-# and build-pdp-image breaks on every PR, every push to main and every release until
-# this lands. A 1.26 builder compiling today's `go 1.25.0` module is forward-compatible.
+# and build-pdp-image breaks. A 1.26 builder compiling today's `go 1.25.0` module is
+# forward-compatible, so this bump is safe to land on its own, ahead of that.
+#
+# Merging this does NOT end that exposure, it only ends it on main. release.yml checks
+# THIS repo out with no `ref:` (:25-26) while still taking permit-opa from `ref: main`
+# (:40-43), so a release builds the Dockerfile of the commit it was cut from against
+# today's permit-opa; tests.yml also builds on any push to a `v*` branch (:6). The
+# newest tag, v0.9.15, is d3da8b9 - this PR's base - whose opa_build is still
+# golang:1.25-bookworm. So the rule that outlives this PR, for as long as the
+# permit-opa checkout is unpinned: once permit-opa#52 merges, every pdp-v2 release and
+# every `v*` branch build must come from a commit containing this FROM line. Backport
+# it before cutting a hotfix or re-running a release from an older tag. permit-opa's
+# `pdp-builder` check (see the FROM-line note below) hands the releaser this same rule
+# and says in so many words that it cannot enforce it, because it only ever reads this
+# file on main. Pinning the permit-opa checkout to a tag removes the whole class.
 #
 # What changes in /app/bin/opa: changes that come with the 1.26 toolchain land with
 # this builder (e.g. the Green Tea GC is on by default). GODEBUG-gated defaults do not:
@@ -79,26 +92,42 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # The binary is CGO_ENABLED=0 (below), so the builder's glibc does not reach the image.
 #
 # The patch version floats with the tag (go1.26.8 today) on purpose: a Go security
-# release reaches the next build with no change here. PDP#338 digest-pins this line and
-# adds a daily Dependabot digest bump; once that lands, "with no change here" stops
-# being true and this paragraph should say "Dependabot moves the digest" instead.
-# The three builds of permit-opa differ deliberately: permit-opa's RELEASE assets pin
-# the toolchain exactly (go1.26.8, checked per binary - permit-opa#51), permit-opa's own
-# ECR image floats above this same floor, and so does this stage.
+# release reaches the next build with no change here.
+#
+# TWO PARAGRAPHS HERE GO STALE WHEN PDP#338 LANDS (open, head 2e8a313) - this one and
+# the auditability one below. #338 digest-pins this FROM line and adds a docker
+# Dependabot entry, daily but with `cooldown: default-days: 7`, so "with no change
+# here" becomes "Dependabot moves tag and digest together, a week after the Go release
+# publishes". It also drops docker-scout's `pull_request` gate and adds
+# image-scan-published.yml (`cron: '17 6 * * *'`), which CLOSES the gap the
+# auditability paragraph describes rather than recording it.
+#
+# This stage pins nothing beyond that floor, and that is a statement about THIS builder
+# only. permit-opa builds its own artifacts - its own Dockerfile, its own release
+# workflow - and its toolchain policy is set in those files, not here. PER-16045
+# proposes pinning its release binaries to an exact toolchain (permit-opa#51) and
+# putting its image on this same go1.26.6 floor (permit-opa#52); both are open, so read
+# permit-opa's own tree for what it does today rather than inferring it from here.
 #
 # Auditability: the toolchain is recorded in the binary's build info, survives `-s -w`,
 # and is readable with `go version` on an extracted copy - extracted, because the
 # runtime base is python:3.13-alpine3.23 and ships no Go. That is an after-the-fact
-# audit, not a gate. The only scanner in this repo is the docker-scout job, which is
-# `pull_request`-only and points at a local tag, so no published pdp-v2 tag is ever
-# re-scanned (tests.yml says so itself; PER-15358, PDP#338) - and the release build
-# re-resolves this tag weeks later, for both arches, with nothing reading either.
+# audit, not a gate. Until PDP#338 lands, the only scanner in this repo is the
+# docker-scout job, which is `pull_request`-only and points at a local tag, so no
+# published pdp-v2 tag is ever re-scanned (tests.yml says so itself; PER-15358) - and
+# the release build re-resolves this tag weeks later, for both arches, with nothing
+# reading either.
 #
 # The floor is go1.26.6, the first 1.26 release with the crypto/tls fix for
 # GO-2026-6090, and the RUN below fails the build on anything older (e.g. a stale local
-# image). It caches on the base image digest, so it re-runs whenever the tag moves - and
-# on that run it prints which 1.26.x it accepted, which is the cheapest answer there is
-# to "what compiled the opa binary in the image we released on the 3rd".
+# image). It prints the version it accepted, but it is a GATE, not a record: it caches
+# on the base image digest, so it only re-runs when the tag moves, and in a release log
+# it usually reads CACHED with that version sitting in whichever earlier run first saw
+# the digest - subject to log retention. The compile RUN below echoes the toolchain too,
+# and that one is reliable: `COPY custom* /custom` sees a tarball the workflow
+# regenerates every run, so the stage re-executes from that COPY on and the echo is
+# always in the log of the build that produced the binary. For an already-published
+# image, `go version` on the extracted binary (above) needs no build log at all.
 # The floor binds only the branch below that compiles permit-opa (custom_opa.tar.gz
 # present); the fallback without the tarball downloads a prebuilt OPA. PER-16045.
 #
@@ -136,6 +165,10 @@ RUN --mount=type=cache,target=/go/pkg/mod \
   then \
     cd /custom && \
     tar xzf custom_opa.tar.gz && \
+    # This RUN never comes from cache - `COPY custom* /custom` above sees a tarball the
+    # workflow regenerates every build - so this echo is the toolchain record for THIS
+    # build. The floor check above is the gate, and usually reads CACHED.
+    echo "opa_build: compiling permit-opa with $(go env GOVERSION)" && \
     # permit-opa moved its main package from the repo root to ./cmd/opa
     # (cmd/ + pkg/ layout); build whichever location the tarball provides
     if [ -d cmd/opa ]; then main_pkg=./cmd/opa; else main_pkg=.; fi && \
