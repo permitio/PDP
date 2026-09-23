@@ -258,23 +258,35 @@ USER root
 # and starlette in requirements.txt. 24.1.0 is the first release tested on 3.13 (23.2.0, the
 # first with the fix, is yanked); 25.x changes the context-manager type for no gain here.
 #
-# The `python -c` line is the regression guard: it makes the exact aiofiles call that
-# backup_store() makes, on the interpreter and packages that actually ship, so a regression
-# fails the image build in tests.yml and release.yml instead of surfacing as a log line 60s
-# after boot. (The pytests job cannot guard this: `pip install .[dev]` resolves the same
-# aiofiles 0.8.0.) It drives the async context manager's __aenter__ directly to stay a
-# one-liner; with the default delete=True the temp file is removed when the wrapper is
-# collected.
+# The NamedTemporaryFile line is the regression guard. It smoke-tests the one code path that
+# broke - aiofiles' named-temp-file wrapper, which every backup_store() call goes through -
+# not backup_store() end to end (that also passes delete=False/dir=/suffix=, then writes the
+# export and os.replace()s it into place). Running it on the shipped interpreter and aiofiles
+# makes a regression fail the image build in tests.yml and release.yml instead of surfacing
+# as a log line 60s after boot. (The pytests job cannot guard this: `pip install .[dev]`
+# resolves the same aiofiles 0.8.0.) It drives the async context manager's __aenter__
+# directly to stay a one-liner; with the default delete=True the temp file is removed when
+# the wrapper is collected.
 #
-# Remove the upgrade and the guard together once requirements.txt moves to an opal-client
-# whose metadata admits aiofiles>=23.2.1. That bump also needs a release carrying
-# permitio/opal#960: opal-client 0.9.9 declares Requires-Python <3.13 and cannot be installed
-# on this image at all.
+# The opal-client line is a tripwire. --no-deps also silences pip's conflict report, so
+# without it a bumped opal-client would silently keep getting aiofiles 24.1.0 whatever it
+# declares. Any change to the opal-client pin fails the build here until this override is
+# re-evaluated.
+#
+# Exit: once requirements.txt moves to an opal-client whose metadata admits aiofiles>=24.1.0,
+# drop the upgrade and the tripwire but KEEP the guard - that bump is exactly when the
+# resolver may start picking a newer aiofiles. It is not a routine bump. The first release
+# carrying permitio/opal#960, 0.10.0rc1 (0.9.9 declares Requires-Python <3.13 and cannot be
+# installed here at all), still caps aiofiles<1 and requires pydantic>=2.9 and
+# starlette>=1.3.1, which the pydantic<2 and starlette==0.50.0 pins in requirements.txt rule
+# out. So the way out is the aiofiles widening landing in opal before 0.10.0 GA plus horizon
+# moving to pydantic v2, or a pydantic-v1 0.9.x backport carrying both. See PER-16234.
 COPY ./requirements.txt ./requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
     apk add --no-cache --virtual .build-deps build-base libffi-dev libressl-dev musl-dev zlib-dev && \
     pip install --upgrade pip setuptools && \
     pip install -r requirements.txt && \
+    python -c "import sys, importlib.metadata as m; v = m.version('opal-client'); v == '0.9.6' or sys.exit('opal-client is %s, not 0.9.6: re-evaluate the aiofiles override (PER-16234)' % v)" && \
     pip install --no-deps --upgrade "aiofiles==24.1.0" && \
     python -c "import asyncio, aiofiles.tempfile as t; asyncio.run(t.NamedTemporaryFile('w').__aenter__())" && \
     python -m pip uninstall -y pip setuptools wheel && \

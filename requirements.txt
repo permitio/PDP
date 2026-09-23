@@ -142,8 +142,9 @@ opal-common==0.9.6
 # and no policy-store backup is ever written (permitio/PDP#340 / PER-16234). Do NOT add an
 # aiofiles line here to fix it: pip cannot loosen an installed package's cap, so it is
 # ResolutionImpossible and the image build fails. The fix is a post-resolve
-# `pip install --upgrade aiofiles==24.1.0` in the Dockerfile pip layer, guarded there by a
-# build-time check. Drop both when this pin moves to an opal-client that admits
-# aiofiles>=23.2.1 - and note that release must also carry permitio/opal#960, since 0.9.9
-# declares Requires-Python <3.13 and cannot be installed on the 3.13 image at all.
+# `pip install --no-deps --upgrade aiofiles==24.1.0` in the Dockerfile pip layer, next to a
+# build-time guard and a tripwire that fails the build whenever this pin changes, so a bump
+# forces a look at that override (exit notes there). Not a routine bump: 0.10.0rc1, the first
+# release carrying permitio/opal#960 (0.9.9 declares Requires-Python <3.13), still caps
+# aiofiles<1 and requires pydantic>=2.9, which the pydantic<2 pin above rules out.
 opal-client==0.9.6
