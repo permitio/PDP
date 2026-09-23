@@ -37,14 +37,16 @@ jobs:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-    - uses: actions/checkout@v3
+    # Pinned; must match tests.yml, which says how to bump it and checks the two agree.
+    - uses: actions/checkout@v4
       with:
         repository: permitio/permit-opa
-        ref: main
+        ref: ab54a3766111b3f6c4796c5ab0a7d7e75f7f590d  # permit-opa main, 2026-09-23 (#51)
         path: './permit-opa'
         token: ${{ secrets.CLONE_REPO_TOKEN }}
 
     - name: Pre build PDP
+      shell: bash  # pipefail, for the tar pipeline
       run: |
         echo "${{ github.event.release.tag_name }}" | cut -d '-' -f 1 > permit_pdp_version
         rm -rf custom
@@ -92,9 +94,10 @@ jobs:
         # Do not budget this filter against a cached dependency compile.
         #
         # READ THAT MEASUREMENT NARROWLY: it comes from a `pull_request` run of tests.yml
-        # built `--platform linux/amd64`. The rust stages are `--platform=$BUILDPLATFORM` so
-        # their cost carries over, but THIS step builds amd64+arm64, so opa_build and main
-        # are each built twice with the second leg under QEMU - and a tag ref restores
+        # built `--platform linux/amd64`. The rust stages and opa_build are
+        # `--platform=$BUILDPLATFORM` so their cost carries over (opa_build compiles once
+        # per arch, natively), but THIS step builds amd64+arm64, so main is built twice
+        # with the arm64 leg under QEMU - and a tag ref restores
         # different GHA caches than a PR ref. Do not read that run's cache profile, or any
         # "longest step" ranking from it, as this step's.
         #

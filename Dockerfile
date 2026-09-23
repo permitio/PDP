@@ -54,83 +54,60 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # OPA BUILD STAGE -----------------------------------
 # Build OPA from source or download precompiled binary
 # ---------------------------------------------------
-# Go 1.26 builder (was golang:1.25-bookworm), landing AHEAD of permit-opa moving its
-# `go` directive to 1.26 (permitio/permit-opa#52, stacked on #51). That move is forced
-# by golang.org/x/crypto >= 0.56.0 - the version that clears CVE-2026-78662 /
+# Go 1.26 builder (was golang:1.25-bookworm), moved AHEAD of permit-opa raising its
+# `go` directive to 1.26 (permitio/permit-opa#52). That move is forced by
+# golang.org/x/crypto >= 0.56.0 - the version that clears CVE-2026-78662 /
 # CVE-2026-56855 (x/crypto/ssh), waived today in .docker/scout/pdp-v2.vex.json - whose
-# own go.mod declares `go 1.26.0`.
-#
-# The order only works one way. tests.yml and release.yml check out
-# permitio/permit-opa at `ref: main`, unpinned, so a permit-opa merge reaches the very
-# next PDP build. With GOTOOLCHAIN=local (set below; the official golang images set it
-# too), a 1.25 builder facing a `go 1.26` module does not fetch a newer toolchain - it
-# hard-fails:
+# own go.mod declares `go 1.26.0`. With GOTOOLCHAIN=local (set below; the official
+# golang images set it too) an older builder facing a newer `go` directive does not
+# fetch a toolchain, it hard-fails:
 #
 #   go: go.mod requires go >= 1.26.0 (running go 1.25.x; GOTOOLCHAIN=local)
 #
-# and build-pdp-image breaks. A 1.26 builder compiling today's `go 1.25.0` module is
-# forward-compatible, so this bump is safe to land on its own, ahead of that.
-#
-# Merging this does NOT end that exposure, it only ends it on main. release.yml checks
-# THIS repo out with no `ref:` (:25-26) while still taking permit-opa from `ref: main`
-# (:40-43), so a release builds the Dockerfile of the commit it was cut from against
-# today's permit-opa; tests.yml also builds on any push to a `v*` branch (:6). The
-# newest tag, v0.9.15, is d3da8b9 - this PR's base - whose opa_build is still
-# golang:1.25-bookworm. So the rule that outlives this PR, for as long as the
-# permit-opa checkout is unpinned: once permit-opa#52 merges, every pdp-v2 release and
-# every `v*` branch build must come from a commit containing this FROM line. Backport
-# it before cutting a hotfix or re-running a release from an older tag. permit-opa's
-# `pdp-builder` check (see the FROM-line note below) hands the releaser this same rule
-# and says in so many words that it cannot enforce it, because it only ever reads this
-# file on main. Pinning the permit-opa checkout to a tag removes the whole class.
+# tests.yml and release.yml check permit-opa out at a pinned commit (PERMIT_OPA_REF),
+# so which permit-opa ships changes only in a PDP commit that moves that pin, and a
+# release or `v*` hotfix builds the pin its own commit carries. Moving the pin to a
+# permit-opa commit whose `go` directive this builder cannot compile fails that PR's
+# build-pdp-image job, not a later release. Commits from before the pin (v0.9.15 and
+# older) still take permit-opa `main`, so once permit-opa#52 merges a release or hotfix
+# cut from one of them fails in this stage: cut it from a commit that has the pin.
 #
 # What changes in /app/bin/opa: changes that come with the 1.26 toolchain land with
 # this builder (e.g. the Green Tea GC is on by default). GODEBUG-gated defaults do not:
-# they follow permit-opa's go.mod - its `go 1.25.0` today, and after permit-opa#52 a
-# `godebug default=go1.25` line. Removing that line in permit-opa changes this binary
-# on the next PDP build, with no change here.
+# they follow permit-opa's go.mod at the pinned commit (after permit-opa#52, a
+# `godebug default=go1.25` line).
 # The binary is CGO_ENABLED=0 (below), so the builder's glibc does not reach the image.
 #
 # The patch version floats with the tag (go1.26.8 today) on purpose: a Go security
-# release reaches the next build with no change here.
-#
-# TWO PARAGRAPHS HERE GO STALE WHEN PDP#338 LANDS (open, head 2e8a313) - this one and
-# the auditability one below. #338 digest-pins this FROM line and adds a docker
-# Dependabot entry, daily but with `cooldown: default-days: 7`, so "with no change
-# here" becomes "Dependabot moves tag and digest together, a week after the Go release
-# publishes". It also drops docker-scout's `pull_request` gate and adds
-# image-scan-published.yml (`cron: '17 6 * * *'`), which CLOSES the gap the
-# auditability paragraph describes rather than recording it.
+# release reaches the next build with no change here. PDP#338 (open) digest-pins this
+# FROM line with a Dependabot entry that moves tag and digest together, and adds a
+# scheduled re-scan of published tags; reword this paragraph and the auditability one
+# below when it lands.
 #
 # This stage pins nothing beyond that floor, and that is a statement about THIS builder
-# only. permit-opa builds its own artifacts - its own Dockerfile, its own release
-# workflow - and its toolchain policy is set in those files, not here. PER-16045
-# proposes pinning its release binaries to an exact toolchain (permit-opa#51) and
-# putting its image on this same go1.26.6 floor (permit-opa#52); both are open, so read
-# permit-opa's own tree for what it does today rather than inferring it from here.
+# only. permit-opa builds its own artifacts (its own Dockerfile and release workflow)
+# with its own toolchain policy; PER-16045 tracks pinning its release binaries
+# (permit-opa#51) and moving its image onto this floor (permit-opa#52). Read
+# permit-opa's own tree for what it does today.
 #
 # Auditability: the toolchain is recorded in the binary's build info, survives `-s -w`,
 # and is readable with `go version` on an extracted copy - extracted, because the
 # runtime base is python:3.13-alpine3.23 and ships no Go. That is an after-the-fact
 # audit, not a gate. Until PDP#338 lands, the only scanner in this repo is the
 # docker-scout job, which is `pull_request`-only and points at a local tag, so no
-# published pdp-v2 tag is ever re-scanned (tests.yml says so itself; PER-15358) - and
-# the release build re-resolves this tag weeks later, for both arches, with nothing
-# reading either.
+# published pdp-v2 tag is ever re-scanned (tests.yml says so itself; PER-15358).
 #
 # The floor is go1.26.6, the first 1.26 release with the crypto/tls fix for
 # GO-2026-6090, and the RUN below fails the build on anything older (e.g. a stale local
 # image). It prints the version it accepted, but it is a GATE, not a record: it caches
-# on the base image digest, so it only re-runs when the tag moves, and in a release log
-# it usually reads CACHED with that version sitting in whichever earlier run first saw
-# the digest - subject to log retention. The compile RUN below echoes the toolchain too,
-# and that one is reliable: `COPY custom* /custom` sees a tarball the workflow
-# regenerates every run, so the stage re-executes from that COPY on and the echo is
-# always in the log of the build that produced the binary. For an already-published
-# image, `go version` on the extracted binary (above) needs no build log at all.
-# The floor binds only the branch below that compiles permit-opa (custom_opa.tar.gz
-# present); the fallback without the tarball downloads a prebuilt OPA - unpinned
-# (`latest`) and unverified (no --fail, no checksum). PER-16045.
+# on the base image digest, so it only re-runs when the tag moves. The compile RUN
+# below echoes the toolchain too, and that one is reliable: `COPY custom* /custom` sees
+# a tarball the workflow regenerates every run, so the stage re-executes from that COPY
+# on and the echo is always in the log of the build that produced the binary.
+#
+# The stage runs on the BUILD host's architecture and cross-compiles for $TARGETARCH
+# (pure Go, CGO_ENABLED=0), so release.yml's arm64 leg compiles natively instead of
+# under QEMU. That is also why the fallback below keys on $TARGETARCH, not `uname -m`.
 #
 # KEEP THE SHAPE OF THE FROM LINE: permit-opa's `pdp-builder` check (permit-opa#52)
 # fetches this Dockerfile from main and greps this line for a literal
@@ -138,7 +115,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # an ARG, splitting the FROM across lines or renaming the stage turns permit-opa's CI
 # red with "cannot compare go.mod's directive" - which is a fail-closed by design, but
 # it will look like an unrelated repo breaking for no reason.
-FROM golang:1.26-bookworm AS opa_build
+FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS opa_build
 ENV GOTOOLCHAIN=local
 RUN v=$(go env GOVERSION) && \
     [ "$(printf '%s\n' go1.26.6 "$v" | sort -V | head -n1)" = go1.26.6 ] || \
@@ -147,41 +124,56 @@ RUN v=$(go env GOVERSION) && \
 
 COPY custom* /custom
 
-# Build OPA binary if custom_opa.tar.gz is provided
+# OPA_BUILD (declared before the first FROM) picks BOTH the binary built here and the
+# plugin config set in main-${OPA_BUILD} below, so the two cannot disagree:
+#   permit  (default) - compile permit-opa from custom/custom_opa.tar.gz, which must
+#                       exist (the workflows and build_opal_bundle.sh create it)
+#   vanilla           - download upstream OPA ${OPA_VERSION}, checked against the
+#                       sha256 below. Bump the version and both sums together; the
+#                       sums are https://openpolicyagent.org/downloads/v<version>/opa_linux_<arch>_static.sha256
+ARG OPA_BUILD
+ARG TARGETARCH
+ARG OPA_VERSION=1.20.2
+ARG OPA_SHA256_amd64=69da5179ee403d10fa11bab6cfb4ffb0d23dba5f9b682fa977db772a1da5670f
+ARG OPA_SHA256_arm64=431bed5a365578241ab06c7cc1c7d0cdff8c11dcbc6f12c3488590deb8b8d66d
 
 # Fix for ARM64 compatibility issue (#289): Build fully static binary to avoid dynamic linking issues
 # Problem: Dynamic linking creates dependencies on system libc (glibc), but Alpine Linux uses musl libc
 # Result: Binary fails with "/lib/ld-musl-aarch64.so.1: /app/bin/opa: Not a valid dynamic program"
 # Solution: Build a truly static binary with no external libc dependencies
 # - CGO_ENABLED=0: Disables CGO to ensure pure Go compilation (eliminates glibc dependency)
-# - -a: Forces rebuilding of all packages to ensure clean static build
 # - -tags netgo: Uses pure Go network stack instead of C-based libc resolver
 # - -s -w: Strips debug info and symbol table to reduce binary size
 # - -extldflags=-static: Ensures static linking if CGO were enabled (defense in depth)
+# No `-a`: with CGO_ENABLED=0 it adds nothing to the above, and it would bypass the
+# go-build cache mount below by recompiling every package, stdlib included.
 
 # Use BuildKit cache mounts for Go modules and build cache for MUCH faster incremental builds
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    if [ -f /custom/custom_opa.tar.gz ]; \
-  then \
+    case "$OPA_BUILD" in \
+  permit) \
+    [ -f /custom/custom_opa.tar.gz ] || \
+      { echo "opa_build: OPA_BUILD=permit needs custom/custom_opa.tar.gz (run build_opal_bundle.sh)"; exit 1; } && \
     cd /custom && \
     tar xzf custom_opa.tar.gz && \
     # This RUN never comes from cache - `COPY custom* /custom` above sees a tarball the
     # workflow regenerates every build - so this echo is the toolchain record for THIS
     # build. The floor check above is the gate, and usually reads CACHED.
-    echo "opa_build: compiling permit-opa with $(go env GOVERSION)" && \
+    echo "opa_build: compiling permit-opa with $(go env GOVERSION) for linux/$TARGETARCH" && \
     # permit-opa moved its main package from the repo root to ./cmd/opa
     # (cmd/ + pkg/ layout); build whichever location the tarball provides
     if [ -d cmd/opa ]; then main_pkg=./cmd/opa; else main_pkg=.; fi && \
-    CGO_ENABLED=0 go build -a -ldflags="-s -w -extldflags=-static" -tags netgo -installsuffix netgo -o /opa $main_pkg && \
-    rm -rf /custom; \
-  else \
-    case $(uname -m) in \
-      x86_64) curl -L -o /opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static ;; \
-      aarch64) curl -L -o /opa https://openpolicyagent.org/downloads/latest/opa_linux_arm64_static ;; \
-      *) echo "Unknown architecture." && exit 1 ;; \
-    esac; \
-  fi
+    CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -ldflags="-s -w -extldflags=-static" -tags netgo -installsuffix netgo -o /opa $main_pkg && \
+    rm -rf /custom ;; \
+  vanilla) \
+    eval "sum=\$OPA_SHA256_$TARGETARCH" && \
+    [ -n "$sum" ] || { echo "opa_build: no OPA checksum for $TARGETARCH"; exit 1; } && \
+    curl --fail --show-error --silent --location -o /opa \
+      "https://openpolicyagent.org/downloads/v${OPA_VERSION}/opa_linux_${TARGETARCH}_static" && \
+    echo "$sum  /opa" | sha256sum -c - ;; \
+  *) echo "opa_build: OPA_BUILD must be permit or vanilla, got '$OPA_BUILD'"; exit 1 ;; \
+    esac
 
 # MAIN IMAGE ----------------------------------------
 # Main image setup (optimized)
