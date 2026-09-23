@@ -1,0 +1,214 @@
+# One weekly Slack message covering all three scanners.
+#
+# WHY A CRON WORKFLOW AND NOT A PER-PR PING
+# Dependabot cannot notify Slack from its own PR runs. Those runs get a read-only
+# GITHUB_TOKEN and can read only the Dependabot secret store, which is empty - so a
+# webhook simply is not reachable from there. A scheduled workflow runs with the full
+# Actions secret store and no fork restriction. "Periodic" is also the right shape: the
+# `docker /` ecosystem is on a DAILY cadence, so a ping per bump would be noise by
+# construction, while a weekly roll-up answers the only question anyone actually asks -
+# is there anything security-shaped waiting on us?
+#
+# This is the roll-up, NOT the alerting path. CRITICAL/HIGH findings are reported the day
+# they appear by scheduled-security-scan.yml, which runs all three scanners - Trivy over the
+# published tags, Docker Scout over `latest`, and the Dependabot alert feed - on one
+# schedule and reports them in ONE Slack message. Nothing security-shaped waits a week.
+#
+# What this workflow uniquely carries is the WAIVER-EXPIRY warning below. All seven
+# waivers expire 2026-12-31, and nothing else in the repo looks ahead of that date, so if
+# this workflow stops running the PR gate and the release gate both go red one morning
+# with no warning. There are deliberately no tracking issues and no automated PRs from any
+# scanner; see docs/image-vulnerability-management.md.
+name: Weekly security digest
+
+on:
+  schedule:
+    # Monday 08:00 UTC - start of the week, before standup in EU/IL time zones.
+    - cron: '0 8 * * 1'
+  workflow_dispatch:
+
+# `pull-requests: read` is for `gh pr list`, `actions: read` for `gh run list`. An
+# explicit block grants ONLY what it lists, so omitting `actions: read` would make the
+# published-image-scan lookup 403 rather than degrade.
+permissions:
+  contents: read
+  pull-requests: read
+  actions: read
+
+concurrency:
+  group: security-digest
+  # Queue rather than cancel: a manual `workflow_dispatch` and the Monday schedule can
+  # race, and losing the scheduled digest is exactly the failure this workflow exists to
+  # prevent.
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      status: ${{ steps.digest.outputs.status }}
+      summary: ${{ steps.digest.outputs.summary }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Install the waiver checker's dependencies
+        run: |
+          set -euo pipefail
+          # A venv, not `pip install --user`: the runner's system Python is
+          # PEP 668 externally-managed, so installing into it fails. Pinned to the same
+          # PyYAML the `waiver-parity` pre-commit hook uses, so the digest and the
+          # blocking PR check cannot disagree about how the YAML parses.
+          python3 -m venv "$RUNNER_TEMP/waiver-venv"
+          "$RUNNER_TEMP/waiver-venv/bin/pip" install \
+            --quiet --disable-pip-version-check pyyaml==6.0.3
+
+      - name: Build the digest
+        id: digest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          # A Dependabot PR older than this is stale enough to be worth calling out: the
+          # cooldown in dependabot.yml is 7 days, so anything past two weeks has been
+          # mergeable and ignored for a full week.
+          STALE_PR_DAYS: '14'
+          WARN_DAYS: '30'
+        run: |
+          set -euo pipefail
+
+          status=ok
+          # fail outranks warn; warn outranks ok. Never downgrade.
+          escalate() {
+            case "$1" in
+              fail) status=fail ;;
+              warn) [ "$status" = fail ] || status=warn ;;
+            esac
+          }
+
+          lines=()
+
+          # --- Dependabot -------------------------------------------------------
+          # `--app` filters by GitHub App author; `-A dependabot` would not match,
+          # because the PRs are authored by the app's bot user.
+          # Guarded, not bare. Under `set -euo pipefail` a transient 502 or a rate limit
+          # on this one call would kill the whole step - and this block runs BEFORE the
+          # waiver-expiry block below, so a blip here would silently discard the only
+          # pre-cliff warning this repo has, on one of the four Mondays it exists.
+          # Degrade this line, never the digest.
+          dependabot_json=''
+          gh_exit=0
+          dependabot_json="$(gh pr list --repo "$REPO" --app dependabot \
+                               --state open --limit 100 \
+                               --json number,createdAt 2>&1)" || gh_exit=$?
+          if [ "$gh_exit" -ne 0 ]; then
+            escalate warn
+            lines+=("*Dependabot* - could not read the PR list (gh exited ${gh_exit}). Count unknown this week.")
+            dependabot_count=-1
+          else
+            dependabot_count="$(printf '%s' "$dependabot_json" | jq 'length')"
+          fi
+          if [ "$dependabot_count" -lt 0 ]; then
+            : # already reported above
+          elif [ "$dependabot_count" -eq 0 ]; then
+            lines+=("*Dependabot* - no open dependency PRs.")
+          else
+            oldest="$(printf '%s' "$dependabot_json" \
+                        | jq -r 'sort_by(.createdAt) | .[0] | "\(.number) \(.createdAt)"')"
+            oldest_number="${oldest%% *}"
+            oldest_created="${oldest##* }"
+            age_days=$(( ( $(date -u +%s) - $(date -u -d "$oldest_created" +%s) ) / 86400 ))
+            lines+=("*Dependabot* - ${dependabot_count} open PR(s); oldest is #${oldest_number}, ${age_days} day(s) old.")
+            escalate warn
+            if [ "$age_days" -ge "$STALE_PR_DAYS" ]; then
+              lines+=("  Oldest has been open for at least ${STALE_PR_DAYS} days - review or close it.")
+            fi
+          fi
+
+          # --- Waiver expiry ----------------------------------------------------
+          # This line is the whole waiver-hygiene mechanism. There is no bot that
+          # extends or deletes a waiver: `expired_at` exists to force a human re-check,
+          # and a bot pushing the date out would invert that. So the only automation is
+          # this heads-up, 30 days ahead of the PR gate going red for everyone.
+          waiver_exit=0
+          waiver_out="$("$RUNNER_TEMP/waiver-venv/bin/python" \
+                          .github/scripts/check_waiver_parity.py \
+                          --warn-days "$WARN_DAYS" 2>&1)" || waiver_exit=$?
+          if [ "$waiver_exit" -ne 0 ]; then
+            # Non-zero means parity is broken or a waiver has ALREADY expired, which
+            # also means the `waiver-parity` pre-commit hook is failing every PR.
+            escalate fail
+            lines+=("*Waivers* - check_waiver_parity.py exited ${waiver_exit}; the blocking pre-commit check is red:")
+            lines+=("$waiver_out")
+          else
+            lines+=("*Waivers* - ${waiver_out}")
+            if [ "${waiver_out%% *}" != "0" ]; then
+              escalate warn
+            fi
+          fi
+
+          # --- Published-image scan ---------------------------------------------
+          # Guarded for the same reason as the Dependabot call above.
+          scan_json=''
+          gh_exit=0
+          scan_json="$(gh run list --repo "$REPO" \
+                         --workflow scheduled-security-scan.yml \
+                         --status completed --limit 1 \
+                         --json conclusion,createdAt,url --jq '.[0] // empty')" || gh_exit=$?
+          if [ "$gh_exit" -ne 0 ]; then
+            escalate warn
+            lines+=("*Published-image scan* - could not read the run list (gh exited ${gh_exit}).")
+          elif [ -z "$scan_json" ]; then
+            escalate warn
+            lines+=("*Published-image scan* - no completed run found. The daily watch may be disabled.")
+          else
+            conclusion="$(printf '%s' "$scan_json" | jq -r '.conclusion')"
+            scan_created="$(printf '%s' "$scan_json" | jq -r '.createdAt')"
+            scan_url="$(printf '%s' "$scan_json" | jq -r '.url')"
+            if [ "$conclusion" = "success" ]; then
+              lines+=("*Published-image scan* - last run ${scan_created} was clean.")
+            else
+              escalate fail
+              lines+=("*Published-image scan* - last run ${scan_created} concluded ${conclusion}: unwaived CRITICAL/HIGH in a PUBLISHED tag, or the scan itself broke. ${scan_url}")
+            fi
+          fi
+
+          summary="$(printf '%s\n' "${lines[@]}")"
+
+          {
+            printf '## Weekly security digest (%s)\n\n' "$status"
+            printf '%s\n' "$summary"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # A random heredoc delimiter: the body carries third-party text (CVE ids,
+          # scanner output) and a fixed marker could be forged out of it.
+          delimiter="DIGEST_$(openssl rand -hex 16)"
+          {
+            printf 'status=%s\n' "$status"
+            printf 'summary<<%s\n' "$delimiter"
+            printf '%s\n' "$summary"
+            printf '%s\n' "$delimiter"
+          } >> "$GITHUB_OUTPUT"
+
+  notify:
+    needs: [collect]
+    # Unconditional by design, including when `collect` failed: "zero open items" is
+    # itself the useful weekly signal, and a digest that goes quiet when it breaks is
+    # indistinguishable from a quiet week.
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/notify-slack.yml
+    with:
+      subject: weekly security digest
+      # The fallbacks fire when `collect` failed before writing its outputs - an empty
+      # `status` is rejected by the notifier, which would swallow the whole message.
+      # `details_url` is omitted so it defaults to this run.
+      status: ${{ needs.collect.outputs.status || 'fail' }}
+      summary: ${{ needs.collect.outputs.summary || 'The digest job failed before it could build a summary. Open the run to see which lookup broke.' }}
+    # Named rather than `secrets: inherit`, which hands the notifier every secret this
+    # repo has (zizmor flags it as `secrets-inherit`). Passing a secret that does not
+    # exist is legal - it arrives as the empty string and the notifier becomes a green
+    # no-op that prints a ::notice::.
+    secrets:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

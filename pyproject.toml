@@ -37,6 +37,13 @@ ignore = [
     "FAST001", # https://docs.astral.sh/ruff/rules/fast-api-redundant-response-model/#fast-api-redundant-response-model-fast001
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# CI helper scripts are command-line tools whose stdout IS their interface: the report
+# they print is what shows up in the workflow log and is the only thing a human reads
+# when a scan fails. T20 (flake8-print) exists to keep stray debugging prints out of the
+# application under horizon/, which is where it still applies.
+".github/scripts/*.py" = ["T201"]
+
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"
 

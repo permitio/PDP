@@ -1,0 +1,169 @@
+# Reusable workflow that posts a PDP security-scan notification to Slack.
+#
+# Called by the security scanning workflows (published-image scan, weekly
+# digest, release verification) to report a scan outcome. The caller formats
+# the body; this workflow only escapes it, colours it and sends it.
+#
+# It is a GREEN NO-OP while the SLACK_WEBHOOK_URL secret does not exist: the
+# send is skipped and the skip is announced as a ::notice:: annotation. The day
+# someone adds the secret it starts posting with no edit to any workflow.
+name: Slack notification
+
+on:
+  workflow_call:
+    inputs:
+      subject:
+        description: 'What the notification is about, e.g. "daily published-image scan".'
+        required: true
+        type: string
+      status:
+        description: 'Scan outcome: "ok", "warn" or "fail". Drives the emoji and colour.'
+        required: true
+        type: string
+      summary:
+        description: 'Message body, pre-formatted by the caller. May contain untrusted text (CVE titles, package names); this workflow escapes it for Slack.'
+        required: true
+        type: string
+      details_url:
+        description: 'URL behind the "View details" link. Defaults to this workflow run.'
+        required: false
+        type: string
+        default: ''
+    secrets:
+      SLACK_WEBHOOK_URL:
+        required: false
+    outputs:
+      delivered:
+        description: >-
+          Outcome of the Slack POST: "success", "failure", or "skipped" when no webhook
+          secret is configured. A reusable workflow reaches its caller ONLY through this
+          block - a `jobs.<id>.outputs` on its own is invisible across the workflow_call
+          boundary, and `needs.<job>.outputs.delivered` would silently be the empty
+          string. See the note on the notify job below for why a caller needs this.
+        value: ${{ jobs.notify.outputs.delivered }}
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # `continue-on-error` on the send step forces that step's CONCLUSION to success, so
+    # this job is green even when delivery failed and no caller can see it in
+    # `needs.notify.result`. Publishing the step's OUTCOME - which GitHub still reports
+    # truthfully under continue-on-error - is what lets a caller whose only product is
+    # the message (scheduled-security-scan.yml) fail loudly on a dead webhook, while the
+    # scan callers, whose own red status already carries the signal, ignore it.
+    # `skipped` here means the webhook secret is absent, which is not a delivery failure.
+    outputs:
+      delivered: ${{ steps.send.outcome }}
+    env:
+      # The `secrets` context is available in NEITHER `jobs.<id>.if` NOR
+      # `jobs.<id>.steps[*].if` — there it silently evaluates to the empty
+      # string, so `if: ${{ secrets.X != '' }}` is always true and the action
+      # runs with an empty webhook. It IS available in `jobs.<id>.env`, so
+      # hoisting it here is the only correct way to gate on its presence.
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    steps:
+      - name: Build Slack payload
+        if: ${{ env.SLACK_WEBHOOK_URL != '' }}
+        env:
+          SUBJECT: ${{ inputs.subject }}
+          STATUS: ${{ inputs.status }}
+          SUMMARY: ${{ inputs.summary }}
+          DETAILS_URL: ${{ inputs.details_url }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          # Slack mrkdwn escaping. jq solves JSON escaping, which is a different
+          # problem — a CVE title needs both.
+          slack_escape() {
+            local s=$1
+            # Order is load-bearing: & FIRST, or &lt; becomes &amp;lt; and renders
+            # literally. Escaping < and > also neutralizes <!channel>-style
+            # mention tokens and stops text from splitting a <url|label> link.
+            s=${s//&/&amp;}
+            s=${s//</&lt;}
+            s=${s//>/&gt;}
+            # Slack has no entity for the <url|label> separator; swap it for a
+            # box-drawing lookalike (U+2502).
+            s=${s//|/│}
+            printf '%s' "$s"
+          }
+
+          case "$STATUS" in
+            ok) emoji=":white_check_mark:"; colour="#2eb886"; label="clean" ;;
+            warn) emoji=":warning:"; colour="#daa038"; label="needs attention" ;;
+            fail) emoji=":red_circle:"; colour="#d63a3a"; label="failed" ;;
+            *)
+              echo "::error::notify-slack: status must be one of ok|warn|fail, got '$STATUS'." >&2
+              exit 1
+              ;;
+          esac
+
+          url=${DETAILS_URL:-}
+          if [ -z "$url" ]; then
+            url="$RUN_URL"
+          fi
+          case "$url" in
+            http://*|https://*) ;;
+            *)
+              echo "::error::notify-slack: details_url must be an http(s) URL, got '$url'." >&2
+              exit 1
+              ;;
+          esac
+          # A URL is escaped differently from text: <, > and | must be
+          # percent-encoded (they are legal-ish in a URL but terminate a Slack
+          # link), and only then is & turned into its entity.
+          url=${url//</%3C}
+          url=${url//>/%3E}
+          url=${url//|/%7C}
+          url=${url//&/&amp;}
+
+          header="$emoji PDP security — *$(slack_escape "$SUBJECT")* — $label"
+          body=$(printf '%s\n<%s|View details>' "$(slack_escape "$SUMMARY")" "$url")
+
+          # jq guarantees valid JSON regardless of the characters in the body.
+          jq -n \
+            --arg header "$header" \
+            --arg body "$body" \
+            --arg colour "$colour" \
+            '{
+               text: $header,
+               attachments: [
+                 {color: $colour, mrkdwn_in: ["text"], text: $body}
+               ]
+             }' > "$RUNNER_TEMP/slack-payload.json"
+
+      - name: Send Slack notification
+        id: send
+        if: ${{ env.SLACK_WEBHOOK_URL != '' }}
+        # Best-effort means VISIBLE AND NON-FATAL, and it takes both settings below to
+        # mean that. `continue-on-error` gives the non-fatal half: a transient Slack
+        # outage must never fail the security scan that called us, and a `uses:` caller
+        # job cannot carry continue-on-error, so it has to live here.
+        #
+        # `errors: true` gives the visible half, and without it the step is a lie. At the
+        # action's default `errors: false` a failed POST is SWALLOWED - a revoked,
+        # rotated or mistyped webhook produces a green step, a green job and no
+        # annotation, so the notifier silently stops notifying and nothing says so. Since
+        # the tracking-issue route was removed, Slack is the only proactive alerting
+        # surface here, so a silent failure of this step is a silent failure of the whole
+        # alerting chain. With both set, the step is marked failed and GitHub annotates
+        # the run while the calling scan still reports its own real result.
+        continue-on-error: true
+        uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
+        with:
+          webhook: ${{ env.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          errors: true
+          # payload-file-path, never the inline `payload:` YAML form — and
+          # payload-templated stays at its default false, so a CVE description
+          # containing ${{ ... }}-shaped text is never re-evaluated.
+          payload-file-path: ${{ runner.temp }}/slack-payload.json
+
+      - name: Report that Slack is not configured
+        if: ${{ env.SLACK_WEBHOOK_URL == '' }}
+        run: echo "::notice::SLACK_WEBHOOK_URL is not set; skipping Slack notification."

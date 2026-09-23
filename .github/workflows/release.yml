@@ -23,7 +23,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+      with:
+        persist-credentials: false
 
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v3
@@ -37,12 +39,19 @@ jobs:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-    - uses: actions/checkout@v3
+    # Pinned to the same SHA as the checkout above. This step sat on @v3 two steps from
+    # an @v4, which is how you get two competing Dependabot PRs for one job.
+    - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
       with:
         repository: permitio/permit-opa
         ref: main
         path: './permit-opa'
         token: ${{ secrets.CLONE_REPO_TOKEN }}
+        # The token is still needed to CLONE the private repo; persist-credentials only
+        # controls whether it is left behind in ./permit-opa/.git/config afterwards.
+        # Nothing here pushes, and the Pre build step tars the worktree, so leaving it
+        # behind would only widen the blast radius of a compromised build step.
+        persist-credentials: false
 
     - name: Pre build PDP
       run: |
@@ -120,8 +129,246 @@ jobs:
         # Plural input, and `main` only - both for the reasons documented there.
         no-cache-filters: main
 
-  update-pdp-api-ecs-service:
+  # Scans the image that was ACTUALLY PUSHED, on both platforms, by digest.
+  #
+  # WHAT THIS ADDS. The pre-push gate is real - `build-and-push-pdp` needs `pdp-tests`,
+  # and a called workflow's result is failure if any of its jobs fail, so a red Scout or
+  # Trivy gate in tests.yml already blocks the push. But that gate scans
+  # `permitio/pdp-v2:next`: a DIFFERENT image, built in a different job, `linux/amd64`
+  # only (tests.yml), while the step above builds and pushes linux/amd64+linux/arm64.
+  # Both builds carry `no-cache-filters: main`, which deliberately re-resolves
+  # `apk upgrade` and `pip install` against live indexes - so the two builds can legally
+  # resolve different package sets, and linux/arm64 is scanned by nothing at all. This
+  # job turns "we scanned something like what shipped" into "we scanned exactly what
+  # shipped, on both platforms", and it is the only place linux/arm64 is ever scanned.
+  #
+  # WHAT THIS CANNOT DO, stated plainly: it runs AFTER the push, so it cannot un-publish
+  # the Docker Hub tag. By the time it goes red the tag is already pullable. What it buys
+  # is (a) the truth, on the release run rather than from a customer six weeks later, and
+  # (b) the ECS rollout below, which it blocks.
+  #
+  # UNEXERCISED UNTIL THE FIRST REAL RELEASE: this job cannot run on a pull request, so
+  # the digest resolution and the arm64 scan are unproven in CI. The jq was walked by
+  # hand against the live `permitio/pdp-v2:0.9.14` manifest list (an OCI image index with
+  # four entries: linux/amd64, linux/arm64, and one attestation manifest per platform,
+  # each carrying `.platform.architecture == "unknown"`). Trivy analyses layers
+  # statically and never executes the image, so scanning an arm64 digest from an amd64
+  # runner is expected to work - confirm that on the first release.
+  verify-published-image:
     needs: build-and-push-pdp
+    runs-on: ubuntu-latest
+    # A hung scan here would hold the ECS rollout hostage until GitHub's 360-minute default.
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      # required to upload the SARIF report to code scanning
+      security-events: write
+    strategy:
+      # Scan both platforms even when one fails: an arm64-only regression is exactly the
+      # thing that has never been visible before, and fail-fast would hide it behind an
+      # amd64 failure.
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    env:
+      IMAGE: permitio/pdp-v2:${{ github.event.release.tag_name }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      # Docker Hub rate-limits anonymous manifest reads, and a 429 here would fail a
+      # release for a reason that has nothing to do with the image.
+      - name: Login to Docker Hub
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Resolve the published per-platform digest
+        id: digest
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          # buildx ships preinstalled on ubuntu-latest, so there is no setup-buildx-action
+          # step: adding one would mean pinning an action this change has no verified SHA
+          # for. If buildx is ever missing, this command fails loudly, which is correct.
+          raw="$(docker buildx imagetools inspect "$IMAGE" --raw)"
+          # `.manifests[]?` yields nothing for a single-platform manifest (no `.manifests`
+          # key at all) instead of erroring - the count check below turns that into a loud
+          # failure rather than an empty scan that passes.
+          #
+          # The attestation filter is load-bearing. buildx attaches one attestation
+          # manifest per platform; they are not images and Trivy fails confusingly on
+          # them. They carry `.platform.architecture == "unknown"`, so the os/arch
+          # selector already excludes them - the annotation check is the second lock,
+          # because the day buildx stamps a real architecture on an attestation the first
+          # one stops working silently.
+          digests="$(printf '%s' "$raw" | jq -r --arg arch "$ARCH" '
+            [ .manifests[]?
+              | select(.platform.os == "linux" and .platform.architecture == $arch)
+              | select((.annotations["vnd.docker.reference.type"] // "") != "attestation-manifest")
+              | .digest ]
+            | unique | .[]')"
+          count="$(printf '%s' "$digests" | grep -c . || true)"
+          if [ "$count" -ne 1 ]; then
+            echo "::error::Expected exactly one linux/${ARCH} manifest in ${IMAGE}, found ${count}. The published tag is not the multi-platform index this job assumes; the raw manifest is in the step log. Refusing to report a release as scanned when it was not."
+            printf 'raw manifest for %s:\n%s\n' "$IMAGE" "$raw" >&2
+            exit 1
+          fi
+          # Scan BY DIGEST, not by tag. trivy-action v0.36.0 has no `platform` input, and
+          # an undeclared input is dropped silently (the same trap as no-cache-filter(s)
+          # above), so `platform:` would look deliberate and scan amd64 twice. A per-arch
+          # digest resolves to a single-platform manifest, which needs no selector.
+          echo "ref=${IMAGE%%:*}@${digests}" >> "$GITHUB_OUTPUT"
+          echo "Resolved linux/${ARCH} of ${IMAGE} to ${IMAGE%%:*}@${digests}"
+
+      # Same severity / vuln-type / trivyignore / ignore-unfixed settings as the PR gate
+      # in tests.yml, so the two cannot disagree about what counts as a finding. The one
+      # deliberate difference is `exit-code: '0'`: the pass/fail decision is made by the
+      # separate fail step below, after the report has been rendered and uploaded.
+      - name: Trivy scan the published image
+        if: ${{ !cancelled() }}
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.digest.outputs.ref }}
+          scanners: vuln
+          severity: CRITICAL,HIGH
+          # NOT `pkg-types`: the action's input is still `vuln-type`. See tests.yml.
+          vuln-type: os,library
+          trivyignores: .trivyignore.yaml
+          format: json
+          output: trivy-published-${{ matrix.arch }}.json
+          exit-code: '0'
+          # Report findings that have no fix yet rather than hiding them - an unfixable
+          # CVE on a just-published image is precisely the one a human must see.
+          ignore-unfixed: false
+
+      - name: Trivy scan the published image (SARIF for code scanning)
+        if: ${{ !cancelled() }}
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.digest.outputs.ref }}
+          scanners: vuln
+          severity: CRITICAL,HIGH
+          vuln-type: os,library
+          trivyignores: .trivyignore.yaml
+          format: sarif
+          output: trivy-published-${{ matrix.arch }}.sarif
+          exit-code: '0'
+          # The DB was already cached by the step above.
+          skip-setup-trivy: true
+
+      # Uploaded BEFORE the fail step on purpose, so code scanning gets the findings from
+      # exactly the run that blocked the rollout.
+      - name: Upload SARIF report
+        if: ${{ !cancelled() }}
+        uses: github/codeql-action/upload-sarif@faaca9a8f6edddba5725ffe5adefdab6669a2eca # v3.38.0
+        with:
+          sarif_file: trivy-published-${{ matrix.arch }}.sarif
+          category: published-release-${{ matrix.arch }}
+
+      - name: Render the scan report
+        id: report
+        if: ${{ !cancelled() }}
+        env:
+          REF: ${{ steps.digest.outputs.ref }}
+          REPORT_JSON: trivy-published-${{ matrix.arch }}.json
+        run: |
+          set -euo pipefail
+          if [ -z "${REF:-}" ]; then
+            echo "::error::No image reference was resolved, so nothing was scanned. See the digest step above."
+            exit 1
+          fi
+          # Docker Scout is deliberately not run here: it gates the pre-push image in
+          # tests.yml against an OpenVEX doc whose statements bind to
+          # `pkg:docker/permitio/pdp-v2@next` and match no release tag. Omitting
+          # --scout-sarif renders "Docker Scout did not run" and leaves parse_ok true;
+          # passing a path that does not exist would render "unavailable" and set
+          # parse_ok false, which is a different claim.
+          #
+          # The formatter always exits 0 by design - never gate on its exit code. It
+          # writes critical/high/total/parse_ok to $GITHUB_OUTPUT, and the fail step
+          # below is what turns those into a red job.
+          python3 .github/scripts/format_scan_report.py \
+            --trivy "$REPORT_JSON" \
+            --image "$REF" \
+            --out scan-report.md \
+            --github-output "$GITHUB_OUTPUT" > /dev/null
+          cat scan-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload raw scan report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: trivy-published-${{ github.event.release.tag_name }}-${{ matrix.arch }}
+          path: |
+            trivy-published-${{ matrix.arch }}.json
+            trivy-published-${{ matrix.arch }}.sarif
+            scan-report.md
+          retention-days: 30
+
+      # `!cancelled()` rather than no `if:` at all: without it this step is skipped the
+      # moment any earlier step fails, and a scan that crashed would report as a green
+      # gate. That failure mode has already bitten the Trivy gate in tests.yml once.
+      - name: Fail if the published image has CRITICAL/HIGH findings
+        if: ${{ !cancelled() }}
+        env:
+          ARCH: ${{ matrix.arch }}
+          REF: ${{ steps.digest.outputs.ref }}
+          PARSE_OK: ${{ steps.report.outputs.parse_ok }}
+          CRITICAL: ${{ steps.report.outputs.critical }}
+          HIGH: ${{ steps.report.outputs.high }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PARSE_OK:-}" ]; then
+            echo "::error::linux/${ARCH}: no scan report was produced for ${IMAGE}, so this image is UNVERIFIED. An earlier step in this job failed - fix that rather than re-running past it."
+            exit 1
+          fi
+          if [ "$PARSE_OK" != "true" ]; then
+            echo "::error::linux/${ARCH}: the Trivy report for ${REF} could not be parsed. Treating an unreadable report as clean is how a zero-byte file ships a vulnerable image; see the job summary."
+            exit 1
+          fi
+          if [ "${CRITICAL:-0}" -ne 0 ] || [ "${HIGH:-0}" -ne 0 ]; then
+            echo "::error::linux/${ARCH}: ${REF} has ${CRITICAL} CRITICAL / ${HIGH} HIGH findings. The tag is ALREADY on Docker Hub - this blocks the ECS rollout, it does not un-publish. Fix and cut a new release, or waive in .trivyignore.yaml AND .docker/scout/pdp-v2.vex.json."
+            exit 1
+          fi
+          echo "linux/${ARCH}: ${REF} has no unwaived CRITICAL/HIGH findings."
+
+  # Only on a genuine failure. `skipped` (the push job failed, so nothing was published)
+  # and `cancelled` are not "the published image is bad" and must not say so.
+  notify-release-scan:
+    needs: verify-published-image
+    if: ${{ always() && needs.verify-published-image.result == 'failure' }}
+    uses: ./.github/workflows/notify-slack.yml
+    secrets:
+      # Named rather than `secrets: inherit`. This workflow holds DOCKERHUB_TOKEN,
+      # CLONE_REPO_TOKEN, PDP_TESTER_API_KEY and PDP_CICD_AWS_ROLE; a workflow whose only
+      # job is to POST to an external webhook has no business being handed any of them.
+      # Naming a secret that does not exist is legal - it resolves to the empty string and
+      # the notifier becomes a green no-op that says so in a ::notice::.
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    with:
+      subject: release image scan
+      status: fail
+      # No `|` anywhere in this text: the notifier swaps it for U+2502 to keep caller text
+      # out of Slack's link syntax. The run link is appended by the notifier itself.
+      summary: >-
+        *permitio/pdp-v2:${{ github.event.release.tag_name }}* is already published on
+        Docker Hub and its post-push scan did not pass. The production ECS rollout is
+        BLOCKED. Both linux/amd64 and linux/arm64 were scanned by digest - open the run
+        to see which platform failed and why.
+
+  update-pdp-api-ecs-service:
+    # Blocked on verify-published-image as well as the push. The honest tradeoff: this
+    # gate runs AFTER the Docker Hub push, so it cannot un-publish the tag - a customer
+    # who pulls in that window gets the image either way. What it prevents is rolling a
+    # CVE-bearing image out to the public PDP fleet, which is the part still under our
+    # control. The cost is that a CVE disclosed between the build and the scan blocks an
+    # operational deploy; that is the intended trade, not an accident.
+    needs: [build-and-push-pdp, verify-published-image]
     runs-on: ubuntu-latest
     if: "!github.event.release.prerelease"
     steps:
