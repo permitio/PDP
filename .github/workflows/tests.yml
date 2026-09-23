@@ -46,10 +46,17 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # permit-opa is compiled into /app/bin/opa from THIS commit, not from its main:
+      # a permit-opa merge changes the shipped binary only through a PDP PR that moves
+      # this pin, which this job then builds. To bump it: pick a permit-opa commit on
+      # main (e.g. `git ls-remote https://github.com/permitio/permit-opa refs/heads/main`),
+      # put its full SHA here AND in release.yml (the Pre build step below fails if the
+      # two differ), and say in the PR what permit-opa changes it brings in. Check
+      # .docker/scout/pdp-v2.vex.json's removal gates when you do.
       - uses: actions/checkout@v4
         with:
           repository: permitio/permit-opa
-          ref: main
+          ref: ab54a3766111b3f6c4796c5ab0a7d7e75f7f590d  # permit-opa main, 2026-09-23 (#51)
           path: './permit-opa'
           token: ${{ secrets.CLONE_REPO_TOKEN }}
 
@@ -60,13 +67,33 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Pre build PDP tests
+        # bash, so the tar pipeline below runs with pipefail (the default `run:` shell
+        # is `bash -e` without it, which would hide a failing find).
+        shell: bash
         run: |
+          # The permit-opa pin must be the same in both workflows.
+          pin() { sed -nE 's/^[[:space:]]*ref: ([0-9a-f]{40})([[:space:]].*)?$/\1/p' "$1"; }
+          test -n "$(pin .github/workflows/tests.yml)"
+          test "$(pin .github/workflows/tests.yml)" = "$(pin .github/workflows/release.yml)" || {
+            echo "::error::permit-opa pin differs between tests.yml and release.yml"; exit 1; }
           echo "next" > permit_pdp_version
           rm -rf custom
           mkdir custom
           build_root="$PWD"
           cd ./permit-opa
           find * \( -name '*go*' -o -name 'LICENSE.md' \) -print0 | xargs -0 tar -czf "$build_root"/custom/custom_opa.tar.gz --exclude '.*'
+
+      # tests.yml builds amd64 only (the image is loaded for pdp-tester), but the
+      # release also builds arm64. opa_build cross-compiles on the build host, so this
+      # is cheap, and it stops before the Rust and Python stages.
+      - name: Build the OPA stage for arm64
+        uses: docker/build-push-action@v5
+        with:
+          push: false
+          context: .
+          target: opa_build
+          platforms: linux/arm64
+          cache-from: type=gha
 
       - name: Build and load PDP Docker image
         uses: docker/build-push-action@v5
@@ -249,9 +276,9 @@ jobs:
           # package `go list -deps ./cmd/opa` proves is not linked into /app/bin/opa - and
           # which are fixed only in x/crypto >=0.56.0, whose go.mod declares `go 1.26.0`.
           # The OPA builder is golang:1.26-bookworm (PDP#342); permit-opa's go.mod stays
-          # `go 1.25.0` until permitio/permit-opa#52 merges, and the next PDP build after
-          # that resolves x/crypto v0.57.0. Then delete both statements. See PER-15358 and
-          # PER-16045.
+          # `go 1.25.0` until permitio/permit-opa#52 merges, and x/crypto v0.57.0 reaches
+          # this image with the PDP PR that moves the permit-opa pin (build-pdp-image)
+          # past it. Then delete both statements. See PER-15358 and PER-16045.
           #
           # NOTE: this gate reads packages, so it does not flag the CPython interpreter
           # itself the way a CPE-based scanner does - that blind spot is why four Python

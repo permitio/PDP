@@ -1,9 +1,9 @@
 #!/bin/bash
 
-set -e
+set -euo pipefail
 
 # Check if PDP_VANILLA is set to true from command line argument
-if [ "$PDP_VANILLA" == "true" ]; then
+if [ "${PDP_VANILLA:-}" == "true" ]; then
   echo "Building for pdp-vanilla environment."
 fi
 
@@ -15,11 +15,14 @@ else
   echo "permit-opa directory already exists. Skipping clone operation."
 fi
 
+# Always start from an empty custom/: a tarball left over from an earlier run would
+# otherwise be what a vanilla build ships.
+rm -rf custom
+mkdir custom
+
 # Conditionally execute the custom OPA tarball creation section based on the value of PDP_VANILLA
-if [ "$PDP_VANILLA" != "true" ]; then
+if [ "${PDP_VANILLA:-}" != "true" ]; then
   # Custom OPA tarball creation section
-  rm -rf custom
-  mkdir custom
   build_root="$PWD"
   cd "../permit-opa"
   find * \( -name '*go*' -o -name 'LICENSE.md' \) -print0 | xargs -0 tar -czf "$build_root"/custom/custom_opa.tar.gz --exclude '.*'
@@ -27,4 +30,5 @@ if [ "$PDP_VANILLA" != "true" ]; then
   echo "Custom OPA tarball created successfully."
 else
   echo "Skipping custom OPA tarball creation for pdp-vanilla environment."
+  echo "Build the image with --build-arg OPA_BUILD=vanilla (the default, permit, needs the tarball)."
 fi
