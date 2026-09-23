@@ -129,7 +129,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # always in the log of the build that produced the binary. For an already-published
 # image, `go version` on the extracted binary (above) needs no build log at all.
 # The floor binds only the branch below that compiles permit-opa (custom_opa.tar.gz
-# present); the fallback without the tarball downloads a prebuilt OPA. PER-16045.
+# present); the fallback without the tarball downloads a prebuilt OPA - unpinned
+# (`latest`) and unverified (no --fail, no checksum). PER-16045.
 #
 # KEEP THE SHAPE OF THE FROM LINE: permit-opa's `pdp-builder` check (permit-opa#52)
 # fetches this Dockerfile from main and greps this line for a literal
@@ -318,13 +319,8 @@ RUN mkdir -p /config && chown -R permit:permit /config
 # Ensure the `permit` user has the correct permissions for home directory and binaries
 RUN chown -R permit:permit /home/permit /app /usr/local/bin
 
-# Switch to permit user
-USER permit
-
 # Copy Kong routes and Gunicorn config
 COPY kong_routes.json /config/kong_routes.json
-
-USER root
 
 # Install python dependencies in one command to optimize layer size
 # Use cache mount for pip to speed up incremental builds
