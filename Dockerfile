@@ -236,11 +236,47 @@ USER root
 
 # Install python dependencies in one command to optimize layer size
 # Use cache mount for pip to speed up incremental builds
+#
+# aiofiles is upgraded AFTER the requirements resolve, on purpose. opal-client 0.9.6 declares
+# `aiofiles>=0.8.0,<1`, and under PEP 440 every calendar-versioned aiofiles release (22.x,
+# 23.x, 24.x) is `>1`, so that cap admits exactly one version: 0.8.0, from November 2021. Its
+# tempfile shim does `result.delete = f.delete` (aiofiles/tempfile/__init__.py:177), which
+# raises AttributeError on CPython >= 3.12 because tempfile._TemporaryFileWrapper no longer
+# exposes `.delete`. opal_client/client.py:449 (backup_store) hits it on every
+# OPAL_STORE_BACKUP_INTERVAL tick (60s) when PDP_ENABLE_OFFLINE_MODE=true, and again on
+# shutdown and on the connectivity-disable path: the exception is swallowed, so the PDP keeps
+# serving, but the policy-store backup is never written and a 0-byte *.json.tmp is leaked into
+# /app/backup per tick. Shipped in 0.9.14 with the 3.13 base bump (#329); the read path
+# (load_store_from_backup) is unaffected. See permitio/PDP#340 and PER-16234.
+#
+# It cannot go in requirements.txt: pip has no override mechanism, so `aiofiles>=23.2.1` next
+# to `opal-client==0.9.6` is ResolutionImpossible and the build stops. Upgrading after the
+# resolve works: with --no-deps pip skips the conflict check entirely and exits 0 (`pip check`
+# would report the declared-constraint violation, but pip is removed from the image right
+# after), and nothing else in the resolved set declares or imports aiofiles - only four
+# opal_client modules do, and all import on 24.1.0. Exact pin, same no-lockfile posture as websockets
+# and starlette in requirements.txt. 24.1.0 is the first release tested on 3.13 (23.2.0, the
+# first with the fix, is yanked); 25.x changes the context-manager type for no gain here.
+#
+# The `python -c` line is the regression guard: it makes the exact aiofiles call that
+# backup_store() makes, on the interpreter and packages that actually ship, so a regression
+# fails the image build in tests.yml and release.yml instead of surfacing as a log line 60s
+# after boot. (The pytests job cannot guard this: `pip install .[dev]` resolves the same
+# aiofiles 0.8.0.) It drives the async context manager's __aenter__ directly to stay a
+# one-liner; with the default delete=True the temp file is removed when the wrapper is
+# collected.
+#
+# Remove the upgrade and the guard together once requirements.txt moves to an opal-client
+# whose metadata admits aiofiles>=23.2.1. That bump also needs a release carrying
+# permitio/opal#960: opal-client 0.9.9 declares Requires-Python <3.13 and cannot be installed
+# on this image at all.
 COPY ./requirements.txt ./requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
     apk add --no-cache --virtual .build-deps build-base libffi-dev libressl-dev musl-dev zlib-dev && \
     pip install --upgrade pip setuptools && \
     pip install -r requirements.txt && \
+    pip install --no-deps --upgrade "aiofiles==24.1.0" && \
+    python -c "import asyncio, aiofiles.tempfile as t; asyncio.run(t.NamedTemporaryFile('w').__aenter__())" && \
     python -m pip uninstall -y pip setuptools wheel && \
     rm -r /usr/local/lib/python3.13/ensurepip && \
     apk del .build-deps
