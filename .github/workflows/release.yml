@@ -76,9 +76,12 @@ jobs:
         #
         # `opa_build` is deliberately NOT listed: `COPY custom* /custom` pulls in
         # custom_opa.tar.gz, which the Pre-build step regenerates every run, so that stage
-        # already re-executes unconditionally. Listing it would imply this filter controls
-        # the OPA binary's Go dependency versions, and it does not - those come from
-        # permit-opa's go.sum (see permitio/permit-opa#49).
+        # re-executes from that COPY on, every run. The two layers before it
+        # (`ENV GOTOOLCHAIN=local` and the go1.26.6 floor check) can come from the cache,
+        # but only while the base image digest is unchanged; a moved tag re-runs the
+        # check. Listing the stage would imply this filter controls the OPA binary's Go
+        # dependency versions, and it does not - those come from permit-opa's go.sum (see
+        # permitio/permit-opa#49).
         #
         # The Rust stages are untouched by this filter, and in practice they barely cache at
         # all: `rust_planner`'s `COPY . .` sees the regenerated tarball, so it and the final
