@@ -324,14 +324,24 @@ COPY kong_routes.json /config/kong_routes.json
 
 # Install python dependencies in one command to optimize layer size
 # Use cache mount for pip to speed up incremental builds
+#
+# requirements-override.txt pins what a dependency's metadata forbids - today aiofiles, which
+# opal-client caps at a 0.8.0 that breaks OPAL's offline-mode backup on CPython >= 3.12 - so it
+# is installed after the resolve. That file holds the rationale and the exit condition
+# (PER-16234). check_aiofiles_override.py is bind-mounted, so it never ships, and runs last:
+# it fails the build if opal-client leaves 0.9.6 or the real backup_store() stops working here.
 COPY ./requirements.txt ./requirements.txt
+COPY ./requirements-override.txt ./requirements-override.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
+    --mount=type=bind,source=check_aiofiles_override.py,target=/tmp/check_aiofiles_override.py \
     apk add --no-cache --virtual .build-deps build-base libffi-dev libressl-dev musl-dev zlib-dev && \
     pip install --upgrade pip setuptools && \
     pip install -r requirements.txt && \
+    pip install --no-deps --require-hashes -r requirements-override.txt && \
     python -m pip uninstall -y pip setuptools wheel && \
     rm -r "$(python3 -c 'import sysconfig; print(sysconfig.get_paths()["stdlib"])')/ensurepip" && \
-    apk del .build-deps
+    apk del .build-deps && \
+    python /tmp/check_aiofiles_override.py
 
 USER permit
 
