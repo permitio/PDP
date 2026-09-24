@@ -250,12 +250,10 @@ jobs:
           # CVE-2026-78662 / CVE-2026-56855, which live in golang.org/x/crypto/ssh - a
           # package `go list -deps ./cmd/opa` proves is not linked into /app/bin/opa - and
           # which are fixed only in x/crypto >=0.56.0, whose go.mod declares `go 1.26.0`.
-          # Go 1.26 has been stable since 2026-02-10 (1.26.8 is current, and 1.27.0 is out)
-          # - the blocker is local, not upstream. The OPA builder is still
-          # golang:1.25-bookworm (the opa_build stage) and permit-opa's go.mod is `go 1.25.0`,
-          # and the official golang images ship GOTOOLCHAIN=local so the toolchain cannot
-          # move implicitly. Gated on PDP#334 plus a matching permit-opa change, not on Go.
-          # See PER-15358.
+          # The OPA builder is golang:1.26-bookworm (PDP#342); permit-opa's go.mod stays
+          # `go 1.25.0` until permitio/permit-opa#52 merges, and the next PDP build after
+          # that resolves x/crypto v0.57.0. Then delete both statements. See PER-15358 and
+          # PER-16045.
           #
           # NOTE: this gate reads packages, so it does not flag the CPython interpreter
           # itself the way a CPE-based scanner does - that blind spot is why four Python
