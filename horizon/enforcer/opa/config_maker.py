@@ -37,16 +37,25 @@ def get_opa_config_file_path(
     decision_logs_backend_tier = (
         sidecar_config.OPA_DECISION_LOG_INGRESS_BACKEND_TIER_URL or sidecar_config.CONTROL_PLANE
     )
+    configs = {
+        "bearer_token": "enforced" if sidecar_config.OPA_BEARER_TOKEN_REQUIRED else "optional",
+        "decision_logs": "disabled",
+        "plugins": list(sidecar_config.OPA_PLUGINS.keys()) or "none",
+    }
+    if sidecar_config.OPA_DECISION_LOG_ENABLED:
+        configs["decision_logs"] = decision_logs_backend_tier
+
     logger.info(
-        "Uploading decision logs to backend tier: {tier}",
-        tier=decision_logs_backend_tier,
+        "Configuring OPA with the following settings:\n{settings}",
+        settings="\n".join(f"{k} = {v}" for k, v in configs.items()),
     )
 
     try:
         template = env.get_template(template_path)
         contents = template.render(
             cloud_service_url=decision_logs_backend_tier,
-            bearer_token=get_env_api_key(),
+            bearer_token=get_env_api_key() if sidecar_config.OPA_BEARER_TOKEN_REQUIRED else None,
+            decision_logs_enabled=sidecar_config.OPA_DECISION_LOG_ENABLED,
             log_ingress_endpoint=sidecar_config.OPA_DECISION_LOG_INGRESS_ROUTE,
             min_delay_seconds=sidecar_config.OPA_DECISION_LOG_MIN_DELAY,
             max_delay_seconds=sidecar_config.OPA_DECISION_LOG_MAX_DELAY,
