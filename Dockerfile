@@ -237,61 +237,23 @@ USER root
 # Install python dependencies in one command to optimize layer size
 # Use cache mount for pip to speed up incremental builds
 #
-# aiofiles is upgraded AFTER the requirements resolve, on purpose. opal-client 0.9.6 declares
-# `aiofiles>=0.8.0,<1`, and under PEP 440 every calendar-versioned aiofiles release (22.x,
-# 23.x, 24.x) is `>1`, so that cap admits exactly one version: 0.8.0, from November 2021. Its
-# tempfile shim does `result.delete = f.delete` (aiofiles/tempfile/__init__.py:177), which
-# raises AttributeError on CPython >= 3.12 because tempfile._TemporaryFileWrapper no longer
-# exposes `.delete`. opal_client/client.py:449 (backup_store) hits it on every
-# OPAL_STORE_BACKUP_INTERVAL tick (60s) when PDP_ENABLE_OFFLINE_MODE=true, and again on
-# shutdown and on the connectivity-disable path: the exception is swallowed, so the PDP keeps
-# serving, but the policy-store backup is never written and a 0-byte *.json.tmp is leaked into
-# /app/backup per tick. Shipped in 0.9.14 with the 3.13 base bump (#329); the read path
-# (load_store_from_backup) is unaffected. See permitio/PDP#340 and PER-16234.
-#
-# It cannot go in requirements.txt: pip has no override mechanism, so `aiofiles>=23.2.1` next
-# to `opal-client==0.9.6` is ResolutionImpossible and the build stops. Upgrading after the
-# resolve works: with --no-deps pip skips the conflict check entirely and exits 0 (`pip check`
-# would report the declared-constraint violation, but pip is removed from the image right
-# after), and nothing else in the resolved set declares or imports aiofiles - only four
-# opal_client modules do, and all import on 24.1.0. Exact pin, same no-lockfile posture as websockets
-# and starlette in requirements.txt. 24.1.0 is the first release tested on 3.13 (23.2.0, the
-# first with the fix, is yanked); 25.x changes the context-manager type for no gain here.
-#
-# The NamedTemporaryFile line is the regression guard. It smoke-tests the one code path that
-# broke - aiofiles' named-temp-file wrapper, which every backup_store() call goes through -
-# not backup_store() end to end (that also passes delete=False/dir=/suffix=, then writes the
-# export and os.replace()s it into place). Running it on the shipped interpreter and aiofiles
-# makes a regression fail the image build in tests.yml and release.yml instead of surfacing
-# as a log line 60s after boot. (The pytests job cannot guard this: `pip install .[dev]`
-# resolves the same aiofiles 0.8.0.) It drives the async context manager's __aenter__
-# directly to stay a one-liner; with the default delete=True the temp file is removed when
-# the wrapper is collected.
-#
-# The opal-client line is a tripwire. --no-deps also silences pip's conflict report, so
-# without it a bumped opal-client would silently keep getting aiofiles 24.1.0 whatever it
-# declares. Any change to the opal-client pin fails the build here until this override is
-# re-evaluated.
-#
-# Exit: once requirements.txt moves to an opal-client whose metadata admits aiofiles>=24.1.0,
-# drop the upgrade and the tripwire but KEEP the guard - that bump is exactly when the
-# resolver may start picking a newer aiofiles. It is not a routine bump. The first release
-# carrying permitio/opal#960, 0.10.0rc1 (0.9.9 declares Requires-Python <3.13 and cannot be
-# installed here at all), still caps aiofiles<1 and requires pydantic>=2.9 and
-# starlette>=1.3.1, which the pydantic<2 and starlette==0.50.0 pins in requirements.txt rule
-# out. So the way out is the aiofiles widening landing in opal before 0.10.0 GA plus horizon
-# moving to pydantic v2, or a pydantic-v1 0.9.x backport carrying both. See PER-16234.
+# requirements-override.txt pins what a dependency's metadata forbids - today aiofiles, which
+# opal-client caps at a 0.8.0 that breaks OPAL's offline-mode backup on CPython >= 3.12 - so it
+# is installed after the resolve. That file holds the rationale and the exit condition
+# (PER-16234). check_aiofiles_override.py is bind-mounted, so it never ships, and runs last:
+# it fails the build if opal-client leaves 0.9.6 or the real backup_store() stops working here.
 COPY ./requirements.txt ./requirements.txt
+COPY ./requirements-override.txt ./requirements-override.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
+    --mount=type=bind,source=check_aiofiles_override.py,target=/tmp/check_aiofiles_override.py \
     apk add --no-cache --virtual .build-deps build-base libffi-dev libressl-dev musl-dev zlib-dev && \
     pip install --upgrade pip setuptools && \
     pip install -r requirements.txt && \
-    python -c "import sys, importlib.metadata as m; v = m.version('opal-client'); v == '0.9.6' or sys.exit('opal-client is %s, not 0.9.6: re-evaluate the aiofiles override (PER-16234)' % v)" && \
-    pip install --no-deps --upgrade "aiofiles==24.1.0" && \
-    python -c "import asyncio, aiofiles.tempfile as t; asyncio.run(t.NamedTemporaryFile('w').__aenter__())" && \
+    pip install --no-deps --require-hashes -r requirements-override.txt && \
     python -m pip uninstall -y pip setuptools wheel && \
     rm -r /usr/local/lib/python3.13/ensurepip && \
-    apk del .build-deps
+    apk del .build-deps && \
+    python /tmp/check_aiofiles_override.py
 
 USER permit
 

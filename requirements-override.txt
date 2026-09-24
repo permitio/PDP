@@ -1,0 +1,19 @@
+# Post-resolve overrides: pins that a dependency's own metadata forbids, so they cannot go in
+# requirements.txt (pip has no override mechanism, so they would be ResolutionImpossible).
+# Installed right after it, with
+#   pip install --no-deps --require-hashes -r requirements-override.txt
+# by the Dockerfile pip layer, the pytests job and the README dev setup. setup.py reads only
+# requirements{,-dev}.txt, so nothing here reaches install_requires.
+#
+# aiofiles - PER-16234, permitio/PDP#340. opal-client 0.9.6 caps aiofiles<1, which admits only
+# 0.8.0 (Nov 2021). Its tempfile shim raises AttributeError on CPython >= 3.12, so on the 3.13
+# image (since 0.9.14) OPAL's offline-mode backup_store() fails on every tick: the error is
+# swallowed and the backup is never updated - a backup from before 0.9.14 stays in place and is
+# what an offline restart loads. 24.1.0 is the first release tested on 3.13 (23.2.0, the first
+# with the fix, is yanked); 25.1.0 adds nothing needed here.
+# Exit: once requirements.txt pins an opal-client whose metadata admits aiofiles>=24.1.0, delete
+# this line, check_opal_client_pin() in check_aiofiles_override.py and the pointer above the
+# opal-client pin; if this file is then empty, delete it and its install lines too (Dockerfile,
+# tests.yml, README). Keep the script's backup check and horizon/tests/test_offline_backup.py:
+# with no lockfile, release builds re-resolve without running pytests. Status: PER-16234.
+aiofiles==24.1.0 --hash=sha256:b4ec55f4195e3eb5d7abd1bf7e061763e864dd4954231fb8539a0ef8bb8260e5

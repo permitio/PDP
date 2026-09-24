@@ -137,14 +137,7 @@ websockets==17.0
 # gitpython >= 3.1.59. See PER-15358.
 GitPython>=3.1.59,<4
 opal-common==0.9.6
-# opal-client 0.9.6 caps aiofiles<1, which resolves only to 0.8.0 (Nov 2021) - broken on the
-# image's CPython 3.13: OPAL's offline-mode backup_store() raises AttributeError on every tick
-# and no policy-store backup is ever written (permitio/PDP#340 / PER-16234). Do NOT add an
-# aiofiles line here to fix it: pip cannot loosen an installed package's cap, so it is
-# ResolutionImpossible and the image build fails. The fix is a post-resolve
-# `pip install --no-deps --upgrade aiofiles==24.1.0` in the Dockerfile pip layer, next to a
-# build-time guard and a tripwire that fails the build whenever this pin changes, so a bump
-# forces a look at that override (exit notes there). Not a routine bump: 0.10.0rc1, the first
-# release carrying permitio/opal#960 (0.9.9 declares Requires-Python <3.13), still caps
-# aiofiles<1 and requires pydantic>=2.9, which the pydantic<2 pin above rules out.
+# Do not add aiofiles here: opal-client 0.9.6 caps it <1 and pip cannot override that
+# (ResolutionImpossible). It is overridden after the resolve from requirements-override.txt,
+# and changing this pin fails the image build until that override is re-evaluated (PER-16234).
 opal-client==0.9.6
