@@ -9,21 +9,30 @@ Login to Permit and create a new environment with the following objects:
 * User 'user-1' with role 'admin'
 
 Copy the `.env.example` file to `.env` and update the values with the environment details.
+Keep `OPAL_STORE_BACKUP_INTERVAL` low: the offline PDP starts as soon as the online one is
+healthy, which is before OPAL's default 60s first backup.
 
 ### Prepare repo for building PDP image
 
-This would download the Custom OPA and FactDB source code.
+From the repository root, download the custom OPA source. This clones the private
+`permitio/permit-opa` next to the repo over SSH (so it needs access to it) and packs its source
+into `custom/custom_opa.tar.gz`, which the image build picks up.
 
 ```bash
-VERSION=<my-local-version> make run-prepare
+make prepare
 ```
-Replace `<my-local-version>` with the version you want to use for the PDP image
 
 ### Run the tests
 
+From this directory:
+
 ```bash
-docker compose up
+docker compose up --build
 ```
+
+Both testers should log `Passed`, `online-pdp` should never log `failed to backup policy store`,
+and `docker compose exec online-pdp ls -la /app/backup` should list `policy_store_backup.json`
+with no `tmp*.json.tmp` next to it.
 
 
 ### What does it do

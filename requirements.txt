@@ -137,4 +137,7 @@ websockets==17.0
 # gitpython >= 3.1.59. See PER-15358.
 GitPython>=3.1.59,<4
 opal-common==0.9.6
+# Do not add aiofiles here: opal-client 0.9.6 caps it <1 and pip cannot override that
+# (ResolutionImpossible). It is overridden after the resolve from requirements-override.txt,
+# and changing this pin fails the image build until that override is re-evaluated (PER-16234).
 opal-client==0.9.6
