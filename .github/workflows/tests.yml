@@ -58,7 +58,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: permitio/permit-opa
-          ref: ab54a3766111b3f6c4796c5ab0a7d7e75f7f590d  # permit-opa main, 2026-09-23 (#51)
+          ref: ff2356d560e3c7152bcb6c6ab8ebd5d4eb691306  # permit-opa 0.0.23 (#52; go 1.26, x/crypto v0.57.0)
           path: './permit-opa'
           token: ${{ secrets.CLONE_REPO_TOKEN }}
 
@@ -273,14 +273,9 @@ jobs:
           # CVE-2026-48818 / CVE-2026-54283, all fixed only in starlette >=1.x, which
           # OPAL's starlette<1 cap forbids; ddtrace CVE-2026-50271, fixed only in
           # ddtrace >=4.8.2, which OPAL's ddtrace<4 cap forbids and which the Dockerfile
-          # mitigates by dropping "baggage" from the extract styles; and x/crypto
-          # CVE-2026-78662 / CVE-2026-56855, which live in golang.org/x/crypto/ssh - a
-          # package `go list -deps ./cmd/opa` proves is not linked into /app/bin/opa - and
-          # which are fixed only in x/crypto >=0.56.0, whose go.mod declares `go 1.26.0`.
-          # The OPA builder is golang:1.26-bookworm (PDP#342); permit-opa's go.mod stays
-          # `go 1.25.0` until permitio/permit-opa#52 merges, and x/crypto v0.57.0 reaches
-          # this image with the PDP PR that moves the permit-opa pin (build-pdp-image)
-          # past it. Then delete both statements. See PER-15358 and PER-16045.
+          # mitigates by dropping "baggage" from the extract styles. (The two x/crypto/ssh
+          # waivers, CVE-2026-78662 / CVE-2026-56855, were removed when the permit-opa pin
+          # moved to 0.0.23, which carries x/crypto v0.57.0. PER-15358, PER-16045.)
           #
           # NOTE: this gate reads packages, so it does not flag the CPython interpreter
           # itself the way a CPE-based scanner does - that blind spot is why four Python

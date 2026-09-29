@@ -57,8 +57,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # Go 1.26 builder (was golang:1.25-bookworm), moved AHEAD of permit-opa raising its
 # `go` directive to 1.26 (permitio/permit-opa#52). That move is forced by
 # golang.org/x/crypto >= 0.56.0 - the version that clears CVE-2026-78662 /
-# CVE-2026-56855 (x/crypto/ssh), waived today in .docker/scout/pdp-v2.vex.json - whose
-# own go.mod declares `go 1.26.0`. With GOTOOLCHAIN=local (set below; the official
+# CVE-2026-56855 (x/crypto/ssh) - whose own go.mod declares `go 1.26.0`. The pin below
+# (permit-opa 0.0.23) includes it, so those two are no longer waived. With GOTOOLCHAIN=local (set below; the official
 # golang images set it too) an older builder facing a newer `go` directive does not
 # fetch a toolchain, it hard-fails:
 #
@@ -71,7 +71,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # cannot compile fails that PR's build-pdp-image job, not a later release. Commits from
 # before the pin still take permit-opa `main`: a release or hotfix cut from one builds
 # whatever permit-opa main is that day, and one cut from v0.9.15 or older (a
-# golang:1.25 builder) fails in this stage once permit-opa#52 merges. Cut releases and
+# golang:1.25 builder) fails in this stage, since permit-opa#52 is merged. Cut releases and
 # hotfixes from a commit that has the pin.
 #
 # What changes in /app/bin/opa: changes that come with the 1.26 toolchain land with
