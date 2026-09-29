@@ -64,13 +64,15 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 #
 #   go: go.mod requires go >= 1.26.0 (running go 1.25.x; GOTOOLCHAIN=local)
 #
-# tests.yml and release.yml check permit-opa out at a pinned commit (PERMIT_OPA_REF),
-# so which permit-opa ships changes only in a PDP commit that moves that pin, and a
-# release or `v*` hotfix builds the pin its own commit carries. Moving the pin to a
-# permit-opa commit whose `go` directive this builder cannot compile fails that PR's
-# build-pdp-image job, not a later release. Commits from before the pin (v0.9.15 and
-# older) still take permit-opa `main`, so once permit-opa#52 merges a release or hotfix
-# cut from one of them fails in this stage: cut it from a commit that has the pin.
+# tests.yml and release.yml check permit-opa out at a pinned commit (the `ref:` of
+# their permit-opa checkout), so which permit-opa ships changes only in a PDP commit
+# that moves that pin, and a release or `v*` hotfix builds the pin its own commit
+# carries. Moving the pin to a permit-opa commit whose `go` directive this builder
+# cannot compile fails that PR's build-pdp-image job, not a later release. Commits from
+# before the pin still take permit-opa `main`: a release or hotfix cut from one builds
+# whatever permit-opa main is that day, and one cut from v0.9.15 or older (a
+# golang:1.25 builder) fails in this stage once permit-opa#52 merges. Cut releases and
+# hotfixes from a commit that has the pin.
 #
 # What changes in /app/bin/opa: changes that come with the 1.26 toolchain land with
 # this builder (e.g. the Green Tea GC is on by default). GODEBUG-gated defaults do not:
