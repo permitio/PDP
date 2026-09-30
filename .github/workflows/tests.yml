@@ -88,9 +88,29 @@ jobs:
           cd ./permit-opa
           find * \( -name '*go*' -o -name 'LICENSE.md' \) -print0 | xargs -0 tar -czf "$build_root"/custom/custom_opa.tar.gz --exclude '.*'
 
+      # The only stage cached across runs. rust_chef reads nothing from the build
+      # context (base image, `apk add`, `cargo install`, `rustup`), so it is safe to
+      # export whole, and it is worth it: a cold rust_chef costs about 4 minutes. It
+      # has its own scope because the gha backend keeps one index per scope. The image
+      # builds below and in release.yml read this scope and export nothing: every layer
+      # of the final image comes from `main`, which `no-cache-filters: main` never
+      # serves from cache, and the other stages see build inputs that must not be
+      # cached for every ref to restore (opa_build's `COPY custom* /custom`, and the
+      # Rust stages' `COPY . .`). Keep rust_chef free of COPY/ADD (see the Dockerfile).
+      - name: Cache the rust_chef stage
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25  # v5.4.0
+        with:
+          outputs: type=cacheonly
+          context: .
+          target: rust_chef
+          cache-from: type=gha,scope=rust-chef
+          cache-to: type=gha,mode=max,scope=rust-chef
+
       # tests.yml builds amd64 only (the image is loaded for pdp-tester), but the
       # release also builds arm64. opa_build cross-compiles on the build host, so this
-      # is cheap, and it stops before the Rust and Python stages.
+      # is cheap, and it stops before the Rust and Python stages. No cache: nothing
+      # exports opa_build, and its only layers before `COPY custom*` (an ENV and the
+      # go1.26.6 floor check) take about 2 seconds.
       - name: Build the OPA stage for arm64
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25  # v5.4.0
         with:
@@ -99,7 +119,6 @@ jobs:
           context: .
           target: opa_build
           platforms: linux/arm64
-          cache-from: type=gha
 
       - name: Build and load PDP Docker image
         uses: docker/build-push-action@v5
@@ -109,8 +128,8 @@ jobs:
           context: .
           platforms: linux/amd64
           tags: permitio/pdp-v2:next
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # rust_chef only, from the step above; no cache-to (that step says why).
+          cache-from: type=gha,scope=rust-chef
           # Must match release.yml. Without it the image that pdp-tester exercises and
           # that docker-scout gate is built from a possibly-stale cached `main`
           # stage, while the released image re-resolves `apk upgrade` and `pip install`
@@ -154,11 +173,13 @@ jobs:
 
       # Checkout the pdp-tester repository
       - name: Checkout pdp-tester repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         with:
           repository: "permitio/pdp-tester"
           token: ${{ secrets.CLONE_REPO_TOKEN }}
           path: './pdp-tester'
+          # Nothing after the clone needs the token; don't leave it in .git/config.
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v5

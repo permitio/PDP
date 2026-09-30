@@ -9,6 +9,9 @@ ARG OPA_BUILD=permit
 # (1) this stage will be run always on current arch
 # zigbuild & Cargo targets added
 
+# Keep this stage free of COPY/ADD. CI caches every layer of it (tests.yml, "Cache
+# the rust_chef stage") in a cache that every ref, forks included, can restore, so
+# nothing from the build context may enter it.
 FROM --platform=$BUILDPLATFORM rust:1.94-alpine AS rust_chef
 WORKDIR /app
 ENV PKGCONFIG_SYSROOTDIR=/
@@ -101,8 +104,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 #
 # The floor is go1.26.6, the first 1.26 release with the crypto/tls fix for
 # GO-2026-6090, and the RUN below fails the build on anything older (e.g. a stale local
-# image). It prints the version it accepted, but it is a GATE, not a record: it caches
-# on the base image digest, so it only re-runs when the tag moves. The compile RUN
+# image). It prints the version it accepted, but it is a GATE, not a record: a local
+# build can serve it from cache until the base image tag moves. (CI exports no
+# opa_build layers, so there it re-runs every build.) The compile RUN
 # below echoes the toolchain too, and that one is reliable: `COPY custom* /custom` sees
 # a tarball the workflow regenerates every run, so the stage re-executes from that COPY
 # on and the echo is always in the log of the build that produced the binary.
@@ -162,7 +166,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     tar xzf custom_opa.tar.gz && \
     # This RUN never comes from cache - `COPY custom* /custom` above sees a tarball the
     # workflow regenerates every build - so this echo is the toolchain record for THIS
-    # build. The floor check above is the gate, and usually reads CACHED.
+    # build. The floor check above is the gate, and may read CACHED locally.
     echo "opa_build: compiling permit-opa with $(go env GOVERSION) for linux/$TARGETARCH" && \
     # permit-opa moved its main package from the repo root to ./cmd/opa
     # (cmd/ + pkg/ layout); build whichever location the tarball provides
