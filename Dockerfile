@@ -57,10 +57,11 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # Go 1.26 builder (was golang:1.25-bookworm), moved AHEAD of permit-opa raising its
 # `go` directive to 1.26 (permitio/permit-opa#52). That move is forced by
 # golang.org/x/crypto >= 0.56.0 - the version that clears CVE-2026-78662 /
-# CVE-2026-56855 (x/crypto/ssh) - whose own go.mod declares `go 1.26.0`. The pin below
-# (permit-opa 0.0.23) includes it, so those two are no longer waived. With GOTOOLCHAIN=local (set below; the official
-# golang images set it too) an older builder facing a newer `go` directive does not
-# fetch a toolchain, it hard-fails:
+# CVE-2026-56855 (x/crypto/ssh) - whose own go.mod declares `go 1.26.0`. The permit-opa
+# commit pinned in tests.yml/release.yml includes it, so the permit build no longer needs
+# those two waivers; the vanilla download carries upstream OPA's own x/crypto. With
+# GOTOOLCHAIN=local (set below; the official golang images set it too) an older builder
+# facing a newer `go` directive does not fetch a toolchain, it hard-fails:
 #
 #   go: go.mod requires go >= 1.26.0 (running go 1.25.x; GOTOOLCHAIN=local)
 #
@@ -81,16 +82,15 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # The binary is CGO_ENABLED=0 (below), so the builder's glibc does not reach the image.
 #
 # The patch version floats with the tag (go1.26.8 today) on purpose: a Go security
-# release reaches the next build with no change here. PDP#338 (open) digest-pins this
-# FROM line with a Dependabot entry that moves tag and digest together, and adds a
-# scheduled re-scan of published tags; reword this paragraph and the auditability one
-# below when it lands.
+# release reaches the next build with no change here. PDP#338 digest-pins this FROM
+# line with a Dependabot entry that moves tag and digest together, and adds a scheduled
+# re-scan of published tags, when it lands; reword this paragraph and the auditability
+# one below then.
 #
 # This stage pins nothing beyond that floor, and that is a statement about THIS builder
 # only. permit-opa builds its own artifacts (its own Dockerfile and release workflow)
-# with its own toolchain policy; PER-16045 tracks pinning its release binaries
-# (permit-opa#51) and moving its image onto this floor (permit-opa#52). Read
-# permit-opa's own tree for what it does today.
+# with its own toolchain policy: permit-opa#51 pinned its release toolchain and #52
+# moved its image onto this floor. Read permit-opa's own tree for what it does today.
 #
 # Auditability: the toolchain is recorded in the binary's build info, survives `-s -w`,
 # and is readable with `go version` on an extracted copy - extracted, because the
@@ -109,7 +109,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 #
 # The stage runs on the BUILD host's architecture and cross-compiles for $TARGETARCH
 # (pure Go, CGO_ENABLED=0), so release.yml's arm64 leg compiles natively instead of
-# under QEMU. That is also why the fallback below keys on $TARGETARCH, not `uname -m`.
+# under QEMU. That is also why the vanilla download below keys on $TARGETARCH, not
+# `uname -m`.
 #
 # KEEP THE SHAPE OF THE FROM LINE: permit-opa's `pdp-builder` check (permit-opa#52)
 # fetches this Dockerfile from main and greps this line for a literal
@@ -156,7 +157,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     case "$OPA_BUILD" in \
   permit) \
     [ -f /custom/custom_opa.tar.gz ] || \
-      { echo "opa_build: OPA_BUILD=permit needs custom/custom_opa.tar.gz (run build_opal_bundle.sh)"; exit 1; } && \
+      { echo "opa_build: OPA_BUILD=permit needs custom/custom_opa.tar.gz (run build_opal_bundle.sh without PDP_VANILLA=true, or build with --build-arg OPA_BUILD=vanilla)"; exit 1; } && \
     cd /custom && \
     tar xzf custom_opa.tar.gz && \
     # This RUN never comes from cache - `COPY custom* /custom` above sees a tarball the
@@ -169,8 +170,11 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -ldflags="-s -w -extldflags=-static" -tags netgo -installsuffix netgo -o /opa $main_pkg && \
     rm -rf /custom ;; \
   vanilla) \
-    eval "sum=\$OPA_SHA256_$TARGETARCH" && \
-    [ -n "$sum" ] || { echo "opa_build: no OPA checksum for $TARGETARCH"; exit 1; } && \
+    case "$TARGETARCH" in \
+      amd64) sum=$OPA_SHA256_amd64 ;; \
+      arm64) sum=$OPA_SHA256_arm64 ;; \
+      *) echo "opa_build: no OPA checksum for '$TARGETARCH'"; exit 1 ;; \
+    esac && \
     curl --fail --show-error --silent --location -o /opa \
       "https://openpolicyagent.org/downloads/v${OPA_VERSION}/opa_linux_${TARGETARCH}_static" && \
     echo "$sum  /opa" | sha256sum -c - ;; \
