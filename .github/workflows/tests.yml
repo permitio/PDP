@@ -110,7 +110,11 @@ jobs:
           platforms: linux/amd64
           tags: permitio/pdp-v2:next
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # mode=min: export only the final image's layers. Intermediate stages see
+          # build inputs that must not be cached for every ref to restore - opa_build's
+          # `COPY custom* /custom` and the Rust stages' `COPY . .` - and the final
+          # image carries only the compiled /opa from them. See release.yml.
+          cache-to: type=gha,mode=min
           # Must match release.yml. Without it the image that pdp-tester exercises and
           # that docker-scout gate is built from a possibly-stale cached `main`
           # stage, while the released image re-resolves `apk upgrade` and `pip install`
@@ -159,6 +163,8 @@ jobs:
           repository: "permitio/pdp-tester"
           token: ${{ secrets.CLONE_REPO_TOKEN }}
           path: './pdp-tester'
+          # Nothing after the clone needs the token; don't leave it in .git/config.
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v5

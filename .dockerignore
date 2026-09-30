@@ -1,5 +1,6 @@
-# Version control
+# Version control (nested checkouts too: a clone's .git/config can hold credentials)
 .git/
+**/.git
 .gitignore
 
 # Build artifacts

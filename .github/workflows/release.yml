@@ -66,7 +66,12 @@ jobs:
         platforms: linux/amd64,linux/arm64
         tags: permitio/pdp-v2:${{ github.event.release.tag_name }}
         cache-from: type=gha
-        cache-to: type=gha,mode=max
+        # mode=min, never max: max also exports the intermediate stages, and those see
+        # build inputs that must not sit in a cache every ref can restore (opa_build's
+        # `COPY custom* /custom`, and the Rust stages' `COPY . .`, which includes custom/).
+        # The final image carries only the compiled /opa from them. Little is lost: the
+        # Rust stages barely cache anyway (see below).
+        cache-to: type=gha,mode=min
         # Never serve the `main` stage from the GHA cache. Its cache key is the instruction
         # text plus the parent layer, so when the base image digest has NOT moved but
         # Alpine's package index has, a release cut later replays the old
@@ -123,7 +128,7 @@ jobs:
         platforms: linux/amd64,linux/arm64
         tags: permitio/pdp-v2:${{ github.event.release.tag_name }},permitio/pdp-v2:latest
         cache-from: type=gha
-        cache-to: type=gha,mode=max
+        cache-to: type=gha,mode=min  # never max - see the pre-release step
         # See the pre-release step above: forces `apk upgrade` and `pip install` to
         # re-resolve so a release can never republish a stale OS/dependency set.
         # Plural input, and `main` only - both for the reasons documented there.
