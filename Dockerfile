@@ -9,6 +9,9 @@ ARG OPA_BUILD=permit
 # (1) this stage will be run always on current arch
 # zigbuild & Cargo targets added
 
+# Keep this stage free of COPY/ADD. CI caches every layer of it (tests.yml, "Cache
+# the rust_chef stage") in a cache that every ref, forks included, can restore, so
+# nothing from the build context may enter it.
 FROM --platform=$BUILDPLATFORM rust:1.94-alpine@sha256:77237dd363a0b127bb5ef532c2d64c0deb380b738e43a9c4bdac73398d6d0a08 AS rust_chef
 WORKDIR /app
 ENV PKGCONFIG_SYSROOTDIR=/
@@ -54,41 +57,132 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # OPA BUILD STAGE -----------------------------------
 # Build OPA from source or download precompiled binary
 # ---------------------------------------------------
-FROM golang:1.25-bookworm@sha256:3b4a11519ad929d1e1d261a12cff056f0c85b735253d7d861346b9c6f8b36437 AS opa_build
+# Go 1.26 builder (was golang:1.25-bookworm), moved AHEAD of permit-opa raising its
+# `go` directive to 1.26 (permitio/permit-opa#52). That move is forced by
+# golang.org/x/crypto >= 0.56.0 - the version that clears CVE-2026-78662 /
+# CVE-2026-56855 (x/crypto/ssh) - whose own go.mod declares `go 1.26.0`. The permit-opa
+# commit pinned in tests.yml/release.yml includes it, so the permit build no longer needs
+# those two waivers; the vanilla download carries upstream OPA's own x/crypto. With
+# GOTOOLCHAIN=local (set below; the official golang images set it too) an older builder
+# facing a newer `go` directive does not fetch a toolchain, it hard-fails:
+#
+#   go: go.mod requires go >= 1.26.0 (running go 1.25.x; GOTOOLCHAIN=local)
+#
+# tests.yml and release.yml check permit-opa out at a pinned commit (the `ref:` of
+# their permit-opa checkout), so which permit-opa ships changes only in a PDP commit
+# that moves that pin, and a release or `v*` hotfix builds the pin its own commit
+# carries. Moving the pin to a permit-opa commit whose `go` directive this builder
+# cannot compile fails that PR's build-pdp-image job, not a later release. Commits from
+# before the pin still take permit-opa `main`: a release or hotfix cut from one builds
+# whatever permit-opa main is that day, and one cut from v0.9.15 or older (a
+# golang:1.25 builder) fails in this stage, since permit-opa#52 is merged. Cut releases and
+# hotfixes from a commit that has the pin.
+#
+# What changes in /app/bin/opa: changes that come with the 1.26 toolchain land with
+# this builder (e.g. the Green Tea GC is on by default). GODEBUG-gated defaults do not:
+# they follow permit-opa's go.mod at the pinned commit (after permit-opa#52, a
+# `godebug default=go1.25` line).
+# The binary is CGO_ENABLED=0 (below), so the builder's glibc does not reach the image.
+#
+# The FROM line is digest-pinned, so a rebuild of the same commit gets the same
+# toolchain. The `docker` entry in .github/dependabot.yml moves tag and digest together
+# weekly, so a Go security release (a new go1.26.x behind the same tag) arrives as a
+# reviewable PR instead of silently on the next build.
+#
+# This stage pins nothing beyond that floor, and that is a statement about THIS builder
+# only. permit-opa builds its own artifacts (its own Dockerfile and release workflow)
+# with its own toolchain policy: permit-opa#51 pinned its release toolchain and #52
+# moved its image onto this floor. Read permit-opa's own tree for what it does today.
+#
+# Auditability: the toolchain is recorded in the binary's build info, survives `-s -w`,
+# and is readable with `go version` on an extracted copy - extracted, because the
+# runtime base is python:3.13-alpine3.23 and ships no Go. That is an after-the-fact
+# audit, not a gate. The gates are the Docker Scout and Trivy scans in tests.yml and
+# release.yml, and scheduled-security-scan.yml re-scans published tags (PER-15358).
+#
+# The floor is go1.26.6, the first 1.26 release with the crypto/tls fix for
+# GO-2026-6090, and the RUN below fails the build on anything older (e.g. a stale local
+# image). It prints the version it accepted, but it is a GATE, not a record: a local
+# build can serve it from cache until the pinned digest moves. (CI exports no
+# opa_build layers, so there it re-runs every build.) The compile RUN
+# below echoes the toolchain too, and that one is reliable: `COPY custom* /custom` sees
+# a tarball the workflow regenerates every run, so the stage re-executes from that COPY
+# on and the echo is always in the log of the build that produced the binary.
+#
+# The stage runs on the BUILD host's architecture and cross-compiles for $TARGETARCH
+# (pure Go, CGO_ENABLED=0), so release.yml's arm64 leg compiles natively instead of
+# under QEMU. That is also why the vanilla download below keys on $TARGETARCH, not
+# `uname -m`.
+#
+# KEEP THE SHAPE OF THE FROM LINE: permit-opa's `pdp-builder` check (permit-opa#52)
+# fetches this Dockerfile from main and greps this line for a literal
+# `golang:<major>.<minor>` on a line ending in `AS opa_build` (a `-bookworm@sha256:...`
+# suffix after it is fine; its regex allows one). Setting the version from
+# an ARG, splitting the FROM across lines or renaming the stage turns permit-opa's CI
+# red with "cannot compare go.mod's directive" - which is a fail-closed by design, but
+# it will look like an unrelated repo breaking for no reason.
+FROM --platform=$BUILDPLATFORM golang:1.26-bookworm@sha256:a688600ca24f8a4d3ca77f95b0dd40704a9fc787c826660eb7ba0b641b8b175d AS opa_build
+ENV GOTOOLCHAIN=local
+RUN v=$(go env GOVERSION) && \
+    [ "$(printf '%s\n' go1.26.6 "$v" | sort -V | head -n1)" = go1.26.6 ] || \
+    { echo "opa_build: $v is below the go1.26.6 floor (GO-2026-6090)"; exit 1; } && \
+    echo "opa_build: building with $v"
 
 COPY custom* /custom
 
-# Build OPA binary if custom_opa.tar.gz is provided
+# OPA_BUILD (declared before the first FROM) picks BOTH the binary built here and the
+# plugin config set in main-${OPA_BUILD} below, so the two cannot disagree:
+#   permit  (default) - compile permit-opa from custom/custom_opa.tar.gz, which must
+#                       exist (the workflows and build_opal_bundle.sh create it)
+#   vanilla           - download upstream OPA ${OPA_VERSION}, checked against the
+#                       sha256 below. Bump the version and both sums together; the
+#                       sums are https://openpolicyagent.org/downloads/v<version>/opa_linux_<arch>_static.sha256
+ARG OPA_BUILD
+ARG TARGETARCH
+ARG OPA_VERSION=1.20.2
+ARG OPA_SHA256_amd64=69da5179ee403d10fa11bab6cfb4ffb0d23dba5f9b682fa977db772a1da5670f
+ARG OPA_SHA256_arm64=431bed5a365578241ab06c7cc1c7d0cdff8c11dcbc6f12c3488590deb8b8d66d
 
 # Fix for ARM64 compatibility issue (#289): Build fully static binary to avoid dynamic linking issues
 # Problem: Dynamic linking creates dependencies on system libc (glibc), but Alpine Linux uses musl libc
 # Result: Binary fails with "/lib/ld-musl-aarch64.so.1: /app/bin/opa: Not a valid dynamic program"
 # Solution: Build a truly static binary with no external libc dependencies
 # - CGO_ENABLED=0: Disables CGO to ensure pure Go compilation (eliminates glibc dependency)
-# - -a: Forces rebuilding of all packages to ensure clean static build
 # - -tags netgo: Uses pure Go network stack instead of C-based libc resolver
 # - -s -w: Strips debug info and symbol table to reduce binary size
 # - -extldflags=-static: Ensures static linking if CGO were enabled (defense in depth)
+# No `-a`: with CGO_ENABLED=0 it adds nothing to the above, and it would bypass the
+# go-build cache mount below by recompiling every package, stdlib included.
 
 # Use BuildKit cache mounts for Go modules and build cache for MUCH faster incremental builds
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    if [ -f /custom/custom_opa.tar.gz ]; \
-  then \
+    case "$OPA_BUILD" in \
+  permit) \
+    [ -f /custom/custom_opa.tar.gz ] || \
+      { echo "opa_build: OPA_BUILD=permit needs custom/custom_opa.tar.gz (run build_opal_bundle.sh without PDP_VANILLA=true, or build with --build-arg OPA_BUILD=vanilla)"; exit 1; } && \
     cd /custom && \
     tar xzf custom_opa.tar.gz && \
+    # This RUN never comes from cache - `COPY custom* /custom` above sees a tarball the
+    # workflow regenerates every build - so this echo is the toolchain record for THIS
+    # build. The floor check above is the gate, and may read CACHED locally.
+    echo "opa_build: compiling permit-opa with $(go env GOVERSION) for linux/$TARGETARCH" && \
     # permit-opa moved its main package from the repo root to ./cmd/opa
     # (cmd/ + pkg/ layout); build whichever location the tarball provides
     if [ -d cmd/opa ]; then main_pkg=./cmd/opa; else main_pkg=.; fi && \
-    CGO_ENABLED=0 go build -a -ldflags="-s -w -extldflags=-static" -tags netgo -installsuffix netgo -o /opa $main_pkg && \
-    rm -rf /custom; \
-  else \
-    case $(uname -m) in \
-      x86_64) curl -L -o /opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static ;; \
-      aarch64) curl -L -o /opa https://openpolicyagent.org/downloads/latest/opa_linux_arm64_static ;; \
-      *) echo "Unknown architecture." && exit 1 ;; \
-    esac; \
-  fi
+    CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -ldflags="-s -w -extldflags=-static" -tags netgo -installsuffix netgo -o /opa $main_pkg && \
+    rm -rf /custom ;; \
+  vanilla) \
+    case "$TARGETARCH" in \
+      amd64) sum=$OPA_SHA256_amd64 ;; \
+      arm64) sum=$OPA_SHA256_arm64 ;; \
+      *) echo "opa_build: no OPA checksum for '$TARGETARCH'"; exit 1 ;; \
+    esac && \
+    curl --fail --show-error --silent --location -o /opa \
+      "https://openpolicyagent.org/downloads/v${OPA_VERSION}/opa_linux_${TARGETARCH}_static" && \
+    echo "$sum  /opa" | sha256sum -c - ;; \
+  *) echo "opa_build: OPA_BUILD must be permit or vanilla, got '$OPA_BUILD'"; exit 1 ;; \
+    esac
 
 # MAIN IMAGE ----------------------------------------
 # Main image setup (optimized)
@@ -165,7 +259,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # change is reviewed and tested. `apk upgrade` still floats the Alpine package set at
 # build time, so pinning costs no package freshness on a rebuild - only the base layer
 # becomes deterministic.
-FROM python:3.13-alpine3.23@sha256:75f27d686432419c9d42420b2b9ef605868c7a0682a6be10a6601fad46c2df01 AS main
+FROM python:3.13-alpine3.23@sha256:6438599575cca0d1df94aeee0d2ae088d4d8846eab554b2ee7784a3a6df0d516 AS main
 
 WORKDIR /app
 
@@ -208,7 +302,7 @@ RUN mkdir -p /app/backup && chmod -R 777 /app/backup
 #      the docker-scout gate scanned this image in July and could not possibly have seen
 #      CVEs disclosed in September, whatever events it runs on.
 #      Detecting drift therefore REQUIRES re-scanning the PUBLISHED tags on a schedule.
-#      .github/workflows/image-scan-published.yml does that daily (PER-15358).
+#      .github/workflows/scheduled-security-scan.yml does that every three days (PER-15358).
 #
 # The PDP never uses SQLite, but its FTS5/zipfile CVEs (CVE-2026-11822,
 # CVE-2026-11824, CVE-2025-70873) are still reported against sqlite-libs, which
@@ -244,31 +338,34 @@ RUN mkdir -p /config && chown -R permit:permit /config
 # Ensure the `permit` user has the correct permissions for home directory and binaries
 RUN chown -R permit:permit /home/permit /app /usr/local/bin
 
-# Switch to permit user
-USER permit
-
 # Copy Kong routes and Gunicorn config
 COPY kong_routes.json /config/kong_routes.json
 
-USER root
-
 # Install python dependencies in one command to optimize layer size
 # Use cache mount for pip to speed up incremental builds
+#
+# requirements-override.txt pins what a dependency's metadata forbids - today aiofiles, which
+# opal-client caps at a 0.8.0 that breaks OPAL's offline-mode backup on CPython >= 3.12 - so it
+# is installed after the resolve. That file holds the rationale and the exit condition
+# (PER-16234). check_aiofiles_override.py is bind-mounted, so it never ships, and runs last:
+# it fails the build if opal-client leaves 0.9.6 or the real backup_store() stops working here.
 COPY ./requirements.txt ./requirements.txt
+COPY ./requirements-override.txt ./requirements-override.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
+    --mount=type=bind,source=check_aiofiles_override.py,target=/tmp/check_aiofiles_override.py \
     apk add --no-cache --virtual .build-deps build-base libffi-dev libressl-dev musl-dev zlib-dev && \
     pip install --upgrade pip setuptools && \
     pip install -r requirements.txt && \
+    pip install --no-deps --require-hashes -r requirements-override.txt && \
     python -m pip uninstall -y pip setuptools wheel && \
-    rm -r /usr/local/lib/python3.13/ensurepip && \
-    apk del .build-deps
+    rm -r "$(python3 -c 'import sysconfig; print(sysconfig.get_paths()["stdlib"])')/ensurepip" && \
+    apk del .build-deps && \
+    python /tmp/check_aiofiles_override.py
 
 USER permit
 
 # Copy the application code
 COPY ./horizon /app/horizon
-
-USER permit
 
 # Version file for the application
 COPY ./permit_pdp_version /app/permit_pdp_version

@@ -18,9 +18,11 @@ You can deploy the PDP to production in multiple designs. See the [Permit.io doc
 
 ### Setting up the development environment
 1. Clone the repository
-2. Install the dependencies
+2. Install the dependencies, then the post-resolve overrides the Docker image and CI also apply
+(see `requirements-override.txt`)
 ```bash
 pip install ".[dev]"
+pip install --no-deps --require-hashes -r requirements-override.txt
 ```
 
 ### Running locally (during development)

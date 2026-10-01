@@ -1,5 +1,6 @@
-# Version control
+# Version control (nested checkouts too: a clone's .git/config can hold credentials)
 .git/
+**/.git
 .gitignore
 
 # Build artifacts
@@ -53,3 +54,6 @@ temp/
 .env
 .env.local
 *.local
+
+# CI checks permit-opa out only to build custom/custom_opa.tar.gz; no stage reads it.
+permit-opa/

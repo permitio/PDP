@@ -54,6 +54,8 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install ".[dev]"
+          # Same post-resolve overrides the image installs - see requirements-override.txt.
+          pip install --no-deps --require-hashes -r requirements-override.txt
           pytest -s --cache-clear horizon/tests/
 
   build-pdp-image:
@@ -62,12 +64,21 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - uses: actions/checkout@v4
+      # permit-opa is compiled into /app/bin/opa from THIS commit, not from its main:
+      # a permit-opa merge changes the shipped binary only through a PDP PR that moves
+      # this pin, which this job then builds. To bump it: pick a permit-opa commit on
+      # main (e.g. `git ls-remote https://github.com/permitio/permit-opa refs/heads/main`),
+      # put its full SHA here AND in release.yml (the Pre build step below fails if the
+      # two differ), and say in the PR what permit-opa changes it brings in. Check
+      # .docker/scout/pdp-v2.vex.json's removal gates when you do.
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         with:
           repository: permitio/permit-opa
-          ref: main
+          ref: ff2356d560e3c7152bcb6c6ab8ebd5d4eb691306  # permit-opa 0.0.23 (#52; go 1.26, x/crypto v0.57.0)
           path: './permit-opa'
           token: ${{ secrets.CLONE_REPO_TOKEN }}
+          # Nothing after the clone needs the token; don't leave it in .git/config.
+          persist-credentials: false
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -76,13 +87,54 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Pre build PDP tests
+        # bash, so the tar pipeline below runs with pipefail (the default `run:` shell
+        # is `bash -e` without it, which would hide a failing find).
+        shell: bash
         run: |
+          # The permit-opa pin must be the same full SHA in both workflows. Select the step
+          # by repository, not by line shape, so another SHA-pinned checkout can't match.
+          pin() { yq '.jobs[].steps[] | select(.with.repository == "permitio/permit-opa") | .with.ref' "$1"; }
+          t=$(pin .github/workflows/tests.yml); r=$(pin .github/workflows/release.yml)
+          [[ $t =~ ^[0-9a-f]{40}$ && $t == "$r" ]] || {
+            echo "::error::permit-opa must be pinned to the same full SHA in tests.yml ($t) and release.yml ($r)"; exit 1; }
           echo "next" > permit_pdp_version
           rm -rf custom
           mkdir custom
           build_root="$PWD"
           cd ./permit-opa
           find * \( -name '*go*' -o -name 'LICENSE.md' \) -print0 | xargs -0 tar -czf "$build_root"/custom/custom_opa.tar.gz --exclude '.*'
+
+      # The only stage cached across runs. rust_chef reads nothing from the build
+      # context (base image, `apk add`, `cargo install`, `rustup`), so it is safe to
+      # export whole, and it is worth it: a cold rust_chef costs about 4 minutes. It
+      # has its own scope because the gha backend keeps one index per scope. The image
+      # builds below and in release.yml read this scope and export nothing: every layer
+      # of the final image comes from `main`, which `no-cache-filters: main` never
+      # serves from cache, and the other stages see build inputs that must not be
+      # cached for every ref to restore (opa_build's `COPY custom* /custom`, and the
+      # Rust stages' `COPY . .`). Keep rust_chef free of COPY/ADD (see the Dockerfile).
+      - name: Cache the rust_chef stage
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25  # v5.4.0
+        with:
+          outputs: type=cacheonly
+          context: .
+          target: rust_chef
+          cache-from: type=gha,scope=rust-chef
+          cache-to: type=gha,mode=max,scope=rust-chef
+
+      # tests.yml builds amd64 only (the image is loaded for pdp-tester), but the
+      # release also builds arm64. opa_build cross-compiles on the build host, so this
+      # is cheap, and it stops before the Rust and Python stages. No cache: nothing
+      # exports opa_build, and its only layers before `COPY custom*` (an ENV and the
+      # go1.26.6 floor check) take about 2 seconds.
+      - name: Build the OPA stage for arm64
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25  # v5.4.0
+        with:
+          # Only the compile matters; say so, or buildx warns that the result is discarded.
+          outputs: type=cacheonly
+          context: .
+          target: opa_build
+          platforms: linux/arm64
 
       - name: Build and load PDP Docker image
         uses: docker/build-push-action@v5
@@ -92,8 +144,8 @@ jobs:
           context: .
           platforms: linux/amd64
           tags: permitio/pdp-v2:next
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # rust_chef only, from the step above; no cache-to (that step says why).
+          cache-from: type=gha,scope=rust-chef
           # Must match release.yml. Without it the image that pdp-tester exercises and
           # that docker-scout/Trivy gate is built from a possibly-stale cached `main`
           # stage, while the released image re-resolves `apk upgrade` and `pip install`
@@ -137,11 +189,13 @@ jobs:
 
       # Checkout the pdp-tester repository
       - name: Checkout pdp-tester repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         with:
           repository: "permitio/pdp-tester"
           token: ${{ secrets.CLONE_REPO_TOKEN }}
           path: './pdp-tester'
+          # Nothing after the clone needs the token; don't leave it in .git/config.
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -304,16 +358,7 @@ jobs:
           # CVE-2026-48818 / CVE-2026-54283, all fixed only in starlette >=1.x, which
           # OPAL's starlette<1 cap forbids; ddtrace CVE-2026-50271, fixed only in
           # ddtrace >=4.8.2, which OPAL's ddtrace<4 cap forbids and which the Dockerfile
-          # mitigates by dropping "baggage" from the extract styles; and x/crypto
-          # CVE-2026-78662 / CVE-2026-56855, which live in golang.org/x/crypto/ssh - a
-          # package `go list -deps ./cmd/opa` proves is not linked into /app/bin/opa - and
-          # which are fixed only in x/crypto >=0.56.0, whose go.mod declares `go 1.26.0`.
-          # Go 1.26 has been stable since 2026-02-10 (1.26.8 is current, and 1.27.0 is out)
-          # - the blocker is local, not upstream. The OPA builder is still
-          # golang:1.25-bookworm (the opa_build stage) and permit-opa's go.mod is `go 1.25.0`,
-          # and the official golang images ship GOTOOLCHAIN=local so the toolchain cannot
-          # move implicitly. Gated on PDP#334 plus a matching permit-opa change, not on Go.
-          # See PER-15358.
+          # mitigates by dropping "baggage" from the extract styles.
           #
           # NOTE: this gate reads packages, so it does not flag the CPython interpreter
           # itself the way a CPE-based scanner does - that blind spot is why four Python
@@ -328,12 +373,13 @@ jobs:
           #
           # SCOPE OF THE VEX DOC: every statement in pdp-v2.vex.json binds its product to
           # `pkg:docker/permitio/pdp-v2@next`, which matches the `local://...:next` image
-          # scanned here and nothing else. That is correct precisely BECAUSE this gate is
-          # the only consumer of the OpenVEX doc - the scheduled re-scan of the published
-          # tags uses Trivy, which reads .trivyignore.yaml and keys on CVE id, so tag
-          # names never enter into it. If Scout is ever pointed at `:latest` or a release
-          # tag, every product @id here has to be extended first or all seven waivers
-          # stop suppressing and the run goes red on known non-issues.
+          # scanned here, AND to `pkg:docker/permitio/pdp-v2@latest`, which the
+          # `scout-latest` job in scheduled-security-scan.yml re-scans. Scout matches VEX
+          # products on the full PURL string, so those two tags are the only ones these
+          # waivers suppress. Published RELEASE tags are deliberately not listed (they rotate
+          # every release); the same scheduled workflow covers them with Trivy, which reads
+          # .trivyignore.yaml and keys on CVE id. If Scout is ever pointed at another tag,
+          # extend every product @id first or the run goes red on known non-issues.
           vex-author: Permit.io
 
       # SECOND SCANNER, on purpose. The Scout gate above reads the image's package
