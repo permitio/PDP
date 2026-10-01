@@ -20,14 +20,10 @@ on:
       # out of actionlint's "not defined in object type" list.
       SLACK_WEBHOOK_URL:
         required: false
-      # Used by the docker-scout job, which also runs on the workflow_call path (release.yml
-      # calls this file with `secrets: inherit`). Declared so a caller that passes secrets
-      # by name knows to pass them; `required: false` because a missing login only fails
-      # the Scout gate, which says why. See PER-15358.
-      DOCKERHUB_USERNAME:
-        required: false
-      DOCKERHUB_TOKEN:
-        required: false
+      # No Docker Hub secret is declared: the docker-scout job logs in through OIDC, so a
+      # caller must instead grant `id-token: write` to the job that calls this workflow - a
+      # called workflow cannot exceed its caller's permissions, and without it the Docker
+      # login fails on the release path only. release.yml's `pdp-tests` job does this.
 
 jobs:
   pre-commit:
@@ -294,6 +290,11 @@ jobs:
       contents: read
       # required to create a pull request comment with the SARIF report
       pull-requests: write
+      # required for the Docker Hub OIDC login below. It does not grant write access to
+      # anything: it only lets the job MINT a GitHub ID token, which Docker exchanges for
+      # a short-lived pull token on permitio/pdp-v2. What that token may do is decided on
+      # Docker's side, by the connection's ruleset, not here.
+      id-token: write
     # Counts have to cross the job boundary for `notify-gate-failure` below to say
     # anything more useful than "it went red". A step output is scoped to its own job, so
     # it only reaches another job by being re-published here. `parse_ok` travels with
@@ -319,11 +320,29 @@ jobs:
       - name: Load Docker image
         run: docker load -i pdp-image.tar
 
-      - name: Login to Docker Hub
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+      # OIDC, not a stored token. The action exchanges this run's GitHub ID token for a
+      # short-lived Docker Hub token; no password exists to leak or rotate. Both Scout steps
+      # below ride this login session - neither passes credentials of its own.
+      #
+      # The connection lives in Docker Home (permitio org -> Identity & auth -> OIDC
+      # connections). Its ruleset matches `repo:permitio/PDP:*` and grants PULL ONLY on
+      # permitio/pdp-v2. That subject covers every way this job runs: pull_request,
+      # push to main, and the release path (where `sub` is the caller's tag ref). If the
+      # exchange fails, the connection's Failures tab shows the exact `sub` Docker saw.
+      #
+      # `username` must be the Docker ORGANIZATION; OIDC does not work for personal
+      # accounts. `password` is deliberately omitted - that is what selects the OIDC flow.
+      #
+      # Lifetime raised from the 300s default: the token is minted here but used by every
+      # Scout step that follows, and an expiry mid-job would surface as a Scout failure
+      # rather than an auth one. 1800s is well inside the action's 3600s ceiling.
+      - name: Login to Docker Hub (OIDC)
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        env:
+          DOCKERHUB_OIDC_CONNECTIONID: ${{ vars.DOCKERHUB_OIDC_CONNECTIONID }}
+          DOCKERHUB_OIDC_EXPIREIN: '1800'
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{ vars.DOCKERHUB_ORGANIZATION }}
 
       - name: Docker Scout CVE report (all severities)
         uses: docker/scout-action@7c6b6c3f7844478ace1ffd4e7aef649053d1f87d # v1.24.0

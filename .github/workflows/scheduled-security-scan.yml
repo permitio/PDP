@@ -624,6 +624,10 @@ jobs:
       contents: read
       # required to upload the SARIF report to code scanning
       security-events: write
+      # required for the Docker Hub OIDC login below; it only lets the job mint a GitHub ID
+      # token. Granted to this job alone - nothing else in this workflow talks to Docker Hub
+      # with an identity.
+      id-token: write
     outputs:
       summary: ${{ steps.summarise.outputs.summary }}
     steps:
@@ -635,15 +639,21 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Login to Docker Hub
+      - name: Login to Docker Hub (OIDC)
         # Scout resolves advisories through the Docker Scout API, which wants a Docker Hub
         # identity even for a public image - the same login tests.yml performs before its
-        # Scout steps. DOCKERHUB_USERNAME and DOCKERHUB_TOKEN are repository-level secrets,
-        # not environment-scoped, so a scheduled run receives them exactly as a PR run does.
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        # Scout steps, and through the same OIDC connection (pull-only on permitio/pdp-v2,
+        # matched by `repo:permitio/PDP:*`). A scheduled run's `sub` is the default
+        # branch, `repo:permitio/PDP:ref:refs/heads/main`, which that rule covers.
+        #
+        # 1800s rather than the 300s default: this job pulls a remote image before Scout
+        # analyses it, and a token that expired mid-job would read as a Scout failure.
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        env:
+          DOCKERHUB_OIDC_CONNECTIONID: ${{ vars.DOCKERHUB_OIDC_CONNECTIONID }}
+          DOCKERHUB_OIDC_EXPIREIN: '1800'
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{ vars.DOCKERHUB_ORGANIZATION }}
 
       - name: Docker Scout CVE report (all severities)
         # Guarded for the same reason every scan/report step in this file is: a step with no

@@ -17,6 +17,12 @@ jobs:
       contents: read
       pull-requests: write
       security-events: write
+      # REQUIRED, and easy to lose. tests.yml's docker-scout job logs in to Docker Hub
+      # through OIDC, and a called workflow cannot be granted more than its caller's job
+      # allows - this block, not the workflow-level one above. Drop this line and the CVE
+      # gate passes on every PR (where tests.yml is the top-level workflow) and fails only
+      # here, on a real release, at the Docker login.
+      id-token: write
 
   build-and-push-pdp:
     needs: pdp-tests
@@ -173,6 +179,8 @@ jobs:
       contents: read
       # required to upload the SARIF report to code scanning
       security-events: write
+      # required for the Docker Hub OIDC login below (mints a GitHub ID token only)
+      id-token: write
     strategy:
       # Scan both platforms even when one fails: an arm64-only regression is exactly the
       # thing that has never been visible before, and fail-fast would hide it behind an
@@ -190,11 +198,19 @@ jobs:
 
       # Docker Hub rate-limits anonymous manifest reads, and a 429 here would fail a
       # release for a reason that has nothing to do with the image.
-      - name: Login to Docker Hub
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+      #
+      # OIDC, pull-only: the connection's `repo:permitio/PDP:*` rule matches a release
+      # run's `sub` (`repo:permitio/PDP:ref:refs/tags/<tag>`) and grants pull on
+      # permitio/pdp-v2, which is all a scan needs. The PUSH in build-and-push-pdp above
+      # deliberately still uses DOCKERHUB_TOKEN - the connection grants no push scope, and
+      # a push rule must be narrower than `:*` (tags only) before it is added.
+      - name: Login to Docker Hub (OIDC)
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        env:
+          DOCKERHUB_OIDC_CONNECTIONID: ${{ vars.DOCKERHUB_OIDC_CONNECTIONID }}
+          DOCKERHUB_OIDC_EXPIREIN: '1800'
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{ vars.DOCKERHUB_ORGANIZATION }}
 
       - name: Resolve the published per-platform digest
         id: digest
