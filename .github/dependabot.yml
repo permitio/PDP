@@ -6,9 +6,10 @@
 # neglect that let permitio/pdp-v2:0.9.14 ship five-week-old OpenSSL to a customer
 # (PER-15358).
 #
-# The cooldown/group/limit shape, commit-message prefixes and labels match the configs
-# proposed for permitio/opal (#957) and permitio/permit-opa (#50), so reviewers learn one
-# convention.
+# The cooldown/group/limit shape and commit-message prefixes match the configs proposed
+# for permitio/opal (#957) and permitio/permit-opa (#50), so reviewers learn one
+# convention. No `labels:`: this repo has no `dependencies` label, and with `labels:`
+# unset Dependabot creates and applies its defaults itself.
 #
 # WHAT THIS DOES *NOT* DO, so nobody retires the image scanning on the strength of it:
 # Dependabot never looks inside a built image. It reads manifests. It cannot see the
@@ -68,8 +69,6 @@ updates:
     commit-message:
       prefix: "deps"
       prefix-development: "deps-dev"
-    labels:
-      - "dependencies"
 
   # Rust dependencies (pdp-server + watchdog workspace members)
   - package-ecosystem: "cargo"
@@ -87,8 +86,6 @@ updates:
     commit-message:
       prefix: "deps"
       prefix-development: "deps-dev"
-    labels:
-      - "dependencies"
 
   # GitHub Actions versions
   # Note: cooldown.semver-major-days is not supported for github-actions
@@ -112,8 +109,6 @@ updates:
     commit-message:
       prefix: "deps"
       prefix-development: "deps-dev"
-    labels:
-      - "dependencies"
 
   # Docker base images
   # Note: cooldown.semver-major-days is not supported for docker
@@ -137,8 +132,6 @@ updates:
       default-days: 7
     commit-message:
       prefix: "deps"
-    labels:
-      - "dependencies"
 
   # The offline-mode test image is built by hand, not by CI, so it rots unnoticed.
   - package-ecosystem: "docker"
@@ -151,5 +144,3 @@ updates:
       default-days: 7
     commit-message:
       prefix: "deps"
-    labels:
-      - "dependencies"
