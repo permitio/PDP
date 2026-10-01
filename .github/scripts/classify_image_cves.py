@@ -91,7 +91,7 @@ def exact_pins(paths: list[Path] | None = None) -> set[str]:
         The set of normalised package names.
     """
     if paths is None:
-        paths = sorted(Path(".").glob("requirements*.txt"))
+        paths = sorted(Path().glob("requirements*.txt"))
     pins: set[str] = set()
     for path in paths:
         for line in path.read_text(encoding="utf-8").splitlines():
@@ -243,15 +243,56 @@ def _cell(text: str) -> str:
     return " ".join(str(text).split()).replace("|", "\\|").replace("`", "'")
 
 
+def _next_steps(by_action: dict[str, list[dict]]) -> list[str]:
+    """One line per kind of action the findings need, in the order a human acts on them."""
+    rebuildable = by_action["rebuild"]
+    opa = by_action["permit-opa"]
+    base = by_action["base-digest"]
+    pinned = by_action["pinned"]
+    nofix = by_action["no-fix"]
+    steps: list[str] = []
+    if rebuildable:
+        steps.append(
+            f"- Cut a release to clear {len(rebuildable)} finding(s). `release.yml` passes "
+            "`no-cache-filters: main`, so the build cannot replay stale `apk` / `pip` "
+            "layers from the GHA cache."
+        )
+    if opa:
+        steps.append(
+            f"- Bump {', '.join(sorted({f['pkg'] for f in opa}))} in permit-opa's `go.mod`, "
+            "then rebuild here to pick up the new OPA binary."
+        )
+    if base:
+        steps.append(
+            "- Merge the open Dependabot `docker` PR that moves the golang digest "
+            "(Dockerfile `opa_build`), then cut a release."
+        )
+    if pinned:
+        steps.append(
+            f"- Raise the `==` pin for {', '.join(sorted({_cell(f['pkg']) for f in pinned}))} "
+            "in requirements*.txt (or waive it with a reachability argument)."
+        )
+    if nofix:
+        steps.append(
+            f"- Triage {', '.join(sorted({_cell(f['cve']) for f in nofix}))} by hand - "
+            "no released version fixes them yet."
+        )
+    return steps
+
+
 def render(tag: str, findings: list[dict], verdict: str) -> str:
     if verdict == "CLEAN":
         return f"## `permitio/pdp-v2:{tag}` - CLEAN\n\nNo CRITICAL/HIGH findings after applying `.trivyignore.yaml`.\n"
 
-    rebuildable = [f for f in findings if f["action"] == "rebuild"]
-    opa = [f for f in findings if f["action"] == "permit-opa"]
-    base = [f for f in findings if f["action"] == "base-digest"]
-    pinned = [f for f in findings if f["action"] == "pinned"]
-    nofix = [f for f in findings if f["action"] == "no-fix"]
+    by_action: dict[str, list[dict]] = {
+        a: [f for f in findings if f["action"] == a]
+        for a in ("rebuild", "permit-opa", "base-digest", "pinned", "no-fix")
+    }
+    rebuildable = by_action["rebuild"]
+    opa = by_action["permit-opa"]
+    base = by_action["base-digest"]
+    pinned = by_action["pinned"]
+    nofix = by_action["no-fix"]
 
     if verdict == "REBUILD":
         headline = (
@@ -314,42 +355,14 @@ def render(tag: str, findings: list[dict], verdict: str) -> str:
     for f in findings:
         fixed = f"`{_cell(f['fixed'])}`" if f["fixed"] else "_none available_"
         cve = _cell(f["cve"])
-        cve_cell = (
-            f"[{cve}](https://avd.aquasec.com/nvd/{cve.lower()})"
-            if _CVE_ID.match(f["cve"])
-            else cve
-        )
+        cve_cell = f"[{cve}](https://avd.aquasec.com/nvd/{cve.lower()})" if _CVE_ID.match(f["cve"]) else cve
         lines.append(
             f"| {_cell(f['severity'])} | `{_cell(f['pkg'])}` | `{_cell(f['installed'])}` | "
             f"{cve_cell} | {fixed} | {owner[f['action']]} |"
         )
 
     lines += ["", "### Next step", ""]
-    if rebuildable:
-        lines.append(
-            f"- Cut a release to clear {len(rebuildable)} finding(s). `release.yml` passes "
-            "`no-cache-filters: main`, so the build cannot replay stale `apk` / `pip` "
-            "layers from the GHA cache."
-        )
-    if opa:
-        lines.append(
-            f"- Bump {', '.join(sorted({f['pkg'] for f in opa}))} in permit-opa's `go.mod`, "
-            "then rebuild here to pick up the new OPA binary."
-        )
-    if base:
-        lines.append(
-            "- Merge the open Dependabot `docker` PR that moves the golang digest "
-            "(Dockerfile `opa_build`), then cut a release."
-        )
-    if pinned:
-        lines.append(
-            f"- Raise the `==` pin for {', '.join(sorted({_cell(f['pkg']) for f in pinned}))} "
-            "in requirements*.txt (or waive it with a reachability argument)."
-        )
-    if nofix:
-        lines.append(
-            f"- Triage {', '.join(sorted({_cell(f['cve']) for f in nofix}))} by hand - no released version fixes them yet."
-        )
+    lines += _next_steps(by_action)
     return "\n".join(lines) + "\n"
 
 

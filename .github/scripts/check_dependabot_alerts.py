@@ -192,11 +192,7 @@ def waived_cve_ids(trivyignore: Path | None = None, today: date | None = None) -
     """
     path = trivyignore or waiver_parity.repo_root() / waiver_parity.TRIVYIGNORE
     today = today or date.today()
-    return {
-        cve
-        for cve, expires in waiver_parity.load_trivyignore(path).items()
-        if expires is None or expires >= today
-    }
+    return {cve for cve, expires in waiver_parity.load_trivyignore(path).items() if expires is None or expires >= today}
 
 
 def read_feed(source: Path | None) -> str:
