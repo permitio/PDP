@@ -16,16 +16,23 @@ One wrinkle: "has a fix" is not the same as "a rebuild of THIS repo picks it up"
 OPA binary at /app/bin/opa is compiled from permit-opa's source, so a CVE in one of its
 Go modules (google.golang.org/grpc, golang.org/x/crypto, ...) is fixed by bumping
 permit-opa's go.mod - a change in a DIFFERENT repository, which no release cut here will
-absorb. The Go *stdlib* is the exception: it comes from the floating `golang:1.25-bookworm`
-build stage, so a rebuild does upgrade it. The classifier splits these, because calling a
-permit-opa dependency "just rebuild" would send someone to cut a release that cannot fix it.
+absorb. Two more cases a plain rebuild cannot fix, because the Dockerfile pins them:
+
+  - The Go *stdlib* comes from the `golang:1.26-bookworm@sha256:...` build stage, which is
+    digest-pinned. A rebuild reuses the same toolchain; the fix arrives when Dependabot's
+    `docker` PR moves the digest and that PR is merged.
+  - A Python package pinned with `==` in requirements*.txt (e.g. starlette, ddtrace,
+    websockets) stays at that version through `pip install`; the pin has to move.
+
+Calling any of these "just rebuild" would send someone to cut a release that cannot fix it.
 
 Verdicts:
   CLEAN   - nothing at CRITICAL/HIGH after waivers.
   REBUILD - findings exist and EVERY one is absorbed by rebuilding this repo's image.
             Cut a release; no code change needed.
   SOURCE  - at least one finding needs a change somewhere: no upstream fix exists at all,
-            or the fix lives in permit-opa's go.mod.
+            the fix lives in permit-opa's go.mod, the golang base digest has to move, or
+            an exact pin in requirements*.txt has to move.
 
 SOURCE outranks REBUILD: a report can contain both kinds, and the one that needs a human
 is the one that should set the verdict.
@@ -40,6 +47,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from collections import Counter
 from pathlib import Path
@@ -66,15 +74,53 @@ class ReportUnreadableError(Exception):
     """The Trivy report cannot be read, so no verdict can be honestly reported."""
 
 
-def classify(finding: dict) -> str:
-    """Who has to act on this finding: 'rebuild', 'permit-opa', or 'no-fix'."""
+_PIN = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[^\]]*\])?\s*==")
+
+
+def exact_pins(paths: list[Path] | None = None) -> set[str]:
+    """Names of Python packages pinned with `==` in the repo's requirements files.
+
+    Names are normalised the PEP 503 way (lower case, runs of `-_.` folded to `-`), which
+    is also how Trivy reports them closely enough to compare.
+
+    Args:
+        paths: Files to read. Defaults to requirements*.txt in the working directory,
+            which is the repo root in every workflow that runs this script.
+
+    Returns:
+        The set of normalised package names.
+    """
+    if paths is None:
+        paths = sorted(Path(".").glob("requirements*.txt"))
+    pins: set[str] = set()
+    for path in paths:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            m = _PIN.match(line)
+            if m:
+                pins.add(_normalise(m.group(1)))
+    return pins
+
+
+def _normalise(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def classify(finding: dict, pins: set[str] | frozenset[str] = frozenset()) -> str:
+    """Who has to act on this finding.
+
+    Returns one of 'rebuild', 'permit-opa', 'base-digest', 'pinned' or 'no-fix'.
+    """
     if not finding["fixed"]:
         return "no-fix"
-    # Go modules linked into /app/bin/opa are permit-opa's dependencies, not ours.
-    # "stdlib" is Trivy's name for the Go runtime itself, which DOES come from this
-    # repo's golang build stage and so is rebuildable here.
-    if finding["type"] == "gobinary" and finding["pkg"] != "stdlib":
+    if finding["type"] == "gobinary":
+        # "stdlib" is Trivy's name for the Go runtime, which comes from the digest-pinned
+        # golang build stage: a rebuild reuses it, so the digest has to move first.
+        if finding["pkg"] == "stdlib":
+            return "base-digest"
+        # Every other Go module linked into /app/bin/opa is a permit-opa dependency.
         return "permit-opa"
+    if finding["type"] == "python-pkg" and _normalise(finding["pkg"]) in pins:
+        return "pinned"
     return "rebuild"
 
 
@@ -117,7 +163,7 @@ def load_report(report: Path) -> dict:
     return data
 
 
-def collect(report: Path) -> list[dict]:
+def collect(report: Path, pins: set[str] | None = None) -> list[dict]:
     """Flatten Trivy's per-target results, de-duplicating on (package, CVE).
 
     Trivy reports one row per affected package, so a single OpenSSL CVE shows up twice
@@ -126,6 +172,8 @@ def collect(report: Path) -> list[dict]:
     is discovered through more than one target.
     """
     data = load_report(report)
+    if pins is None:
+        pins = exact_pins()
     findings: dict[tuple[str, str], dict] = {}
     for result in data.get("Results") or []:
         for vuln in result.get("Vulnerabilities") or []:
@@ -144,9 +192,9 @@ def collect(report: Path) -> list[dict]:
                 },
             )
     for f in findings.values():
-        f["action"] = classify(f)
+        f["action"] = classify(f, pins)
     order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
-    action_order = {"no-fix": 0, "permit-opa": 1, "rebuild": 2}
+    action_order = {"no-fix": 0, "permit-opa": 1, "base-digest": 2, "pinned": 3, "rebuild": 4}
     return sorted(
         findings.values(),
         key=lambda f: (
@@ -183,12 +231,26 @@ def severity_breakdown(findings: list[dict]) -> str:
     return ", ".join(f"{counts[name]} {name}" for name in names)
 
 
+_CVE_ID = re.compile(r"^CVE-\d{4}-\d{4,}$")
+
+
+def _cell(text: str) -> str:
+    """Make scanner-supplied text safe inside a Markdown table cell.
+
+    Package names, versions and ids come from the image under scan. A `|`, backtick or
+    newline in one would add columns, break the code span or end the row.
+    """
+    return " ".join(str(text).split()).replace("|", "\\|").replace("`", "'")
+
+
 def render(tag: str, findings: list[dict], verdict: str) -> str:
     if verdict == "CLEAN":
         return f"## `permitio/pdp-v2:{tag}` - CLEAN\n\nNo CRITICAL/HIGH findings after applying `.trivyignore.yaml`.\n"
 
     rebuildable = [f for f in findings if f["action"] == "rebuild"]
     opa = [f for f in findings if f["action"] == "permit-opa"]
+    base = [f for f in findings if f["action"] == "base-digest"]
+    pinned = [f for f in findings if f["action"] == "pinned"]
     nofix = [f for f in findings if f["action"] == "no-fix"]
 
     if verdict == "REBUILD":
@@ -213,6 +275,18 @@ def render(tag: str, findings: list[dict], verdict: str) -> str:
                 "which is built from **permit-opa** - the fix is a `go.mod` bump in that "
                 "repo, so cutting a release here will not clear them"
             )
+        if base:
+            parts.append(
+                f"{len(base)} finding(s) are in the Go stdlib, which comes from the "
+                "digest-pinned golang build stage - merge Dependabot's `docker` digest PR "
+                "for it first, then rebuild"
+            )
+        if pinned:
+            parts.append(
+                f"{len(pinned)} finding(s) are in Python packages pinned with `==` in "
+                "requirements*.txt - `pip install` keeps those versions, so the pin has to "
+                "move"
+            )
         headline = "**A rebuild alone will NOT clear this image.** " + "; ".join(parts) + "."
 
     lines = [
@@ -223,6 +297,8 @@ def render(tag: str, findings: list[dict], verdict: str) -> str:
         f"- Findings: **{len(findings)}** ({severity_breakdown(findings)})",
         f"- Cleared by rebuilding this repo: **{len(rebuildable)}**",
         f"- Need a permit-opa `go.mod` bump: **{len(opa)}**",
+        f"- Need the golang base digest to move: **{len(base)}**",
+        f"- Need an exact pin in requirements*.txt moved: **{len(pinned)}**",
         f"- No upstream fix available: **{len(nofix)}**",
         "",
         "| Severity | Package | Installed | CVE | Fixed in | Owner |",
@@ -231,14 +307,21 @@ def render(tag: str, findings: list[dict], verdict: str) -> str:
     owner = {
         "rebuild": "rebuild (this repo)",
         "permit-opa": "**permit-opa go.mod**",
+        "base-digest": "**golang base digest**",
+        "pinned": "**requirements pin**",
         "no-fix": "**no fix - needs a decision**",
     }
     for f in findings:
-        fixed = f"`{f['fixed']}`" if f["fixed"] else "_none available_"
+        fixed = f"`{_cell(f['fixed'])}`" if f["fixed"] else "_none available_"
+        cve = _cell(f["cve"])
+        cve_cell = (
+            f"[{cve}](https://avd.aquasec.com/nvd/{cve.lower()})"
+            if _CVE_ID.match(f["cve"])
+            else cve
+        )
         lines.append(
-            f"| {f['severity']} | `{f['pkg']}` | `{f['installed']}` | "
-            f"[{f['cve']}](https://avd.aquasec.com/nvd/{f['cve'].lower()}) | {fixed} "
-            f"| {owner[f['action']]} |"
+            f"| {_cell(f['severity'])} | `{_cell(f['pkg'])}` | `{_cell(f['installed'])}` | "
+            f"{cve_cell} | {fixed} | {owner[f['action']]} |"
         )
 
     lines += ["", "### Next step", ""]
@@ -253,9 +336,19 @@ def render(tag: str, findings: list[dict], verdict: str) -> str:
             f"- Bump {', '.join(sorted({f['pkg'] for f in opa}))} in permit-opa's `go.mod`, "
             "then rebuild here to pick up the new OPA binary."
         )
+    if base:
+        lines.append(
+            "- Merge the open Dependabot `docker` PR that moves the golang digest "
+            "(Dockerfile `opa_build`), then cut a release."
+        )
+    if pinned:
+        lines.append(
+            f"- Raise the `==` pin for {', '.join(sorted({_cell(f['pkg']) for f in pinned}))} "
+            "in requirements*.txt (or waive it with a reachability argument)."
+        )
     if nofix:
         lines.append(
-            f"- Triage {', '.join(sorted({f['cve'] for f in nofix}))} by hand - no released version fixes them yet."
+            f"- Triage {', '.join(sorted({_cell(f['cve']) for f in nofix}))} by hand - no released version fixes them yet."
         )
     return "\n".join(lines) + "\n"
 
@@ -306,7 +399,7 @@ def write_outputs(args: argparse.Namespace, verdict: str, findings: list[dict]) 
     """Write the step outputs every consumer of this script reads.
 
     `verdict` and `findings` are consumed by scheduled-security-scan.yml; renaming either
-    breaks the daily scan. `critical`, `high` and `parse_ok` are additive.
+    breaks the scheduled scan. `critical`, `high` and `parse_ok` are additive.
     """
     if not args.github_output:
         return

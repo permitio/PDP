@@ -268,14 +268,18 @@ jobs:
           format: sarif
           output: trivy-published-${{ matrix.arch }}.sarif
           exit-code: '0'
-          # The DB was already cached by the step above.
+          # Without this, the action drops the severity filter for SARIF output and code
+          # scanning gets every severity, not the CRITICAL,HIGH set the gate uses.
+          limit-severities-for-sarif: true
+          # Skips re-installing the Trivy binary; the DB is reused because the steps
+          # share the same cache dir on disk.
           skip-setup-trivy: true
 
       # Uploaded BEFORE the fail step on purpose, so code scanning gets the findings from
       # exactly the run that blocked the rollout.
       - name: Upload SARIF report
         if: ${{ !cancelled() }}
-        uses: github/codeql-action/upload-sarif@faaca9a8f6edddba5725ffe5adefdab6669a2eca # v3.38.0
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           sarif_file: trivy-published-${{ matrix.arch }}.sarif
           category: published-release-${{ matrix.arch }}

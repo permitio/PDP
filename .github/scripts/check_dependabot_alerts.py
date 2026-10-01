@@ -50,7 +50,7 @@ import importlib.util
 import json
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 # Exit code for "the alert feed itself is unusable", distinct from "no new alerts".
@@ -173,21 +173,30 @@ def slack_escape(text: str) -> str:
     return escaped.replace("|", "│")
 
 
-def waived_cve_ids(trivyignore: Path | None = None) -> set[str]:
-    """Read the CVE ids waived for Trivy.
+def waived_cve_ids(trivyignore: Path | None = None, today: date | None = None) -> set[str]:
+    """Read the CVE ids that are CURRENTLY waived for Trivy.
+
+    A waiver past its `expired_at` is not a waiver any more: Trivy reports the CVE again,
+    so the Dependabot alert must come back too.
 
     Args:
         trivyignore: Waiver file to read. Defaults to the repository's own
             `.trivyignore.yaml`, located the way the parity checker locates it.
+        today: Date to judge expiry against. Defaults to today.
 
     Returns:
-        Every waived CVE id.
+        Every waived CVE id whose waiver has not expired.
 
     Raises:
         SystemExit: The waiver file is missing or malformed, as raised by the loader.
     """
     path = trivyignore or waiver_parity.repo_root() / waiver_parity.TRIVYIGNORE
-    return set(waiver_parity.load_trivyignore(path))
+    today = today or date.today()
+    return {
+        cve
+        for cve, expires in waiver_parity.load_trivyignore(path).items()
+        if expires is None or expires >= today
+    }
 
 
 def read_feed(source: Path | None) -> str:

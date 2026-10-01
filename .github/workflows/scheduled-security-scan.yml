@@ -30,7 +30,7 @@
 # .docker/scout/pdp-v2.vex.json binds every waiver to a product PURL and therefore only to
 # the tags it names. `latest` is a fixed string a static VEX doc can name; release tags
 # rotate with every release and cannot be. Scanning a release tag with Scout would drop all
-# seven waivers and paint the run red on documented non-issues, which is also why Scout is a
+# five waivers and paint the run red on documented non-issues, which is also why Scout is a
 # separate job rather than a third leg of the Trivy matrix.
 #
 # THE THIRD SCANNER
@@ -207,12 +207,16 @@ jobs:
           format: sarif
           output: trivy-${{ matrix.tag }}.sarif
           exit-code: '0'
-          # The DB is already cached by the previous step in this job.
+          # Without this, the action drops the severity filter for SARIF output and code
+          # scanning gets every severity, not the CRITICAL,HIGH set the gate uses.
+          limit-severities-for-sarif: true
+          # Skips re-installing the Trivy binary; the DB is reused because the steps
+          # share the same cache dir on disk.
           skip-setup-trivy: true
 
       - name: Upload SARIF report
         if: always()
-        uses: github/codeql-action/upload-sarif@faaca9a8f6edddba5725ffe5adefdab6669a2eca # v3.38.0
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           sarif_file: trivy-${{ matrix.tag }}.sarif
           category: published-image-${{ matrix.tag }}
@@ -570,9 +574,8 @@ jobs:
       summary: ${{ needs.digest.outputs.summary || 'The scheduled security scan produced no digest, so nothing has been cleared by any scanner. See the run log.' }}
     secrets:
       # Named rather than `inherit`: the notifier needs exactly this one secret, and
-      # `inherit` hands a called workflow every secret the repo has. Naming a secret that
-      # does not exist yet is legal - it arrives as the empty string and the notifier is
-      # a green no-op until someone creates it.
+      # `inherit` hands a called workflow every secret the repo has. If the secret is ever
+      # unset it arrives as the empty string and the notifier is a green no-op.
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
 
   # A swallowed delivery failure is invisible here in a way it is not elsewhere. The
@@ -626,7 +629,7 @@ jobs:
     steps:
       - name: Checkout code
         # The OpenVEX doc the gate below reads lives in this repo, so the checkout is not
-        # optional here: without it `vex-location` resolves to nothing and all seven
+        # optional here: without it `vex-location` resolves to nothing and all five
         # waivers stop suppressing.
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -679,7 +682,7 @@ jobs:
           exit-code: true
           # THE file the summary step reads, and it has to be this one rather than the
           # report SARIF above, because only this step applies the OpenVEX waivers: the
-          # report's SARIF still contains all seven waived CVEs at critical/high, so
+          # report's SARIF still contains all five waived CVEs at critical/high, so
           # counting it would alert on known non-issues every single day.
           sarif-file: scout-latest-gate.sarif
           summary: true
@@ -688,7 +691,7 @@ jobs:
           # statement there names BOTH pkg:docker/permitio/pdp-v2@next and
           # pkg:docker/permitio/pdp-v2@latest; scout matches products on the full PURL
           # string, so pointing this step at any other tag without extending the doc first
-          # drops all seven waivers silently.
+          # drops all five waivers silently.
           vex-location: .docker/scout
           only-vex-affected: true
           # REQUIRED: scout only *applies* VEX statements whose author matches its
@@ -702,7 +705,7 @@ jobs:
         # upload-sarif a missing path fails the step, which would paint this job red for
         # the wrong reason and bury whatever actually went wrong underneath it.
         if: ${{ !cancelled() && hashFiles('scout-latest-report.sarif') != '' }}
-        uses: github/codeql-action/upload-sarif@faaca9a8f6edddba5725ffe5adefdab6669a2eca # v3.38.0
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           sarif_file: scout-latest-report.sarif
           # Distinct from the Trivy categories (`published-image-<tag>`), so the two
@@ -753,3 +756,4 @@ jobs:
           # The message is built only from a count, fixed strings and ids filtered to
           # ^(CVE|GHSA)-[A-Za-z0-9.-]+$, so it cannot contain a newline and needs no
           # heredoc delimiter.
+          printf 'summary=%s\n' "$message" >> "$GITHUB_OUTPUT"

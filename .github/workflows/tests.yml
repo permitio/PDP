@@ -11,21 +11,23 @@ on:
       CLONE_REPO_TOKEN:
         required: true
       # Consumed by the `notify-gate-failure` job at the bottom of this file, which hands
-      # it to ./.github/workflows/notify-slack.yml. `required: false` on purpose: the
-      # secret does not exist in this repository yet, and the notifier is a green no-op
-      # that says so in a ::notice:: until it does. Declaring it is not cosmetic - on the
+      # it to ./.github/workflows/notify-slack.yml. `required: false` on purpose: if the
+      # secret is ever unset, the notifier is a green no-op that says so in a ::notice::
+      # rather than failing the caller. Declaring it is not cosmetic - on the
       # workflow_call path an UNdeclared secret only arrives when the caller says
       # `secrets: inherit`, so without this line a caller that passes secrets by name
       # would silently stop alerting. It is also what keeps `secrets.SLACK_WEBHOOK_URL`
       # out of actionlint's "not defined in object type" list.
       SLACK_WEBHOOK_URL:
         required: false
-      # NOT declared here but still REQUIRED by the docker-scout job, which now runs on
-      # the workflow_call path too (it used to be skipped on releases): DOCKERHUB_USERNAME
-      # and DOCKERHUB_TOKEN. release.yml supplies them by calling this workflow with
-      # `secrets: inherit`, which is why it works. If a future caller passes secrets
-      # explicitly instead, the Docker Hub login fails and the CVE gate fails with it -
-      # add them to that caller, or declare them here. See PER-15358.
+      # Used by the docker-scout job, which also runs on the workflow_call path (release.yml
+      # calls this file with `secrets: inherit`). Declared so a caller that passes secrets
+      # by name knows to pass them; `required: false` because a missing login only fails
+      # the Scout gate, which says why. See PER-15358.
+      DOCKERHUB_USERNAME:
+        required: false
+      DOCKERHUB_TOKEN:
+        required: false
 
 jobs:
   pre-commit:
@@ -63,6 +65,19 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      # Dependabot-triggered runs only see the DEPENDABOT secret store. Without a
+      # Dependabot copy of CLONE_REPO_TOKEN the clone below fails with an opaque git
+      # error; say what is actually missing instead.
+      - name: Check the permit-opa clone token is available
+        if: ${{ github.actor == 'dependabot[bot]' }}
+        env:
+          HAS_TOKEN: ${{ secrets.CLONE_REPO_TOKEN != '' }}
+        run: |
+          if [ "$HAS_TOKEN" != "true" ]; then
+            echo "::error::CLONE_REPO_TOKEN is not in the Dependabot secret store, so this Dependabot PR cannot clone permit-opa. Add it (and DOCKERHUB_USERNAME, DOCKERHUB_TOKEN, PDP_TESTER_API_KEY) under Settings > Secrets > Dependabot."
+            exit 1
+          fi
 
       # permit-opa is compiled into /app/bin/opa from THIS commit, not from its main:
       # a permit-opa merge changes the shipped binary only through a PDP PR that moves
@@ -291,9 +306,13 @@ jobs:
       parse_ok: ${{ steps.report.outputs.parse_ok }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        with:
+          # This job runs third-party scanner actions with a write-scoped GITHUB_TOKEN;
+          # nothing here pushes, so don't leave the token in .git/config for them.
+          persist-credentials: false
       - name: Download Docker image artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: pdp-image
 
@@ -301,7 +320,7 @@ jobs:
         run: docker load -i pdp-image.tar
 
       - name: Login to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -341,7 +360,7 @@ jobs:
           exit-code: true
           # THE file the unified PR comment and its fail step read. It has to be this one
           # and not scout-results.sarif above, because only this step applies the OpenVEX
-          # waivers: the report step's SARIF still contains all seven waived CVEs at
+          # waivers: the report step's SARIF still contains all five waived CVEs at
           # critical/high, so counting it would fail every PR on known non-issues. Reading
           # the gate's own output instead means the comment shows, and the fail step blocks
           # on, exactly the finding set this step already exits non-zero for - the gate
@@ -618,7 +637,7 @@ jobs:
 
       - name: Upload SARIF report
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           sarif_file: scout-results.sarif
 
@@ -632,9 +651,6 @@ jobs:
   # workflow_call path release.yml uses means something very different: the finding is
   # already merged, or is about to be published to Docker Hub. That is the one nobody is
   # looking at yet, so that is the one worth a message.
-  #
-  # `failure()` rather than a step-level check, because it also covers the runs where
-  # docker-scout died before producing any counts at all.
   #
   # A separate job rather than a step, because ./.github/workflows/notify-slack.yml is a
   # reusable workflow and `uses:` at job level is the only way to call one. That is also
@@ -655,7 +671,11 @@ jobs:
     # Not on pull_request: a PR-gate failure is already in front of its author as a red
     # check and the sticky comment. A failure on main or on a release means it got IN,
     # which is the thing worth interrupting someone for.
-    if: ${{ needs.docker-scout.result == 'failure' && github.event_name != 'pull_request' }}
+    #
+    # `always()` is REQUIRED. A job-level `if:` without a status function gets an
+    # implicit `success()`, which is false exactly when docker-scout failed - so without
+    # it this job would be skipped on the one outcome it exists for.
+    if: ${{ always() && needs.docker-scout.result == 'failure' && github.event_name != 'pull_request' }}
     # `permissions` IS allowed on a `uses:` job even though `env` and `continue-on-error`
     # are not, and without it this job would hand the notifier whatever the repository
     # default grants. `contents: read` exactly mirrors what notify-slack.yml declares for
@@ -680,8 +700,8 @@ jobs:
       # notifier. This workflow holds DOCKERHUB_TOKEN, CLONE_REPO_TOKEN and
       # PDP_TESTER_API_KEY; a workflow whose only job is to POST to an external webhook
       # has no business being handed any of them, and `inherit` hands over all three.
-      # Naming a secret that does not exist yet is legal - it resolves to the empty
-      # string and the notifier becomes a green no-op that says so in a ::notice::.
+      # If the secret is ever unset it resolves to the empty string and the notifier
+      # becomes a green no-op that says so in a ::notice::.
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
 
   dependency-review:
@@ -715,6 +735,13 @@ jobs:
         with:
           fail-on-severity: high
           show-patched-versions: true
+          # The five CVEs waived in .trivyignore.yaml and .docker/scout/pdp-v2.vex.json,
+          # by GHSA id (this action does not read either file). Without this, a PR that
+          # touches the starlette or ddtrace pins fails here on CVEs every other gate
+          # treats as waived. Keep in step with those two files.
+          allow-ghsas: >-
+            GHSA-wqp7-x3pw-xc5r, GHSA-82w8-qh3p-5jfq, GHSA-86qp-5c8j-p5mr,
+            GHSA-x746-7m8f-x49c, GHSA-mw54-j2v2-42hr
           # This action posts its own sticky comment under its own marker, so it needs
           # none of the github-script plumbing the image report above does. `on-failure`
           # keeps a clean PR silent. `never` on fork and Dependabot PRs, where

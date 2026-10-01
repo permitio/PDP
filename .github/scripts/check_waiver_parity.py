@@ -161,15 +161,19 @@ def parse_args() -> argparse.Namespace:
         default=0,
         help="Print a one-line warning for waivers expiring within N days (exit stays 0).",
     )
+    # For tests: point at a temp tree and pin "today", so the unit tests never depend on
+    # the real waiver files or on the calendar date.
+    ap.add_argument("--root", type=Path, help=argparse.SUPPRESS)
+    ap.add_argument("--today", type=date.fromisoformat, help=argparse.SUPPRESS)
     return ap.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    root = repo_root()
+    root = args.root or repo_root()
     waivers = load_trivyignore(root / TRIVYIGNORE)
     vex_ids = load_vex(root / VEX)
-    today = date.today()
+    today = args.today or date.today()
 
     errors = parity_errors(waivers, vex_ids) + expiry_errors(waivers, today)
     if errors:

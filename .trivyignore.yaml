@@ -15,8 +15,12 @@
 # delete the field. See PER-15358.
 vulnerabilities:
   # starlette is capped <1 by opal-common/opal-client 0.9.6 (and further to
-  # <0.51.0 via fastapi-utils -> fastapi). No <1 backport exists for either CVE.
+  # <0.51.0 via fastapi-utils -> fastapi). No <1 backport exists for any of the four starlette CVEs.
   - id: CVE-2026-48818
+    # Bound to the exact pinned version, like the VEX statement: if the pin moves,
+    # Trivy reports the CVE again instead of waiving it for any starlette.
+    purls:
+      - pkg:pypi/starlette@0.50.0
     statement: >-
       not_affected / vulnerable_code_not_in_execute_path. SSRF via UNC-path
       resolution in starlette.staticfiles, Windows-only. The PDP runs on Alpine
@@ -24,6 +28,10 @@ vulnerabilities:
       opal-common's starlette<1 cap forbids. See .docker/scout/pdp-v2.vex.json.
     expired_at: 2026-12-31
   - id: CVE-2026-54283
+    # Bound to the exact pinned version, like the VEX statement: if the pin moves,
+    # Trivy reports the CVE again instead of waiving it for any starlette.
+    purls:
+      - pkg:pypi/starlette@0.50.0
     statement: >-
       not_affected / vulnerable_code_not_in_execute_path. request.form() size
       limits ignored for urlencoded bodies. The PDP is a JSON-only API: it never
@@ -32,6 +40,10 @@ vulnerabilities:
       See .docker/scout/pdp-v2.vex.json.
     expired_at: 2026-12-31
   - id: CVE-2026-48710
+    # Bound to the exact pinned version, like the VEX statement: if the pin moves,
+    # Trivy reports the CVE again instead of waiving it for any starlette.
+    purls:
+      - pkg:pypi/starlette@0.50.0
     statement: >-
       not_affected / vulnerable_code_not_in_execute_path. A malformed Host header
       makes request.url.path diverge from the path actually routed, so a check that
@@ -43,6 +55,10 @@ vulnerabilities:
       cap forbids. See .docker/scout/pdp-v2.vex.json.
     expired_at: 2026-12-31
   - id: CVE-2026-48817
+    # Bound to the exact pinned version, like the VEX statement: if the pin moves,
+    # Trivy reports the CVE again instead of waiving it for any starlette.
+    purls:
+      - pkg:pypi/starlette@0.50.0
     statement: >-
       not_affected / vulnerable_code_not_in_execute_path. Unsafe reflection in
       starlette.endpoints.HTTPEndpoint dispatch: the HTTP method is lowercased and
@@ -55,6 +71,8 @@ vulnerabilities:
     expired_at: 2026-12-31
   # ddtrace is capped <4 by opal-common 0.9.6 (`ddtrace<4,>=3.0.0`).
   - id: CVE-2026-50271
+    purls:
+      - pkg:pypi/ddtrace@3.19.8
     statement: >-
       not_affected / inline_mitigations_already_exist. Unbounded W3C baggage
       header extraction. The Dockerfile drops "baggage" from

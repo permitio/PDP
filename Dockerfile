@@ -86,7 +86,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 #
 # The FROM line is digest-pinned, so a rebuild of the same commit gets the same
 # toolchain. The `docker` entry in .github/dependabot.yml moves tag and digest together
-# weekly, so a Go security release (a new go1.26.x behind the same tag) arrives as a
+# daily, so a Go security release (a new go1.26.x behind the same tag) arrives as a
 # reviewable PR instead of silently on the next build.
 #
 # This stage pins nothing beyond that floor, and that is a statement about THIS builder

@@ -9,12 +9,14 @@
 # construction, while a weekly roll-up answers the only question anyone actually asks -
 # is there anything security-shaped waiting on us?
 #
-# This is the roll-up, NOT the alerting path. CRITICAL/HIGH findings are reported the day
-# they appear by scheduled-security-scan.yml, which runs all three scanners - Trivy over the
+# This is the roll-up, NOT the alerting path. CRITICAL/HIGH findings are reported within
+# three days of appearing by scheduled-security-scan.yml (every third day), which runs all three scanners - Trivy over the
 # published tags, Docker Scout over `latest`, and the Dependabot alert feed - on one
-# schedule and reports them in ONE Slack message. Nothing security-shaped waits a week.
+# schedule and reports them in ONE Slack message, only when something is not clean. This
+# digest is the one deliberate heartbeat: it posts even on a clean week, so a scanner
+# that silently stopped running is noticed within a week.
 #
-# What this workflow uniquely carries is the WAIVER-EXPIRY warning below. All seven
+# What this workflow uniquely carries is the WAIVER-EXPIRY warning below. All five
 # waivers expire 2026-12-31, and nothing else in the repo looks ahead of that date, so if
 # this workflow stops running the PR gate and the release gate both go red one morning
 # with no warning. There are deliberately no tracking issues and no automated PRs from any

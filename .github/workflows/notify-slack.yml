@@ -1,12 +1,12 @@
 # Reusable workflow that posts a PDP security-scan notification to Slack.
 #
-# Called by the security scanning workflows (published-image scan, weekly
+# Called by the security scanning workflows (scheduled-security-scan.yml, weekly
 # digest, release verification) to report a scan outcome. The caller formats
 # the body; this workflow only escapes it, colours it and sends it.
 #
-# It is a GREEN NO-OP while the SLACK_WEBHOOK_URL secret does not exist: the
-# send is skipped and the skip is announced as a ::notice:: annotation. The day
-# someone adds the secret it starts posting with no edit to any workflow.
+# It is a GREEN NO-OP whenever the SLACK_WEBHOOK_URL secret is unset: the send
+# is skipped and the skip is announced as a ::notice:: annotation. The secret
+# exists in this repository, so callers post as soon as they run.
 name: Slack notification
 
 on:

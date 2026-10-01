@@ -363,3 +363,17 @@ def test_cli_exits_non_zero_on_a_permission_error_body(tmp_path):
     result = _run(["--alerts", str(feed)])
     assert result.returncode == watch.EXIT_UNREADABLE_FEED
     assert "expected an array" in result.stderr
+
+
+def test_an_expired_waiver_no_longer_silences_its_alert(tmp_path):
+    from datetime import date
+
+    waivers = tmp_path / "w.yaml"
+    waivers.write_text(
+        "vulnerabilities:\n"
+        "  - id: CVE-2026-1\n    expired_at: 2026-09-30\n"
+        "  - id: CVE-2026-2\n    expired_at: 2026-12-31\n",
+        encoding="utf-8",
+    )
+    assert watch.waived_cve_ids(waivers, today=date(2026, 10, 1)) == {"CVE-2026-2"}
+    assert watch.waived_cve_ids(waivers, today=date(2026, 9, 30)) == {"CVE-2026-1", "CVE-2026-2"}

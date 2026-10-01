@@ -343,12 +343,46 @@ def test_permit_opa_go_module_forces_source(tmp_path):
     assert findings[0]["action"] == "permit-opa"
 
 
-def test_go_stdlib_is_still_classified_as_rebuildable(tmp_path):
+def test_go_stdlib_needs_the_golang_base_digest_to_move(tmp_path):
+    # The golang build stage is digest-pinned, so a rebuild reuses the same toolchain.
     report = _write(
         tmp_path / "t.json",
-        _trivy(_vuln("CVE-2026-3", "HIGH", pkg="stdlib", fixed="1.25.4"), target_type="gobinary"),
+        _trivy(_vuln("CVE-2026-3", "HIGH", pkg="stdlib", fixed="1.26.9"), target_type="gobinary"),
     )
-    assert classifier.collect(report)[0]["action"] == "rebuild"
+    assert classifier.collect(report, pins=set())[0]["action"] == "base-digest"
+
+
+def test_exact_pinned_python_package_needs_the_pin_moved(tmp_path):
+    report = _write(
+        tmp_path / "t.json",
+        _trivy(
+            _vuln("CVE-2026-5", "HIGH", pkg="Starlette", fixed="1.3.1"),
+            _vuln("CVE-2026-6", "HIGH", pkg="httpx", fixed="0.28.2"),
+            target_type="python-pkg",
+        ),
+    )
+    actions = {f["pkg"]: f["action"] for f in classifier.collect(report, pins={"starlette"})}
+    assert actions == {"Starlette": "pinned", "httpx": "rebuild"}
+
+
+def test_exact_pins_reads_only_double_equals_lines(tmp_path):
+    req = _write(
+        tmp_path / "requirements.txt",
+        "starlette==0.50.0\nddtrace[opentracing]==3.19.8\nhttpx>=0.27\n# pydantic==2\n"
+        "aiofiles==24.1.0 --hash=sha256:abc\n",
+    )
+    assert classifier.exact_pins([req]) == {"starlette", "ddtrace", "aiofiles"}
+
+
+def test_classifier_table_cells_survive_hostile_scanner_text(tmp_path):
+    report = _write(
+        tmp_path / "t.json",
+        _trivy(_vuln("CVE-2026-7|x", "HIGH", pkg="evil|pkg`\nrow", fixed="1|2")),
+    )
+    body = classifier.render("next", classifier.collect(report, pins=set()), "REBUILD")
+    row = next(line for line in body.splitlines() if "evil" in line)
+    assert row.count(" | ") == 5  # still exactly six cells
+    assert "](https://" not in row  # a malformed id is not turned into a link
 
 
 def test_finding_without_a_fix_needs_a_decision(tmp_path):
@@ -476,26 +510,49 @@ def test_classifier_cli_reports_a_verdict_and_exits_zero(tmp_path):
 # --------------------------------------------------------------------------- check_waiver_parity
 
 
-def test_the_repos_own_waiver_files_are_in_parity():
-    result = subprocess.run(
-        [sys.executable, str(SCRIPTS / "check_waiver_parity.py")],
+def _waiver_tree(tmp_path, expires="2030-01-01"):
+    """A minimal repo tree with one waiver in both files.
+
+    The real waiver files are checked by the pre-commit hook. The unit tests use their
+    own, so they never fail because a real waiver expired or was removed.
+    """
+    _write(
+        tmp_path / parity.TRIVYIGNORE,
+        f"vulnerabilities:\n  - id: CVE-2026-1\n    expired_at: {expires}\n",
+    )
+    (tmp_path / parity.VEX).parent.mkdir(parents=True)
+    _write(tmp_path / parity.VEX, {"statements": [{"vulnerability": {"name": "CVE-2026-1"}}]})
+    return tmp_path
+
+
+def _run_parity(*args):
+    return subprocess.run(
+        [sys.executable, str(SCRIPTS / "check_waiver_parity.py"), *args],
         capture_output=True,
         text=True,
         check=False,
     )
+
+
+def test_parity_cli_passes_on_matching_files(tmp_path):
+    root = _waiver_tree(tmp_path)
+    result = _run_parity("--root", str(root), "--today", "2026-10-01")
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Waiver parity OK" in result.stdout
 
 
-def test_warn_days_prints_one_line_and_still_exits_zero():
-    result = subprocess.run(
-        [sys.executable, str(SCRIPTS / "check_waiver_parity.py"), "--warn-days", "36500"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+def test_parity_cli_fails_once_a_waiver_has_expired(tmp_path):
+    root = _waiver_tree(tmp_path, expires="2026-09-30")
+    result = _run_parity("--root", str(root), "--today", "2026-10-01")
+    assert result.returncode == 1
+    assert "CVE-2026-1" in result.stdout and "expired on 2026-09-30" in result.stdout
+
+
+def test_warn_days_prints_one_line_and_still_exits_zero(tmp_path):
+    root = _waiver_tree(tmp_path)
+    result = _run_parity("--root", str(root), "--today", "2026-10-01", "--warn-days", "36500")
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "waiver(s) expire within 36500 days:" in result.stdout
+    assert "1 waiver(s) expire within 36500 days: CVE-2026-1 (2030-01-01)" in result.stdout
     assert len(result.stdout.strip().splitlines()) == 1
 
 

@@ -6,9 +6,9 @@
 # neglect that let permitio/pdp-v2:0.9.14 ship five-week-old OpenSSL to a customer
 # (PER-15358).
 #
-# Structure deliberately mirrors the agent-security repo's config - same schedule, same
-# cooldown/group/limit shape, same commit-message prefixes and labels - so the two repos
-# behave alike and reviewers do not have to learn two conventions.
+# The cooldown/group/limit shape, commit-message prefixes and labels match the configs
+# proposed for permitio/opal (#957) and permitio/permit-opa (#50), so reviewers learn one
+# convention.
 #
 # WHAT THIS DOES *NOT* DO, so nobody retires the image scanning on the strength of it:
 # Dependabot never looks inside a built image. It reads manifests. It cannot see the
@@ -21,8 +21,7 @@
 # semver-specific knobs (semver-major-days etc.) are only supported on semver-strict
 # ecosystems - pip and cargo here, NOT docker or github-actions. The cooldown is not
 # noise reduction, it is supply-chain defence: most malicious-release incidents are
-# caught within a week, and GitHub made a 3-day cooldown the platform default in July
-# 2026 for exactly that reason. Security updates are never delayed by cooldown.
+# caught within a week. Security updates are never delayed by cooldown.
 version: 2
 updates:
   # Python dependencies (requirements.txt drives the image build)
@@ -42,8 +41,9 @@ updates:
       # starlette and ddtrace are CAPPED BY OPAL, not by us: opal-common/opal-client
       # 0.9.6 require `starlette<1` and `ddtrace<4,>=3.0.0`. Both are pinned exactly in
       # requirements.txt so the OpenVEX/trivyignore waiver PURLs stay bound to a known
-      # version, and the CVEs that would be fixed by upgrading (starlette CVE-2026-48818
-      # / CVE-2026-54283, ddtrace CVE-2026-50271) are waived as unreachable instead.
+      # version, and the CVEs that would be fixed by upgrading (starlette CVE-2026-48818,
+      # CVE-2026-54283, CVE-2026-48710 and CVE-2026-48817; ddtrace CVE-2026-50271) are
+      # waived as unreachable instead.
       #
       # A Dependabot PR for either one is therefore unmergeable by construction - it
       # would bump past OPAL's cap, break the resolve, and silently unbind the waivers.
@@ -51,7 +51,7 @@ updates:
       # merge.
       #
       # Removal gate: drop these two entries the moment opal-common relaxes its caps.
-      # At that point also delete the exact pins in requirements.txt, the three
+      # At that point also delete the exact pins in requirements.txt, the five
       # .trivyignore.yaml entries, the matching OpenVEX statements, and the
       # DD_TRACE_PROPAGATION_STYLE_EXTRACT override in the Dockerfile - they are one
       # change, not five. See PER-15358.
@@ -94,9 +94,10 @@ updates:
   # Note: cooldown.semver-major-days is not supported for github-actions
   # (Dependabot only supports it on semver-strict ecosystems like pip and cargo).
   #
-  # There is real drift to clear here: release.yml pins actions/checkout@v3 two steps
-  # away from an actions/checkout@v4, and aws-actions/configure-aws-credentials@v1.6.1
-  # is several majors behind. Nothing was watching.
+  # There is real drift to clear here: deploy_sidecar.yml, helm_release.yml and the
+  # test_release*.yml workflows still use actions/checkout@v3, and deploy_sidecar.yml's
+  # aws-actions/configure-aws-credentials@v1.6.1 is several majors behind. Nothing was
+  # watching.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
