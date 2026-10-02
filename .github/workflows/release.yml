@@ -13,7 +13,10 @@ permissions:
 jobs:
   pdp-tests:
     # Call the reusable tests workflow.
-    uses: ./.github/workflows/tests.yml
+    # `./`, not the `$/` zizmor's self-repository audit suggests: actionlint 1.7.12 rejects
+    # `$/` in a job-level `uses:`, and only with `./` does it check `secrets:` against the
+    # callee. A `./` call resolves from the caller's own commit, so nothing can drift.
+    uses: ./.github/workflows/tests.yml  # zizmor: ignore[self-repository]
     secrets:
       PDP_TESTER_API_KEY: ${{ secrets.PDP_TESTER_API_KEY }}
       CLONE_APP_CLIENT_ID: ${{ secrets.CLONE_APP_CLIENT_ID }}
@@ -480,7 +483,8 @@ jobs:
       ${{ always() && (needs.build-pdp-release.result == 'failure'
           || needs.scan-pdp-release.result == 'failure'
           || needs.publish-pdp-release.result == 'failure') }}
-    uses: ./.github/workflows/notify-slack.yml
+    # `./`, not `$/`: see the note on pdp-tests above.
+    uses: ./.github/workflows/notify-slack.yml  # zizmor: ignore[self-repository]
     secrets:
       # Named rather than `secrets: inherit`. This workflow holds CLONE_APP_PRIVATE_KEY,
       # PDP_TESTER_API_KEY and PDP_CICD_AWS_ROLE; a workflow whose only job is to POST to

@@ -200,7 +200,10 @@ jobs:
     # itself the useful weekly signal, and a digest that goes quiet when it breaks is
     # indistinguishable from a quiet week.
     if: ${{ !cancelled() }}
-    uses: ./.github/workflows/notify-slack.yml
+    # `./`, not the `$/` zizmor's self-repository audit suggests: actionlint 1.7.12 rejects
+    # `$/` in a job-level `uses:`, and only with `./` does it check `secrets:` against the
+    # callee. A `./` call resolves from the caller's own commit, so nothing can drift.
+    uses: ./.github/workflows/notify-slack.yml  # zizmor: ignore[self-repository]
     with:
       subject: weekly security digest
       # The fallbacks fire when `collect` failed before writing its outputs - an empty

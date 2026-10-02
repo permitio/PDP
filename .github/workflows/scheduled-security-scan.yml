@@ -564,7 +564,10 @@ jobs:
     # Speak up when any scanner is not clean, and when the digest job itself could not run
     # - a missing digest is not evidence of a clean scan. A fully clean run stays silent.
     if: ${{ !cancelled() && (needs.digest.result != 'success' || needs.digest.outputs.notify == 'true') }}
-    uses: ./.github/workflows/notify-slack.yml
+    # `./`, not the `$/` zizmor's self-repository audit suggests: actionlint 1.7.12 rejects
+    # `$/` in a job-level `uses:`, and only with `./` does it check `secrets:` against the
+    # callee. A `./` call resolves from the caller's own commit, so nothing can drift.
+    uses: ./.github/workflows/notify-slack.yml  # zizmor: ignore[self-repository]
     with:
       subject: scheduled security scan
       # `||` falls through on an empty string, which is what an unsuccessful digest job

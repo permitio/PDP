@@ -753,7 +753,10 @@ jobs:
     # further than the callee asks for would fail the run rather than tighten anything.
     permissions:
       contents: read
-    uses: ./.github/workflows/notify-slack.yml
+    # `./`, not the `$/` zizmor's self-repository audit suggests: actionlint 1.7.12 rejects
+    # `$/` in a job-level `uses:`, and only with `./` does it check `secrets:` against the
+    # callee. A `./` call resolves from the caller's own commit, so nothing can drift.
+    uses: ./.github/workflows/notify-slack.yml  # zizmor: ignore[self-repository]
     with:
       subject: image vulnerability gate on ${{ github.ref_name }}
       status: fail
