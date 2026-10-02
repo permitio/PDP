@@ -160,7 +160,7 @@ jobs:
       matrix: ${{ fromJson(needs.resolve-tags.outputs.matrix) }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -271,7 +271,7 @@ jobs:
 
       - name: Upload raw scan report
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: trivy-report-${{ matrix.tag }}
           path: |
@@ -306,7 +306,7 @@ jobs:
       summary: ${{ steps.result.outputs.summary }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -443,12 +443,18 @@ jobs:
       summary: ${{ steps.build.outputs.summary }}
     steps:
       - name: Download the per-tag verdicts
-        # A run where every scan leg died before uploading downloads nothing, and
-        # download-artifact treats "no artifact matched" as an error. That is not a
-        # failure of THIS job - it is the loudest outcome there is, and the step below
-        # turns the empty directory into a "nothing was cleared" notification.
+        # A run where every scan leg died before uploading matches no artifact. That is not
+        # an error: download-artifact (v4.3.0 and v8.0.1 alike) downloads nothing and
+        # succeeds, and the step below turns the empty directory into a "nothing was
+        # cleared" notification. continue-on-error is for a download that does fail - an
+        # artifact API error, or v8's default `digest-mismatch: error` - so the digest still
+        # runs and reports Scout and Dependabot instead of being skipped.
         continue-on-error: true
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        env:
+          # v8.0.1 bundles an unzip library that still calls the deprecated Buffer() constructor,
+          # so every download warns DEP0005 (actions/download-artifact#484). Drop when fixed.
+          NODE_OPTIONS: --disable-warning=DEP0005
         with:
           pattern: trivy-report-*
           merge-multiple: true
@@ -638,7 +644,7 @@ jobs:
         # The OpenVEX doc the gate below reads lives in this repo, so the checkout is not
         # optional here: without it `vex-location` resolves to nothing and all five
         # waivers stop suppressing.
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
