@@ -22,7 +22,13 @@ jobs:
 
       - name: Deploy Helm Chart in Kind Cluster
         working-directory: ./charts/pdp
-        run: helm install pdp . --set pdp.ApiKey=${{ secrets.PDP_API_KEY }} --create-namespace --namespace pdp --wait
+        # Through env, not `${{ }}` in the script, so the key is never spliced into the
+        # shell source.
+        env:
+          PDP_API_KEY: ${{ secrets.PDP_API_KEY }}
+        run: |
+          helm install pdp . --set pdp.ApiKey="$PDP_API_KEY" \
+            --create-namespace --namespace pdp --wait
 
       - name: Show PDP logs in case of failure
         run: kubectl logs svc/permitio-pdp -n pdp
