@@ -93,7 +93,11 @@ jobs:
           HAS_PRIVATE_KEY: ${{ secrets.CLONE_APP_PRIVATE_KEY != '' }}
         run: |
           if [ "$HAS_CLIENT_ID" != "true" ] || [ "$HAS_PRIVATE_KEY" != "true" ]; then
-            echo "::error::CLONE_APP_CLIENT_ID and CLONE_APP_PRIVATE_KEY must both be set, or this run cannot clone permit-opa. They are missing from the Actions secret store, or - on a Dependabot-triggered run - from the Dependabot secret store (Settings > Secrets and variables > Dependabot; PDP_TESTER_API_KEY belongs there too). Fork PRs get neither store."
+            echo "::error::CLONE_APP_CLIENT_ID and CLONE_APP_PRIVATE_KEY must both be set," \
+                 "or this run cannot clone permit-opa. They are missing from the Actions" \
+                 "secret store, or - on a Dependabot-triggered run - from the Dependabot" \
+                 "secret store (Settings > Secrets and variables > Dependabot;" \
+                 "PDP_TESTER_API_KEY belongs there too). Fork PRs get neither store."
             exit 1
           fi
 
