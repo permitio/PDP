@@ -18,7 +18,7 @@ jobs:
           persist-credentials: false
 
       - name: Create k8s Kind Cluster
-        uses: helm/kind-action@0b5c88445f37b7e12a2ce1ecca7805b9046a74db # v1
+        uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
 
       - name: Deploy Helm Chart in Kind Cluster
         working-directory: ./charts/pdp
