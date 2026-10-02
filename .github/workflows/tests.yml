@@ -82,17 +82,18 @@ jobs:
         with:
           persist-credentials: false
 
-      # Dependabot-triggered runs only see the DEPENDABOT secret store. Without Dependabot
-      # copies of the clone App's credentials the token step below fails with an opaque
-      # error; say what is actually missing instead.
+      # Without the clone App's credentials the token step below fails with an opaque
+      # error; say what is actually missing instead. No `if:`: which secret store a run
+      # reads is decided by the actor that TRIGGERED it, not by who opened the PR, so a
+      # condition on the PR author misfires both ways. A Dependabot-triggered run reads only
+      # the Dependabot store, every other run the Actions store, and a fork PR neither.
       - name: Check the permit-opa clone credentials are available
-        if: ${{ github.event.pull_request.user.login == 'dependabot[bot]' }}
         env:
           HAS_CLIENT_ID: ${{ secrets.CLONE_APP_CLIENT_ID != '' }}
           HAS_PRIVATE_KEY: ${{ secrets.CLONE_APP_PRIVATE_KEY != '' }}
         run: |
           if [ "$HAS_CLIENT_ID" != "true" ] || [ "$HAS_PRIVATE_KEY" != "true" ]; then
-            echo "::error::CLONE_APP_CLIENT_ID and CLONE_APP_PRIVATE_KEY must both be in the Dependabot secret store, or this Dependabot PR cannot clone permit-opa. Add them (and PDP_TESTER_API_KEY) under Settings > Secrets and variables > Dependabot."
+            echo "::error::CLONE_APP_CLIENT_ID and CLONE_APP_PRIVATE_KEY must both be set, or this run cannot clone permit-opa. They are missing from the Actions secret store, or - on a Dependabot-triggered run - from the Dependabot secret store (Settings > Secrets and variables > Dependabot; PDP_TESTER_API_KEY belongs there too). Fork PRs get neither store."
             exit 1
           fi
 
