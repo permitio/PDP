@@ -14,7 +14,11 @@ jobs:
   pdp-tests:
     # Call the reusable tests workflow.
     uses: ./.github/workflows/tests.yml
-    secrets: inherit
+    secrets:
+      PDP_TESTER_API_KEY: ${{ secrets.PDP_TESTER_API_KEY }}
+      CLONE_APP_CLIENT_ID: ${{ secrets.CLONE_APP_CLIENT_ID }}
+      CLONE_APP_PRIVATE_KEY: ${{ secrets.CLONE_APP_PRIVATE_KEY }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
     permissions:
       contents: read
       pull-requests: write
@@ -89,6 +93,7 @@ jobs:
         mkdir custom
         build_root="$PWD"
         cd ./permit-opa
+        # shellcheck disable=SC2035 # find * is intentional: top-level entries have no '-' prefix
         find * \( -name '*go*' -o -name 'LICENSE.md' \) -print0 | xargs -0 tar -czf "$build_root"/custom/custom_opa.tar.gz --exclude '.*'
 
     # Built ONCE, for both the pre-release and the official path: the tags are applied at

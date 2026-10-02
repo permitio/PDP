@@ -1,0 +1,35 @@
+name: Workflow Hardening
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Read-only by default.
+permissions:
+  contents: read
+
+jobs:
+  # A CVE gate that runs in a workflow an attacker can rewrite is not a gate.
+  workflow-hardening:
+    name: Workflow Hardening
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # No inputs: the repository has no action.yml, so the runner builds its
+      # Dockerfile and runs actionlint with no arguments. actionlint exits 1
+      # on any finding, and a non-zero container exit fails the step.
+      - name: actionlint
+        uses: rhysd/actionlint@914e7df21a07ef503a81201c76d2b11c789d3fca # v1.7.12
+
+      - name: zizmor
+        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          # Findings are uploaded to code scanning by default, which needs
+          # Advanced Security. Keep it to the job log and the exit code.
+          advanced-security: false
+          persona: regular

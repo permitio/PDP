@@ -32,18 +32,27 @@ on:
       # called workflow cannot exceed its caller's permissions, and without it the Docker
       # login fails on the release path only. release.yml's `pdp-tests` job does this.
 
+# Read-only by default. Jobs grant additional permissions only as needed.
+permissions:
+  contents: read
+
 jobs:
   pre-commit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-      - uses: pre-commit/action@v3.0.1
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - name: Run pre-commit
+        uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
   pytests:
     runs-on: ubuntu-latest
     steps:
       - name: Python setup
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           # Keep in lockstep with the interpreter the image actually ships
           # (Dockerfile: python:3.13-alpine3.23). This job pinned 3.11.8 while the image
@@ -53,7 +62,9 @@ jobs:
           python-version: '3.13'
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Run Pytests
         run: |
@@ -67,13 +78,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       # Dependabot-triggered runs only see the DEPENDABOT secret store. Without Dependabot
       # copies of the clone App's credentials the token step below fails with an opaque
       # error; say what is actually missing instead.
       - name: Check the permit-opa clone credentials are available
-        if: ${{ github.actor == 'dependabot[bot]' }}
+        if: ${{ github.event.pull_request.user.login == 'dependabot[bot]' }}
         env:
           HAS_CLIENT_ID: ${{ secrets.CLONE_APP_CLIENT_ID != '' }}
           HAS_PRIVATE_KEY: ${{ secrets.CLONE_APP_PRIVATE_KEY != '' }}
@@ -114,10 +127,10 @@ jobs:
           persist-credentials: false
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       - name: Pre build PDP tests
         # bash, so the tar pipeline below runs with pipefail (the default `run:` shell
@@ -135,6 +148,7 @@ jobs:
           mkdir custom
           build_root="$PWD"
           cd ./permit-opa
+          # shellcheck disable=SC2035 # find * is intentional: top-level entries have no '-' prefix
           find * \( -name '*go*' -o -name 'LICENSE.md' \) -print0 | xargs -0 tar -czf "$build_root"/custom/custom_opa.tar.gz --exclude '.*'
 
       # The only stage cached across runs. rust_chef reads nothing from the build
@@ -170,7 +184,7 @@ jobs:
           platforms: linux/arm64
 
       - name: Build and load PDP Docker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
         with:
           push: false
           load: true
@@ -197,7 +211,7 @@ jobs:
         run: docker save permitio/pdp-v2:next -o pdp-image.tar
 
       - name: Upload Docker image artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: pdp-image
           path: pdp-image.tar
@@ -213,7 +227,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Download Docker image artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        env:
+          NODE_OPTIONS: --disable-warning=DEP0005
         with:
           name: pdp-image
 
@@ -242,7 +258,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
           # Cache pdp-tester's deps so each run doesn't re-resolve/re-download
@@ -346,7 +362,9 @@ jobs:
           # nothing here pushes, so don't leave the token in .git/config for them.
           persist-credentials: false
       - name: Download Docker image artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        env:
+          NODE_OPTIONS: --disable-warning=DEP0005
         with:
           name: pdp-image
 
@@ -806,16 +824,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@v1
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: stable
           components: rustfmt, clippy
 
       - name: Rust cache
-        uses: swatinem/rust-cache@v2
+        uses: swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
         with:
           shared-key: "rust-cache"
 
