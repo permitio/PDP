@@ -752,10 +752,11 @@ jobs:
     # it this job would be skipped on the one outcome it exists for.
     if: ${{ always() && needs.docker-scout.result == 'failure' && github.event_name != 'pull_request' }}
     # `permissions` IS allowed on a `uses:` job even though `env` and `continue-on-error`
-    # are not, and without it this job would hand the notifier whatever the repository
-    # default grants. `contents: read` exactly mirrors what notify-slack.yml declares for
-    # itself - a called workflow's permissions cannot exceed the caller's, so narrowing
-    # further than the callee asks for would fail the run rather than tighten anything.
+    # are not. It matches this file's workflow-level default today, and is spelled out so
+    # the notifier's grant does not follow that default if it ever widens.
+    # `contents: read` exactly mirrors what notify-slack.yml declares for itself - a called
+    # workflow's permissions cannot exceed the caller's, so narrowing further than the
+    # callee asks for would fail the run rather than tighten anything.
     permissions:
       contents: read
     # `./`, not the `$/` zizmor's self-repository audit suggests: actionlint 1.7.12 rejects
@@ -794,9 +795,8 @@ jobs:
     # chaining the image build behind it would only serialise CI.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    # Per-job, never workflow-level: a job-level permissions block REPLACES the
-    # workflow-level one instead of merging, so introducing a workflow default here would
-    # silently narrow every other job in this file.
+    # A job-level permissions block REPLACES the workflow-level default instead of merging
+    # with it, so this job restates `contents: read` alongside the write it adds.
     permissions:
       # read the dependency graph and the diff
       contents: read

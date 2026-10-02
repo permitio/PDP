@@ -10,7 +10,10 @@ permissions:
   contents: read
 
 jobs:
-  # A CVE gate that runs in a workflow an attacker can rewrite is not a gate.
+  # Lints every workflow with actionlint and zizmor (online audits on, the action's
+  # default), and goes red on any finding from either. Advisory only: it is not a required
+  # status check on main, so a red run blocks nothing until someone adds `Workflow
+  # Hardening` to the main branch ruleset.
   workflow-hardening:
     name: Workflow Hardening
     runs-on: ubuntu-24.04
