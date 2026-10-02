@@ -314,7 +314,7 @@ jobs:
     # reaches this workflow through `workflow_call`, where github.event_name is the caller's
     # event ('release') - so the PR-only condition meant the CVE gate was skipped on exactly
     # the runs that publish an image to Docker Hub. Releases went out ungated. Now that
-    # build-and-push-pdp `needs: pdp-tests`, a failing gate blocks the push.
+    # build-pdp-release `needs: pdp-tests`, a failing gate blocks the release build.
     # See PER-15358.
     permissions:
       # required to upload the SARIF report
