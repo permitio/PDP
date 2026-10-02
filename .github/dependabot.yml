@@ -90,11 +90,6 @@ updates:
   # GitHub Actions versions
   # Note: cooldown.semver-major-days is not supported for github-actions
   # (Dependabot only supports it on semver-strict ecosystems like pip and cargo).
-  #
-  # There is real drift to clear here: deploy_sidecar.yml, helm_release.yml and the
-  # test_release*.yml workflows still use actions/checkout@v3, and deploy_sidecar.yml's
-  # aws-actions/configure-aws-credentials@v1.6.1 is several majors behind. Nothing was
-  # watching.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
