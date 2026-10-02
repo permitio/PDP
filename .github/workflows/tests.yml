@@ -8,7 +8,14 @@ on:
     secrets:
       PDP_TESTER_API_KEY:
         required: true
-      CLONE_REPO_TOKEN:
+      # The org-owned GitHub App `permitio-pdp-ci` (read-only Contents on permit-opa and
+      # pdp-tester only). Each job below mints its own 1-hour token from these, scoped to
+      # the one repository it clones. Both are secrets - the client id is not sensitive,
+      # but whether the `vars` context reaches Dependabot-triggered runs is undocumented,
+      # and these must work there too.
+      CLONE_APP_CLIENT_ID:
+        required: true
+      CLONE_APP_PRIVATE_KEY:
         required: true
       # Consumed by the `notify-gate-failure` job at the bottom of this file, which hands
       # it to ./.github/workflows/notify-slack.yml. `required: false` on purpose: if the
@@ -62,18 +69,33 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Dependabot-triggered runs only see the DEPENDABOT secret store. Without a
-      # Dependabot copy of CLONE_REPO_TOKEN the clone below fails with an opaque git
+      # Dependabot-triggered runs only see the DEPENDABOT secret store. Without Dependabot
+      # copies of the clone App's credentials the token step below fails with an opaque
       # error; say what is actually missing instead.
-      - name: Check the permit-opa clone token is available
+      - name: Check the permit-opa clone credentials are available
         if: ${{ github.actor == 'dependabot[bot]' }}
         env:
-          HAS_TOKEN: ${{ secrets.CLONE_REPO_TOKEN != '' }}
+          HAS_CLIENT_ID: ${{ secrets.CLONE_APP_CLIENT_ID != '' }}
+          HAS_PRIVATE_KEY: ${{ secrets.CLONE_APP_PRIVATE_KEY != '' }}
         run: |
-          if [ "$HAS_TOKEN" != "true" ]; then
-            echo "::error::CLONE_REPO_TOKEN is not in the Dependabot secret store, so this Dependabot PR cannot clone permit-opa. Add it (and DOCKERHUB_USERNAME, DOCKERHUB_TOKEN, PDP_TESTER_API_KEY) under Settings > Secrets > Dependabot."
+          if [ "$HAS_CLIENT_ID" != "true" ] || [ "$HAS_PRIVATE_KEY" != "true" ]; then
+            echo "::error::CLONE_APP_CLIENT_ID and CLONE_APP_PRIVATE_KEY must both be in the Dependabot secret store, or this Dependabot PR cannot clone permit-opa. Add them (and PDP_TESTER_API_KEY) under Settings > Secrets and variables > Dependabot."
             exit 1
           fi
+
+      # A token minted per run from the org-owned GitHub App, instead of a personal access
+      # token: it expires in an hour, is revoked when the job ends, belongs to no person,
+      # and is narrowed here to READ on the ONE repository this job clones - even though the
+      # App itself is installed on two.
+      - name: Mint a read-only token for permitio/permit-opa
+        id: permit-opa-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.CLONE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CLONE_APP_PRIVATE_KEY }}
+          owner: permitio
+          repositories: permit-opa
+          permission-contents: read
 
       # permit-opa is compiled into /app/bin/opa from THIS commit, not from its main:
       # a permit-opa merge changes the shipped binary only through a PDP PR that moves
@@ -87,7 +109,7 @@ jobs:
           repository: permitio/permit-opa
           ref: ff2356d560e3c7152bcb6c6ab8ebd5d4eb691306  # permit-opa 0.0.23 (#52; go 1.26, x/crypto v0.57.0)
           path: './permit-opa'
-          token: ${{ secrets.CLONE_REPO_TOKEN }}
+          token: ${{ steps.permit-opa-token.outputs.token }}
           # Nothing after the clone needs the token; don't leave it in .git/config.
           persist-credentials: false
 
@@ -198,12 +220,23 @@ jobs:
       - name: Load Docker image
         run: docker load -i pdp-image.tar
 
-      # Checkout the pdp-tester repository
+      # Same App as the permit-opa clone in build-pdp-image, narrowed to the one
+      # repository this job reads.
+      - name: Mint a read-only token for permitio/pdp-tester
+        id: pdp-tester-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.CLONE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CLONE_APP_PRIVATE_KEY }}
+          owner: permitio
+          repositories: pdp-tester
+          permission-contents: read
+
       - name: Checkout pdp-tester repository
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         with:
           repository: "permitio/pdp-tester"
-          token: ${{ secrets.CLONE_REPO_TOKEN }}
+          token: ${{ steps.pdp-tester-token.outputs.token }}
           path: './pdp-tester'
           # Nothing after the clone needs the token; don't leave it in .git/config.
           persist-credentials: false
@@ -716,9 +749,9 @@ jobs:
         Fix by upgrading the package, or - only with a written reachability argument - waive the CVE in BOTH `.trivyignore.yaml` and `.docker/scout/pdp-v2.vex.json`. See docs/image-vulnerability-management.md.
     secrets:
       # Named rather than `secrets: inherit`, matching release.yml's call of the same
-      # notifier. This workflow holds DOCKERHUB_TOKEN, CLONE_REPO_TOKEN and
-      # PDP_TESTER_API_KEY; a workflow whose only job is to POST to an external webhook
-      # has no business being handed any of them, and `inherit` hands over all three.
+      # notifier. This workflow holds CLONE_APP_PRIVATE_KEY and PDP_TESTER_API_KEY; a
+      # workflow whose only job is to POST to an external webhook has no business being
+      # handed either, and `inherit` hands over both.
       # If the secret is ever unset it resolves to the empty string and the notifier
       # becomes a green no-op that says so in a ::notice::.
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

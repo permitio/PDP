@@ -45,13 +45,25 @@ jobs:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+    # A 1-hour, read-only token on permit-opa alone, minted from the org-owned GitHub App
+    # `permitio-pdp-ci` - see the matching step in tests.yml's build-pdp-image.
+    - name: Mint a read-only token for permitio/permit-opa
+      id: permit-opa-token
+      uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+      with:
+        client-id: ${{ secrets.CLONE_APP_CLIENT_ID }}
+        private-key: ${{ secrets.CLONE_APP_PRIVATE_KEY }}
+        owner: permitio
+        repositories: permit-opa
+        permission-contents: read
+
     # Pinned; must match tests.yml, which says how to bump it and checks the two agree.
     - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
       with:
         repository: permitio/permit-opa
         ref: ff2356d560e3c7152bcb6c6ab8ebd5d4eb691306  # permit-opa 0.0.23 (#52; go 1.26, x/crypto v0.57.0)
         path: './permit-opa'
-        token: ${{ secrets.CLONE_REPO_TOKEN }}
+        token: ${{ steps.permit-opa-token.outputs.token }}
         # Nothing after the clone needs the token; don't leave it in .git/config.
         persist-credentials: false
 
@@ -375,7 +387,7 @@ jobs:
     uses: ./.github/workflows/notify-slack.yml
     secrets:
       # Named rather than `secrets: inherit`. This workflow holds DOCKERHUB_TOKEN,
-      # CLONE_REPO_TOKEN, PDP_TESTER_API_KEY and PDP_CICD_AWS_ROLE; a workflow whose only
+      # CLONE_APP_PRIVATE_KEY, PDP_TESTER_API_KEY and PDP_CICD_AWS_ROLE; a workflow whose only
       # job is to POST to an external webhook has no business being handed any of them.
       # Naming a secret that does not exist is legal - it resolves to the empty string and
       # the notifier becomes a green no-op that says so in a ::notice::.
