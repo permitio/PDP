@@ -29,7 +29,7 @@ logzio-python-handler
 # build has no lockfile, so an unpinned ddtrace would drift to a new 3.x and silently
 # break the match. Remove this pin + the waiver + the Dockerfile ENV and upgrade
 # ddtrace>=4.8.2 once OPAL relaxes its ddtrace<4 bound. See PER-15358.
-ddtrace==3.19.8
+ddtrace==4.8.2
 # sqlparse was removed, not bumped. It was added in f837d77 as a floor pin during a 2024
 # vulnerability sweep, back when ddtrace pulled it in transitively; ddtrace 3.19.8 declares
 # no sqlparse dependency and its wheel contains no reference to it, nothing else in the
