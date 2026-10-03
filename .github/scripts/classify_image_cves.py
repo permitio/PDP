@@ -2,10 +2,10 @@
 """Turn a Trivy JSON report on a published image into an actionable verdict.
 
 Triaging a CVE report on a shipped container image always comes down to one question:
-can a rebuild fix this, or does someone have to change source? The 0.9.14 customer
-report (PER-15358) took a full manual investigation to answer it - twelve CVEs that
-looked like a code emergency turned out to be an image that had not been rebuilt since
-2026-08-04, with every fix already sitting in Alpine's repos.
+can a rebuild fix this, or does someone have to change source? Answered by hand, that
+takes a full investigation - and a batch of CVEs that looks like a code emergency is
+often an image that has simply not been rebuilt, with every fix already sitting in
+Alpine's repos.
 
 Trivy already carries the signal needed to answer that automatically: a finding with a
 FixedVersion means upstream shipped a patch, so `apk upgrade` / `pip install` in the
@@ -298,8 +298,7 @@ def render(tag: str, findings: list[dict], verdict: str) -> str:
         headline = (
             "**Every finding is already patched upstream, so this image is stale rather "
             "than broken.** No source change is needed: cutting a release rebuilds it and "
-            "`apk upgrade` / `pip install` absorb the patches. This is exactly the "
-            "situation behind the 0.9.14 customer report (PER-15358)."
+            "`apk upgrade` / `pip install` absorb the patches."
         )
     else:
         parts = []

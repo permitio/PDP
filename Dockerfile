@@ -188,7 +188,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # Main image setup (optimized)
 # ---------------------------------------------------
 # Python 3.13 (>= 3.13.14) on Alpine 3.23. Moved off python:3.10-alpine3.22 to clear four
-# CPython CVEs a customer CPE scan raised against pdp-v2 0.9.14-rc1 (PER-15358):
+# CPython CVEs that CPE-based scanners raise against the 3.10 interpreter (PER-15358):
 #   CVE-2026-6019  (http.cookies Morsel.js_output escaping) - fixed in 3.13.14
 #   CVE-2026-7210  (expat hash-flooding entropy)            - fixed in 3.13.14 AND needs
 #                                                             libexpat >= 2.8.0; this image
@@ -238,8 +238,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 #
 # The patch version USED to float (see the previous python:3.10-alpine3.22 base and the
 # rebuild-picks-it-up posture in PER-15532). It no longer does - the digest below carries
-# 3.13.15 - because "a rebuild will pick it up" only holds if something rebuilds, and for
-# five weeks nothing did. See the pinning note below.
+# 3.13.15 - because "a rebuild will pick it up" only holds if something rebuilds. See the
+# pinning note below.
 #
 # Python 3.10 also reaches end of life in October 2026, so this move was due regardless.
 # Base images are pinned by DIGEST, and Dependabot's docker ecosystem
@@ -248,12 +248,11 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # pinning a per-arch digest instead would break the linux/amd64 + linux/arm64 build.
 #
 # Why pin at all, when floating the tag sounds strictly fresher: upstream rebuilds these
-# tags IN PLACE. `python:3.13-alpine3.23` silently gained a new digest with patched
-# OpenSSL between 0.9.14's build and the customer's scan, and because the tag string
-# never changed there was nothing for anyone - human or bot - to notice. A floating tag
-# is only fresh at the instant of a build, and nothing was triggering builds. Pinning
-# inverts that: the drift arrives as a digest-bump PR that CI validates before it ships,
-# which is the signal that was missing (PER-15358).
+# tags IN PLACE. `python:3.13-alpine3.23` can silently gain a new digest with patched
+# OpenSSL, and because the tag string never changes there is nothing for anyone - human
+# or bot - to notice. A floating tag is only fresh at the instant of a build, and nothing
+# triggers builds. Pinning inverts that: the drift arrives as a digest-bump PR that CI
+# validates before it ships (PER-15358).
 #
 # Do NOT hand-edit these digests to chase a CVE. Let the Dependabot PR do it, so the
 # change is reviewed and tested. `apk upgrade` still floats the Alpine package set at
@@ -275,32 +274,23 @@ RUN mkdir -p /app/backup && chmod -R 777 /app/backup
 # layer to avoid persisting binutils CVEs (CVE-2025-69649, CVE-2025-69650).
 #
 # `apk upgrade` here is the ONLY thing that keeps the OS package set current, and it is
-# only as fresh as the build that ran it. permitio/pdp-v2:0.9.14 was built 2026-08-04 and
-# pinned libcrypto3/libssl3 3.5.7-r0 + libuuid 2.41.4-r0 at that moment. Alpine 3.23 later
-# published openssl 3.5.8-r0 and util-linux 2.41.6-r1, so by 2026-09-09 a customer CPE scan
-# of the UNCHANGED published tag reported 12 CVEs / 21 findings - nine OpenSSL
-# (CVE-2026-14456, CVE-2026-14457, CVE-2026-18798, CVE-2026-54874, CVE-2026-63072,
-# CVE-2026-63073, CVE-2026-63075, CVE-2026-63076, CVE-2026-75803) and three util-linux.
-# Not one of them was a source defect: this Dockerfile was already correct, and a rebuild
-# with no edits produces 0 findings. The image was simply never rebuilt. See PER-15358.
+# only as fresh as the build that ran it: a published tag keeps the libcrypto3/libssl3 and
+# util-linux versions current on its build day. When Alpine later publishes fixes, a scan
+# of the UNCHANGED tag reports CVEs that are not source defects at all - this Dockerfile is
+# already correct, and a rebuild with no edits clears them. See PER-15358.
 #
 # Two consequences, both load-bearing:
 #   1. Release builds MUST NOT serve this layer from cache. release.yml uses
 #      `cache-from: type=gha`, and the cache key is this instruction text plus the parent
-#      layer - so a release cut months later could replay the 2026-08-04 apk layer and
-#      re-ship the exact packages a customer just flagged. release.yml therefore passes
+#      layer - so a release cut months later could replay a months-old apk layer and
+#      re-ship packages upstream has since patched. release.yml therefore passes
 #      `no-cache-filters: main` to force that stage to re-resolve on every release, and
 #      tests.yml passes the same value so the scanned image is not built on a stale
-#      package set either. That is the guarantee - NOT that the two images match. They
-#      are two independent fresh resolutions against the live Alpine/PyPI indexes, and
-#      tests.yml builds linux/amd64 only while release.yml builds amd64+arm64. The gate
-#      now runs on release events too (this change removes the `pull_request`-only
-#      condition), so a release IS gated - but on that amd64 proxy build, not on the
-#      published multi-arch manifest. That residual gap is what the scheduled re-scan of
-#      the published tags covers (PER-15358).
+#      package set either. The release itself is scanned per platform from the exact
+#      archive it then publishes (release.yml, scan-pdp-release), so what ships is what
+#      was scanned (PER-15358).
 #   2. A tag that is never rebuilt rots on its own, and no build-time gate can catch that:
-#      the docker-scout gate scanned this image in July and could not possibly have seen
-#      CVEs disclosed in September, whatever events it runs on.
+#      a gate can only see the CVEs known on the day it ran, whatever events it runs on.
 #      Detecting drift therefore REQUIRES re-scanning the PUBLISHED tags on a schedule.
 #      .github/workflows/scheduled-security-scan.yml does that every three days (PER-15358).
 #

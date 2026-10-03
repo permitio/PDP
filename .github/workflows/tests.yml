@@ -459,8 +459,8 @@ jobs:
           # mitigates by dropping "baggage" from the extract styles.
           #
           # NOTE: this gate reads packages, so it does not flag the CPython interpreter
-          # itself the way a CPE-based scanner does - that blind spot is why four Python
-          # CVEs reached a customer scan of 0.9.14-rc1 without failing CI (PER-15532).
+          # itself the way a CPE-based scanner does - CPython CVEs can pass this gate
+          # unflagged (PER-15532).
           vex-location: .docker/scout
           only-vex-affected: true
           # REQUIRED: docker scout only *applies* VEX statements whose author
@@ -482,12 +482,11 @@ jobs:
 
       # SECOND SCANNER, on purpose. The Scout gate above reads the image's package
       # manifests, which is why the NOTE on it says it cannot see the CPython interpreter
-      # itself the way a CPE-based scanner does - four Python CVEs reached a customer scan
-      # of 0.9.14-rc1 without failing this job (PER-15532). Trivy resolves the Alpine
-      # package DB and the Python/Go package trees independently and carries its own
-      # advisory feed, so the two disagree in useful ways: on the published 0.9.14 image
-      # Scout was clean while Trivy found 31 CRITICAL/HIGH, including a CRITICAL GitPython
-      # RCE (CVE-2026-78676) that the customer's own OS-only scan also missed.
+      # itself the way a CPE-based scanner does, so CPython CVEs can pass this job
+      # unflagged (PER-15532). Trivy resolves the Alpine package DB and the Python/Go
+      # package trees independently and carries its own advisory feed, so the two
+      # disagree in useful ways: on one published image Scout was clean while Trivy found
+      # dozens of CRITICAL/HIGH, including a CRITICAL that an OS-only scanner misses too.
       #
       # Waivers live in .trivyignore.yaml, which must stay in sync with the OpenVEX doc
       # Scout reads. Both files change together or neither does.

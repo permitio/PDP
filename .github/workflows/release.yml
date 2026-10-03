@@ -123,8 +123,8 @@ jobs:
         # text plus the parent layer, so when the base image digest has NOT moved but
         # Alpine's package index has, a release cut later replays the old
         # `apk update && apk upgrade` + `pip install` results and re-ships packages
-        # upstream has since patched. That is the shape of PER-15358: 0.9.14 froze
-        # libcrypto3 3.5.7-r0 on 2026-08-04 and Alpine published 3.5.8-r0 afterwards.
+        # upstream has since patched - e.g. libcrypto3 frozen at whatever was current
+        # when the layer was first cached, after Alpine has shipped the fix.
         #
         # NOTE the input is PLURAL. `no-cache-filter` (singular) is the buildx CLI flag;
         # the action input is `no-cache-filters`, and an undeclared input is warned about

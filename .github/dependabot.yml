@@ -2,9 +2,7 @@
 #
 # WHY: this repo had NO dependabot.yml at all. Dependabot *alerts* were on (and six of
 # them sat unread on main), but nothing was proposing upgrades, so every dependency and
-# every base image moved only when a human happened to touch it. That is the same
-# neglect that let permitio/pdp-v2:0.9.14 ship five-week-old OpenSSL to a customer
-# (PER-15358).
+# every base image moved only when a human happened to touch it (PER-15358).
 #
 # The cooldown/group/limit shape and commit-message prefixes match the configs proposed
 # for permitio/opal (#957) and permitio/permit-opa (#50), so reviewers learn one
@@ -14,9 +12,9 @@
 # WHAT THIS DOES *NOT* DO, so nobody retires the image scanning on the strength of it:
 # Dependabot never looks inside a built image. It reads manifests. It cannot see the
 # `apk upgrade` package set, and it cannot tell you that an image ALREADY PUBLISHED has
-# picked up a CVE disclosed after its build - which is precisely how the 0.9.14 report
-# happened. That gap is covered by scheduled-security-scan.yml, and the two are
-# complementary rather than alternatives. See docs/image-vulnerability-management.md.
+# picked up a CVE disclosed after its build. That gap is covered by
+# scheduled-security-scan.yml, and the two are complementary rather than alternatives.
+# See docs/image-vulnerability-management.md.
 #
 # `cooldown` note: default-days is supported on all four ecosystems below, but the
 # semver-specific knobs (semver-major-days etc.) are only supported on semver-strict
@@ -116,8 +114,8 @@ updates:
   # a rebuilt base becomes a digest-bump PR that CI actually validates. See the
   # comment above the FROM lines in the Dockerfile.
   #
-  # Daily, not weekly: this is the signal that was missing for 0.9.14, and a weekly
-  # cadence would have delayed it by up to six more days.
+  # Daily, not weekly: a rebuilt base is the signal a stale image needs, and a weekly
+  # cadence would delay it by up to six more days.
   - package-ecosystem: "docker"
     directory: "/"
     schedule:

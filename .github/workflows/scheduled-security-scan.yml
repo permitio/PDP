@@ -4,20 +4,17 @@
 # WHY THIS EXISTS
 # The docker-scout gate in tests.yml is a BUILD-time gate. It can only ever see the CVEs
 # that were known on the day the image was built, and it is the last word on that tag
-# forever, because nothing rebuilds a released image. That blind spot is not theoretical:
-# permitio/pdp-v2:0.9.14 was built 2026-08-04 and passed its gate; Alpine then published
-# openssl 3.5.8-r0 and util-linux 2.41.6-r1; by 2026-09-09 a customer's own scan of that
-# unchanged tag reported 12 CVEs / 21 findings and we heard about it from the customer.
-# Not one of them was a source defect - a rebuild of the untouched Dockerfile scanned
-# clean. The image had simply rotted on the shelf. See PER-15358.
+# forever, because nothing rebuilds a released image. A tag that passed its gate keeps
+# shipping the packages it was built with after Alpine publishes fixes for them; CVEs
+# disclosed afterwards are real findings on that tag, yet often not a source defect at all -
+# a rebuild of the untouched Dockerfile scans clean. See PER-15358.
 #
 # So this workflow scans what customers actually pull, on a clock, and classifies what it
 # finds into the only two buckets that matter for triage:
 #
 #   REBUILD  - every finding has a FixedVersion, i.e. upstream already shipped the patch
 #              and `apk upgrade` / `pip install` would absorb it. Cut a release; no code
-#              change needed. This is what 0.9.14 was, and the whole 0.9.14 investigation
-#              was spent establishing it by hand.
+#              change needed. Establishing this by hand takes a full investigation.
 #   SOURCE   - at least one finding has NO FixedVersion, so a rebuild cannot help and the
 #              fix is a pin, a base-image move, a dependency drop, or a VEX waiver.
 #
@@ -49,7 +46,7 @@
 # WHERE THE RESULT GOES
 # Code scanning gets the SARIF, the run goes red, and Slack gets ONE message covering all
 # three scanners - but only when something is not clean. An "all clear" ping on every run is how a
-# channel gets muted, which is the same inattention PER-15358 was found through.
+# channel gets muted.
 #
 # ONE SCHEDULE, ONE MESSAGE, ON PURPOSE. Trivy, Scout and Dependabot previously ran on
 # separate crons and each sent its own Slack message, so one CVE in a published image could
@@ -77,7 +74,7 @@ on:
     # only on what is new in the window.
     #
     # Every third day rather than weekly: new CVEs land continuously, and a weekly cadence
-    # would have left 0.9.14 exposed for up to six more days after the OpenSSL advisories.
+    # leaves a published image exposed for up to six more days after an advisory.
     - cron: '17 6 */3 * *'
   workflow_dispatch:
     inputs:
@@ -127,9 +124,9 @@ jobs:
             tags="$INPUT_TAGS"
           else
             # `latest` is what an unpinned `docker pull` gets. The newest non-prerelease
-            # release tag is what a customer who pinned a version is running - 0.9.14 was
-            # reported by a customer pinned to a tag that was no longer `latest`, so
-            # scanning only `latest` would have missed it.
+            # release tag is what a customer who pinned a version is running, and once a
+            # newer release ships it is no longer `latest`, so scanning only `latest`
+            # would miss it.
             newest="$(gh release list --repo "$REPO" --limit 30 \
                         --exclude-drafts --exclude-pre-releases \
                         --json tagName --jq '.[0].tagName // empty')"
@@ -615,8 +612,8 @@ jobs:
           exit 1
 
   # Docker Scout's periodic leg, mirroring the report+gate pair in tests.yml. It exists for
-  # the same reason the build-time job runs two scanners: on the published 0.9.14 image
-  # Scout was clean while Trivy found 31 CRITICAL/HIGH, and the failure modes run the other
+  # the same reason the build-time job runs two scanners: on a published image Scout can be
+  # clean while Trivy finds dozens of CRITICAL/HIGH, and the failure modes run the other
   # way too - Scout reads Docker's own advisory feed and applies the OpenVEX reachability
   # statements, which Trivy cannot express.
   #
