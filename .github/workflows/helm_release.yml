@@ -8,14 +8,17 @@ on:
 jobs:
   helm-release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Read-only: the checkout does not persist GITHUB_TOKEN, and chart-releaser makes its
+    # release API calls and builds its gh-pages push URL from CR_TOKEN (secrets.PAGES).
     permissions:
-      contents: write
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Configure Git
         run: |
@@ -23,10 +26,10 @@ jobs:
           git config user.email "eli@permit.io"
 
       - name: Install Helm
-        uses: azure/setup-helm@v3
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
 
       - name: Run chart-releaser
-        uses: helm/chart-releaser-action@v1.6.0
+        uses: helm/chart-releaser-action@a917fd15b20e8b64b94d9158ad54cd6345335584 # v1.6.0
         env:
           CR_TOKEN: "${{ secrets.PAGES }}"
         with:
