@@ -20,7 +20,7 @@ tenacity>=8.0.1,<9
 typer>=0.27.2,<1
 uvicorn[standard]>=0.17.6,<1
 logzio-python-handler
-# ddtrace is capped <4 by opal-common 0.9.9 (`ddtrace<4,>=3.0.0`). CVE-2026-50271 (remote
+# ddtrace is capped <4 by opal-common 0.9.6 (`ddtrace<4,>=3.0.0`). CVE-2026-50271 (remote
 # DoS via unbounded W3C baggage header extraction) is fixed only in ddtrace >= 4.8.2, so
 # it cannot be upgraded away while OPAL holds that cap. Mitigated in the Dockerfile by
 # dropping "baggage" from DD_TRACE_PROPAGATION_STYLE_EXTRACT, and waived in
@@ -48,12 +48,12 @@ protobuf>=6.33.5 # pinned to avoid CVE-2026-0994
 # 2026-08-04: CVE-2026-69249 (CVSS 8.7, fixed in 49.0.0) and CVE-2026-69247 (CVSS 8.2,
 # Observable Timing Discrepancy, affects >=44.0.0, fixed only in 50.0.0). The floor also
 # still covers the earlier GHSA-537c-gmf6-5ccf and CVE-2026-26007. Nothing else bounds
-# cryptography - opal-common 0.9.9 requires it unpinned and its pyjwt[crypto]<3,>=2.4.0
+# cryptography - opal-common 0.9.6 requires it unpinned and its pyjwt[crypto]<3,>=2.4.0
 # carries no upper bound - so the <51 cap is ours, to keep majors out of an image build
 # that has no lockfile. musllinux_1_2 cp311-abi3 wheels exist for x86_64 and aarch64, so
 # the alpine build stays prebuilt and needs no Rust toolchain.
 cryptography>=50.0.0,<51
-# starlette is capped <1 by opal-common/opal-client 0.9.9 (and further to <0.51.0 via
+# starlette is capped <1 by opal-common/opal-client 0.9.6 (and further to <0.51.0 via
 # fastapi-utils -> fastapi 0.125.0). Four starlette CVEs (CVE-2026-54283 fixed in 1.3.1,
 # CVE-2026-48817 fixed in 1.1.0, CVE-2026-48818 fixed in 1.1.0, CVE-2026-48710 fixed in
 # 1.0.1) have no <1 backport, so they cannot be upgraded away while OPAL caps
@@ -136,8 +136,10 @@ websockets==17.0
 # the companion change). Drop this floor once opal-common itself floors
 # gitpython >= 3.1.59. See PER-15358.
 GitPython>=3.1.59,<4
-opal-common==0.9.9
-# Do not add aiofiles here: opal-client 0.9.9 caps it <1 and pip cannot override that
+# opal-common/opal-client 0.9.9 declare Requires-Python <3.13, so pip cannot install them on
+# the 3.13 image. Stay on 0.9.6 until an OPAL release lifts that bound.
+opal-common==0.9.6
+# Do not add aiofiles here: opal-client 0.9.6 caps it <1 and pip cannot override that
 # (ResolutionImpossible). It is overridden after the resolve from requirements-override.txt,
 # and changing this pin fails the image build until that override is re-evaluated (PER-16234).
-opal-client==0.9.9
+opal-client==0.9.6

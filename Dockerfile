@@ -338,7 +338,7 @@ COPY kong_routes.json /config/kong_routes.json
 # opal-client caps at a 0.8.0 that breaks OPAL's offline-mode backup on CPython >= 3.12 - so it
 # is installed after the resolve. That file holds the rationale and the exit condition
 # (PER-16234). check_aiofiles_override.py is bind-mounted, so it never ships, and runs last:
-# it fails the build if opal-client leaves 0.9.9 or the real backup_store() stops working here.
+# it fails the build if opal-client leaves 0.9.6 or the real backup_store() stops working here.
 COPY ./requirements.txt ./requirements.txt
 COPY ./requirements-override.txt ./requirements-override.txt
 RUN --mount=type=cache,target=/root/.cache/pip \

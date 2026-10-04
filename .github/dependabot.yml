@@ -38,7 +38,7 @@ updates:
         update-types: ["minor", "patch"]
     ignore:
       # starlette and ddtrace are CAPPED BY OPAL, not by us: opal-common/opal-client
-      # 0.9.9 require `starlette<1` and `ddtrace<4,>=3.0.0`. Both are pinned exactly in
+      # 0.9.6 require `starlette<1` and `ddtrace<4,>=3.0.0`. Both are pinned exactly in
       # requirements.txt so the OpenVEX/trivyignore waiver PURLs stay bound to a known
       # version, and the CVEs that would be fixed by upgrading (starlette CVE-2026-48818,
       # CVE-2026-54283, CVE-2026-48710 and CVE-2026-48817; ddtrace CVE-2026-50271) are
@@ -56,7 +56,7 @@ updates:
       # change, not five. See PER-15358.
       - dependency-name: "starlette"
       - dependency-name: "ddtrace"
-      # Also capped by OPAL 0.9.9: `pydantic<2` and `tenacity<9`. scalar-fastapi 1.9.0+
+      # Also capped by OPAL 0.9.6: `pydantic<2` and `tenacity<9`. scalar-fastapi 1.9.0+
       # requires pydantic>=2, so it is held at 1.8.x by the same cap. Drop these three
       # when OPAL moves to pydantic 2 and tenacity 9.
       - dependency-name: "pydantic"
