@@ -379,8 +379,11 @@ ENV OPAL_INLINE_OPA_LOG_FORMAT="http"
 # header. The fix is only in ddtrace >= 4.8.2, which opal-common's `ddtrace<4,>=3.0.0`
 # cap forbids, so we remove the vulnerable parser from the request path instead.
 #
-# This only matters when PDP_ENABLE_MONITORING=true (default false) - that is what calls
-# patch(fastapi=True) and puts ddtrace on the inbound request path at all. Injection is
+# ddtrace reaches the inbound request path only with monitoring on - that is what calls
+# patch(fastapi=True). PDP_ENABLE_MONITORING defaults to false, but horizon/pdp.py applies
+# the control plane's remote config before it checks the flag, so monitoring can be turned
+# on without touching this image's env. That is why this ENV, not the default, is the
+# mitigation the waivers rely on. Injection is
 # left at its default, so outbound baggage propagation is unaffected. Remove this once
 # OPAL relaxes its ddtrace<4 bound and ddtrace moves to >= 4.8.2. See PER-15358.
 ENV DD_TRACE_PROPAGATION_STYLE_EXTRACT="datadog,tracecontext"
