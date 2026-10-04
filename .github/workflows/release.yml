@@ -440,9 +440,9 @@ jobs:
   # Three locks, any one of which stops a push:
   #   1. `environment: dockerhub-release` - GitHub only lets a job into it from a release
   #      TAG matching `[0-9]*.[0-9]*.[0-9]*` or `v[0-9]*.[0-9]*.[0-9]*` (no branch, no
-  #      PR), and only after a member of the R&D team who did not trigger the run
-  #      approves it. Approval comes AFTER the build and scan, so reviewers approve an
-  #      image that has already passed.
+  #      PR), and only after a member of the R&D team approves it. Self-review is allowed
+  #      on purpose, so whoever cut the release may approve it. Approval comes AFTER the
+  #      build and scan, so reviewers approve an image that has already passed.
   #   2. Docker's OIDC connection grants Image Push on permitio/pdp-v2 ONLY to the
   #      subject `repo:permitio/PDP:environment:dockerhub-release` - i.e. to this job.
   #      Every other job in the repo matches only the pull-only `repo:permitio/PDP:*` rule.
