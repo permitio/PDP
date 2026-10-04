@@ -85,12 +85,27 @@ def _alert(number, cve, severity="high", ghsa=None, package="starlette", summary
     }
 
 
+CLEAN_CARGO = {"vulnerabilities": {"found": False, "count": 0, "list": []}, "warnings": {}}
+
+
+def _cargo(*vulns, warnings=None):
+    return {"vulnerabilities": {"count": len(vulns), "list": list(vulns)}, "warnings": warnings or {}}
+
+
+def _crate(rustsec, cvss=None, name="rmcp", version="0.12.0", aliases=(), patched=(">=1.4.0",)):
+    return {
+        "advisory": {"id": rustsec, "title": f"{name} advisory", "cvss": cvss, "aliases": list(aliases)},
+        "package": {"name": name, "version": version},
+        "versions": {"patched": list(patched)},
+    }
+
+
 @pytest.fixture
 def run(tmp_path, monkeypatch):
     """Write the given inputs, run the CLI, and return (message, headline, outputs)."""
     monkeypatch.setattr(report.dependabot, "waived_cve_ids", lambda: {"CVE-2099-0001"})
 
-    def _run(trivy=None, scout=None, alerts=None, extra_args=()):
+    def _run(trivy=None, scout=None, alerts=None, cargo=CLEAN_CARGO, extra_args=()):
         args = ["--repo", "permitio/PDP", "--run-url", "https://github.com/permitio/PDP/actions/runs/1"]
         for tag, data in (trivy or {}).items():
             path = tmp_path / f"trivy-{tag}.json"
@@ -105,6 +120,10 @@ def run(tmp_path, monkeypatch):
             path = tmp_path / "alerts.json"
             path.write_text(json.dumps(alerts) if isinstance(alerts, list) else alerts, encoding="utf-8")
             args += ["--dependabot", str(path)]
+        if cargo is not None:
+            path = tmp_path / "cargo-audit.json"
+            path.write_text(json.dumps(cargo) if isinstance(cargo, dict) else cargo, encoding="utf-8")
+            args += ["--cargo", str(path)]
         out, headline, gh = tmp_path / "slack.txt", tmp_path / "headline.txt", tmp_path / "gh.txt"
         args += ["--out", str(out), "--headline-out", str(headline), "--github-output", str(gh), *extra_args]
         assert report.main(args) == 0
@@ -118,7 +137,7 @@ def test_all_clean_is_silent_and_green(run):
     message, headline, outputs = run(trivy={"latest": _trivy()}, scout=_sarif(), alerts=[])
     assert message.startswith(":white_check_mark: *permitio/PDP: no high/critical vulnerabilities found*")
     assert headline == "no high/critical vulnerabilities found"
-    assert outputs == {"notify": "false", "status": "ok", "severe": "0"}
+    assert outputs == {"notify": "false", "status": "ok", "severe": "0", "unscored": "0"}
 
 
 def test_same_cve_from_every_source_is_one_line_naming_all_sources(run):
@@ -133,7 +152,7 @@ def test_same_cve_from_every_source_is_one_line_naming_all_sources(run):
     assert "Trivy latest, Trivy 0.9.16, Docker Scout latest, Dependabot" in listed[0]
     assert "libssl3@3.5.7-r0" in listed[0] and "libcrypto3@3.5.7-r0" in listed[0]
     assert headline == "1 high/critical vulnerability found"
-    assert outputs == {"notify": "true", "status": "warn", "severe": "1"}
+    assert outputs == {"notify": "true", "status": "warn", "severe": "1", "unscored": "0"}
 
 
 def test_ghsa_alias_merges_a_dependabot_alert_into_the_scanner_finding(run):
@@ -173,10 +192,73 @@ def test_unparseable_sarif_and_feed_are_incomplete(run):
     assert outputs["status"] == "fail"
 
 
-def test_no_scout_or_dependabot_argument_reads_as_incomplete(run):
-    message, _, outputs = run(trivy={"latest": _trivy()})
+def test_no_scout_cargo_or_dependabot_argument_reads_as_incomplete(run):
+    message, _, outputs = run(trivy={"latest": _trivy()}, cargo=None)
     incomplete = [line for line in message.splitlines() if line.startswith("• ") and "did not complete" in line]
-    assert len(incomplete) == 2
+    assert len(incomplete) == 3
+    assert outputs["status"] == "fail"
+
+
+@pytest.mark.parametrize(
+    ("vector", "expected"),
+    [
+        ("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H", 9.8),
+        ("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H", 7.5),
+        ("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H", 10.0),
+        ("CVSS:3.0/AV:L/AC:H/PR:H/UI:R/S:U/C:L/I:N/A:N", 1.8),
+        ("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:N", 0.0),
+        ("CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N", None),
+        ("CVSS:3.1/AV:X/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H", None),
+        ("", None),
+    ],
+)
+def test_cvss3_base_score(vector, expected):
+    assert report.cvss3_base_score(vector) == expected
+
+
+def test_cargo_finding_is_scored_from_its_vector_and_linked_to_rustsec(run):
+    crate = _crate("RUSTSEC-2026-0189", cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H")
+    message, _, outputs = run(trivy={"latest": _trivy()}, scout=_sarif(), alerts=[], cargo=_cargo(crate))
+    line = next(line for line in message.splitlines() if "RUSTSEC-2026-0189" in line)
+    assert line.startswith("• *high 7.5*")
+    assert "<https://rustsec.org/advisories/RUSTSEC-2026-0189|RUSTSEC-2026-0189>" in line
+    assert "fix: &gt;=1.4.0" in line and "_(cargo audit)_" in line
+    assert outputs["severe"] == "1"
+
+
+def test_cargo_alias_merges_with_the_dependabot_alert(run):
+    crate = _crate("RUSTSEC-2026-0190", cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H", aliases=["CVE-2026-0190"])
+    message, _, _ = run(
+        trivy={"latest": _trivy()},
+        scout=_sarif(),
+        alerts=[_alert(9, "CVE-2026-0190", package="rmcp")],
+        cargo=_cargo(crate),
+    )
+    listed = [line for line in message.splitlines() if "CVE-2026-0190" in line or "RUSTSEC-2026-0190" in line]
+    assert len(listed) == 1
+    assert "cargo audit, Dependabot" in listed[0]
+
+
+def test_unscored_cargo_advisory_is_listed_and_notifies(run):
+    crate = _crate("RUSTSEC-2026-0258", cvss=None, name="h2", version="0.3.27")
+    message, headline, outputs = run(trivy={"latest": _trivy()}, scout=_sarif(), alerts=[], cargo=_cargo(crate))
+    assert message.startswith(":large_yellow_circle: *permitio/PDP: no high/critical vulnerabilities; 1 unscored")
+    assert "*Unscored* (the advisory has no CVSS v3 score; triage manually)" in message
+    assert "• *unscored* — `h2@0.3.27`" in message
+    assert headline == "no high/critical vulnerabilities; 1 unscored to triage"
+    assert outputs == {"notify": "true", "status": "warn", "severe": "0", "unscored": "1"}
+
+
+def test_cargo_warnings_are_counted_not_alerted(run):
+    warnings = {"unmaintained": [{"advisory": {"id": "RUSTSEC-2024-0436"}}], "yanked": []}
+    message, _, outputs = run(trivy={"latest": _trivy()}, scout=_sarif(), alerts=[], cargo=_cargo(warnings=warnings))
+    assert "*cargo audit* (`Cargo.lock`): clean · 1 warning(s): unmaintained or yanked crates" in message
+    assert outputs["notify"] == "false"
+
+
+def test_unreadable_cargo_report_is_incomplete(run):
+    message, _, outputs = run(trivy={"latest": _trivy()}, scout=_sarif(), alerts=[], cargo="{}")
+    assert "*cargo audit* (`Cargo.lock`): :warning: did not complete: the report has no vulnerability list" in message
     assert outputs["status"] == "fail"
 
 

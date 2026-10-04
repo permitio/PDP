@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """Build the scheduled security scan's single Slack report.
 
-Three scanners feed it: Trivy over each published tag, Docker Scout over `latest`, and
-the repository's open Dependabot alerts. Each reports CRITICAL/HIGH findings that the
-waiver list (.trivyignore.yaml / the OpenVEX doc) does not already answer. The same CVE
-seen by several scanners or tags is ONE line, naming every source that saw it, so three
-agreeing scanners never read as three problems.
+Four sources feed it: Trivy over each published tag, Docker Scout over `latest`, and the
+repository's open Dependabot alerts - each reporting CRITICAL/HIGH findings that the
+waiver list (.trivyignore.yaml / the OpenVEX doc) does not already answer - plus cargo
+audit over Cargo.lock, which reports every RustSec advisory. The same advisory seen by
+several sources or tags is ONE line, naming every source that saw it, so agreeing
+scanners never read as several problems.
 
 The layout follows permitio/agent-security's report: a headline count, one line per
-source, then the high/critical findings with package, advisory link and remediation.
+source, then the high/critical findings with package, advisory link and remediation, and
+an "Unscored" list for advisories with no CVSS v3 score.
 
 A source whose report is missing or unreadable is shown as "did not complete" and the
 report never claims a clean result while one is missing. Findings are not failures:
@@ -315,6 +317,91 @@ def dependabot_source(alerts: Path | None, waived: set[str]) -> tuple[Source, in
     return source, waived_count
 
 
+# --- cargo audit ---------------------------------------------------------------------
+
+# cargo audit carries a CVSS vector, not a score or severity; many RustSec advisories carry
+# neither. CVSS v3.x base-metric weights, from the FIRST CVSS v3.1 specification, 7.4.
+_AV = {"N": 0.85, "A": 0.62, "L": 0.55, "P": 0.2}
+_AC = {"L": 0.77, "H": 0.44}
+_PR_UNCHANGED = {"N": 0.85, "L": 0.62, "H": 0.27}
+_PR_CHANGED = {"N": 0.85, "L": 0.68, "H": 0.5}
+_UI = {"N": 0.85, "R": 0.62}
+_CIA = {"H": 0.56, "L": 0.22, "N": 0.0}
+_RUSTSEC_ID = re.compile(r"^RUSTSEC-\d{4}-\d{4}$")
+
+
+def _roundup(value: float) -> float:
+    """CVSS v3.1 Roundup: the smallest one-decimal number >= value, float-safe."""
+    scaled = round(value * 100_000)
+    if scaled % 10_000 == 0:
+        return scaled / 100_000
+    return (scaled // 10_000 + 1) / 10
+
+
+def cvss3_base_score(vector: str) -> float | None:
+    """Base score of a CVSS v3.0/v3.1 vector; None for any other version or a malformed one."""
+    parts = vector.strip().split("/")
+    if parts[0] not in ("CVSS:3.0", "CVSS:3.1"):
+        return None
+    metrics = dict(part.split(":", 1) for part in parts[1:] if ":" in part)
+    scope = metrics.get("S")
+    if scope not in ("U", "C"):
+        return None
+    privileges = _PR_CHANGED if scope == "C" else _PR_UNCHANGED
+    try:
+        av, ac = _AV[metrics["AV"]], _AC[metrics["AC"]]
+        pr, ui = privileges[metrics["PR"]], _UI[metrics["UI"]]
+        c, i, a = _CIA[metrics["C"]], _CIA[metrics["I"]], _CIA[metrics["A"]]
+    except KeyError:
+        return None
+    iss = 1 - (1 - c) * (1 - i) * (1 - a)
+    impact = 6.42 * iss if scope == "U" else 7.52 * (iss - 0.029) - 3.25 * (iss - 0.02) ** 15
+    if impact <= 0:
+        return 0.0
+    exploitability = 8.22 * av * ac * pr * ui
+    raw = impact + exploitability if scope == "U" else 1.08 * (impact + exploitability)
+    return _roundup(min(raw, 10))
+
+
+def cargo_source(report: Path | None) -> tuple[Source, int]:
+    """Vulnerable crates from `cargo audit --json`, and how many warnings (unmaintained, yanked) it gave."""
+    source = Source(name="cargo audit", scope="Cargo.lock")
+    if report is None:
+        source.complete, source.note = False, "no report"
+        return source, 0
+    data, error = scan_report.read_json(report)
+    if data is None:
+        source.complete, source.note = False, _unreadable(report, error)
+        return source, 0
+    vulnerabilities = (data.get("vulnerabilities") or {}).get("list")
+    if not isinstance(vulnerabilities, list):
+        source.complete, source.note = False, "the report has no vulnerability list"
+        return source, 0
+    for entry in vulnerabilities:
+        if not isinstance(entry, dict):
+            continue
+        advisory = entry.get("advisory") or {}
+        package = entry.get("package") or {}
+        advisory_id = str(advisory.get("id") or "?")
+        score = cvss3_base_score(str(advisory.get("cvss") or ""))
+        url = f"https://rustsec.org/advisories/{advisory_id}" if _RUSTSEC_ID.match(advisory_id) else ""
+        source.findings.append(
+            Finding(
+                id=advisory_id,
+                severity=normalise_severity(None, score),
+                score=score or None,
+                title=str(advisory.get("title") or ""),
+                url=url or str(advisory.get("url") or ""),
+                remediation=_remediation(", ".join((entry.get("versions") or {}).get("patched") or [])),
+                packages=[f"{package.get('name') or '?'}@{package.get('version') or '?'}"],
+                sources=["cargo audit"],
+                aliases={str(alias) for alias in advisory.get("aliases") or [] if alias},
+            )
+        )
+    warnings = data.get("warnings") or {}
+    return source, sum(len(items) for items in warnings.values() if isinstance(items, list))
+
+
 # --- Merge and render ----------------------------------------------------------------
 
 
@@ -365,7 +452,7 @@ def finding_line(finding: Finding) -> str:
     return f"• {' — '.join(pieces)} _({sources})_"
 
 
-def headline(severe: int, *, incomplete: bool) -> str:
+def headline(severe: int, unscored: int, *, incomplete: bool) -> str:
     """Plain-text one-liner for the weekly digest; never carries scanner text."""
     if severe:
         noun = "vulnerability" if severe == 1 else "vulnerabilities"
@@ -373,26 +460,42 @@ def headline(severe: int, *, incomplete: bool) -> str:
         return f"{severe} high/critical {noun} found{suffix}"
     if incomplete:
         return "security scan incomplete"
+    if unscored:
+        return f"no high/critical vulnerabilities; {unscored} unscored to triage"
     return "no high/critical vulnerabilities found"
+
+
+def _list_section(title: str, findings: list[Finding]) -> list[str]:
+    if not findings:
+        return []
+    lines = ["", title, *(finding_line(f) for f in findings[:MAX_LISTED])]
+    if len(findings) > MAX_LISTED:
+        lines.append(f"• …and {len(findings) - MAX_LISTED} more (see the run)")
+    return lines
 
 
 def render(repo: str, run_url: str, lines: list[str], findings: list[Finding], *, incomplete: bool) -> str:
     severe = [f for f in findings if f.severity in SEVERE]
+    unscored = [f for f in findings if f.severity == "unscored"]
     name = escape_slack(repo)
     if severe:
-        top = f":rotating_light: *{name}: {headline(len(severe), incomplete=False)}*"
+        top = f":rotating_light: *{name}: {headline(len(severe), 0, incomplete=False)}*"
     elif incomplete:
         top = f":warning: *{name}: security scan incomplete*"
+    elif unscored:
+        top = f":large_yellow_circle: *{name}: {headline(0, len(unscored), incomplete=False)}*"
     else:
         top = f":white_check_mark: *{name}: no high/critical vulnerabilities found*"
     body = [top]
     if incomplete:
         body.append(":warning: Some scans did not complete, so the results are partial.")
-    body += ["", "_Critical/high only, after the waivers in `.trivyignore.yaml` and the OpenVEX doc._", *lines]
-    if severe:
-        body += ["", "*High / critical*", *(finding_line(f) for f in severe[:MAX_LISTED])]
-        if len(severe) > MAX_LISTED:
-            body.append(f"• …and {len(severe) - MAX_LISTED} more (see the run)")
+    note = (
+        "_Image scanners and Dependabot: critical/high only, after the waivers in `.trivyignore.yaml` "
+        "and the OpenVEX doc. cargo audit: every RustSec advisory._"
+    )
+    body += ["", note, *lines]
+    body += _list_section("*High / critical*", severe)
+    body += _list_section("*Unscored* (the advisory has no CVSS v3 score; triage manually)", unscored)
     body += ["", link(run_url, "Workflow run")]
     return "\n".join(body)
 
@@ -419,15 +522,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="TAG=trivy.json, once per tag that was meant to be scanned; a missing file reads as incomplete.",
     )
     ap.add_argument("--scout", type=_tag_path, help="TAG=gate.sarif from the VEX-filtered Scout gate.")
+    ap.add_argument("--cargo", type=Path, help="`cargo audit --json` report for Cargo.lock.")
     ap.add_argument("--dependabot", type=Path, help="Open Dependabot alerts JSON (gh api --paginate).")
     ap.add_argument("--out", type=Path, required=True, help="Write the Slack mrkdwn message here.")
     ap.add_argument("--headline-out", type=Path, help="Write the plain one-line headline here.")
-    ap.add_argument("--github-output", type=Path, help="Append notify/status/severe here.")
+    ap.add_argument("--github-output", type=Path, help="Append notify/status/severe/unscored here.")
     return ap.parse_args(argv)
 
 
-def build(args: argparse.Namespace) -> tuple[str, str, int, bool]:
-    """Render the message; returns (message, headline, severe count, incomplete)."""
+@dataclass
+class Report:
+    """The rendered message and the counts the workflow branches on."""
+
+    message: str
+    headline: str
+    severe: int
+    unscored: int
+    incomplete: bool
+
+
+def build(args: argparse.Namespace) -> Report:
     pins = classifier.exact_pins()
     sources = [trivy_source(tag, path, pins) for tag, path in args.trivy]
     if not sources:
@@ -436,30 +550,39 @@ def build(args: argparse.Namespace) -> tuple[str, str, int, bool]:
         sources.append(scout_source(*args.scout))
     else:
         sources.append(Source(name="Docker Scout", scope="pdp-v2:latest", complete=False, note="no report"))
+    cargo, warnings = cargo_source(args.cargo)
     alerts, waived = dependabot_source(args.dependabot, dependabot.waived_cve_ids())
-    sources.append(alerts)
 
-    lines = [source_line(s) for s in sources[:-1]]
+    lines = [source_line(s) for s in sources]
+    lines.append(source_line(cargo, f" · {warnings} warning(s): unmaintained or yanked crates" if warnings else ""))
     lines.append(source_line(alerts, f" · {waived} waived in {WAIVER_FILE}" if waived else ""))
+    sources += [cargo, alerts]
     findings = merge(sources)
     incomplete = any(not s.complete for s in sources)
     severe = sum(1 for f in findings if f.severity in SEVERE)
-    message = render(args.repo, args.run_url, lines, findings, incomplete=incomplete)
-    return message, headline(severe, incomplete=incomplete), severe, incomplete
+    unscored = sum(1 for f in findings if f.severity == "unscored")
+    return Report(
+        message=render(args.repo, args.run_url, lines, findings, incomplete=incomplete),
+        headline=headline(severe, unscored, incomplete=incomplete),
+        severe=severe,
+        unscored=unscored,
+        incomplete=incomplete,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    message, summary, severe, incomplete = build(args)
-    args.out.write_text(message + "\n", encoding="utf-8")
+    report = build(args)
+    args.out.write_text(report.message + "\n", encoding="utf-8")
     if args.headline_out:
-        args.headline_out.write_text(summary + "\n", encoding="utf-8")
+        args.headline_out.write_text(report.headline + "\n", encoding="utf-8")
     if args.github_output:
-        status = "fail" if incomplete else ("warn" if severe else "ok")
+        attention = report.severe or report.unscored
+        status = "fail" if report.incomplete else ("warn" if attention else "ok")
+        notify = "true" if attention or report.incomplete else "false"
         with args.github_output.open("a", encoding="utf-8") as fh:
-            fh.write(f"notify={'true' if severe or incomplete else 'false'}\n")
-            fh.write(f"status={status}\nsevere={severe}\n")
-    print(message)
+            fh.write(f"notify={notify}\nstatus={status}\nsevere={report.severe}\nunscored={report.unscored}\n")
+    print(report.message)
     return 0
 
 

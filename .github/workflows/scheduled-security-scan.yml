@@ -1,5 +1,6 @@
-# The scheduled security scan: Trivy and Docker Scout over the PUBLISHED pdp-v2 tags, and the
-# Dependabot alert feed, on one schedule, reporting through one Slack message.
+# The scheduled security scan: Trivy and Docker Scout over the PUBLISHED pdp-v2 tags, cargo
+# audit over main's Cargo.lock, and the Dependabot alert feed, on one schedule, reporting
+# through one Slack message.
 #
 # WHY THIS EXISTS
 # The docker-scout gate in tests.yml is a BUILD-time gate. It can only ever see the CVEs
@@ -24,7 +25,11 @@
 # the names it lists. `latest` is a fixed string a static VEX doc can name; release tags
 # rotate with every release and cannot be.
 #
-# THE THIRD SCANNER
+# CARGO AUDIT AND DEPENDABOT
+# The `cargo-audit` job checks the crates compiled into the Rust binaries, which the image
+# scanners do not reliably see. It reports every RustSec advisory; one with no CVSS v3
+# score is listed as "unscored" rather than dropped.
+#
 # Dependabot is here too, in the `dependabot` job. It cannot report itself: a
 # Dependabot-triggered run gets a read-only GITHUB_TOKEN and can read only the Dependabot
 # secret store, so it can never reach Slack from its own PR runs, and GitHub publishes no
@@ -40,11 +45,11 @@
 # The PR gate (tests.yml) and the release gate (release.yml) are different: they block.
 #
 # ONE MESSAGE
-# The `report` job merges all three scanners with format_security_report.py: one line per
-# advisory, naming every scanner and tag that saw it, so three agreeing scanners never read
-# as three problems. Slack hears from this workflow only when there is a high/critical
-# finding or a scan did not complete; a clean run stays silent, because an "all clear" on
-# every run is how a channel gets muted.
+# The `report` job merges every scanner with format_security_report.py: one line per
+# advisory, naming every scanner and tag that saw it, so agreeing scanners never read as
+# several problems. Slack hears from this workflow only when there is a high/critical or
+# unscored finding or a scan did not complete; a clean run stays silent, because an "all
+# clear" on every run is how a channel gets muted.
 name: Scheduled security scan
 
 on:
@@ -347,8 +352,50 @@ jobs:
           path: scout-latest-gate.sarif
           retention-days: 30
 
-  # THE THIRD SCANNER. Runs in parallel with the two image scanners above, so its result
-  # lands in the same report. It needs no image and shares nothing with them.
+  # cargo audit over main's Cargo.lock: the crates compiled into the Rust binaries, which
+  # the image scanners do not reliably see. Same pinned version and cache as tests.yml.
+  cargo-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Cache cargo-audit
+        id: cargo-audit-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: cargo-audit-0.22.2-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Install cargo-audit
+        if: steps.cargo-audit-cache.outputs.cache-hit != 'true'
+        run: cargo install --locked cargo-audit@0.22.2
+
+      # A vulnerable crate is a finding for the report, not a red job: cargo audit's exit
+      # status is ignored and only a missing or unreadable report fails here.
+      - name: Audit Cargo.lock
+        run: |
+          set -euo pipefail
+          status=0
+          cargo audit --json > cargo-audit.json || status=$?
+          if ! jq -e '.vulnerabilities.list | type == "array"' cargo-audit.json > /dev/null 2>&1; then
+            echo "::error::cargo audit produced no readable report (exit ${status}). See the log above."
+            exit 1
+          fi
+          echo "cargo audit: $(jq '.vulnerabilities.count' cargo-audit.json) vulnerable crate(s) in Cargo.lock."
+
+      - name: Upload the report for the report job
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cargo-audit
+          path: cargo-audit.json
+          retention-days: 30
+
+  # Runs in parallel with the scanners above, so its result lands in the same report. It
+  # needs no image and shares nothing with them.
   dependabot:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -404,10 +451,10 @@ jobs:
           retention-days: 30
 
   report:
-    # ONE message for the whole run, merging all three scanners. Each scanner hands over its
+    # ONE message for the whole run, merging every scanner. Each scanner hands over its
     # raw report as an artifact; `needs.scan.outputs.*` on a matrix job would carry one
     # arbitrary leg's values.
-    needs: [resolve-tags, scan, scout-latest, dependabot]
+    needs: [resolve-tags, scan, scout-latest, cargo-audit, dependabot]
     # Not `success()`: a scanner job that went red is exactly what the report must say.
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
@@ -468,6 +515,7 @@ jobs:
             --run-url "$RUN_URL" \
             "${trivy_args[@]}" \
             --scout "latest=reports/scout-latest-gate.sarif" \
+            --cargo reports/cargo-audit.json \
             --dependabot reports/dependabot-alerts.json \
             --out security-report.txt \
             --headline-out security-report-headline.txt \
