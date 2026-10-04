@@ -76,6 +76,11 @@ jobs:
 
   build-pdp-image:
     runs-on: ubuntu-latest
+    env:
+      # build-push-action v6+ uploads a build-record artifact (logs, provenance) by
+      # default. This public repo's build compiles the private permit-opa, so keep the
+      # build record out of the run's downloadable artifacts, as v5 did.
+      DOCKER_BUILD_RECORD_UPLOAD: 'false'
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -166,7 +171,7 @@ jobs:
       # cached for every ref to restore (opa_build's `COPY custom* /custom`, and the
       # Rust stages' `COPY . .`). Keep rust_chef free of COPY/ADD (see the Dockerfile).
       - name: Cache the rust_chef stage
-        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25  # v5.4.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           outputs: type=cacheonly
           context: .
@@ -180,7 +185,7 @@ jobs:
       # exports opa_build, and its only layers before `COPY custom*` (an ENV and the
       # go1.26.6 floor check) take about 2 seconds.
       - name: Build the OPA stage for arm64
-        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25  # v5.4.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           # Only the compile matters; say so, or buildx warns that the result is discarded.
           outputs: type=cacheonly
@@ -189,7 +194,7 @@ jobs:
           platforms: linux/arm64
 
       - name: Build and load PDP Docker image
-        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           push: false
           load: true

@@ -47,6 +47,11 @@ jobs:
     timeout-minutes: 90
     permissions:
       contents: read
+    env:
+      # build-push-action v6+ uploads a build-record artifact (logs, provenance) by
+      # default. This public repo's build compiles the private permit-opa, so keep the
+      # build record out of the run's downloadable artifacts, as v5 did.
+      DOCKER_BUILD_RECORD_UPLOAD: 'false'
     steps:
     - name: Checkout code
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -102,7 +107,7 @@ jobs:
     # Built ONCE, for both the pre-release and the official path: the tags are applied at
     # publish time, so there is no second build that could resolve a different package set.
     - name: Build PDP image (multi-platform OCI archive, not pushed)
-      uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
+      uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
       with:
         push: false
         context: .
