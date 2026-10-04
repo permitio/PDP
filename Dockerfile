@@ -57,8 +57,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # OPA BUILD STAGE -----------------------------------
 # Build OPA from source or download precompiled binary
 # ---------------------------------------------------
-# Go 1.26 builder (was golang:1.25-bookworm), moved AHEAD of permit-opa raising its
-# `go` directive to 1.26 (permitio/permit-opa#52). That move is forced by
+# Go 1.27 builder. It first moved to 1.26 (from golang:1.25-bookworm) AHEAD of permit-opa
+# raising its `go` directive to 1.26 (permitio/permit-opa#52). That move is forced by
 # golang.org/x/crypto >= 0.56.0 - the version that clears CVE-2026-78662 /
 # CVE-2026-56855 (x/crypto/ssh) - whose own go.mod declares `go 1.26.0`. The permit-opa
 # commit pinned in tests.yml/release.yml includes it, so the permit build no longer needs
@@ -78,15 +78,15 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # golang:1.25 builder) fails in this stage, since permit-opa#52 is merged. Cut releases and
 # hotfixes from a commit that has the pin.
 #
-# What changes in /app/bin/opa: changes that come with the 1.26 toolchain land with
-# this builder (e.g. the Green Tea GC is on by default). GODEBUG-gated defaults do not:
+# What changes in /app/bin/opa: changes that come with the builder's toolchain land with
+# it (e.g. the Green Tea GC, on by default since 1.26). GODEBUG-gated defaults do not:
 # they follow permit-opa's go.mod at the pinned commit (after permit-opa#52, a
 # `godebug default=go1.25` line).
 # The binary is CGO_ENABLED=0 (below), so the builder's glibc does not reach the image.
 #
 # The FROM line is digest-pinned, so a rebuild of the same commit gets the same
 # toolchain. The `docker` entry in .github/dependabot.yml moves tag and digest together
-# daily, so a Go security release (a new go1.26.x behind the same tag) arrives as a
+# daily, so a Go security release (a new go1.27.x behind the same tag) arrives as a
 # reviewable PR instead of silently on the next build.
 #
 # This stage pins nothing beyond that floor, and that is a statement about THIS builder
