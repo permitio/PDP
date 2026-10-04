@@ -16,7 +16,7 @@ pydantic[email]>=1.9.1,<2
 requests>=2.32.4,<3
 urllib3>=2.6.3,<3
 gunicorn>=23.0.0,<24
-tenacity>=8.0.1,<9
+tenacity>=9.1.4,<10
 typer>=0.4.1,<1
 uvicorn[standard]>=0.17.6,<1
 logzio-python-handler
