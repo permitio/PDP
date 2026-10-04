@@ -489,11 +489,12 @@ jobs:
           #
           # SCOPE OF THE VEX DOC: every statement in pdp-v2.vex.json binds its product to
           # `pkg:docker/permitio/pdp-v2@next`, which matches the `local://...:next` image
-          # scanned here, AND to `pkg:docker/permitio/pdp-v2@latest`, which the
+          # scanned here, to `@release-scan`, the local name release.yml's scan-pdp-release
+          # gives each platform of the release archive, AND to `@latest`, which the
           # `scout-latest` job in scheduled-security-scan.yml re-scans. Scout matches VEX
-          # products on the full PURL string, so those two tags are the only ones these
+          # products on the full PURL string, so those three names are the only ones these
           # waivers suppress. Published RELEASE tags are deliberately not listed (they rotate
-          # every release); the same scheduled workflow covers them with Trivy, which reads
+          # every release); the scheduled workflow covers them with Trivy, which reads
           # .trivyignore.yaml and keys on CVE id. If Scout is ever pointed at another tag,
           # extend every product @id first or the run goes red on known non-issues.
           vex-author: Permit.io
