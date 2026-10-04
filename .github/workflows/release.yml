@@ -4,67 +4,112 @@ on:
   release:
     types: [published]
 
+# Read-only by default. `id-token: write` is granted only to the three jobs that exchange
+# a GitHub ID token - pdp-tests (Scout's Docker Hub pull login), publish-pdp-release (the
+# push login) and update-pdp-api-ecs-service (the AWS role) - rather than to every job.
 permissions:
-  id-token: write
   contents: read
 
 jobs:
   pdp-tests:
     # Call the reusable tests workflow.
-    uses: ./.github/workflows/tests.yml
-    secrets: inherit
+    # `./`, not the `$/` zizmor's self-repository audit suggests: actionlint 1.7.12 rejects
+    # `$/` in a job-level `uses:`, and only with `./` does it check `secrets:` against the
+    # callee. A `./` call resolves from the caller's own commit, so nothing can drift.
+    uses: ./.github/workflows/tests.yml  # zizmor: ignore[self-repository]
+    secrets:
+      PDP_TESTER_API_KEY: ${{ secrets.PDP_TESTER_API_KEY }}
+      CLONE_APP_CLIENT_ID: ${{ secrets.CLONE_APP_CLIENT_ID }}
+      CLONE_APP_PRIVATE_KEY: ${{ secrets.CLONE_APP_PRIVATE_KEY }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
     permissions:
       contents: read
       pull-requests: write
       security-events: write
+      # REQUIRED, and easy to lose. tests.yml's docker-scout job logs in to Docker Hub
+      # through OIDC, and a called workflow cannot be granted more than its caller's job
+      # allows - this block, not the workflow-level one above. Drop this line and the CVE
+      # gate passes on every PR (where tests.yml is the top-level workflow) and fails only
+      # here, on a real release, at the Docker login.
+      id-token: write
 
-  build-and-push-pdp:
+  # BUILD, WITH NO WAY TO PUBLISH. This job holds no Docker credential and cannot obtain
+  # one - no `id-token`, no environment, no Docker login. It builds the multi-platform
+  # image into an OCI archive and hands it on as a run artifact. The release is then
+  # scanned (scan-pdp-release) and only after that pushed (publish-pdp-release), so the
+  # 36 minutes of third-party build code here never run anywhere near a push credential,
+  # and an image with unwaived CRITICAL/HIGH findings never reaches Docker Hub at all.
+  build-pdp-release:
     needs: pdp-tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    # The 0.9.16 build-and-push took 36 minutes (arm64 under QEMU). Bounded so a hang
+    # fails the release instead of holding a runner for GitHub's 360-minute default.
+    timeout-minutes: 90
+    permissions:
+      contents: read
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      with:
+        persist-credentials: false
 
     - name: Set up QEMU
-      uses: docker/setup-qemu-action@v3
+      uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
 
+    # The docker-container driver this sets up is what makes a multi-platform OCI export
+    # possible; the default docker driver cannot export more than one platform.
     - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+      uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
-    - name: Login to Docker Hub
-      uses: docker/login-action@v3
+    # A 1-hour, read-only token on permit-opa alone, minted from the org-owned GitHub App
+    # `permitio-pdp-ci` - see the matching step in tests.yml's build-pdp-image.
+    - name: Mint a read-only token for permitio/permit-opa
+      id: permit-opa-token
+      uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
       with:
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_TOKEN }}
+        client-id: ${{ secrets.CLONE_APP_CLIENT_ID }}
+        private-key: ${{ secrets.CLONE_APP_PRIVATE_KEY }}
+        owner: permitio
+        repositories: permit-opa
+        permission-contents: read
 
     # Pinned; must match tests.yml, which says how to bump it and checks the two agree.
-    - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       with:
         repository: permitio/permit-opa
         ref: ff2356d560e3c7152bcb6c6ab8ebd5d4eb691306  # permit-opa 0.0.23 (#52; go 1.26, x/crypto v0.57.0)
         path: './permit-opa'
-        token: ${{ secrets.CLONE_REPO_TOKEN }}
+        token: ${{ steps.permit-opa-token.outputs.token }}
         # Nothing after the clone needs the token; don't leave it in .git/config.
         persist-credentials: false
 
     - name: Pre build PDP
       shell: bash  # pipefail, for the tar pipeline
+      env:
+        # Through env, not `${{ }}` in the script: the tag is text whoever cuts the release
+        # chose, and interpolating it into a shell body is a template-injection sink.
+        RELEASE_TAG: ${{ github.event.release.tag_name }}
       run: |
-        echo "${{ github.event.release.tag_name }}" | cut -d '-' -f 1 > permit_pdp_version
+        # The version is the tag up to its first '-' (0.9.17-rc1 -> 0.9.17).
+        printf '%s\n' "${RELEASE_TAG%%-*}" > permit_pdp_version
         rm -rf custom
         mkdir custom
         build_root="$PWD"
         cd ./permit-opa
+        # shellcheck disable=SC2035 # find * is intentional: top-level entries have no '-' prefix
         find * \( -name '*go*' -o -name 'LICENSE.md' \) -print0 | xargs -0 tar -czf "$build_root"/custom/custom_opa.tar.gz --exclude '.*'
 
-    - name: Build and push PDP image - (pre-release)
-      if: "github.event.release.prerelease"
-      uses: docker/build-push-action@v5
+    # Built ONCE, for both the pre-release and the official path: the tags are applied at
+    # publish time, so there is no second build that could resolve a different package set.
+    - name: Build PDP image (multi-platform OCI archive, not pushed)
+      uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
       with:
-        push: true
+        push: false
         context: .
         platforms: linux/amd64,linux/arm64
-        tags: permitio/pdp-v2:${{ github.event.release.tag_name }}
+        # One archive holding the multi-platform index, both platform images and buildx's
+        # per-platform attestation manifests - the exact bytes publish-pdp-release pushes.
+        outputs: type=oci,dest=${{ runner.temp }}/pdp-image.oci.tar
         # rust_chef only, from tests.yml's "Cache the rust_chef stage" step (it runs in
         # pdp-tests above, and on every push to main). Never add a cache-to here: the
         # other stages see build inputs that must not sit in a cache every ref can
@@ -78,8 +123,8 @@ jobs:
         # text plus the parent layer, so when the base image digest has NOT moved but
         # Alpine's package index has, a release cut later replays the old
         # `apk update && apk upgrade` + `pip install` results and re-ships packages
-        # upstream has since patched. That is the shape of PER-15358: 0.9.14 froze
-        # libcrypto3 3.5.7-r0 on 2026-08-04 and Alpine published 3.5.8-r0 afterwards.
+        # upstream has since patched - e.g. libcrypto3 frozen at whatever was current
+        # when the layer was first cached, after Alpine has shipped the fix.
         #
         # NOTE the input is PLURAL. `no-cache-filter` (singular) is the buildx CLI flag;
         # the action input is `no-cache-filters`, and an undeclared input is warned about
@@ -123,27 +168,362 @@ jobs:
         # out of scope here and tracked separately under PER-15358.
         no-cache-filters: main
 
-    - name: Build and push PDP image - (official release)
-      if: "!github.event.release.prerelease"
-      uses: docker/build-push-action@v5
+    - name: Hand the archive to the scan and publish jobs
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
-        push: true
-        context: .
-        platforms: linux/amd64,linux/arm64
-        tags: permitio/pdp-v2:${{ github.event.release.tag_name }},permitio/pdp-v2:latest
-        cache-from: type=gha,scope=rust-chef  # no cache-to - see the pre-release step
-        # See the pre-release step above: forces `apk upgrade` and `pip install` to
-        # re-resolve so a release can never republish a stale OS/dependency set.
-        # Plural input, and `main` only - both for the reasons documented there.
-        no-cache-filters: main
+        name: pdp-image-oci
+        path: ${{ runner.temp }}/pdp-image.oci.tar
+        if-no-files-found: error
+        # Image layers are already compressed; recompressing costs minutes and saves
+        # nothing.
+        compression-level: 0
+        # Only this run reads it. A release archive lingering for the 90-day default is
+        # just storage.
+        retention-days: 1
+
+  # SCANS THE RELEASE BEFORE IT IS PUBLISHED, on both platforms, from the exact archive
+  # publish-pdp-release will push. A failure here means nothing reaches Docker Hub.
+  #
+  # What this adds over the pre-push gate in tests.yml: that gate scans
+  # `permitio/pdp-v2:next` - a DIFFERENT build, `linux/amd64` only. Both builds carry
+  # `no-cache-filters: main`, which deliberately re-resolves `apk upgrade` and
+  # `pip install` against live indexes, so the two can legally resolve different package
+  # sets, and linux/arm64 is scanned by nothing else. This job scans the release bytes
+  # themselves; publish-pdp-release then pushes them with --preserve-digests and checks
+  # the registry holds the same index, so "scanned" and "shipped" are the same image.
+  #
+  # No Docker login: the image comes from the run artifact, not a registry. Trivy reads
+  # layers statically and never executes the image, so scanning arm64 on an amd64 runner
+  # is fine.
+  scan-pdp-release:
+    needs: build-pdp-release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      # required to upload the SARIF report to code scanning
+      security-events: write
+    strategy:
+      # Scan both platforms even when one fails: an arm64-only regression is exactly the
+      # thing that was never visible before, and fail-fast would hide it behind an amd64
+      # failure.
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download the release archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        env:
+          # v8.0.1 bundles an unzip library that still calls the deprecated Buffer() constructor,
+          # so every download warns DEP0005 (actions/download-artifact#484). Drop when fixed.
+          NODE_OPTIONS: --disable-warning=DEP0005
+        with:
+          name: pdp-image-oci
+          path: ${{ runner.temp }}
+
+      - name: Extract the linux/${{ matrix.arch }} image from the archive
+        id: extract
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/pdp-image.oci.tar"
+          raw="$(skopeo inspect --raw "oci-archive:${archive}")"
+          # The attestation filter is load-bearing. buildx attaches one attestation
+          # manifest per platform; they are not images and Trivy fails confusingly on them.
+          # They carry `.platform.architecture == "unknown"`, so the os/arch selector
+          # already excludes them - the annotation check is the second lock, for the day
+          # buildx stamps a real architecture on an attestation.
+          digests="$(printf '%s' "$raw" | jq -r --arg arch "$ARCH" '
+            [ .manifests[]?
+              | select(.platform.os == "linux" and .platform.architecture == $arch)
+              | select((.annotations["vnd.docker.reference.type"] // "") != "attestation-manifest")
+              | .digest ]
+            | unique | .[]')"
+          count="$(printf '%s' "$digests" | grep -c . || true)"
+          if [ "$count" -ne 1 ]; then
+            echo "::error::Expected exactly one linux/${ARCH} image in the release archive, found ${count}. The build did not produce the multi-platform index this job assumes; the raw index is in the step log. Refusing to report a release as scanned when it was not."
+            printf 'raw index:\n%s\n' "$raw" >&2
+            exit 1
+          fi
+          # Trivy-action has no `platform` input, so the platform is selected HERE, into a
+          # single-platform archive Trivy can read unambiguously.
+          out="${RUNNER_TEMP}/pdp-${ARCH}.docker.tar"
+          skopeo copy --quiet --override-os linux --override-arch "$ARCH" \
+            "oci-archive:${archive}" "docker-archive:${out}:permitio/pdp-v2:release-scan"
+          echo "input=${out}" >> "$GITHUB_OUTPUT"
+          echo "digest=${digests}" >> "$GITHUB_OUTPUT"
+          echo "linux/${ARCH} image in the release archive: ${digests}"
+
+      # Same severity / vuln-type / trivyignore / ignore-unfixed settings as the PR gate in
+      # tests.yml, so the two cannot disagree about what counts as a finding. The one
+      # deliberate difference is `exit-code: '0'`: the pass/fail decision is made by the
+      # separate fail step below, after the report has been rendered and uploaded.
+      - name: Trivy scan the release image
+        if: ${{ !cancelled() }}
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          input: ${{ steps.extract.outputs.input }}
+          scanners: vuln
+          severity: CRITICAL,HIGH
+          # NOT `pkg-types`: the action's input is still `vuln-type`. See tests.yml.
+          vuln-type: os,library
+          trivyignores: .trivyignore.yaml
+          format: json
+          output: trivy-release-${{ matrix.arch }}.json
+          exit-code: '0'
+          # Report findings that have no fix yet rather than hiding them - an unfixable
+          # CVE in an image about to ship is precisely the one a human must see.
+          ignore-unfixed: false
+
+      - name: Trivy scan the release image (SARIF for code scanning)
+        if: ${{ !cancelled() }}
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          input: ${{ steps.extract.outputs.input }}
+          scanners: vuln
+          severity: CRITICAL,HIGH
+          vuln-type: os,library
+          trivyignores: .trivyignore.yaml
+          format: sarif
+          output: trivy-release-${{ matrix.arch }}.sarif
+          exit-code: '0'
+          # Without this, the action drops the severity filter for SARIF output and code
+          # scanning gets every severity, not the CRITICAL,HIGH set the gate uses.
+          limit-severities-for-sarif: true
+          # Skips re-installing the Trivy binary; the DB is reused because the steps
+          # share the same cache dir on disk.
+          skip-setup-trivy: true
+
+      # Uploaded BEFORE the fail step on purpose, so code scanning gets the findings from
+      # exactly the run that blocked the release. The category keeps its earlier name so
+      # existing alerts continue in place rather than being orphaned under a new one.
+      - name: Upload SARIF report
+        if: ${{ !cancelled() }}
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          sarif_file: trivy-release-${{ matrix.arch }}.sarif
+          category: published-release-${{ matrix.arch }}
+
+      - name: Render the scan report
+        id: report
+        if: ${{ !cancelled() }}
+        env:
+          ARCH: ${{ matrix.arch }}
+          DIGEST: ${{ steps.extract.outputs.digest }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          REPORT_JSON: trivy-release-${{ matrix.arch }}.json
+        run: |
+          set -euo pipefail
+          if [ -z "${DIGEST:-}" ]; then
+            echo "::error::No linux/${ARCH} image was extracted, so nothing was scanned. See the extract step above."
+            exit 1
+          fi
+          # Docker Scout is deliberately not run here: it gates the pre-push image in
+          # tests.yml against an OpenVEX doc whose statements bind to
+          # `pkg:docker/permitio/pdp-v2@next` / `@latest` and match no release tag.
+          # Omitting --scout-sarif renders "Docker Scout did not run" and leaves parse_ok
+          # true; passing a path that does not exist would render "unavailable" and set
+          # parse_ok false, which is a different claim.
+          #
+          # The formatter always exits 0 by design - never gate on its exit code. It
+          # writes critical/high/total/parse_ok to $GITHUB_OUTPUT, and the fail step
+          # below is what turns those into a red job.
+          python3 .github/scripts/format_scan_report.py \
+            --trivy "$REPORT_JSON" \
+            --image "permitio/pdp-v2:${RELEASE_TAG} linux/${ARCH} (${DIGEST})" \
+            --out scan-report.md \
+            --github-output "$GITHUB_OUTPUT" > /dev/null
+          cat scan-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload raw scan report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: trivy-release-${{ github.event.release.tag_name }}-${{ matrix.arch }}
+          path: |
+            trivy-release-${{ matrix.arch }}.json
+            trivy-release-${{ matrix.arch }}.sarif
+            scan-report.md
+          retention-days: 30
+
+      # `!cancelled()` rather than no `if:` at all: without it this step is skipped the
+      # moment any earlier step fails, and a scan that crashed would report as a green
+      # gate. That failure mode has already bitten the Trivy gate in tests.yml once.
+      - name: Fail if the release image has CRITICAL/HIGH findings
+        if: ${{ !cancelled() }}
+        env:
+          ARCH: ${{ matrix.arch }}
+          DIGEST: ${{ steps.extract.outputs.digest }}
+          PARSE_OK: ${{ steps.report.outputs.parse_ok }}
+          CRITICAL: ${{ steps.report.outputs.critical }}
+          HIGH: ${{ steps.report.outputs.high }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PARSE_OK:-}" ]; then
+            echo "::error::linux/${ARCH}: no scan report was produced, so this release image is UNVERIFIED and will not be published. An earlier step in this job failed - fix that rather than re-running past it."
+            exit 1
+          fi
+          if [ "$PARSE_OK" != "true" ]; then
+            echo "::error::linux/${ARCH}: the Trivy report for ${DIGEST} could not be parsed. Treating an unreadable report as clean is how a zero-byte file ships a vulnerable image; see the job summary."
+            exit 1
+          fi
+          if [ "${CRITICAL:-0}" -ne 0 ] || [ "${HIGH:-0}" -ne 0 ]; then
+            echo "::error::linux/${ARCH}: ${DIGEST} has ${CRITICAL} CRITICAL / ${HIGH} HIGH findings. NOTHING was published. Fix and cut a new release, or waive in .trivyignore.yaml AND .docker/scout/pdp-v2.vex.json."
+            exit 1
+          fi
+          echo "linux/${ARCH}: ${DIGEST} has no unwaived CRITICAL/HIGH findings."
+
+  # PUBLISH: the ONLY job that can push to Docker Hub, and it runs no build code - it
+  # downloads the scanned archive and copies it, byte for byte, to the registry.
+  #
+  # Three locks, any one of which stops a push:
+  #   1. `environment: dockerhub-release` - GitHub only lets a job into it from a release
+  #      TAG matching `[0-9]*.[0-9]*.[0-9]*` or `v[0-9]*.[0-9]*.[0-9]*` (no branch, no
+  #      PR), and only after a member of the R&D team who did not trigger the run
+  #      approves it. Approval comes AFTER the build and scan, so reviewers approve an
+  #      image that has already passed.
+  #   2. Docker's OIDC connection grants Image Push on permitio/pdp-v2 ONLY to the
+  #      subject `repo:permitio/PDP:environment:dockerhub-release` - i.e. to this job.
+  #      Every other job in the repo matches only the pull-only `repo:permitio/PDP:*` rule.
+  #   3. The token is minted for 10 minutes and exists only inside this job. There is no
+  #      stored Docker credential anywhere in this repository.
+  publish-pdp-release:
+    needs: [build-pdp-release, scan-pdp-release]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: dockerhub-release
+    permissions:
+      # Mints the GitHub ID token Docker exchanges for the push token. Nothing else: the
+      # job reads no repository content, and same-run artifact downloads need no scope.
+      id-token: write
+    steps:
+      - name: Download the scanned release archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        env:
+          # v8.0.1 bundles an unzip library that still calls the deprecated Buffer() constructor,
+          # so every download warns DEP0005 (actions/download-artifact#484). Drop when fixed.
+          NODE_OPTIONS: --disable-warning=DEP0005
+        with:
+          name: pdp-image-oci
+          path: ${{ runner.temp }}
+
+      - name: Check the tag and tooling
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          # Docker's own tag grammar. The environment's tag policy already narrows this,
+          # but the tag is about to become part of a registry reference - fail here, with
+          # a reason, rather than in skopeo with an opaque one.
+          if ! [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "::error::Release tag '${RELEASE_TAG}' is not a valid Docker tag; nothing was published."
+            exit 1
+          fi
+          # skopeo ships on ubuntu-24.04 runner images. If an image update drops it, say so.
+          skopeo --version || {
+            echo "::error::skopeo is not available on this runner, so the release cannot be published. It is preinstalled on GitHub's ubuntu-24.04 image - check runs-on."
+            exit 1
+          }
+
+      # OIDC: the subject here is `repo:permitio/PDP:environment:dockerhub-release`, which
+      # the connection's push ruleset matches. If the exchange fails, Docker Home -> the
+      # connection -> Failures shows the exact subject it received.
+      - name: Login to Docker Hub (OIDC, push)
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        env:
+          DOCKERHUB_OIDC_CONNECTIONID: ${{ vars.DOCKERHUB_OIDC_CONNECTIONID }}
+          # Ten minutes: two copies of an already-built archive, so this is ample.
+          DOCKERHUB_OIDC_EXPIREIN: '600'
+        with:
+          username: ${{ vars.DOCKERHUB_ORGANIZATION }}
+
+      - name: Publish to Docker Hub
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/pdp-image.oci.tar"
+          repo="docker.io/permitio/pdp-v2"
+          # Fail before any copy if the login left nothing skopeo can read, instead of
+          # surfacing as an anonymous-push 401 halfway through.
+          skopeo login --get-login docker.io > /dev/null || {
+            echo "::error::The Docker Hub login produced no credentials skopeo can read; nothing was published."
+            exit 1
+          }
+          # --all: the whole multi-platform index, both platforms and their attestations.
+          # --preserve-digests: refuse rather than let any manifest be rewritten in transit,
+          # so the digests the scan job reported are the digests customers pull.
+          publish() {
+            skopeo copy --all --preserve-digests --retry-times 3 \
+              "oci-archive:${archive}" "docker://${repo}:$1"
+          }
+          publish "$RELEASE_TAG"
+          # Pre-releases get their own tag only; an official release also moves `latest`.
+          if [ "$PRERELEASE" != "true" ]; then
+            publish latest
+          fi
+          # Prove the registry now serves the index that was scanned.
+          want="$(skopeo inspect --raw "oci-archive:${archive}" | sha256sum | cut -d' ' -f1)"
+          got="$(skopeo inspect --raw "docker://${repo}:${RELEASE_TAG}" | sha256sum | cut -d' ' -f1)"
+          if [ "$want" != "$got" ]; then
+            echo "::error::${repo}:${RELEASE_TAG} resolves to sha256:${got}, not the scanned index sha256:${want}."
+            exit 1
+          fi
+          {
+            echo "### Published \`${repo}:${RELEASE_TAG}\`"
+            echo
+            echo "Index digest \`sha256:${want}\` - identical to the archive scan-pdp-release scanned."
+            if [ "$PRERELEASE" != "true" ]; then echo; echo "\`latest\` moved to the same index."; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Any genuine failure on the release path - build, scan, or push. `skipped` and
+  # `cancelled` are not failures and must not say so.
+  notify-release-failure:
+    needs: [build-pdp-release, scan-pdp-release, publish-pdp-release]
+    if: >-
+      ${{ always() && (needs.build-pdp-release.result == 'failure'
+          || needs.scan-pdp-release.result == 'failure'
+          || needs.publish-pdp-release.result == 'failure') }}
+    # `./`, not `$/`: see the note on pdp-tests above.
+    uses: ./.github/workflows/notify-slack.yml  # zizmor: ignore[self-repository]
+    secrets:
+      # Named rather than `secrets: inherit`. This workflow holds CLONE_APP_PRIVATE_KEY,
+      # PDP_TESTER_API_KEY and PDP_CICD_AWS_ROLE; a workflow whose only job is to POST to
+      # an external webhook has no business being handed any of them. Naming a secret
+      # that does not exist is legal - it resolves to the empty string and the notifier
+      # becomes a green no-op that says so in a ::notice::.
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    with:
+      subject: release image
+      status: fail
+      # No `|` anywhere in this text: the notifier swaps it for U+2502 to keep caller text
+      # out of Slack's link syntax. The run link is appended by the notifier itself.
+      summary: >-
+        ${{ needs.scan-pdp-release.result == 'failure'
+            && format('*permitio/pdp-v2:{0}* was NOT published - its pre-publish scan did not pass. Nothing reached Docker Hub and ECS was not touched. Open the run to see which platform failed and why.', github.event.release.tag_name)
+            || needs.publish-pdp-release.result == 'failure'
+            && format('*permitio/pdp-v2:{0}* passed its scan but the Docker Hub push FAILED. Check the OIDC exchange under Docker Home - OIDC connections - Failures. ECS was not touched.', github.event.release.tag_name)
+            || format('*permitio/pdp-v2:{0}* failed to BUILD. Nothing was scanned or published, and ECS was not touched.', github.event.release.tag_name) }}
 
   update-pdp-api-ecs-service:
-    needs: build-and-push-pdp
+    # Needs the publish, which needs the scan - so a release whose image has unwaived
+    # CRITICAL/HIGH findings is neither published nor rolled out to the public PDP fleet.
+    needs: publish-pdp-release
     runs-on: ubuntu-latest
     if: "!github.event.release.prerelease"
+    permissions:
+      # AWS OIDC role assumption, below. Granted here rather than workflow-wide.
+      id-token: write
     steps:
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
         with:
           role-to-assume: ${{ secrets.PDP_CICD_AWS_ROLE }}
           aws-region: us-east-1

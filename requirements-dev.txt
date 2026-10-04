@@ -2,3 +2,11 @@ pytest
 pytest-asyncio
 ruff
 aioresponses
+# Imported by .github/scripts/check_waiver_parity.py, which horizon/tests/test_ci_scripts.py
+# loads at COLLECTION time - so a missing PyYAML does not fail one test, it fails the whole
+# required `pytests` job (`pip install ".[dev]"` + `pytest horizon/tests/`) at import. Until
+# now it only arrived transitively, via uvicorn[standard] in requirements.txt, which meant a
+# required status check rested on uvicorn continuing to ship it. Declared here rather than in
+# requirements.txt because nothing under horizon/ or pdp-server/ imports yaml - it is a test
+# and CI-tooling dependency only, and does not belong in the shipped image.
+PyYAML

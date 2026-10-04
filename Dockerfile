@@ -12,7 +12,7 @@ ARG OPA_BUILD=permit
 # Keep this stage free of COPY/ADD. CI caches every layer of it (tests.yml, "Cache
 # the rust_chef stage") in a cache that every ref, forks included, can restore, so
 # nothing from the build context may enter it.
-FROM --platform=$BUILDPLATFORM rust:1.94-alpine AS rust_chef
+FROM --platform=$BUILDPLATFORM rust:1.94-alpine@sha256:77237dd363a0b127bb5ef532c2d64c0deb380b738e43a9c4bdac73398d6d0a08 AS rust_chef
 WORKDIR /app
 ENV PKGCONFIG_SYSROOTDIR=/
 RUN apk add --no-cache musl-dev openssl-dev zig pkgconf perl make
@@ -84,11 +84,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # `godebug default=go1.25` line).
 # The binary is CGO_ENABLED=0 (below), so the builder's glibc does not reach the image.
 #
-# The patch version floats with the tag (go1.26.8 today) on purpose: a Go security
-# release reaches the next build with no change here. PDP#338 digest-pins this FROM
-# line with a Dependabot entry that moves tag and digest together, and adds a scheduled
-# re-scan of published tags, when it lands; reword this paragraph and the auditability
-# one below then.
+# The FROM line is digest-pinned, so a rebuild of the same commit gets the same
+# toolchain. The `docker` entry in .github/dependabot.yml moves tag and digest together
+# daily, so a Go security release (a new go1.26.x behind the same tag) arrives as a
+# reviewable PR instead of silently on the next build.
 #
 # This stage pins nothing beyond that floor, and that is a statement about THIS builder
 # only. permit-opa builds its own artifacts (its own Dockerfile and release workflow)
@@ -98,14 +97,13 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # Auditability: the toolchain is recorded in the binary's build info, survives `-s -w`,
 # and is readable with `go version` on an extracted copy - extracted, because the
 # runtime base is python:3.13-alpine3.23 and ships no Go. That is an after-the-fact
-# audit, not a gate. Until PDP#338 lands, the only scanner in this repo is the
-# docker-scout job, which is `pull_request`-only and points at a local tag, so no
-# published pdp-v2 tag is ever re-scanned (tests.yml says so itself; PER-15358).
+# audit, not a gate. The gates are the Docker Scout and Trivy scans in tests.yml and
+# release.yml, and scheduled-security-scan.yml re-scans published tags (PER-15358).
 #
 # The floor is go1.26.6, the first 1.26 release with the crypto/tls fix for
 # GO-2026-6090, and the RUN below fails the build on anything older (e.g. a stale local
 # image). It prints the version it accepted, but it is a GATE, not a record: a local
-# build can serve it from cache until the base image tag moves. (CI exports no
+# build can serve it from cache until the pinned digest moves. (CI exports no
 # opa_build layers, so there it re-runs every build.) The compile RUN
 # below echoes the toolchain too, and that one is reliable: `COPY custom* /custom` sees
 # a tarball the workflow regenerates every run, so the stage re-executes from that COPY
@@ -118,11 +116,12 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 #
 # KEEP THE SHAPE OF THE FROM LINE: permit-opa's `pdp-builder` check (permit-opa#52)
 # fetches this Dockerfile from main and greps this line for a literal
-# `golang:<major>.<minor>` on a line ending in `AS opa_build`. Setting the version from
+# `golang:<major>.<minor>` on a line ending in `AS opa_build` (a `-bookworm@sha256:...`
+# suffix after it is fine; its regex allows one). Setting the version from
 # an ARG, splitting the FROM across lines or renaming the stage turns permit-opa's CI
 # red with "cannot compare go.mod's directive" - which is a fail-closed by design, but
 # it will look like an unrelated repo breaking for no reason.
-FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS opa_build
+FROM --platform=$BUILDPLATFORM golang:1.26-bookworm@sha256:a688600ca24f8a4d3ca77f95b0dd40704a9fc787c826660eb7ba0b641b8b175d AS opa_build
 ENV GOTOOLCHAIN=local
 RUN v=$(go env GOVERSION) && \
     [ "$(printf '%s\n' go1.26.6 "$v" | sort -V | head -n1)" = go1.26.6 ] || \
@@ -189,7 +188,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # Main image setup (optimized)
 # ---------------------------------------------------
 # Python 3.13 (>= 3.13.14) on Alpine 3.23. Moved off python:3.10-alpine3.22 to clear four
-# CPython CVEs a customer CPE scan raised against pdp-v2 0.9.14-rc1 (PER-15358):
+# CPython CVEs that CPE-based scanners raise against the 3.10 interpreter (PER-15358):
 #   CVE-2026-6019  (http.cookies Morsel.js_output escaping) - fixed in 3.13.14
 #   CVE-2026-7210  (expat hash-flooding entropy)            - fixed in 3.13.14 AND needs
 #                                                             libexpat >= 2.8.0; this image
@@ -201,8 +200,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # so the vulnerable code really was present in 3.10.20 and an upgrade was the only fix.
 # CVE-2026-15308 (html.parser CPU-exhaustion DoS) is now cleared too: it was waived here as
 # unreachable while it was patched only in 3.15.0b4, but CPython backported the fix and it
-# landed in 3.13.15 (also 3.14.7). The base tag floats, so the current build resolves
-# 3.13.15 and the waiver has been REMOVED from .docker/scout/pdp-v2.vex.json.
+# landed in 3.13.15 (also 3.14.7). The base digest below carries 3.13.15, so the waiver has
+# been REMOVED from .docker/scout/pdp-v2.vex.json.
 # Do not drop below the patched floor for whichever branch the base resolves to: 3.13.15 on
 # the 3.13 line, 3.14.7 on 3.14. The apk layer below enforces exactly that, per branch -
 # a flat `>= (3,13,15)` would have passed 3.14.0 through 3.14.6, which are the versions the
@@ -211,10 +210,10 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # Removing the CVE-2026-15308 waiver is NOT what enforces it. Scout indexes the interpreter
 # - `docker scout sbom` reports `pkg:generic/python@3.13.15` for this base - but it does not
 # match CPython advisories against it the way a CPE-based scanner does (see the NOTE in
-# tests.yml), and the gate is `pull_request`-only so a release never scans at all. Catching
-# a stale interpreter through a scanner needs a CPE-based one; that is the companion change
-# under PER-15358. The plain reason the waiver could go is simply that 3.13.15 carries the
-# fix.
+# tests.yml). The gate no longer skips releases - this change removes that condition - but
+# that closes a COVERAGE gap, not this one: catching a stale interpreter through a scanner
+# still needs a CPE-based one, which neither gate is. The plain reason the waiver could go
+# is simply that 3.13.15 carries the fix.
 #
 # The check imports the C extension modules DIRECTLY - `_ssl`, `_hashlib`, `_decimal` and
 # friends rather than `ssl`, `hashlib`, `decimal` - and that is the point, not decoration.
@@ -237,12 +236,29 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # removal around `pip install` further down - so it proves the interpreter survived the
 # sqlite surgery, not that it survives every later package mutation.
 #
-# The patch version floats deliberately (see the previous python:3.10-alpine3.22 base and
-# the rebuild-picks-it-up posture in PER-15532). Note what that posture costs if nothing
-# ever rebuilds: see the apk note below.
+# The patch version USED to float (see the previous python:3.10-alpine3.22 base and the
+# rebuild-picks-it-up posture in PER-15532). It no longer does - the digest below carries
+# 3.13.15 - because "a rebuild will pick it up" only holds if something rebuilds. See the
+# pinning note below.
 #
 # Python 3.10 also reaches end of life in October 2026, so this move was due regardless.
-FROM python:3.13-alpine3.23 AS main
+# Base images are pinned by DIGEST, and Dependabot's docker ecosystem
+# (.github/dependabot.yml, daily) bumps them. The digest is the manifest-LIST digest, so
+# multi-arch is preserved - `docker buildx imagetools inspect <tag>` reports it, and
+# pinning a per-arch digest instead would break the linux/amd64 + linux/arm64 build.
+#
+# Why pin at all, when floating the tag sounds strictly fresher: upstream rebuilds these
+# tags IN PLACE. `python:3.13-alpine3.23` can silently gain a new digest with patched
+# OpenSSL, and because the tag string never changes there is nothing for anyone - human
+# or bot - to notice. A floating tag is only fresh at the instant of a build, and nothing
+# triggers builds. Pinning inverts that: the drift arrives as a digest-bump PR that CI
+# validates before it ships (PER-15358).
+#
+# Do NOT hand-edit these digests to chase a CVE. Let the Dependabot PR do it, so the
+# change is reviewed and tested. `apk upgrade` still floats the Alpine package set at
+# build time, so pinning costs no package freshness on a rebuild - only the base layer
+# becomes deterministic.
+FROM python:3.13-alpine3.23@sha256:6438599575cca0d1df94aeee0d2ae088d4d8846eab554b2ee7784a3a6df0d516 AS main
 
 WORKDIR /app
 
@@ -258,34 +274,25 @@ RUN mkdir -p /app/backup && chmod -R 777 /app/backup
 # layer to avoid persisting binutils CVEs (CVE-2025-69649, CVE-2025-69650).
 #
 # `apk upgrade` here is the ONLY thing that keeps the OS package set current, and it is
-# only as fresh as the build that ran it. permitio/pdp-v2:0.9.14 was built 2026-08-04 and
-# pinned libcrypto3/libssl3 3.5.7-r0 + libuuid 2.41.4-r0 at that moment. Alpine 3.23 later
-# published openssl 3.5.8-r0 and util-linux 2.41.6-r1, so by 2026-09-09 a customer CPE scan
-# of the UNCHANGED published tag reported 12 CVEs / 21 findings - nine OpenSSL
-# (CVE-2026-14456, CVE-2026-14457, CVE-2026-18798, CVE-2026-54874, CVE-2026-63072,
-# CVE-2026-63073, CVE-2026-63075, CVE-2026-63076, CVE-2026-75803) and three util-linux.
-# Not one of them was a source defect: this Dockerfile was already correct, and a rebuild
-# with no edits produces 0 findings. The image was simply never rebuilt. See PER-15358.
+# only as fresh as the build that ran it: a published tag keeps the libcrypto3/libssl3 and
+# util-linux versions current on its build day. When Alpine later publishes fixes, a scan
+# of the UNCHANGED tag reports CVEs that are not source defects at all - this Dockerfile is
+# already correct, and a rebuild with no edits clears them. See PER-15358.
 #
 # Two consequences, both load-bearing:
 #   1. Release builds MUST NOT serve this layer from cache. release.yml uses
 #      `cache-from: type=gha`, and the cache key is this instruction text plus the parent
-#      layer - so a release cut months later could replay the 2026-08-04 apk layer and
-#      re-ship the exact packages a customer just flagged. release.yml therefore passes
+#      layer - so a release cut months later could replay a months-old apk layer and
+#      re-ship packages upstream has since patched. release.yml therefore passes
 #      `no-cache-filters: main` to force that stage to re-resolve on every release, and
 #      tests.yml passes the same value so the scanned image is not built on a stale
-#      package set either. That is the guarantee - NOT that the two images match. They
-#      are two independent fresh resolutions against the live Alpine/PyPI indexes,
-#      tests.yml builds linux/amd64 only while release.yml builds amd64+arm64, and the
-#      scout gate is `pull_request`-only so the release build is never the one scanned.
-#      Closing that last gap needs the gate to run on release events (PER-15358).
+#      package set either. The release itself is scanned per platform from the exact
+#      archive it then publishes (release.yml, scan-pdp-release), so what ships is what
+#      was scanned (PER-15358).
 #   2. A tag that is never rebuilt rots on its own, and no build-time gate can catch that:
-#      the docker-scout gate in tests.yml runs only on pull_request, so it scanned this
-#      image in July and could not possibly have seen CVEs disclosed in September.
+#      a gate can only see the CVEs known on the day it ran, whatever events it runs on.
 #      Detecting drift therefore REQUIRES re-scanning the PUBLISHED tags on a schedule.
-#      Deliberately phrased as a requirement, not a description: no workflow in this repo
-#      has a `schedule:` trigger, so nothing here does it yet. That is the job of the
-#      companion change tracked under PER-15358.
+#      .github/workflows/scheduled-security-scan.yml does that every three days (PER-15358).
 #
 # The PDP never uses SQLite, but its FTS5/zipfile CVEs (CVE-2026-11822,
 # CVE-2026-11824, CVE-2025-70873) are still reported against sqlite-libs, which
