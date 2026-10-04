@@ -571,7 +571,7 @@ jobs:
     # Needs the publish, which needs the scan - so a release whose image has unwaived
     # CRITICAL/HIGH findings is neither published nor rolled out to the public PDP fleet.
     needs: publish-pdp-release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: "!github.event.release.prerelease"
     permissions:
       # AWS OIDC role assumption, below. Granted here rather than workflow-wide.

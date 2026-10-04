@@ -60,7 +60,7 @@ permissions:
 
 jobs:
   notify:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     # `continue-on-error` on the send step forces that step's CONCLUSION to success, so
     # this job is green even when delivery failed and no caller can see it in

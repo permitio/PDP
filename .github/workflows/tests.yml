@@ -38,7 +38,7 @@ permissions:
 
 jobs:
   pre-commit:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -62,7 +62,7 @@ jobs:
           python -m pip install --quiet --disable-pip-version-check pre-commit==4.6.2
           pre-commit run --show-diff-on-failure --color=always --all-files
   pytests:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Python setup
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -88,7 +88,7 @@ jobs:
           pytest -s --cache-clear horizon/tests/
 
   build-pdp-image:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       # build-push-action v6+ uploads a build-record artifact (logs, provenance) by
       # default. This public repo's build compiles the private permit-opa, so keep the
@@ -241,7 +241,7 @@ jobs:
           retention-days: 1
 
   pdp-tester:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: build-pdp-image
     # Cap the run so a hung tester fails fast instead of holding the runner
     # until GitHub's 360-minute default. The old k3d path was bounded by
@@ -349,7 +349,7 @@ jobs:
           done
 
   docker-scout:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: build-pdp-image
     # Deliberately NOT gated on `github.event_name == 'pull_request'` any more. release.yml
     # reaches this workflow through `workflow_call`, where github.event_name is the caller's
@@ -816,7 +816,7 @@ jobs:
     # there. Deliberately not in any job's `needs:` - it is an independent gate and
     # chaining the image build behind it would only serialise CI.
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # A job-level permissions block REPLACES the workflow-level default instead of merging
     # with it, so this job restates `contents: read` alongside the write it adds.
     permissions:
@@ -851,7 +851,7 @@ jobs:
 
   rust-ci:
     name: Rust CI
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
