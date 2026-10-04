@@ -880,3 +880,56 @@ jobs:
 
       - name: Run tests
         run: cargo test --all --locked --verbose
+
+  # The third dependency scanner beside Trivy and Docker Scout (docker-scout above): those
+  # read the BUILT image, and neither reliably sees the crates compiled into the Rust
+  # binaries. cargo audit reads Cargo.lock against the RustSec advisory database. A
+  # vulnerable crate fails the job, which also blocks a release (release.yml needs this
+  # whole workflow); unmaintained and yanked crates are warnings and do not.
+  cargo-audit:
+    name: cargo audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Built from crates.io with --locked rather than fetched by a third-party installer
+      # action; the binary is cached per version, so only a version bump compiles it.
+      - name: Cache cargo-audit
+        id: cargo-audit-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: cargo-audit-0.22.2-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Install cargo-audit
+        if: steps.cargo-audit-cache.outputs.cache-hit != 'true'
+        run: cargo install --locked cargo-audit@0.22.2
+
+      - name: Audit Cargo.lock
+        run: |
+          set -euo pipefail
+          # cargo audit exits non-zero on a vulnerability, so its status is captured and the
+          # decision made from the report: a missing or unreadable report fails as well.
+          status=0
+          cargo audit --json > cargo-audit.json || status=$?
+          if ! jq -e '.vulnerabilities.list | type == "array"' cargo-audit.json > /dev/null 2>&1; then
+            echo "::error::cargo audit produced no readable report (exit ${status}). See the log above."
+            exit 1
+          fi
+          {
+            echo "## cargo audit"
+            echo
+            jq -r '"\(.vulnerabilities.count) vulnerable crate(s). Warnings: \(.warnings | to_entries | map("\(.value | length) \(.key)") | join(", ") | if . == "" then "none" else . end)."' cargo-audit.json
+            echo
+            jq -r '.vulnerabilities.list[] | "- `\(.package.name)@\(.package.version)` [\(.advisory.id)](https://rustsec.org/advisories/\(.advisory.id)): \(.advisory.title) - patched: \(.versions.patched | join(", ") | if . == "" then "none" else . end)"' cargo-audit.json
+          } >> "$GITHUB_STEP_SUMMARY"
+          count="$(jq '.vulnerabilities.count' cargo-audit.json)"
+          if [ "$count" -gt 0 ]; then
+            echo "::error::cargo audit found ${count} vulnerable crate(s) in Cargo.lock. See the job summary. Upgrade the crate (cargo update -p NAME), or - only with a written reachability argument - ignore the advisory in .cargo/audit.toml."
+            exit 1
+          fi
+          echo "cargo audit: no vulnerable crates in Cargo.lock."
