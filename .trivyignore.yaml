@@ -7,14 +7,14 @@
 # `statement` fields here are deliberately short pointers to it.
 #
 # Every entry MUST carry `expired_at`. A waiver that never expires silently
-# becomes permanent. All five below exist only because opal-common 0.9.6 caps the
+# becomes permanent. All five below exist only because opal-common 0.9.9 caps the
 # dependency that would otherwise fix them. (The two x/crypto/ssh waivers that used
 # to be here are gone: the pinned permit-opa 0.0.23 ships x/crypto v0.57.0.) When
 # the date passes, Trivy starts reporting the CVE again, which is the intended prompt to re-check
 # whether OPAL has relaxed its cap yet. Push the date out deliberately; do not
 # delete the field. See PER-15358.
 vulnerabilities:
-  # starlette is capped <1 by opal-common/opal-client 0.9.6 (and further to
+  # starlette is capped <1 by opal-common/opal-client 0.9.9 (and further to
   # <0.51.0 via fastapi-utils -> fastapi). No <1 backport exists for any of the four starlette CVEs.
   - id: CVE-2026-48818
     # Bound to the exact pinned version, like the VEX statement: if the pin moves,
@@ -69,7 +69,7 @@ vulnerabilities:
       >= 1.1.0, which opal-common's starlette<1 cap forbids.
       See .docker/scout/pdp-v2.vex.json.
     expired_at: 2026-12-31
-  # ddtrace is capped <4 by opal-common 0.9.6 (`ddtrace<4,>=3.0.0`).
+  # ddtrace is capped <4 by opal-common 0.9.9 (`ddtrace<4,>=3.0.0`).
   - id: CVE-2026-50271
     purls:
       - pkg:pypi/ddtrace@3.19.8

@@ -3,7 +3,7 @@
 The Dockerfile pip layer bind-mounts and runs this as its last step, so it sees exactly what
 ships. It fails the image build if:
 
-1. opal-client is no longer 0.9.6. The override is installed with --no-deps, which also silences
+1. opal-client is no longer 0.9.9. The override is installed with --no-deps, which also silences
    pip's conflict report, so a bumped opal-client would otherwise keep the overridden aiofiles
    whatever it declares. Re-evaluate the override first; this check goes away with it (see the
    exit note in requirements-override.txt).
@@ -23,7 +23,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-EXPECTED_OPAL_CLIENT = "0.9.6"
+EXPECTED_OPAL_CLIENT = "0.9.9"
 EXPORT = {"policies": {}, "data": {}}
 
 

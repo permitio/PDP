@@ -13,7 +13,7 @@ WHY THE WAIVER FILTER IS THE WHOLE POINT
 At the time of writing, all three open HIGH alerts on this repo - CVE-2026-50271
 (ddtrace), CVE-2026-54283 and CVE-2026-48818 (starlette) - are CVEs already triaged and
 waived in `.trivyignore.yaml` and `.docker/scout/pdp-v2.vex.json`, because opal-common
-0.9.6 caps the dependency that would otherwise fix them. A watcher that alerted on "any
+0.9.9 caps the dependency that would otherwise fix them. A watcher that alerted on "any
 open critical/high" would post the same three CVEs every morning, and the channel would
 be muted inside a week - at which point the alert that DOES matter arrives in a muted
 channel. So the filter is not a nicety: an alert reaches Slack only if the same waiver
