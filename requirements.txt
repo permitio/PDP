@@ -39,7 +39,7 @@ ddtrace==3.19.8
 # gate for a parser the PDP never runs. Dropping the package clears them at the source.
 # Do not re-add it in a future sweep: if a scanner flags sqlparse again, it is back as a
 # transitive dependency and belongs pinned next to whatever pulled it in. See PER-15358.
-scalar-fastapi==1.0.3
+scalar-fastapi==1.9.1
 httpx>=0.27.0,<1
 # TODO: change to use re2 in the future, currently not supported in alpine due to c++ library issues
 # google-re2 # use re2 instead of re for regex matching because it's simiplier and safer for user inputted regexes
@@ -136,8 +136,8 @@ websockets==17.0
 # the companion change). Drop this floor once opal-common itself floors
 # gitpython >= 3.1.59. See PER-15358.
 GitPython>=3.1.59,<4
-opal-common==0.9.6
+opal-common==0.9.9
 # Do not add aiofiles here: opal-client 0.9.6 caps it <1 and pip cannot override that
 # (ResolutionImpossible). It is overridden after the resolve from requirements-override.txt,
 # and changing this pin fails the image build until that override is re-evaluated (PER-16234).
-opal-client==0.9.6
+opal-client==0.9.9
