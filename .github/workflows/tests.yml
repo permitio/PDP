@@ -46,8 +46,21 @@ jobs:
           persist-credentials: false
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          # The interpreter the pytests job and the image use.
+          python-version: '3.13'
+      # These two steps are what pre-commit/action v3.0.1 does, without its bundled
+      # actions/cache@v4, which still runs on Node 20. Same cache path and key shape.
+      - name: Cache pre-commit hook environments
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-3|${{ env.pythonLocation }}|${{ hashFiles('.pre-commit-config.yaml') }}
       - name: Run pre-commit
-        uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet --disable-pip-version-check pre-commit==4.6.2
+          pre-commit run --show-diff-on-failure --color=always --all-files
   pytests:
     runs-on: ubuntu-latest
     steps:
