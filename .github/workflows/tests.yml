@@ -49,18 +49,18 @@ jobs:
         with:
           # The interpreter the pytests job and the image use.
           python-version: '3.13'
-      # These two steps are what pre-commit/action v3.0.1 does, without its bundled
-      # actions/cache@v4, which still runs on Node 20. Same cache path and key shape.
-      - name: Cache pre-commit hook environments
+      # prek runs the same .pre-commit-config.yaml as pre-commit, faster. The job keeps the
+      # name `pre-commit` because that is the required status check on main.
+      - name: Cache prek hook environments
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/.cache/pre-commit
-          key: pre-commit-3|${{ env.pythonLocation }}|${{ hashFiles('.pre-commit-config.yaml') }}
-      - name: Run pre-commit
+          path: ~/.cache/prek
+          key: prek-0.5.4|${{ env.pythonLocation }}|${{ hashFiles('.pre-commit-config.yaml') }}
+      - name: Run prek
         run: |
           set -euo pipefail
-          python -m pip install --quiet --disable-pip-version-check pre-commit==4.6.2
-          pre-commit run --show-diff-on-failure --color=always --all-files
+          python -m pip install --quiet --disable-pip-version-check prek==0.5.4
+          prek run --show-diff-on-failure --color=always --all-files
   pytests:
     runs-on: ubuntu-24.04
     steps:
