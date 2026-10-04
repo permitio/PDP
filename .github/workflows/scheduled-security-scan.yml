@@ -9,14 +9,10 @@
 # disclosed afterwards are real findings on that tag, yet often not a source defect at all -
 # a rebuild of the untouched Dockerfile scans clean. See PER-15358.
 #
-# So this workflow scans what customers actually pull, on a clock, and classifies what it
-# finds into the only two buckets that matter for triage:
-#
-#   REBUILD  - every finding has a FixedVersion, i.e. upstream already shipped the patch
-#              and `apk upgrade` / `pip install` would absorb it. Cut a release; no code
-#              change needed. Establishing this by hand takes a full investigation.
-#   SOURCE   - at least one finding has NO FixedVersion, so a rebuild cannot help and the
-#              fix is a pin, a base-image move, a dependency drop, or a VEX waiver.
+# So this workflow scans what customers actually pull, on a clock. Each Trivy finding in the
+# report says who has to act on it (a release rebuild, permit-opa, the golang base digest, an
+# exact pin, or nobody yet because there is no fix) - the REBUILD/SOURCE split
+# classify_image_cves.py also writes to each scan job's summary.
 #
 # Waivers come from .trivyignore.yaml, which mirrors .docker/scout/pdp-v2.vex.json.
 #
@@ -25,53 +21,42 @@
 # own `scout-latest` job over `latest` only. That asymmetry is deliberate and is forced by
 # how each tool waives: .trivyignore.yaml keys on CVE id, so it applies to any tag, while
 # .docker/scout/pdp-v2.vex.json binds every waiver to a product PURL and therefore only to
-# the tags it names. `latest` is a fixed string a static VEX doc can name; release tags
-# rotate with every release and cannot be. Scanning a release tag with Scout would drop all
-# five waivers and paint the run red on documented non-issues, which is also why Scout is a
-# separate job rather than a third leg of the Trivy matrix.
+# the names it lists. `latest` is a fixed string a static VEX doc can name; release tags
+# rotate with every release and cannot be.
 #
 # THE THIRD SCANNER
 # Dependabot is here too, in the `dependabot` job. It cannot report itself: a
 # Dependabot-triggered run gets a read-only GITHUB_TOKEN and can read only the Dependabot
 # secret store, so it can never reach Slack from its own PR runs, and GitHub publishes no
 # `dependabot_alert` workflow trigger to hook. Polling its alerts API on this schedule is
-# the only way to get that signal out, and putting it here rather than in its own workflow
-# is what lets all three scanners share one message.
+# the only way to get that signal out. Alerts are filtered through .trivyignore.yaml, so a
+# waived CVE is counted, not listed - adding a waiver also silences its Dependabot alert.
 #
-# It filters every alert through .trivyignore.yaml before reporting. Today all three open
-# HIGH alerts (CVE-2026-50271, CVE-2026-54283, CVE-2026-48818) are already waived there, so
-# an unfiltered feed would repeat the same three CVEs every morning until the channel was
-# muted. Consequence worth knowing: adding a waiver also silences its Dependabot alert.
+# GREEN MEANS THE SCANS RAN, NOT THAT NOTHING WAS FOUND
+# Findings are reported, not failed: the run stays green when every scanner produced a
+# readable report, whatever that report says, and the Slack message is the alert. A job goes
+# red only when its scan did not complete - a scanner error, an unreadable report, an
+# unreadable alert feed - or, in `verify-delivery`, when the message never reached Slack.
+# The PR gate (tests.yml) and the release gate (release.yml) are different: they block.
 #
-# WHERE THE RESULT GOES
-# Code scanning gets the SARIF, the run goes red, and Slack gets ONE message covering all
-# three scanners - but only when something is not clean. An "all clear" ping on every run is how a
-# channel gets muted.
-#
-# ONE SCHEDULE, ONE MESSAGE, ON PURPOSE. Trivy, Scout and Dependabot previously ran on
-# separate crons and each sent its own Slack message, so one CVE in a published image could
-# produce three notifications on the same morning - the three scanners agreeing with each
-# other, which reads as three problems. They now run as parallel jobs under one trigger and
-# a single `digest` job merges their verdicts, so a reader gets one message and can see at a
-# glance whether the scanners agree. The cost is that the message waits for the slowest
-# scanner; that is minutes on a three-day cadence, against a permanent reduction in noise.
+# ONE MESSAGE
+# The `report` job merges all three scanners with format_security_report.py: one line per
+# advisory, naming every scanner and tag that saw it, so three agreeing scanners never read
+# as three problems. Slack hears from this workflow only when there is a high/critical
+# finding or a scan did not complete; a clean run stays silent, because an "all clear" on
+# every run is how a channel gets muted.
 name: Scheduled security scan
 
 on:
   schedule:
-    # Every third day. `*/3` in the DAY-OF-MONTH field means days 1, 4, 7, ... 31, so be
-    # precise about what that is and is not: it resets at each month boundary, so the gap
-    # from the 31st to the 1st is one day, not three, and February's 28th-to-1st gap is
-    # one day too. Cron has no true "every 72 hours". The consequences are bounded and
-    # both are handled: a SHORT gap only means the Dependabot window below overlaps and
-    # may repeat an alert once, and a LONG gap cannot happen at all.
+    # Every third day. `*/3` in the DAY-OF-MONTH field means days 1, 4, 7, ... 31, so the gap
+    # resets at each month boundary (31st to 1st is one day). Cron has no true "every 72
+    # hours"; a short gap only means one extra report.
     #
     # Deliberately NOT on the hour: GitHub's docs say a scheduled run "can be delayed
     # during periods of high loads", that "high load times include the start of every
-    # hour", and that queued jobs may be DROPPED rather than retried. A dropped run costs
-    # more at this cadence than it did daily - the next one is three days away - which is
-    # why the `digest` job also branches on the standing backlog (total_unwaived) and not
-    # only on what is new in the window.
+    # hour", and that queued jobs may be DROPPED rather than retried. Every report lists the
+    # whole unwaived backlog, not a delta, so a dropped run loses nothing but time.
     #
     # Every third day rather than weekly: new CVEs land continuously, and a weekly cadence
     # leaves a published image exposed for up to six more days after an advisory.
@@ -82,11 +67,6 @@ on:
         description: 'Space-separated tags to scan (default: latest + newest release)'
         required: false
         type: string
-      all_alerts:
-        description: 'Report the whole unwaived CRITICAL/HIGH Dependabot backlog, not just the last 73 hours.'
-        required: false
-        type: boolean
-        default: false
 
 # `vulnerability-alerts: read` is the ONLY permission that lets GITHUB_TOKEN call
 # GET /repos/{owner}/{repo}/dependabot/alerts. It is not a synonym for anything older:
@@ -100,9 +80,8 @@ permissions:
   vulnerability-alerts: read
 
 concurrency:
-  # Queue rather than cancel: a manual workflow_dispatch and the schedule can race, and
-  # cancelling the scheduled run would drop a day out of the Dependabot --new-since window
-  # with nothing to say it happened.
+  # Queue rather than cancel: a manual workflow_dispatch and the schedule can race, and a
+  # cancelled scheduled run would leave nothing to say it happened.
   group: scheduled-security-scan
   cancel-in-progress: false
 
@@ -162,15 +141,11 @@ jobs:
           persist-credentials: false
 
       # Scans the published manifest, NOT a local build - that is the whole point.
-      # exit-code stays 0 here so the classify step below can produce a verdict; the
-      # workflow's pass/fail decision is made there.
+      # `exit-code: '0'`: a finding is reported by the `report` job, never a red job.
       #
-      # Deliberately WITHOUT `if: ${{ !cancelled() }}`, unlike every scan/report step after
-      # it. The only step that can precede it is the checkout, and running Trivy without a
-      # checkout means running it without .trivyignore.yaml - every waived CVE would come
-      # back as a finding and the tag would be classified on a report built from a
-      # half-configured scan. Skipping is the correct outcome there; the guards below exist
-      # to stop a failure of THIS step from silently swallowing the verdict.
+      # Deliberately WITHOUT `if: ${{ !cancelled() }}`, unlike every step after it. The only
+      # step that can precede it is the checkout, and running Trivy without a checkout means
+      # running it without .trivyignore.yaml - every waived CVE would come back as a finding.
       - name: Trivy scan published image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -205,7 +180,7 @@ jobs:
           output: trivy-${{ matrix.tag }}.sarif
           exit-code: '0'
           # Without this, the action drops the severity filter for SARIF output and code
-          # scanning gets every severity, not the CRITICAL,HIGH set the gate uses.
+          # scanning gets every severity, not the CRITICAL,HIGH set the report uses.
           limit-severities-for-sarif: true
           # Skips re-installing the Trivy binary; the DB is reused because the steps
           # share the same cache dir on disk.
@@ -218,17 +193,10 @@ jobs:
           sarif_file: trivy-${{ matrix.tag }}.sarif
           category: published-image-${{ matrix.tag }}
 
-      # Exits 2 when the report is missing, empty or unparseable, which turns this job red
-      # instead of reading a zero-byte report as CLEAN. `--slack-output` is written on that
-      # path as well, so the digest job below always has something true to say.
+      # Writes the REBUILD/SOURCE triage to this job's summary. Exits 2 when the report is
+      # missing, empty or unparseable - the one case that turns this job red, because then
+      # the scan did not complete. Findings exit 0.
       - name: Classify findings (REBUILD vs SOURCE)
-        id: classify
-        # Same reason as the SARIF step above, and the more important half of it: with no
-        # guard, a failed Trivy step skips classify, which leaves steps.classify.outputs.
-        # verdict empty. The digest job reads an absent verdict as ERROR, so the run still
-        # goes red - but this tag loses its triage verdict and its Slack line entirely, and
-        # nobody learns whether it was REBUILD or SOURCE. Running here instead makes the
-        # script exit 2 on the unreadable report and say so out loud.
         if: ${{ !cancelled() }}
         env:
           TAG: ${{ matrix.tag }}
@@ -237,379 +205,15 @@ jobs:
           python3 .github/scripts/classify_image_cves.py \
             --report "trivy-${TAG}.json" \
             --tag "${TAG}" \
-            --summary "$GITHUB_STEP_SUMMARY" \
-            --github-output "$GITHUB_OUTPUT" \
-            --slack-output "slack-${TAG}.txt"
-
-      # Matrix legs cannot aggregate job outputs - each leg writes its own copy and the
-      # last one to finish wins - so every leg leaves its verdict on disk and the digest
-      # job downstream merges them into a single Slack message.
-      - name: Record this tag's verdict for the digest
-        if: ${{ !cancelled() }}
-        env:
-          TAG: ${{ matrix.tag }}
-          VERDICT: ${{ steps.classify.outputs.verdict }}
-        run: |
-          set -euo pipefail
-          # An empty verdict means the classify step never got far enough to write one:
-          # the Trivy step failed, python blew up, the runner died. Fail closed - an
-          # absent verdict is ERROR, never CLEAN.
-          verdict="${VERDICT:-ERROR}"
-          line="slack-${TAG}.txt"
-          if [ ! -s "$line" ]; then
-            printf '%s' "permitio/pdp-v2:${TAG} -> ERROR (the scan produced no summary)" > "$line"
-          fi
-          # Line 1 is the verdict token; every line after it is the Slack body.
-          {
-            printf '%s\n' "$verdict"
-            cat "$line"
-            printf '\n'
-          } > "verdict-${TAG}.txt"
+            --summary "$GITHUB_STEP_SUMMARY"
 
       - name: Upload raw scan report
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: trivy-report-${{ matrix.tag }}
-          path: |
-            trivy-${{ matrix.tag }}.json
-            verdict-${{ matrix.tag }}.txt
+          path: trivy-${{ matrix.tag }}.json
           retention-days: 30
-
-      - name: Fail if findings remain
-        if: steps.classify.outputs.verdict != 'CLEAN'
-        env:
-          TAG: ${{ matrix.tag }}
-          VERDICT: ${{ steps.classify.outputs.verdict }}
-        run: |
-          set -euo pipefail
-          echo "::error::permitio/pdp-v2:${TAG} -> ${VERDICT}. See the job summary."
-          exit 1
-
-  # THE THIRD SCANNER. Runs in parallel with the two image scanners above rather than in
-  # its own workflow, so its result lands in the same digest and the same Slack message.
-  # It needs no image and shares nothing with them, so it has no `needs:`.
-  dependabot:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    outputs:
-      new_count: ${{ steps.check.outputs.new_count }}
-      # Exported as well as new_count because a DELTA alone is not enough to notice a
-      # problem. `new_count` only sees the --new-since window, so a standing unwaived
-      # backlog - or an alert that landed during a run GitHub dropped - is invisible to
-      # it forever. The digest below branches on both.
-      total_unwaived: ${{ steps.check.outputs.total_unwaived }}
-      status: ${{ steps.result.outputs.status }}
-      summary: ${{ steps.result.outputs.summary }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Install the waiver loader's dependencies
-        run: |
-          set -euo pipefail
-          # A venv, not `pip install --user`: the runner's system Python is PEP 668
-          # externally-managed, so installing into it fails. Pinned to the same PyYAML
-          # the `waiver-parity` pre-commit hook uses, so this watcher and the blocking
-          # PR check cannot disagree about how .trivyignore.yaml parses.
-          python3 -m venv "$RUNNER_TEMP/alert-venv"
-          "$RUNNER_TEMP/alert-venv/bin/pip" install \
-            --quiet --disable-pip-version-check pyyaml==6.0.3
-
-      - name: Fetch open Dependabot alerts
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          ALERTS_FILE: ${{ runner.temp }}/dependabot-alerts.json
-        run: |
-          set -euo pipefail
-          # --paginate merges the pages into one JSON array, which is what the script
-          # expects. Without it a repo with more than 100 open alerts silently reports
-          # only the first page.
-          if ! gh api --paginate \
-                 "repos/${REPO}/dependabot/alerts?state=open&per_page=100" \
-                 > "$ALERTS_FILE"; then
-            echo "::error::Could not read Dependabot alerts for ${REPO}. A 403 here means" \
-                 "GITHUB_TOKEN lacks 'vulnerability-alerts: read' - check that this" \
-                 "workflow's permissions block still grants it and that GitHub Advanced" \
-                 "Security/Dependabot alerts are enabled on the repo. If this GitHub" \
-                 "instance predates the vulnerability-alerts permission, the endpoint" \
-                 "needs a PAT with the classic 'security_events' scope instead." >&2
-            exit 1
-          fi
-
-      - name: Check for new unwaived CRITICAL/HIGH alerts
-        id: check
-        env:
-          ALERTS_FILE: ${{ runner.temp }}/dependabot-alerts.json
-          SLACK_FILE: ${{ runner.temp }}/dependabot-slack.txt
-          # `false` on a schedule run, because the first operand is already false there.
-          REPORT_ALL: ${{ github.event_name == 'workflow_dispatch' && inputs.all_alerts }}
-        run: |
-          set -euo pipefail
-
-          # A function taking "$@", not an `args=()` array: expanding an EMPTY array as
-          # "${args[@]}" is an unbound-variable error under `set -u` in bash before 4.4.
-          # The runner has bash 5, so this would work today and break the day anything
-          # runs it elsewhere. "$@" is empty-safe in every bash.
-          watch() {
-            # Exits non-zero only when the feed is unreadable, which must never be
-            # mistaken for "nothing new" - `set -e` turns that into a red run.
-            #
-            # --new-since is passed EXPLICITLY, and 73 is not arbitrary: it is the 72-hour
-            # cron interval above plus one hour of overlap, so an alert opened between two
-            # runs cannot fall through the gap. It lives here rather than being left to the
-            # script's default because it is a function of the cron three lines of YAML
-            # away - change one and you must change the other, and the script's default is
-            # kept in step for anyone running it by hand.
-            "$RUNNER_TEMP/alert-venv/bin/python" .github/scripts/check_dependabot_alerts.py \
-              --alerts "$ALERTS_FILE" \
-              --slack-output "$SLACK_FILE" \
-              --github-output "$GITHUB_OUTPUT" \
-              --new-since 73 \
-              "$@"
-          }
-
-          if [ "$REPORT_ALL" = "true" ]; then
-            watch --all
-          else
-            watch
-          fi
-
-      - name: Publish the result
-        id: result
-        env:
-          NEW_COUNT: ${{ steps.check.outputs.new_count }}
-          TOTAL_UNWAIVED: ${{ steps.check.outputs.total_unwaived }}
-          WAIVED_COUNT: ${{ steps.check.outputs.waived_count }}
-          SLACK_FILE: ${{ runner.temp }}/dependabot-slack.txt
-        run: |
-          set -euo pipefail
-          summary="$(cat "$SLACK_FILE")"
-
-          # `warn`, not `fail`: an alert needs a human, but nothing here is broken, and
-          # the notifier renders `fail` as "failed".
-          #
-          # TOTAL_UNWAIVED escalates as well as NEW_COUNT. Gating on the window alone
-          # would render a standing backlog of unwaived CRITICAL/HIGH as `ok`, which the
-          # notifier prints with a green check and the word "clean" - the most misleading
-          # thing this workflow could say.
-          status=ok
-          if [ "$NEW_COUNT" -gt 0 ] || [ "$TOTAL_UNWAIVED" -gt 0 ]; then
-            status=warn
-          fi
-
-          # Always written, including on a quiet day. The run log is the only place that
-          # says the watch ran at all when Slack stays silent by design.
-          {
-            printf '## Dependabot alerts (%s)\n\n' "$status"
-            printf '%s\n\n' "$summary"
-            printf -- '- New unwaived CRITICAL/HIGH in window: %s\n' "$NEW_COUNT"
-            printf -- '- Unwaived CRITICAL/HIGH open in total: %s\n' "$TOTAL_UNWAIVED"
-            printf -- '- Suppressed by .trivyignore.yaml: %s\n' "$WAIVED_COUNT"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          # A random heredoc delimiter: the body carries third-party text (package
-          # names, advisory ids) and a fixed marker could be forged out of it.
-          delimiter="ALERTS_$(openssl rand -hex 16)"
-          {
-            printf 'status=%s\n' "$status"
-            printf 'summary<<%s\n' "$delimiter"
-            printf '%s\n' "$summary"
-            printf '%s\n' "$delimiter"
-          } >> "$GITHUB_OUTPUT"
-
-  digest:
-    # ONE message for the whole run, merging all three scanners. The per-tag Trivy
-    # verdicts arrive as artifacts rather than job outputs because `needs.scan.outputs.*`
-    # on a matrix job carries one arbitrary leg's values; Scout and Dependabot are single
-    # jobs and pass their summaries through job outputs directly.
-    needs: [scan, scout-latest, dependabot]
-    # Not `success()`: the run worth reporting is precisely the one where a job went red.
-    # A `needs:` job that failed still reaches this one under !cancelled(), and each
-    # scanner's section below is written to say so rather than to omit it silently.
-    if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    outputs:
-      notify: ${{ steps.build.outputs.notify }}
-      status: ${{ steps.build.outputs.status }}
-      summary: ${{ steps.build.outputs.summary }}
-    steps:
-      - name: Download the per-tag verdicts
-        # A run where every scan leg died before uploading matches no artifact. That is not
-        # an error: download-artifact (v4.3.0 and v8.0.1 alike) downloads nothing and
-        # succeeds, and the step below turns the empty directory into a "nothing was
-        # cleared" notification. continue-on-error is for a download that does fail - an
-        # artifact API error, or v8's default `digest-mismatch: error` - so the digest still
-        # runs and reports Scout and Dependabot instead of being skipped.
-        continue-on-error: true
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        env:
-          # v8.0.1 bundles an unzip library that still calls the deprecated Buffer() constructor,
-          # so every download warns DEP0005 (actions/download-artifact#484). Drop when fixed.
-          NODE_OPTIONS: --disable-warning=DEP0005
-        with:
-          pattern: trivy-report-*
-          merge-multiple: true
-          path: verdicts
-
-      - name: Build the aggregated digest
-        id: build
-        env:
-          SCOUT_RESULT: ${{ needs.scout-latest.result }}
-          SCOUT_SUMMARY: ${{ needs.scout-latest.outputs.summary }}
-          DEPENDABOT_RESULT: ${{ needs.dependabot.result }}
-          DEPENDABOT_STATUS: ${{ needs.dependabot.outputs.status }}
-          DEPENDABOT_SUMMARY: ${{ needs.dependabot.outputs.summary }}
-          DEPENDABOT_NEW: ${{ needs.dependabot.outputs.new_count }}
-          DEPENDABOT_BACKLOG: ${{ needs.dependabot.outputs.total_unwaived }}
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          files=(verdicts/verdict-*.txt)
-
-          # One notify flag and one status across all three scanners. `status` only ever
-          # escalates - ok -> warn -> fail - so a clean Dependabot result can never talk
-          # down a Trivy SOURCE verdict.
-          notify=false
-          status=ok
-          escalate() {
-            case "$1" in
-              fail) status=fail ;;
-              warn) [ "$status" = fail ] || status=warn ;;
-            esac
-          }
-
-          # --- Trivy, over the published tags ------------------------------------
-          clean=0
-          dirty=0
-          bodies=""
-          if [ "${#files[@]}" -eq 0 ]; then
-            # Silence must never read as clean.
-            notify=true
-            escalate fail
-            trivy_line='*Trivy* - no per-tag verdict was produced, so NO published tag has been cleared. The scan job failed before it could classify anything.'
-          else
-            for file in "${files[@]}"; do
-              verdict="$(head -n 1 "$file")"
-              body="$(tail -n +2 "$file")"
-              case "$verdict" in
-                CLEAN)
-                  clean=$((clean + 1))
-                  ;;
-                REBUILD)
-                  # Answered by cutting a release, so it is a warning, not a failure.
-                  dirty=$((dirty + 1))
-                  escalate warn
-                  ;;
-                *)
-                  # SOURCE needs a person; ERROR means we do not know. Both are failures.
-                  dirty=$((dirty + 1))
-                  escalate fail
-                  ;;
-              esac
-              bodies="$(printf '%s\n  • %s' "$bodies" "$body")"
-            done
-            [ "$dirty" -eq 0 ] || notify=true
-            trivy_line="$(printf '*Trivy* - %d published tag(s): %d clean, %d not clean.%s' \
-                            "${#files[@]}" "$clean" "$dirty" "$bodies")"
-          fi
-
-          # --- Docker Scout, over `latest` ---------------------------------------
-          # Keyed on the JOB RESULT, not on a count: the summary step exports a body for
-          # both the clean and the unclean case, so the body alone cannot tell them apart.
-          if [ "$SCOUT_RESULT" = 'success' ]; then
-            scout_line="*Docker Scout* - ${SCOUT_SUMMARY:-no summary produced, see the run log.}"
-          else
-            notify=true
-            escalate fail
-            scout_line="*Docker Scout* - job ${SCOUT_RESULT:-did not run}. ${SCOUT_SUMMARY:-The scan of permitio/pdp-v2:latest produced no summary, so the published image has NOT been cleared. See the run log.}"
-          fi
-
-          # --- Dependabot alerts --------------------------------------------------
-          if [ "$DEPENDABOT_RESULT" = 'success' ]; then
-            dependabot_line="*Dependabot* - ${DEPENDABOT_SUMMARY:-no summary produced, see the run log.}"
-            escalate "${DEPENDABOT_STATUS:-warn}"
-            # Both branches matter. NEW_COUNT alone would miss a standing backlog that
-            # predates the --new-since window, or one that landed during a run GitHub
-            # dropped; the backlog check is what makes a missed run recoverable.
-            if [ "${DEPENDABOT_NEW:-0}" -gt 0 ] || [ "${DEPENDABOT_BACKLOG:-0}" -gt 0 ]; then
-              notify=true
-            fi
-          else
-            notify=true
-            escalate fail
-            dependabot_line="*Dependabot* - the alert watch ${DEPENDABOT_RESULT:-did not run}, so the alert feed was NOT checked. A 403 on the alerts endpoint means GITHUB_TOKEN lost 'vulnerability-alerts: read'."
-          fi
-
-          message="$(printf '%s\n%s\n%s' "$trivy_line" "$scout_line" "$dependabot_line")"
-          echo "$message"
-
-          # Random heredoc delimiter: the body carries third-party text (CVE ids, package
-          # names), and a fixed delimiter appearing inside that text would let it forge
-          # step outputs.
-          delim="PDP_DIGEST_$(openssl rand -hex 16)"
-          {
-            printf 'notify=%s\n' "$notify"
-            printf 'status=%s\n' "$status"
-            printf 'summary<<%s\n%s\n%s\n' "$delim" "$message" "$delim"
-          } >> "$GITHUB_OUTPUT"
-
-  # THE ONLY Slack sender in this workflow. All three scanners report through it, so a
-  # morning where Trivy, Scout and Dependabot all see the same CVE produces one message
-  # naming three agreeing scanners, not three messages that read as three problems.
-  notify:
-    needs: digest
-    # Speak up when any scanner is not clean, and when the digest job itself could not run
-    # - a missing digest is not evidence of a clean scan. A fully clean run stays silent.
-    if: ${{ !cancelled() && (needs.digest.result != 'success' || needs.digest.outputs.notify == 'true') }}
-    # `./`, not the `$/` zizmor's self-repository audit suggests: actionlint 1.7.12 rejects
-    # `$/` in a job-level `uses:`, and only with `./` does it check `secrets:` against the
-    # callee. A `./` call resolves from the caller's own commit, so nothing can drift.
-    uses: ./.github/workflows/notify-slack.yml  # zizmor: ignore[self-repository]
-    with:
-      subject: scheduled security scan
-      # `||` falls through on an empty string, which is what an unsuccessful digest job
-      # leaves behind. The notifier rejects an empty status outright, so these fallbacks
-      # are what keeps that path a message rather than a second failure.
-      status: ${{ needs.digest.outputs.status || 'fail' }}
-      summary: ${{ needs.digest.outputs.summary || 'The scheduled security scan produced no digest, so nothing has been cleared by any scanner. See the run log.' }}
-    secrets:
-      # Named rather than `inherit`: the notifier needs exactly this one secret, and
-      # `inherit` hands a called workflow every secret the repo has. If the secret is ever
-      # unset it arrives as the empty string and the notifier is a green no-op.
-      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-
-  # A swallowed delivery failure is invisible here in a way it is not elsewhere. The
-  # notifier's send step carries `continue-on-error: true`, which forces that step's
-  # CONCLUSION to success, so `needs.notify.result` reads 'success' even when the POST
-  # failed; only the step's OUTCOME is truthful, and that is what the notifier exports as
-  # `delivered`. This workflow is also silent by design on a clean day, so "the webhook
-  # has been dead for a month" looks exactly like "nothing to report for a month" unless
-  # something checks. 'skipped' means no webhook secret is configured, which is a
-  # documented green no-op rather than a failure.
-  verify-delivery:
-    needs: notify
-    if: >-
-      ${{ !cancelled() && needs.notify.result == 'success'
-          && needs.notify.outputs.delivered != 'success'
-          && needs.notify.outputs.delivered != 'skipped' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    steps:
-      - name: Fail because the findings never reached Slack
-        env:
-          DELIVERED: ${{ needs.notify.outputs.delivered }}
-        run: |
-          set -euo pipefail
-          echo "::error::The scheduled security scan found something to report but the Slack notification failed to send (delivery outcome: ${DELIVERED}). Nobody was told. Check that SLACK_WEBHOOK_URL is still valid - an incoming webhook returns 410 Gone once it is revoked or its channel is archived."
-          exit 1
 
   # Docker Scout's periodic leg, mirroring the report+gate pair in tests.yml. It exists for
   # the same reason the build-time job runs two scanners: on a published image Scout can be
@@ -617,13 +221,7 @@ jobs:
   # way too - Scout reads Docker's own advisory feed and applies the OpenVEX reachability
   # statements, which Trivy cannot express.
   #
-  # `latest` ONLY - see TWO SCANNERS, TWO COVERAGE SETS at the top of this file. Release
-  # tags stay with Trivy.
-  #
-  # It reports through the shared `digest` job rather than sending its own Slack message,
-  # which is what makes the two scanners' agreement visible in one place. The digest keys
-  # on this job's RESULT, not on its finding count: the summary step exports a body for the
-  # clean case too, so the body alone cannot distinguish "gate passed" from "gate never ran".
+  # `latest` ONLY - see TWO SCANNERS, TWO COVERAGE SETS at the top of this file.
   scout-latest:
     runs-on: ubuntu-latest
     permissions:
@@ -634,8 +232,6 @@ jobs:
       # token. Granted to this job alone - nothing else in this workflow talks to Docker Hub
       # with an identity.
       id-token: write
-    outputs:
-      summary: ${{ steps.summarise.outputs.summary }}
     steps:
       - name: Checkout code
         # The OpenVEX doc the gate below reads lives in this repo, so the checkout is not
@@ -678,36 +274,34 @@ jobs:
           exit-code: false
           # All severities, NO VEX filtering, on purpose: this SARIF is what code scanning
           # gets, where a waived CVE should still be visible as a tracked, explained alert.
-          # It is deliberately NOT the file the Slack summary reads - see the gate below.
+          # It is deliberately NOT the file the report reads - see the gate below.
           sarif-file: scout-latest-report.sarif
           summary: true
           # There is no PR on a scheduled run.
           write-comment: false
 
-      - name: Docker Scout CVE gate (critical and high)
+      - name: Docker Scout CVE scan (critical and high, VEX applied)
         id: scout-gate
-        # Load-bearing, not defensive. Without it a failed report step skips the gate, and a
-        # skipped gate is indistinguishable from a passing one at a glance - the absence of
-        # this guard has already cost this repo a silent miss.
+        # Load-bearing, not defensive. Without it a failed report step skips this one, and
+        # the report job would have nothing from Scout to read.
         if: ${{ !cancelled() }}
         uses: docker/scout-action@7c6b6c3f7844478ace1ffd4e7aef649053d1f87d # v1.24.0
         with:
           command: cves
           image: registry://permitio/pdp-v2:latest
           only-severities: critical,high
-          exit-code: true
-          # THE file the summary step reads, and it has to be this one rather than the
-          # report SARIF above, because only this step applies the OpenVEX waivers: the
-          # report's SARIF still contains all five waived CVEs at critical/high, so
-          # counting it would alert on known non-issues every single day.
+          # `false`: findings go to the report, not to a red job. A Scout ERROR (auth,
+          # registry, API) still fails this step, which is a scan that did not complete.
+          exit-code: false
+          # THE file the report reads, and it has to be this one rather than the report
+          # SARIF above, because only this step applies the OpenVEX waivers: the report's
+          # SARIF still contains all five waived CVEs at critical/high.
           sarif-file: scout-latest-gate.sarif
           summary: true
           write-comment: false
-          # Accept CVEs marked not_affected in .docker/scout/pdp-v2.vex.json. Every
-          # statement there names BOTH pkg:docker/permitio/pdp-v2@next and
-          # pkg:docker/permitio/pdp-v2@latest; scout matches products on the full PURL
-          # string, so pointing this step at any other tag without extending the doc first
-          # drops all five waivers silently.
+          # Accept CVEs marked not_affected in .docker/scout/pdp-v2.vex.json. Scout matches
+          # products on the full PURL string, so pointing this step at a tag the doc does
+          # not list drops all five waivers silently.
           vex-location: .docker/scout
           only-vex-affected: true
           # REQUIRED: scout only *applies* VEX statements whose author matches its
@@ -728,48 +322,234 @@ jobs:
           # scanners' alerts coexist in code scanning instead of overwriting each other.
           category: published-image-scout-latest
 
-      - name: Summarise the Scout verdict for Slack
-        id: summarise
+      - name: Confirm the scan produced a readable report
         if: ${{ !cancelled() }}
         env:
           GATE_OUTCOME: ${{ steps.scout-gate.outcome }}
-          IMAGE: permitio/pdp-v2:latest
         run: |
           set -euo pipefail
-
-          findings=''
-          if jq -e . scout-latest-gate.sarif > /dev/null 2>&1; then
-            findings="$(jq '[.runs[].results[]?] | length' scout-latest-gate.sarif)"
+          # Scout writes no SARIF when it finds nothing. After a SUCCESSFUL step that can
+          # only mean zero findings, so an empty SARIF is the honest stand-in; after any
+          # other outcome the scan did not complete and this job fails.
+          if [ ! -s scout-latest-gate.sarif ] && [ "$GATE_OUTCOME" = success ]; then
+            echo '{"version":"2.1.0","runs":[]}' > scout-latest-gate.sarif
+          fi
+          if ! jq -e '.runs | type == "array"' scout-latest-gate.sarif > /dev/null 2>&1; then
+            echo "::error::Docker Scout produced no readable report for permitio/pdp-v2:latest (scan outcome: ${GATE_OUTCOME:-skipped}). See the steps above."
+            exit 1
           fi
 
-          if [ -z "$findings" ]; then
-            # No parseable report. Fail closed - silence is not evidence of a clean image.
-            message="Docker Scout produced no readable report for ${IMAGE} (gate outcome: ${GATE_OUTCOME:-skipped}), so the published image has NOT been cleared. See the run log."
-          elif [ "$findings" -gt 0 ]; then
-            # Rule ids come from a third party. Keep only strings that look like a CVE or
-            # GHSA id, so nothing in the scan output can shape the Slack message or forge a
-            # step output below. `|| true` because grep exits 1 on no match and head can
-            # SIGPIPE it, either of which would kill the step under `pipefail`.
-            ids="$(jq -r '[.runs[].results[]?.ruleId] | unique | .[]' scout-latest-gate.sarif \
-                     | grep -E '^(CVE|GHSA)-[A-Za-z0-9.-]+$' | head -n 20 \
-                     | paste -sd ',' - | sed 's/,/, /g' || true)"
-            # The count is authoritative; the id list is deduplicated, filtered and capped,
-            # so it is named as a sample rather than presented as the whole finding set.
-            message="Docker Scout found ${findings} unwaived CRITICAL/HIGH finding(s) in ${IMAGE}. Up to 20 recognised ids: ${ids:-none recognised, see code scanning}. Fix by upgrading the package, or - only with a written reachability argument - waive the CVE in BOTH .trivyignore.yaml and .docker/scout/pdp-v2.vex.json. See docs/image-vulnerability-management.md."
-          elif [ "$GATE_OUTCOME" != 'success' ]; then
-            # Zero findings but a non-zero exit is not a pass: the gate failed for some
-            # other reason (registry, API, auth) and knows nothing about the image.
-            message="Docker Scout reported no finding for ${IMAGE} but its gate did not succeed (outcome: ${GATE_OUTCOME:-skipped}), so the published image has NOT been cleared. See the run log."
-          else
-            # Reached only when the gate itself passed. This summary is still sent when the
-            # job is red, because a later step can fail after the gate - and then this exact
-            # sentence is the useful one: it says the failure was not a CVE finding.
-            message="Docker Scout's CVE gate found no unwaived CRITICAL or HIGH CVE in ${IMAGE}; anything red in this run happened after the gate. See the run log."
+      - name: Upload the report for the report job
+        if: ${{ !cancelled() && hashFiles('scout-latest-gate.sarif') != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: scout-gate-latest
+          path: scout-latest-gate.sarif
+          retention-days: 30
+
+  # THE THIRD SCANNER. Runs in parallel with the two image scanners above, so its result
+  # lands in the same report. It needs no image and shares nothing with them.
+  dependabot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the waiver loader's dependencies
+        run: |
+          set -euo pipefail
+          # A venv, not `pip install --user`: the runner's system Python is PEP 668
+          # externally-managed, so installing into it fails. Pinned to the same PyYAML
+          # the `waiver-parity` pre-commit hook uses, so this watcher and the blocking
+          # PR check cannot disagree about how .trivyignore.yaml parses.
+          python3 -m venv "$RUNNER_TEMP/alert-venv"
+          "$RUNNER_TEMP/alert-venv/bin/pip" install \
+            --quiet --disable-pip-version-check pyyaml==6.0.3
+
+      - name: Fetch open Dependabot alerts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # --paginate merges the pages into one JSON array, which is what the scripts
+          # expect. Without it a repo with more than 100 open alerts silently reports
+          # only the first page.
+          if ! gh api --paginate \
+                 "repos/${REPO}/dependabot/alerts?state=open&per_page=100" \
+                 > dependabot-alerts.json; then
+            echo "::error::Could not read Dependabot alerts for ${REPO}. A 403 here means" \
+                 "GITHUB_TOKEN lacks 'vulnerability-alerts: read' - check that this" \
+                 "workflow's permissions block still grants it and that GitHub Advanced" \
+                 "Security/Dependabot alerts are enabled on the repo." >&2
+            exit 1
           fi
 
-          echo "$message"
+      # Exits 2 when the feed is unreadable - a scan that did not complete - and 0 whatever
+      # the alerts say. The log lists the unwaived critical/high backlog.
+      - name: Validate the alert feed
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/alert-venv/bin/python" .github/scripts/check_dependabot_alerts.py \
+            --alerts dependabot-alerts.json --all
 
-          # The message is built only from a count, fixed strings and ids filtered to
-          # ^(CVE|GHSA)-[A-Za-z0-9.-]+$, so it cannot contain a newline and needs no
-          # heredoc delimiter.
-          printf 'summary=%s\n' "$message" >> "$GITHUB_OUTPUT"
+      - name: Upload the alerts for the report job
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dependabot-alerts
+          path: dependabot-alerts.json
+          retention-days: 30
+
+  report:
+    # ONE message for the whole run, merging all three scanners. Each scanner hands over its
+    # raw report as an artifact; `needs.scan.outputs.*` on a matrix job would carry one
+    # arbitrary leg's values.
+    needs: [resolve-tags, scan, scout-latest, dependabot]
+    # Not `success()`: a scanner job that went red is exactly what the report must say.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      notify: ${{ steps.build.outputs.notify }}
+      status: ${{ steps.build.outputs.status }}
+      headline: ${{ steps.build.outputs.headline }}
+      message: ${{ steps.build.outputs.message }}
+    steps:
+      - name: Checkout code
+        # The formatter, the waiver list and requirements.txt (for exact pins) are read
+        # from the repo.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the waiver loader's dependencies
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/report-venv"
+          "$RUNNER_TEMP/report-venv/bin/pip" install \
+            --quiet --disable-pip-version-check pyyaml==6.0.3
+
+      - name: Download the scanner reports
+        # A scanner whose job died uploads nothing. That is not an error here: the formatter
+        # reads a missing report as "did not complete". continue-on-error covers a download
+        # that does fail (an artifact API error, or v8's default `digest-mismatch: error`),
+        # so the report still goes out.
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        env:
+          # v8.0.1 bundles an unzip library that still calls the deprecated Buffer() constructor,
+          # so every download warns DEP0005 (actions/download-artifact#484). Drop when fixed.
+          NODE_OPTIONS: --disable-warning=DEP0005
+        with:
+          merge-multiple: true
+          path: reports
+
+      - name: Build the report
+        id: build
+        env:
+          MATRIX: ${{ needs.resolve-tags.outputs.matrix }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # One --trivy per tag that was MEANT to be scanned, so a leg that uploaded nothing
+          # reads as "did not complete" instead of disappearing from the message.
+          trivy_args=()
+          while IFS= read -r tag; do
+            trivy_args+=(--trivy "${tag}=reports/trivy-${tag}.json")
+          done < <(printf '%s' "$MATRIX" | jq -r '.tag[]?')
+
+          "$RUNNER_TEMP/report-venv/bin/python" .github/scripts/format_security_report.py \
+            --repo "$REPO" \
+            --run-url "$RUN_URL" \
+            "${trivy_args[@]}" \
+            --scout "latest=reports/scout-latest-gate.sarif" \
+            --dependabot reports/dependabot-alerts.json \
+            --out security-report.txt \
+            --headline-out security-report-headline.txt \
+            --github-output "$GITHUB_OUTPUT"
+
+          cat security-report.txt >> "$GITHUB_STEP_SUMMARY"
+          # Random heredoc delimiters: the message carries third-party text (CVE titles,
+          # package names), and a fixed delimiter appearing inside it could forge outputs.
+          delim="PDP_REPORT_$(openssl rand -hex 16)"
+          {
+            printf 'headline=%s\n' "$(cat security-report-headline.txt)"
+            printf 'message<<%s\n%s\n%s\n' "$delim" "$(cat security-report.txt)" "$delim"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Record the report status
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        env:
+          STATUS: ${{ steps.build.outputs.status }}
+        run: printf '%s\n' "$STATUS" > security-report-status.txt
+
+      # Read by security-digest.yml, which reports the latest scan's headline every Monday.
+      # The run's own conclusion cannot answer "were there findings" any more: it is green
+      # whenever the scans ran.
+      - name: Upload the report
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: security-report
+          path: |
+            security-report.txt
+            security-report-headline.txt
+            security-report-status.txt
+          retention-days: 30
+
+  # THE ONLY Slack sender in this workflow.
+  notify:
+    needs: report
+    # Speak up on a high/critical finding or an incomplete scan, and when the report job
+    # itself could not run - a missing report is not evidence of a clean scan. A fully
+    # clean run stays silent.
+    if: ${{ !cancelled() && (needs.report.result != 'success' || needs.report.outputs.notify == 'true') }}
+    # `./`, not the `$/` zizmor's self-repository audit suggests: actionlint 1.7.12 rejects
+    # `$/` in a job-level `uses:`, and only with `./` does it check `secrets:` against the
+    # callee. A `./` call resolves from the caller's own commit, so nothing can drift.
+    uses: ./.github/workflows/notify-slack.yml  # zizmor: ignore[self-repository]
+    with:
+      subject: scheduled security scan
+      # `||` falls through on an empty string, which is what an unsuccessful report job
+      # leaves behind; the notifier then renders `summary` with the `fail` header.
+      status: ${{ needs.report.outputs.status || 'fail' }}
+      summary: ${{ needs.report.outputs.headline || 'The scheduled security scan produced no report, so nothing has been cleared by any scanner. See the run log.' }}
+      # Already escaped by format_security_report.py; sent verbatim.
+      message: ${{ needs.report.outputs.message }}
+    secrets:
+      # Named rather than `inherit`: the notifier needs exactly this one secret, and
+      # `inherit` hands a called workflow every secret the repo has. If the secret is ever
+      # unset it arrives as the empty string and the notifier is a green no-op.
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  # A swallowed delivery failure is invisible here in a way it is not elsewhere. The
+  # notifier's send step carries `continue-on-error: true`, which forces that step's
+  # CONCLUSION to success, so `needs.notify.result` reads 'success' even when the POST
+  # failed; only the step's OUTCOME is truthful, and that is what the notifier exports as
+  # `delivered`. This workflow is also silent by design on a clean day, so "the webhook
+  # has been dead for a month" looks exactly like "nothing to report for a month" unless
+  # something checks. 'skipped' means no webhook secret is configured, which is a
+  # documented green no-op rather than a failure.
+  verify-delivery:
+    needs: notify
+    if: >-
+      ${{ !cancelled() && needs.notify.result == 'success'
+          && needs.notify.outputs.delivered != 'success'
+          && needs.notify.outputs.delivered != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Fail because the report never reached Slack
+        env:
+          DELIVERED: ${{ needs.notify.outputs.delivered }}
+        run: |
+          set -euo pipefail
+          echo "::error::The scheduled security scan had something to report but the Slack notification failed to send (delivery outcome: ${DELIVERED}). Nobody was told. Check that SLACK_WEBHOOK_URL is still valid - an incoming webhook returns 410 Gone once it is revoked or its channel is archived."
+          exit 1

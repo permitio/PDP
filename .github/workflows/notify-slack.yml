@@ -4,6 +4,11 @@
 # digest, release verification) to report a scan outcome. The caller formats
 # the body; this workflow only escapes it, colours it and sends it.
 #
+# A caller that renders a complete Slack message itself passes it as `message`
+# instead, already escaped (scheduled-security-scan.yml does, through
+# .github/scripts/format_security_report.py). It is sent as-is, with no header or
+# colour bar: escaping it again here would turn `&gt;` into a literal `&gt;`.
+#
 # It is a GREEN NO-OP whenever the SLACK_WEBHOOK_URL secret is unset: the send
 # is skipped and the skip is announced as a ::notice:: annotation. The secret
 # exists in this repository, so callers post as soon as they run.
@@ -26,6 +31,14 @@ on:
         type: string
       details_url:
         description: 'URL behind the "View details" link. Defaults to this workflow run.'
+        required: false
+        type: string
+        default: ''
+      message:
+        description: >-
+          Complete Slack mrkdwn message, ALREADY escaped by the caller. When set it is sent
+          verbatim in place of the subject/status/summary rendering, which then only names
+          the run in the log.
         required: false
         type: string
         default: ''
@@ -73,9 +86,15 @@ jobs:
           STATUS: ${{ inputs.status }}
           SUMMARY: ${{ inputs.summary }}
           DETAILS_URL: ${{ inputs.details_url }}
+          MESSAGE: ${{ inputs.message }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
+
+          if [ -n "$MESSAGE" ]; then
+            jq -n --arg text "$MESSAGE" '{text: $text}' > "$RUNNER_TEMP/slack-payload.json"
+            exit 0
+          fi
 
           # Slack mrkdwn escaping. jq solves JSON escaping, which is a different
           # problem — a CVE title needs both.

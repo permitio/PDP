@@ -158,22 +158,36 @@ jobs:
           scan_json="$(gh run list --repo "$REPO" \
                          --workflow scheduled-security-scan.yml \
                          --status completed --limit 1 \
-                         --json conclusion,createdAt,url --jq '.[0] // empty')" || gh_exit=$?
+                         --json conclusion,createdAt,url,databaseId --jq '.[0] // empty')" || gh_exit=$?
           if [ "$gh_exit" -ne 0 ]; then
             escalate warn
             lines+=("*Published-image scan* - could not read the run list (gh exited ${gh_exit}).")
           elif [ -z "$scan_json" ]; then
             escalate warn
-            lines+=("*Published-image scan* - no completed run found. The daily watch may be disabled.")
+            lines+=("*Published-image scan* - no completed run found. The scheduled scan may be disabled.")
           else
             conclusion="$(printf '%s' "$scan_json" | jq -r '.conclusion')"
             scan_created="$(printf '%s' "$scan_json" | jq -r '.createdAt')"
             scan_url="$(printf '%s' "$scan_json" | jq -r '.url')"
-            if [ "$conclusion" = "success" ]; then
-              lines+=("*Published-image scan* - last run ${scan_created} was clean.")
-            else
+            scan_id="$(printf '%s' "$scan_json" | jq -r '.databaseId')"
+            # The run is green whenever its scans completed, findings or not, so the
+            # findings come from the report it uploads, not from its conclusion.
+            report_dir="$RUNNER_TEMP/last-scan"
+            if [ "$conclusion" != "success" ]; then
               escalate fail
-              lines+=("*Published-image scan* - last run ${scan_created} concluded ${conclusion}: unwaived CRITICAL/HIGH in a PUBLISHED tag, or the scan itself broke. ${scan_url}")
+              lines+=("*Published-image scan* - last run ${scan_created} concluded ${conclusion}: a scan did not complete, or its report never reached Slack. ${scan_url}")
+            elif gh run download "$scan_id" --repo "$REPO" --name security-report --dir "$report_dir"; then
+              scan_status="$(head -n 1 "$report_dir/security-report-status.txt")"
+              scan_headline="$(head -n 1 "$report_dir/security-report-headline.txt")"
+              case "$scan_status" in
+                ok) ;;
+                warn) escalate warn ;;
+                *) escalate fail ;;
+              esac
+              lines+=("*Published-image scan* - last run ${scan_created}: ${scan_headline}. ${scan_url}")
+            else
+              escalate warn
+              lines+=("*Published-image scan* - last run ${scan_created} finished, but its report could not be downloaded. ${scan_url}")
             fi
           fi
 
