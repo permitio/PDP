@@ -12,7 +12,7 @@ aiohttp>=3.13.3,<4
 # window is 0.124.0-0.125.0. See PER-15249.
 fastapi>=0.124.0,<1
 Jinja2>=3.1.2,<4
-pydantic[email]>=1.9.1,<2
+pydantic[email]>=2.13.5,<3
 requests>=2.32.4,<3
 urllib3>=2.6.3,<3
 gunicorn>=23.0.0,<24
