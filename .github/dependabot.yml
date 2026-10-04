@@ -146,3 +146,18 @@ updates:
       default-days: 7
     commit-message:
       prefix: "deps"
+
+  # Hook versions in .pre-commit-config.yaml (run by prek, which reads the same file).
+  - package-ecosystem: "pre-commit"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "deps"
