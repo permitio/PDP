@@ -74,7 +74,7 @@ impl CacheBackend for RedisCache {
         let result: Option<String> = match conn.get(key).await {
             Ok(value) => value,
             Err(err) => {
-                if err.kind() == redis::ErrorKind::TypeError {
+                if err.kind() == redis::ErrorKind::UnexpectedReturnType {
                     // Key doesn't exist
                     return Ok(None);
                 }
