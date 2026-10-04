@@ -148,10 +148,11 @@ jobs:
         # are never cached (no build exports them), and would barely cache anyway:
         # `rust_planner`'s `COPY . .` sees the regenerated tarball, so it and the final
         # `cargo zigbuild` re-run every build. `cargo chef cook` re-runs too despite being
-        # keyed on recipe.json - 404.6s on tests.yml run 34858998837. The likely cause is
-        # that no Cargo.lock is tracked (it is also .dockerignore'd), so `cargo chef prepare`
-        # resolves crates.io fresh each build and the lock embedded in recipe.json drifts.
-        # Do not budget this filter against a cached dependency compile.
+        # keyed on recipe.json - 404.6s on tests.yml run 34858998837, measured while no
+        # Cargo.lock was tracked, so the lock embedded in recipe.json drifted every build.
+        # Cargo.lock is now committed and the build is `--locked`; whether that lets the
+        # cook step hit a cache has not been measured, so do not budget this filter against
+        # a cached dependency compile.
         #
         # READ THAT MEASUREMENT NARROWLY: it comes from a `pull_request` run of tests.yml
         # built `--platform linux/amd64`. The rust stages are `--platform=$BUILDPLATFORM` and

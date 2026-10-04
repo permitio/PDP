@@ -873,10 +873,10 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run cargo check
-        run: cargo check --all --verbose
+        run: cargo check --all --locked --verbose
 
       - name: Run clippy
-        run: cargo clippy --all -- -D warnings
+        run: cargo clippy --all --locked -- -D warnings
 
       - name: Run tests
-        run: cargo test --all --verbose
+        run: cargo test --all --locked --verbose

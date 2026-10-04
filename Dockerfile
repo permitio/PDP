@@ -37,7 +37,7 @@ ENV CARGO_INCREMENTAL=1
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/app/target \
-    cargo chef cook --recipe-path recipe.json --release --zigbuild \
+    cargo chef cook --recipe-path recipe.json --release --zigbuild --locked \
     --target x86_64-unknown-linux-musl --target aarch64-unknown-linux-musl
 
 # (4) actual project build for all targets
@@ -47,7 +47,7 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/app/target \
-    cargo zigbuild -r --target x86_64-unknown-linux-musl --target aarch64-unknown-linux-musl && \
+    cargo zigbuild -r --locked --target x86_64-unknown-linux-musl --target aarch64-unknown-linux-musl && \
     mkdir -p /app/linux/arm64/ && \
     mkdir -p /app/linux/amd64/ && \
     cp target/aarch64-unknown-linux-musl/release/pdp-server /app/linux/arm64/pdp && \
