@@ -8,21 +8,51 @@ on:
     secrets:
       PDP_TESTER_API_KEY:
         required: true
-      CLONE_REPO_TOKEN:
+      # The org-owned GitHub App `permitio-pdp-ci` (read-only Contents on permit-opa and
+      # pdp-tester only). Each job below mints its own 1-hour token from these, scoped to
+      # the one repository it clones. Both are secrets - the client id is not sensitive,
+      # but whether the `vars` context reaches Dependabot-triggered runs is undocumented,
+      # and these must work there too.
+      CLONE_APP_CLIENT_ID:
         required: true
+      CLONE_APP_PRIVATE_KEY:
+        required: true
+      # Consumed by the `notify-gate-failure` job at the bottom of this file, which hands
+      # it to ./.github/workflows/notify-slack.yml. `required: false` on purpose: if the
+      # secret is ever unset, the notifier is a green no-op that says so in a ::notice::
+      # rather than failing the caller. Declaring it is not cosmetic - on the
+      # workflow_call path an UNdeclared secret only arrives when the caller says
+      # `secrets: inherit`, so without this line a caller that passes secrets by name
+      # would silently stop alerting. It is also what keeps `secrets.SLACK_WEBHOOK_URL`
+      # out of actionlint's "not defined in object type" list.
+      SLACK_WEBHOOK_URL:
+        required: false
+      # No Docker Hub secret is declared: the docker-scout job logs in through OIDC, so a
+      # caller must instead grant `id-token: write` to the job that calls this workflow - a
+      # called workflow cannot exceed its caller's permissions, and without it the Docker
+      # login fails on the release path only. release.yml's `pdp-tests` job does this.
+
+# Read-only by default. Jobs grant additional permissions only as needed.
+permissions:
+  contents: read
 
 jobs:
   pre-commit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-      - uses: pre-commit/action@v3.0.1
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - name: Run pre-commit
+        uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
   pytests:
     runs-on: ubuntu-latest
     steps:
       - name: Python setup
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           # Keep in lockstep with the interpreter the image actually ships
           # (Dockerfile: python:3.13-alpine3.23). This job pinned 3.11.8 while the image
@@ -32,7 +62,9 @@ jobs:
           python-version: '3.13'
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Run Pytests
         run: |
@@ -46,7 +78,42 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Without the clone App's credentials the token step below fails with an opaque
+      # error; say what is actually missing instead. No `if:`: which secret store a run
+      # reads is decided by the actor that TRIGGERED it, not by who opened the PR, so a
+      # condition on the PR author misfires both ways. A Dependabot-triggered run reads only
+      # the Dependabot store, every other run the Actions store, and a fork PR neither.
+      - name: Check the permit-opa clone credentials are available
+        env:
+          HAS_CLIENT_ID: ${{ secrets.CLONE_APP_CLIENT_ID != '' }}
+          HAS_PRIVATE_KEY: ${{ secrets.CLONE_APP_PRIVATE_KEY != '' }}
+        run: |
+          if [ "$HAS_CLIENT_ID" != "true" ] || [ "$HAS_PRIVATE_KEY" != "true" ]; then
+            echo "::error::CLONE_APP_CLIENT_ID and CLONE_APP_PRIVATE_KEY must both be set," \
+                 "or this run cannot clone permit-opa. They are missing from the Actions" \
+                 "secret store, or - on a Dependabot-triggered run - from the Dependabot" \
+                 "secret store (Settings > Secrets and variables > Dependabot;" \
+                 "PDP_TESTER_API_KEY belongs there too). Fork PRs get neither store."
+            exit 1
+          fi
+
+      # A token minted per run from the org-owned GitHub App, instead of a personal access
+      # token: it expires in an hour, is revoked when the job ends, belongs to no person,
+      # and is narrowed here to READ on the ONE repository this job clones - even though the
+      # App itself is installed on two.
+      - name: Mint a read-only token for permitio/permit-opa
+        id: permit-opa-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.CLONE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CLONE_APP_PRIVATE_KEY }}
+          owner: permitio
+          repositories: permit-opa
+          permission-contents: read
 
       # permit-opa is compiled into /app/bin/opa from THIS commit, not from its main:
       # a permit-opa merge changes the shipped binary only through a PDP PR that moves
@@ -55,20 +122,20 @@ jobs:
       # put its full SHA here AND in release.yml (the Pre build step below fails if the
       # two differ), and say in the PR what permit-opa changes it brings in. Check
       # .docker/scout/pdp-v2.vex.json's removal gates when you do.
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           repository: permitio/permit-opa
           ref: ff2356d560e3c7152bcb6c6ab8ebd5d4eb691306  # permit-opa 0.0.23 (#52; go 1.26, x/crypto v0.57.0)
           path: './permit-opa'
-          token: ${{ secrets.CLONE_REPO_TOKEN }}
+          token: ${{ steps.permit-opa-token.outputs.token }}
           # Nothing after the clone needs the token; don't leave it in .git/config.
           persist-credentials: false
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       - name: Pre build PDP tests
         # bash, so the tar pipeline below runs with pipefail (the default `run:` shell
@@ -86,6 +153,7 @@ jobs:
           mkdir custom
           build_root="$PWD"
           cd ./permit-opa
+          # shellcheck disable=SC2035 # find * is intentional: top-level entries have no '-' prefix
           find * \( -name '*go*' -o -name 'LICENSE.md' \) -print0 | xargs -0 tar -czf "$build_root"/custom/custom_opa.tar.gz --exclude '.*'
 
       # The only stage cached across runs. rust_chef reads nothing from the build
@@ -121,7 +189,7 @@ jobs:
           platforms: linux/arm64
 
       - name: Build and load PDP Docker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
         with:
           push: false
           load: true
@@ -131,7 +199,7 @@ jobs:
           # rust_chef only, from the step above; no cache-to (that step says why).
           cache-from: type=gha,scope=rust-chef
           # Must match release.yml. Without it the image that pdp-tester exercises and
-          # that docker-scout gate is built from a possibly-stale cached `main`
+          # that docker-scout/Trivy gate is built from a possibly-stale cached `main`
           # stage, while the released image re-resolves `apk upgrade` and `pip install`
           # - so CI would be validating and scanning a DIFFERENT package set than the one
           # customers pull. Two ways that bites: a gate that passes on cached packages
@@ -148,7 +216,7 @@ jobs:
         run: docker save permitio/pdp-v2:next -o pdp-image.tar
 
       - name: Upload Docker image artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: pdp-image
           path: pdp-image.tar
@@ -164,25 +232,40 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Download Docker image artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        env:
+          # v8.0.1 bundles an unzip library that still calls the deprecated Buffer() constructor,
+          # so every download warns DEP0005 (actions/download-artifact#484). Drop when fixed.
+          NODE_OPTIONS: --disable-warning=DEP0005
         with:
           name: pdp-image
 
       - name: Load Docker image
         run: docker load -i pdp-image.tar
 
-      # Checkout the pdp-tester repository
+      # Same App as the permit-opa clone in build-pdp-image, narrowed to the one
+      # repository this job reads.
+      - name: Mint a read-only token for permitio/pdp-tester
+        id: pdp-tester-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.CLONE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CLONE_APP_PRIVATE_KEY }}
+          owner: permitio
+          repositories: pdp-tester
+          permission-contents: read
+
       - name: Checkout pdp-tester repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           repository: "permitio/pdp-tester"
-          token: ${{ secrets.CLONE_REPO_TOKEN }}
+          token: ${{ steps.pdp-tester-token.outputs.token }}
           path: './pdp-tester'
           # Nothing after the clone needs the token; don't leave it in .git/config.
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
           # Cache pdp-tester's deps so each run doesn't re-resolve/re-download
@@ -250,7 +333,12 @@ jobs:
   docker-scout:
     runs-on: ubuntu-latest
     needs: build-pdp-image
-    if: github.event_name == 'pull_request'
+    # Deliberately NOT gated on `github.event_name == 'pull_request'` any more. release.yml
+    # reaches this workflow through `workflow_call`, where github.event_name is the caller's
+    # event ('release') - so the PR-only condition meant the CVE gate was skipped on exactly
+    # the runs that publish an image to Docker Hub. Releases went out ungated. Now that
+    # build-pdp-release `needs: pdp-tests`, a failing gate blocks the release build.
+    # See PER-15358.
     permissions:
       # required to upload the SARIF report
       security-events: write
@@ -258,39 +346,109 @@ jobs:
       contents: read
       # required to create a pull request comment with the SARIF report
       pull-requests: write
+      # required for the Docker Hub OIDC login below. It does not grant write access to
+      # anything: it only lets the job MINT a GitHub ID token, which Docker exchanges for
+      # a short-lived pull token on permitio/pdp-v2. What that token may do is decided on
+      # Docker's side, by the connection's ruleset, not here.
+      id-token: write
+    # Counts have to cross the job boundary for `notify-gate-failure` below to say
+    # anything more useful than "it went red". A step output is scoped to its own job, so
+    # it only reaches another job by being re-published here. `parse_ok` travels with
+    # them on purpose: "0 CRITICAL / 0 HIGH" from a scan that never parsed is exactly the
+    # message that would talk someone out of looking.
+    outputs:
+      critical: ${{ steps.report.outputs.critical }}
+      high: ${{ steps.report.outputs.high }}
+      total: ${{ steps.report.outputs.total }}
+      parse_ok: ${{ steps.report.outputs.parse_ok }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # This job runs third-party scanner actions with a write-scoped GITHUB_TOKEN;
+          # nothing here pushes, so don't leave the token in .git/config for them.
+          persist-credentials: false
       - name: Download Docker image artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        env:
+          # v8.0.1 bundles an unzip library that still calls the deprecated Buffer() constructor,
+          # so every download warns DEP0005 (actions/download-artifact#484). Drop when fixed.
+          NODE_OPTIONS: --disable-warning=DEP0005
         with:
           name: pdp-image
 
       - name: Load Docker image
         run: docker load -i pdp-image.tar
 
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
+      # OIDC, not a stored token. The action exchanges this run's GitHub ID token for a
+      # short-lived Docker Hub token; no password exists to leak or rotate. Both Scout steps
+      # below ride this login session - neither passes credentials of its own.
+      #
+      # The connection lives in Docker Home (permitio org -> Identity & auth -> OIDC
+      # connections). Its ruleset matches `repo:permitio/PDP:*` and grants PULL ONLY on
+      # permitio/pdp-v2. That subject covers every way this job runs: pull_request,
+      # push to main, and the release path (where `sub` is the caller's tag ref). If the
+      # exchange fails, the connection's Failures tab shows the exact `sub` Docker saw.
+      #
+      # `username` must be the Docker ORGANIZATION; OIDC does not work for personal
+      # accounts. `password` is deliberately omitted - that is what selects the OIDC flow.
+      #
+      # Lifetime raised from the 300s default: the token is minted here but used by every
+      # Scout step that follows, and an expiry mid-job would surface as a Scout failure
+      # rather than an auth one. 1800s is well inside the action's 3600s ceiling.
+      - name: Login to Docker Hub (OIDC)
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        env:
+          DOCKERHUB_OIDC_CONNECTIONID: ${{ vars.DOCKERHUB_OIDC_CONNECTIONID }}
+          DOCKERHUB_OIDC_EXPIREIN: '1800'
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{ vars.DOCKERHUB_ORGANIZATION }}
 
       - name: Docker Scout CVE report (all severities)
-        uses: docker/scout-action@v1
+        uses: docker/scout-action@7c6b6c3f7844478ace1ffd4e7aef649053d1f87d # v1.24.0
         with:
           command: cves
           image: local://permitio/pdp-v2:next
           exit-code: false
+          # All severities, NO VEX filtering, on purpose: this SARIF is what gets uploaded
+          # to code scanning, where a waived CVE should still be visible as a tracked,
+          # explained alert. It is deliberately NOT the file the PR comment reads - see the
+          # `sarif-file` note on the gate step below.
           sarif-file: scout-results.sarif
+          # `summary` publishes to the GitHub Action SUMMARY page, not to the PR - it is
+          # wanted on every run, releases especially, so it stays on (default true).
+          # `write-comment` is the one that needs a PR to exist, so that is what used to be
+          # gated once this job started running on releases too. Getting these the wrong
+          # way round suppressed the release job summary while still attempting a PR
+          # comment with no PR. Same conclusion reached independently in #335.
+          #
+          # `write-comment` is now off unconditionally rather than PR-gated: Scout's
+          # findings arrive inside the unified `<!-- pdp-image-scan -->` sticky comment
+          # posted further down, so leaving Scout's own comments on would put three bot
+          # comments on every PR instead of one.
           summary: true
+          write-comment: false
 
       - name: Docker Scout CVE gate (high and critical)
-        uses: docker/scout-action@v1
+        id: scout-gate
+        uses: docker/scout-action@7c6b6c3f7844478ace1ffd4e7aef649053d1f87d # v1.24.0
         with:
           command: cves
           image: local://permitio/pdp-v2:next
           only-severities: critical,high
           exit-code: true
+          # THE file the unified PR comment and its fail step read. It has to be this one
+          # and not scout-results.sarif above, because only this step applies the OpenVEX
+          # waivers: the report step's SARIF still contains all five waived CVEs at
+          # critical/high, so counting it would fail every PR on known non-issues. Reading
+          # the gate's own output instead means the comment shows, and the fail step blocks
+          # on, exactly the finding set this step already exits non-zero for - the gate
+          # neither loosens nor tightens, it just gains a readable report.
+          sarif-file: scout-gate.sarif
+          # Defaults are true for both; this step runs on releases now, where there is no
+          # PR to comment on. Off unconditionally for the same reason as the report step:
+          # one unified sticky comment, not three.
+          write-comment: false
           # Accept CVEs marked not_affected in the OpenVEX doc (see
           # .docker/scout/pdp-v2.vex.json) so the gate does not fail on
           # vulnerabilities whose code path the PDP never executes and for which
@@ -301,8 +459,8 @@ jobs:
           # mitigates by dropping "baggage" from the extract styles.
           #
           # NOTE: this gate reads packages, so it does not flag the CPython interpreter
-          # itself the way a CPE-based scanner does - that blind spot is why four Python
-          # CVEs reached a customer scan of 0.9.14-rc1 without failing CI (PER-15532).
+          # itself the way a CPE-based scanner does - CPython CVEs can pass this gate
+          # unflagged (PER-15532).
           vex-location: .docker/scout
           only-vex-affected: true
           # REQUIRED: docker scout only *applies* VEX statements whose author
@@ -313,36 +471,382 @@ jobs:
           #
           # SCOPE OF THE VEX DOC: every statement in pdp-v2.vex.json binds its product to
           # `pkg:docker/permitio/pdp-v2@next`, which matches the `local://...:next` image
-          # scanned here and nothing else. That is sound only while this gate is the ONLY
-          # consumer of the doc, which it is today - nothing re-scans the PUBLISHED tags
-          # yet (PER-15358), so read this as a gap, not as cover: those tags are matched by
-          # no waiver mechanism at all. When a published-tag scan does land it must either
-          # key on CVE id rather than PURL, or every product @id here has to be extended
-          # first, or every waiver stops suppressing and the run goes red on known
-          # non-issues.
+          # scanned here, AND to `pkg:docker/permitio/pdp-v2@latest`, which the
+          # `scout-latest` job in scheduled-security-scan.yml re-scans. Scout matches VEX
+          # products on the full PURL string, so those two tags are the only ones these
+          # waivers suppress. Published RELEASE tags are deliberately not listed (they rotate
+          # every release); the same scheduled workflow covers them with Trivy, which reads
+          # .trivyignore.yaml and keys on CVE id. If Scout is ever pointed at another tag,
+          # extend every product @id first or the run goes red on known non-issues.
           vex-author: Permit.io
+
+      # SECOND SCANNER, on purpose. The Scout gate above reads the image's package
+      # manifests, which is why the NOTE on it says it cannot see the CPython interpreter
+      # itself the way a CPE-based scanner does, so CPython CVEs can pass this job
+      # unflagged (PER-15532). Trivy resolves the Alpine package DB and the Python/Go
+      # package trees independently and carries its own advisory feed, so the two
+      # disagree in useful ways: on one published image Scout was clean while Trivy found
+      # dozens of CRITICAL/HIGH, including a CRITICAL that an OS-only scanner misses too.
+      #
+      # Waivers live in .trivyignore.yaml, which must stay in sync with the OpenVEX doc
+      # Scout reads. Both files change together or neither does.
+      #
+      # `if: !cancelled()` is REQUIRED, not defensive. A step with no `if:` is skipped as
+      # soon as an earlier step in the job fails, so without it this gate only ran when the
+      # Scout gate passed - the first CI run of this job reported "Docker Scout CVE gate:
+      # failure / Trivy CVE gate: skipped" and the second opinion was never collected. A
+      # run where Scout fails is exactly the run where it is most worth having. `!cancelled()`
+      # rather than `always()` so a cancelled workflow still stops promptly. The job still
+      # fails if either gate fails; both now report on every run. Guard any third scanner
+      # the same way. The Trivy leg is now four steps (scan, format, comment, fail) and
+      # every one of them carries the guard - dropping it from any single step puts the
+      # whole leg back to being skipped the moment Scout goes red.
+      - name: Trivy CVE scan (JSON report)
+        if: ${{ !cancelled() }}
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: permitio/pdp-v2:next
+          scanners: vuln
+          severity: CRITICAL,HIGH
+          # NOT `pkg-types`. The trivy CLI flag is `--pkg-types`, but the action's input
+          # is still called `vuln-type` (its action.yaml even carries a
+          # "# TODO: rename to pkg-types"), and it maps to TRIVY_PKG_TYPES internally.
+          # An undeclared input is dropped silently, so `pkg-types:` here would look
+          # deliberate and do nothing. Same trap as no-cache-filter(s) in release.yml.
+          vuln-type: os,library
+          trivyignores: .trivyignore.yaml
+          format: json
+          output: trivy-pr.json
+          # `exit-code: '0'` is NOT a relaxation. Trivy's own exit code makes a bad gate:
+          # it is non-zero on ANY finding, so the step died before anything could read the
+          # report and the PR got a red X pointing at a log nobody opens. The scan now
+          # always succeeds, the report always renders, and the fail step below decides.
+          #
+          # NET GATE BEHAVIOUR IS UNCHANGED. With `severity: CRITICAL,HIGH` +
+          # `trivyignores: .trivyignore.yaml` + `ignore-unfixed: false`, every vulnerability
+          # that can reach trivy-pr.json is by definition an unwaived CRITICAL or HIGH -
+          # precisely the set that made `exit-code: '1'` fail. So "critical + high > 0" in
+          # the fail step is the old condition, evaluated two steps later. The fail step
+          # additionally blocks when the report cannot be parsed, which the old exit code
+          # could not express at all.
+          exit-code: '0'
+          # Report findings that have no fix yet, rather than hiding them. An unfixable
+          # CVE is the case that needs a human decision (bump, drop, or waive with a
+          # documented reachability argument), so it must not be silently dropped.
+          ignore-unfixed: false
+
+      # ONE comment per PR, covering BOTH scanners, keyed by the `<!-- pdp-image-scan -->`
+      # marker the formatter emits as the body's first line.
+      #
+      # The formatter always exits 0 and always emits a marked body, even when a report is
+      # missing or unparseable - a silent PR is worse than a red one, and the blocking
+      # decision belongs to the fail step (which reads `parse_ok`), not to this step's exit
+      # code. stdout is discarded: the body is third-party advisory text and is dumped to
+      # the log under a `::stop-commands::` guard in the fail step instead.
+      - name: Format image vulnerability report
+        id: report
+        if: ${{ !cancelled() }}
+        env:
+          SCOUT_GATE_OUTCOME: ${{ steps.scout-gate.outcome }}
+        run: |
+          set -euo pipefail
+          # An absent scout-gate.sarif normally means Scout never produced a verdict, and
+          # the formatter is right to call that "unavailable" and set parse_ok=false so the
+          # fail step blocks. The one exception is a gate step that SUCCEEDED and wrote
+          # nothing, which can only mean it found nothing: Scout has already asserted the
+          # image is clean of unwaived critical/high, so an empty SARIF is the honest
+          # stand-in. Every other outcome - failure, skipped, cancelled - leaves the file
+          # absent and the build fails closed.
+          if [ ! -s scout-gate.sarif ] && [ "${SCOUT_GATE_OUTCOME}" = "success" ]; then
+            echo '{"version":"2.1.0","runs":[]}' > scout-gate.sarif
+            echo "::notice title=Docker Scout wrote no SARIF::The Scout gate passed without producing scout-gate.sarif; reporting it as zero findings."
+          fi
+          python3 .github/scripts/format_scan_report.py \
+            --trivy trivy-pr.json \
+            --scout-sarif scout-gate.sarif \
+            --image permitio/pdp-v2:next \
+            --out scan-comment.md \
+            --github-output "$GITHUB_OUTPUT" > /dev/null
+
+      # Update-or-create against the marker, so a PR collects one comment that is rewritten
+      # on every push rather than a wall of them.
+      #
+      # All four guards are load-bearing:
+      #   - `!cancelled()` so the comment still posts on the run where the gate FAILED,
+      #     which is the run where it matters most.
+      #   - `steps.report.outcome == 'success'` because scan-comment.md does not exist
+      #     otherwise.
+      #   - the fork check, because PDP is public: on a fork PR GITHUB_TOKEN is read-only
+      #     and createComment 403s, turning the gate red for the wrong reason. Do NOT
+      #     "fix" that with pull_request_target - it would run untrusted head code with
+      #     this repo's secrets.
+      #   - the Dependabot check, because Dependabot-triggered runs get the same read-only
+      #     token.
+      # On every skipped path the fail step below still writes the identical markdown to
+      # the job summary and one ::error:: annotation per finding, so nothing is lost.
+      #
+      # Stays on the default GITHUB_TOKEN: the dedup match is on the
+      # `github-actions[bot]` author login, and a PAT or App token would change it and
+      # start a fresh comment chain.
+      - name: Post unified scan comment
+        if: |
+          !cancelled()
+          && steps.report.outcome == 'success'
+          && github.event_name == 'pull_request'
+          && github.event.pull_request.head.repo.full_name == github.repository
+          && github.actor != 'dependabot[bot]'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- pdp-image-scan -->';
+            const body = fs.readFileSync('scan-comment.md', 'utf8');
+
+            // github.paginate, not a bare listComments: the API defaults to 30 comments
+            // per page, so on a busy PR the marked comment falls off page 1 and every
+            // subsequent push appends a new one instead of updating.
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              per_page: 100,
+            });
+            const existing = comments.find(c =>
+              c.user?.login === 'github-actions[bot]' && c.body?.startsWith(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+      # The gate itself, split out from the scanners so the report is always rendered
+      # before anything decides to fail. It is also the only surface on the runs where the
+      # comment step is skipped (fork PRs, Dependabot PRs, pushes and releases), which is
+      # why it writes the full markdown to the job summary unconditionally.
+      #
+      # Values arrive through `env:`, never as `${{ }}` inside the script body - that is
+      # zizmor's template-injection rule, and the substituted values here are derived from
+      # third-party advisory data.
+      - name: Fail on unwaived CRITICAL/HIGH findings
+        if: ${{ !cancelled() }}
+        env:
+          CRITICAL: ${{ steps.report.outputs.critical }}
+          HIGH: ${{ steps.report.outputs.high }}
+          TOTAL: ${{ steps.report.outputs.total }}
+          PARSE_OK: ${{ steps.report.outputs.parse_ok }}
+          REPORT_OUTCOME: ${{ steps.report.outcome }}
+        run: |
+          set -uo pipefail
+
+          # FAIL CLOSED. A scanner that crashed, or a report the formatter could not
+          # parse, must never read as clean - a zero-byte report silently classified as
+          # CLEAN is the exact bug this replaces.
+          if [ "${REPORT_OUTCOME}" != "success" ] || [ "${PARSE_OK:-}" != "true" ]; then
+            {
+              echo "## PDP image vulnerability report - the scan did not complete"
+              echo ""
+              echo "Report step outcome: \`${REPORT_OUTCOME}\`. parse_ok: \`${PARSE_OK:-unset}\`."
+              echo ""
+              echo "Failing closed. Check the Trivy scan and Docker Scout steps above:"
+              echo "a missing or unparseable report is not a clean image."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error title=Image scan did not complete::The vulnerability report could not be produced or parsed (outcome=${REPORT_OUTCOME}, parse_ok=${PARSE_OK:-unset}). Failing closed - a scan that did not run is not a clean scan."
+            exit 1
+          fi
+
+          # Same markdown as the PR comment. The formatter already escapes every
+          # scanner-supplied cell, so this is safe to append verbatim.
+          cat scan-comment.md >> "$GITHUB_STEP_SUMMARY"
+
+          # The log copy is not: a CVE title containing `::error::` or `::endgroup::`
+          # would hijack the workflow-command stream and could forge a passing
+          # annotation next to the real failure. ::stop-commands:: with a per-run token
+          # disarms the whole block.
+          STOP_TOKEN="pdp-image-scan-${GITHUB_RUN_ID}-${RANDOM}"
+          echo "::group::PDP image vulnerability report"
+          echo "::stop-commands::${STOP_TOKEN}"
+          cat scan-comment.md
+          echo "::${STOP_TOKEN}::"
+          echo "::endgroup::"
+
+          if [ "${CRITICAL:-0}" -eq 0 ] && [ "${HIGH:-0}" -eq 0 ]; then
+            echo "No unwaived CRITICAL or HIGH findings (${TOTAL:-0} finding(s) reported in total)."
+            exit 0
+          fi
+
+          # One annotation per finding, from both scanners. GitHub caps the annotations
+          # panel near 10, which is why the full table went to the job summary above -
+          # but on a fork PR these annotations and that summary are the ONLY surface.
+          #
+          # `%`, CR and LF are the workflow-command escapes; `,` and `:` are structural
+          # inside a `title=` property, so they get encoded there too. Titles are cut at
+          # 200 characters to stay legible in the checks UI.
+          ESCAPES='
+            def escmsg: tostring | gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A");
+            def escprop: escmsg | gsub(","; "%2C") | gsub(":"; "%3A");
+          '
+          if ! jq -r "${ESCAPES}"'
+            .Results[]? | .Vulnerabilities[]?
+            | select((.Severity // "") | ascii_upcase | . == "CRITICAL" or . == "HIGH")
+            | "::error title=Trivy \((.Severity // "?") | escprop) - \((.PkgName // "?") | escprop)::\((.VulnerabilityID // "?") | escmsg) in \((.PkgName // "?") | escmsg) \((.InstalledVersion // "?") | escmsg) - fixed in \((.FixedVersion // "") | if . == "" then "no fix available" else . end | escmsg) - \((.Title // "") | .[0:200] | escmsg)"
+          ' trivy-pr.json; then
+            echo "::warning title=Trivy annotations unavailable::Could not render per-finding annotations from trivy-pr.json. The full table is in the job summary."
+          fi
+          if [ -s scout-gate.sarif ] && ! jq -r "${ESCAPES}"'
+            .runs[]?.results[]?
+            | "::error title=Docker Scout - \((.ruleId // "?") | escprop)::\((.message.text // "see the report in the job summary") | .[0:200] | escmsg)"
+          ' scout-gate.sarif; then
+            echo "::warning title=Docker Scout annotations unavailable::Could not render per-finding annotations from scout-gate.sarif. The full table is in the job summary."
+          fi
+
+          echo "::error title=Image vulnerability gate::${CRITICAL} CRITICAL and ${HIGH} HIGH unwaived finding(s) in permitio/pdp-v2:next. Fix by upgrading the package, or - only with a written reachability argument - waive the CVE in BOTH .trivyignore.yaml and .docker/scout/pdp-v2.vex.json. See docs/image-vulnerability-management.md."
+          exit 1
 
       - name: Upload SARIF report
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           sarif_file: scout-results.sarif
+
+  # Immediate Slack alert when the image gate itself goes red - the PR comment and the
+  # weekly digest are not enough on their own.
+  #
+  # NOT on pull_request, deliberately. A PR-gate failure is already in front of the one
+  # person who can fix it: a red required check plus the `<!-- pdp-image-scan -->` sticky
+  # comment on their own PR. Paging a channel for it trains everyone to mute the channel,
+  # which is how the real alerts get lost. A failure on a push to main or on the
+  # workflow_call path release.yml uses means something very different: the finding is
+  # already merged, or is about to be published to Docker Hub. That is the one nobody is
+  # looking at yet, so that is the one worth a message.
+  #
+  # A separate job rather than a step, because ./.github/workflows/notify-slack.yml is a
+  # reusable workflow and `uses:` at job level is the only way to call one. That is also
+  # why there is no `env:` or `continue-on-error:` here - neither is permitted on a
+  # `uses:` job, and the notifier already handles both internally: it no-ops green when
+  # SLACK_WEBHOOK_URL is unset, and its own send step carries continue-on-error so a
+  # Slack outage cannot mask the gate result.
+  notify-gate-failure:
+    needs: docker-scout
+    # `needs.docker-scout.result == 'failure'`, NOT `failure()`. A job-level `failure()`
+    # is true when ANY ancestor failed, and `build-pdp-image` is an ancestor of
+    # docker-scout - so `failure()` would fire on a plain Dockerfile or build break and
+    # announce "this is NOT a clean image" about an image that was never scanned. That
+    # misdescribes a build break as a security finding, which is the fastest way to teach
+    # people to ignore this channel. A build break leaves docker-scout `skipped` and is
+    # already a red run on main; it does not need a security alert.
+    #
+    # Not on pull_request: a PR-gate failure is already in front of its author as a red
+    # check and the sticky comment. A failure on main or on a release means it got IN,
+    # which is the thing worth interrupting someone for.
+    #
+    # `always()` is REQUIRED. A job-level `if:` without a status function gets an
+    # implicit `success()`, which is false exactly when docker-scout failed - so without
+    # it this job would be skipped on the one outcome it exists for.
+    if: ${{ always() && needs.docker-scout.result == 'failure' && github.event_name != 'pull_request' }}
+    # `permissions` IS allowed on a `uses:` job even though `env` and `continue-on-error`
+    # are not. It matches this file's workflow-level default today, and is spelled out so
+    # the notifier's grant does not follow that default if it ever widens.
+    # `contents: read` exactly mirrors what notify-slack.yml declares for itself - a called
+    # workflow's permissions cannot exceed the caller's, so narrowing further than the
+    # callee asks for would fail the run rather than tighten anything.
+    permissions:
+      contents: read
+    # `./`, not the `$/` zizmor's self-repository audit suggests: actionlint 1.7.12 rejects
+    # `$/` in a job-level `uses:`, and only with `./` does it check `secrets:` against the
+    # callee. A `./` call resolves from the caller's own commit, so nothing can drift.
+    uses: ./.github/workflows/notify-slack.yml  # zizmor: ignore[self-repository]
+    with:
+      subject: image vulnerability gate on ${{ github.ref_name }}
+      status: fail
+      # `parse_ok != 'true'` covers both an unparseable report and a docker-scout job that
+      # never reached the report step, where every output is the empty string. Announcing
+      # "0 CRITICAL / 0 HIGH" for either of those is the one message that would talk
+      # someone out of opening the run.
+      summary: |-
+        ${{ needs.docker-scout.outputs.parse_ok == 'true' && format('{0} CRITICAL / {1} HIGH unwaived finding(s) in permitio/pdp-v2:next ({2} reported in total).', needs.docker-scout.outputs.critical, needs.docker-scout.outputs.high, needs.docker-scout.outputs.total) || 'The image scan did not complete - the report could not be produced or parsed. Failing closed: this is NOT a clean image.' }}
+        Commit `${{ github.sha }}` on `${{ github.ref_name }}` (event: ${{ github.event_name }}).
+        Fix by upgrading the package, or - only with a written reachability argument - waive the CVE in BOTH `.trivyignore.yaml` and `.docker/scout/pdp-v2.vex.json`. See docs/image-vulnerability-management.md.
+    secrets:
+      # Named rather than `secrets: inherit`, matching release.yml's call of the same
+      # notifier. This workflow holds CLONE_APP_PRIVATE_KEY and PDP_TESTER_API_KEY; a
+      # workflow whose only job is to POST to an external webhook has no business being
+      # handed either, and `inherit` hands over both.
+      # If the secret is ever unset it resolves to the empty string and the notifier
+      # becomes a green no-op that says so in a ::notice::.
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  dependency-review:
+    # The third scanner, and the only one that looks at the dependency DIFF rather than at
+    # a built image: it blocks a PR that ADDS a high/critical advisory, where Dependabot's
+    # own PRs only clean up advisories already on main. PDP is a public repository, so the
+    # dependency graph and this action are free - no GitHub Advanced Security licence.
+    #
+    # PR-only, because the action diffs base-ref against head-ref and has neither on a
+    # push or on the workflow_call path release.yml uses; it errors rather than no-ops
+    # there. Deliberately not in any job's `needs:` - it is an independent gate and
+    # chaining the image build behind it would only serialise CI.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    # A job-level permissions block REPLACES the workflow-level default instead of merging
+    # with it, so this job restates `contents: read` alongside the write it adds.
+    permissions:
+      # read the dependency graph and the diff
+      contents: read
+      # write this action's own summary comment
+      pull-requests: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+          show-patched-versions: true
+          # The five CVEs waived in .trivyignore.yaml and .docker/scout/pdp-v2.vex.json,
+          # by GHSA id (this action does not read either file). Without this, a PR that
+          # touches the starlette or ddtrace pins fails here on CVEs every other gate
+          # treats as waived. Keep in step with those two files.
+          allow-ghsas: >-
+            GHSA-wqp7-x3pw-xc5r, GHSA-82w8-qh3p-5jfq, GHSA-86qp-5c8j-p5mr,
+            GHSA-x746-7m8f-x49c, GHSA-mw54-j2v2-42hr
+          # This action posts its own sticky comment under its own marker, so it needs
+          # none of the github-script plumbing the image report above does. `on-failure`
+          # keeps a clean PR silent. `never` on fork and Dependabot PRs, where
+          # GITHUB_TOKEN is read-only and the comment would 403 - the job summary still
+          # carries the result there.
+          comment-summary-in-pr: ${{ (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]') && 'on-failure' || 'never' }}
 
   rust-ci:
     name: Rust CI
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@v1
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
         with:
           toolchain: stable
           components: rustfmt, clippy
 
       - name: Rust cache
-        uses: swatinem/rust-cache@v2
+        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: "rust-cache"
 
