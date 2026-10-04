@@ -885,11 +885,17 @@ jobs:
   # read the BUILT image, and neither reliably sees the crates compiled into the Rust
   # binaries. cargo audit reads Cargo.lock against the RustSec advisory database. A
   # vulnerable crate fails the job, which also blocks a release (release.yml needs this
-  # whole workflow); unmaintained and yanked crates are warnings and do not.
+  # whole workflow); unmaintained and yanked crates are warnings and do not. On a PR the
+  # result is kept in one sticky comment, marker `<!-- pdp-cargo-audit -->`, the way
+  # permitio/agent-security reports its audits.
   cargo-audit:
     name: cargo audit
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    permissions:
+      contents: read
+      # required to create or update the sticky PR comment
+      pull-requests: write
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -909,27 +915,81 @@ jobs:
         if: steps.cargo-audit-cache.outputs.cache-hit != 'true'
         run: cargo install --locked cargo-audit@0.22.2
 
+      # cargo audit exits non-zero on any vulnerability, so its status is not the verdict:
+      # the report is rendered first and the fail step below decides from it.
       - name: Audit Cargo.lock
+        id: audit
+        run: |
+          set -uo pipefail
+          cargo audit --json > cargo-audit.json
+          echo "cargo audit exited $?"
+
+      # Always exits 0 with a body - an unreadable report renders a "could not be parsed"
+      # comment and sets parse_ok=false, which the fail step blocks on.
+      - name: Render the audit report
+        id: report
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
-          # cargo audit exits non-zero on a vulnerability, so its status is captured and the
-          # decision made from the report: a missing or unreadable report fails as well.
-          status=0
-          cargo audit --json > cargo-audit.json || status=$?
-          if ! jq -e '.vulnerabilities.list | type == "array"' cargo-audit.json > /dev/null 2>&1; then
-            echo "::error::cargo audit produced no readable report (exit ${status}). See the log above."
+          python3 .github/scripts/format_cargo_audit.py \
+            --report cargo-audit.json \
+            --out cargo-audit-comment.md \
+            --github-output "$GITHUB_OUTPUT" > /dev/null
+          cat cargo-audit-comment.md >> "$GITHUB_STEP_SUMMARY"
+
+      # Same guards and upsert as the image-scan comment above: same-repo PRs only (a fork
+      # or Dependabot PR gets a read-only token), and listComments paginated so the marked
+      # comment is found on a busy PR.
+      - name: Post the cargo audit comment
+        if: |
+          !cancelled()
+          && steps.report.outcome == 'success'
+          && github.event_name == 'pull_request'
+          && github.event.pull_request.head.repo.full_name == github.repository
+          && github.actor != 'dependabot[bot]'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- pdp-cargo-audit -->';
+            const body = fs.readFileSync('cargo-audit-comment.md', 'utf8');
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              per_page: 100,
+            });
+            const existing = comments.find(c =>
+              c.user?.login === 'github-actions[bot]' && c.body?.startsWith(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+      - name: Fail on a vulnerable crate or an unreadable report
+        if: ${{ !cancelled() }}
+        env:
+          PARSE_OK: ${{ steps.report.outputs.parse_ok }}
+          VULNERABLE: ${{ steps.report.outputs.vulnerable }}
+        run: |
+          set -euo pipefail
+          if [ "${PARSE_OK:-}" != "true" ]; then
+            echo "::error::cargo audit produced no readable report, so Cargo.lock is UNVERIFIED. See the audit step's log."
             exit 1
           fi
-          {
-            echo "## cargo audit"
-            echo
-            jq -r '"\(.vulnerabilities.count) vulnerable crate(s). Warnings: \(.warnings | to_entries | map("\(.value | length) \(.key)") | join(", ") | if . == "" then "none" else . end)."' cargo-audit.json
-            echo
-            jq -r '.vulnerabilities.list[] | "- `\(.package.name)@\(.package.version)` [\(.advisory.id)](https://rustsec.org/advisories/\(.advisory.id)): \(.advisory.title) - patched: \(.versions.patched | join(", ") | if . == "" then "none" else . end)"' cargo-audit.json
-          } >> "$GITHUB_STEP_SUMMARY"
-          count="$(jq '.vulnerabilities.count' cargo-audit.json)"
-          if [ "$count" -gt 0 ]; then
-            echo "::error::cargo audit found ${count} vulnerable crate(s) in Cargo.lock. See the job summary. Upgrade the crate (cargo update -p NAME), or - only with a written reachability argument - ignore the advisory in .cargo/audit.toml."
+          if [ "${VULNERABLE:-0}" -gt 0 ]; then
+            echo "::error::cargo audit found ${VULNERABLE} vulnerable crate(s) in Cargo.lock. See the job summary. Upgrade the crate (cargo update -p NAME), or - only with a written reachability argument - ignore the advisory in .cargo/audit.toml."
             exit 1
           fi
           echo "cargo audit: no vulnerable crates in Cargo.lock."

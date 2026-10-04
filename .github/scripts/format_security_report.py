@@ -66,6 +66,7 @@ def _sibling(name: str):
 scan_report = _sibling("format_scan_report")
 classifier = _sibling("classify_image_cves")
 dependabot = _sibling("check_dependabot_alerts")
+cargo_audit = _sibling("format_cargo_audit")
 
 
 @dataclass
@@ -319,49 +320,6 @@ def dependabot_source(alerts: Path | None, waived: set[str]) -> tuple[Source, in
 
 # --- cargo audit ---------------------------------------------------------------------
 
-# cargo audit carries a CVSS vector, not a score or severity; many RustSec advisories carry
-# neither. CVSS v3.x base-metric weights, from the FIRST CVSS v3.1 specification, 7.4.
-_AV = {"N": 0.85, "A": 0.62, "L": 0.55, "P": 0.2}
-_AC = {"L": 0.77, "H": 0.44}
-_PR_UNCHANGED = {"N": 0.85, "L": 0.62, "H": 0.27}
-_PR_CHANGED = {"N": 0.85, "L": 0.68, "H": 0.5}
-_UI = {"N": 0.85, "R": 0.62}
-_CIA = {"H": 0.56, "L": 0.22, "N": 0.0}
-_RUSTSEC_ID = re.compile(r"^RUSTSEC-\d{4}-\d{4}$")
-
-
-def _roundup(value: float) -> float:
-    """CVSS v3.1 Roundup: the smallest one-decimal number >= value, float-safe."""
-    scaled = round(value * 100_000)
-    if scaled % 10_000 == 0:
-        return scaled / 100_000
-    return (scaled // 10_000 + 1) / 10
-
-
-def cvss3_base_score(vector: str) -> float | None:
-    """Base score of a CVSS v3.0/v3.1 vector; None for any other version or a malformed one."""
-    parts = vector.strip().split("/")
-    if parts[0] not in ("CVSS:3.0", "CVSS:3.1"):
-        return None
-    metrics = dict(part.split(":", 1) for part in parts[1:] if ":" in part)
-    scope = metrics.get("S")
-    if scope not in ("U", "C"):
-        return None
-    privileges = _PR_CHANGED if scope == "C" else _PR_UNCHANGED
-    try:
-        av, ac = _AV[metrics["AV"]], _AC[metrics["AC"]]
-        pr, ui = privileges[metrics["PR"]], _UI[metrics["UI"]]
-        c, i, a = _CIA[metrics["C"]], _CIA[metrics["I"]], _CIA[metrics["A"]]
-    except KeyError:
-        return None
-    iss = 1 - (1 - c) * (1 - i) * (1 - a)
-    impact = 6.42 * iss if scope == "U" else 7.52 * (iss - 0.029) - 3.25 * (iss - 0.02) ** 15
-    if impact <= 0:
-        return 0.0
-    exploitability = 8.22 * av * ac * pr * ui
-    raw = impact + exploitability if scope == "U" else 1.08 * (impact + exploitability)
-    return _roundup(min(raw, 10))
-
 
 def cargo_source(report: Path | None) -> tuple[Source, int]:
     """Vulnerable crates from `cargo audit --json`, and how many warnings (unmaintained, yanked) it gave."""
@@ -383,15 +341,14 @@ def cargo_source(report: Path | None) -> tuple[Source, int]:
         advisory = entry.get("advisory") or {}
         package = entry.get("package") or {}
         advisory_id = str(advisory.get("id") or "?")
-        score = cvss3_base_score(str(advisory.get("cvss") or ""))
-        url = f"https://rustsec.org/advisories/{advisory_id}" if _RUSTSEC_ID.match(advisory_id) else ""
+        score = cargo_audit.cvss3_base_score(str(advisory.get("cvss") or ""))
         source.findings.append(
             Finding(
                 id=advisory_id,
                 severity=normalise_severity(None, score),
                 score=score or None,
                 title=str(advisory.get("title") or ""),
-                url=url or str(advisory.get("url") or ""),
+                url=cargo_audit.advisory_url(advisory),
                 remediation=_remediation(", ".join((entry.get("versions") or {}).get("patched") or [])),
                 packages=[f"{package.get('name') or '?'}@{package.get('version') or '?'}"],
                 sources=["cargo audit"],

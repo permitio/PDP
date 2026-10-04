@@ -199,23 +199,6 @@ def test_no_scout_cargo_or_dependabot_argument_reads_as_incomplete(run):
     assert outputs["status"] == "fail"
 
 
-@pytest.mark.parametrize(
-    ("vector", "expected"),
-    [
-        ("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H", 9.8),
-        ("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H", 7.5),
-        ("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H", 10.0),
-        ("CVSS:3.0/AV:L/AC:H/PR:H/UI:R/S:U/C:L/I:N/A:N", 1.8),
-        ("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:N", 0.0),
-        ("CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N", None),
-        ("CVSS:3.1/AV:X/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H", None),
-        ("", None),
-    ],
-)
-def test_cvss3_base_score(vector, expected):
-    assert report.cvss3_base_score(vector) == expected
-
-
 def test_cargo_finding_is_scored_from_its_vector_and_linked_to_rustsec(run):
     crate = _crate("RUSTSEC-2026-0189", cvss="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H")
     message, _, outputs = run(trivy={"latest": _trivy()}, scout=_sarif(), alerts=[], cargo=_cargo(crate))
