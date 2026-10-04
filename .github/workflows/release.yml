@@ -59,7 +59,7 @@ jobs:
     # The docker-container driver this sets up is what makes a multi-platform OCI export
     # possible; the default docker driver cannot export more than one platform.
     - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
     # A 1-hour, read-only token on permit-opa alone, minted from the org-owned GitHub App
     # `permitio-pdp-ci` - see the matching step in tests.yml's build-pdp-image.
