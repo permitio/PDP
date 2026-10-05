@@ -832,22 +832,71 @@ def test_a_pinned_report_names_mains_pinned_version(tmp_path):
     assert "Raise the `==` pin" not in body
 
 
-def test_a_finding_a_rebuild_cannot_clear_outranks_the_python_maybe(tmp_path):
-    vulns = [
-        _vuln("CVE-2026-6", pkg="httpx", fixed="0.28.1"),
-        _vuln("CVE-2026-8", pkg="golang.org/x/net", fixed="0.41.0"),
-    ]
+@pytest.mark.parametrize(
+    ("result_type", "vuln", "certainly", "part"),
+    [
+        pytest.param(
+            "alpine",
+            _vuln("CVE-2026-8", pkg="busybox", fixed=""),
+            WILL_NOT,
+            "1 finding(s) have **no upstream fix at all**",
+            id="no-fix",
+        ),
+        pytest.param(
+            "gobinary",
+            _vuln("CVE-2026-8", pkg="stdlib", fixed="1.26.9"),
+            WILL_NOT,
+            "1 finding(s) are in the Go stdlib",
+            id="base-digest",
+        ),
+        pytest.param(
+            "gobinary",
+            _vuln("CVE-2026-8", pkg="golang.org/x/net", fixed="0.41.0"),
+            WILL_NOT,
+            "1 finding(s) are in Go modules linked into `/app/bin/opa`",
+            id="permit-opa",
+        ),
+        pytest.param(
+            "python-pkg",
+            _vuln("CVE-2026-8", pkg="anyio", fixed="4.9.0", installed="4.8.0"),
+            WILL_NOT,
+            "1 finding(s) are in Python packages whose flagged version main's uv.lock still holds",
+            id="lock-still-flagged",
+        ),
+        pytest.param(
+            "python-pkg",
+            _vuln("CVE-2026-8", pkg="starlette", fixed="0.51.0", installed="0.50.0"),
+            WILL_NOT,
+            "1 finding(s) are in Python packages whose flagged version main's uv.lock still holds",
+            id="pin-still-flagged",
+        ),
+        # Control: a second Python finding whose lock moved on leaves the call open.
+        pytest.param(
+            "python-pkg",
+            _vuln("CVE-2026-8", pkg="anyio", fixed="4.9.0", installed="4.7.0"),
+            MIGHT_NOT,
+            "2 finding(s) are in Python packages, which a rebuild installs",
+            id="lock-moved",
+        ),
+    ],
+)
+def test_a_finding_a_rebuild_cannot_clear_outranks_the_python_maybe(tmp_path, result_type, vuln, certainly, part):
+    maybe = _vuln("CVE-2026-6", pkg="httpx", fixed="0.28.2", installed="0.28.0")
     report = _write(
         tmp_path / "t.json",
         {
             "Results": [
-                {"Target": "py", "Type": "python-pkg", "Vulnerabilities": vulns[:1]},
-                {"Target": "opa", "Type": "gobinary", "Vulnerabilities": vulns[1:]},
+                {"Target": "py", "Type": "python-pkg", "Vulnerabilities": [maybe]},
+                {"Target": "other", "Type": result_type, "Vulnerabilities": [vuln]},
             ]
         },
     )
-    body = classifier.render("latest", classifier.collect(report, pins=set(), locked={}), "SOURCE")
-    assert "**A rebuild alone will NOT clear this image.**" in body
+    locked = {"httpx": {"0.28.1"}, "anyio": {"4.8.0"}, "starlette": {"0.50.0"}}
+    body = classifier.render("latest", classifier.collect(report, pins={"starlette"}, locked=locked), "SOURCE")
+    headline = _headline(body)
+    assert headline.startswith(certainly)
+    assert part in headline
+    assert "finding(s) are in Python packages, which a rebuild installs from main's uv.lock as it is" in headline
 
 
 def _classify_cli(report: Path, summary: Path) -> subprocess.CompletedProcess:
