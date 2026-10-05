@@ -15,7 +15,7 @@ import importlib.util
 import json
 import subprocess
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -34,11 +34,12 @@ def _load(name: str, path: Path):
 
 watch = _load("ci_scripts_check_dependabot_alerts", SCRIPT)
 
-NOW = datetime(2026, 9, 16, 12, 0, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 9, 16, 12, 0, 0, tzinfo=UTC)
 WAIVED = {"CVE-2026-50271", "CVE-2026-54283", "CVE-2026-48818"}
 
 
 def _raw(
+    *,
     number=1,
     severity="high",
     state="open",
@@ -319,7 +320,7 @@ def test_cli_reports_an_unwaived_alert_and_writes_the_outputs(tmp_path):
 
 
 def test_cli_suppresses_an_alert_waived_in_the_real_trivyignore(tmp_path):
-    waived_id = sorted(watch.waived_cve_ids())[0]
+    waived_id = min(watch.waived_cve_ids())
     feed = tmp_path / "alerts.json"
     feed.write_text(json.dumps([_raw(number=78, cve=waived_id)]), encoding="utf-8")
     outputs = tmp_path / "gh.txt"
@@ -355,8 +356,6 @@ def test_cli_exits_non_zero_on_a_permission_error_body(tmp_path):
 
 
 def test_an_expired_waiver_no_longer_silences_its_alert(tmp_path):
-    from datetime import date
-
     waivers = tmp_path / "w.yaml"
     waivers.write_text(
         "vulnerabilities:\n"

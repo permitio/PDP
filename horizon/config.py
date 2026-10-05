@@ -1,3 +1,4 @@
+from enum import StrEnum
 from typing import Any
 
 from opal_common.confi import Confi, confi
@@ -12,8 +13,7 @@ from horizon.debounce import DEFAULT_DEBOUNCE_SECONDS
 MOCK_API_KEY = "MUST BE DEFINED"
 
 
-# scopes enum
-class ApiKeyLevel(str):
+class ApiKeyLevel(StrEnum):
     ORGANIZATION = "organization"
     PROJECT = "project"
     ENVIRONMENT = "environment"
@@ -233,8 +233,7 @@ class SidecarConfig(Confi):
     def parse_plugins(value: Any) -> dict[str, dict[str, int | bool | str]]:
         if isinstance(value, str):
             return parse_raw_as(dict[str, dict[str, int | bool | str]], value)
-        else:
-            return parse_obj_as(dict[str, dict[str, int | bool | str]], value)
+        return parse_obj_as(dict[str, dict[str, int | bool | str]], value)
 
     OPA_PLUGINS: dict[str, dict[str, int | bool | str]] = confi.str(
         "OPA_PLUGINS",
@@ -319,8 +318,7 @@ class SidecarConfig(Confi):
     def parse_callbacks(value: Any) -> list[CallbackEntry]:
         if isinstance(value, str):
             return parse_raw_as(list[CallbackEntry], value)
-        else:
-            return parse_obj_as(list[CallbackEntry], value)
+        return parse_obj_as(list[CallbackEntry], value)
 
     DATA_UPDATE_CALLBACKS: list[CallbackEntry] = confi.str(
         "DATA_UPDATE_CALLBACKS",
@@ -342,13 +340,13 @@ class SidecarConfig(Confi):
         {
             "name": "Authorization API",
             "description": "Authorization queries to OPA. These queries are answered locally by OPA "
-            + "and do not require the cloud service. Latency should be very low (< 20ms per query)",
+            "and do not require the cloud service. Latency should be very low (< 20ms per query)",
         },
         {
             "name": "Local Queries",
             "description": "These queries are done locally against the sidecar and do not "
-            + "involve a network round-trip to Permit.io cloud API. Therefore they are safe "
-            + "to use with reasonable performance (i.e: with negligible latency) in the context of a user request.",
+            "involve a network round-trip to Permit.io cloud API. Therefore they are safe "
+            "to use with reasonable performance (i.e: with negligible latency) in the context of a user request.",
         },
         {
             "name": "Policy Updater",

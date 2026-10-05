@@ -1,8 +1,9 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from horizon.facts.client import CONSISTENT_UPDATE_HEADER, FactsClient
 from starlette.requests import Request as FastApiRequest
+
+from horizon.facts.client import CONSISTENT_UPDATE_HEADER, FactsClient
 
 
 def _make_request(headers: dict[str, str] | None = None) -> FastApiRequest:

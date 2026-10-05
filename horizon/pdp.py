@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import math
 import os
@@ -71,17 +70,17 @@ def set_process_niceness(target_nice: int) -> None:
         if delta != 0:
             os.nice(delta)  # Apply the change
             new_niceness = os.nice(0)  # Read the new niceness to confirm
-            logging.info(
-                "Changed the process niceness by %d from %d to %d (target was %d).",
+            logger.info(
+                "Changed the process niceness by {} from {} to {} (target was {}).",
                 delta,
                 current_niceness,
                 new_niceness,
                 target_nice,
             )
         else:
-            logging.debug("Process niceness is already %d, which matches the target; no change made.", current_niceness)
+            logger.debug("Process niceness is already {}, which matches the target; no change made.", current_niceness)
     except OSError as exc:
-        logging.warning("Failed to change process niceness to %d: %s", target_nice, exc)
+        logger.warning("Failed to change process niceness to {}: {}", target_nice, exc)
 
 
 def apply_config(overrides_dict: dict, config_object: Confi):
@@ -97,7 +96,7 @@ def apply_config(overrides_dict: dict, config_object: Confi):
                     key,
                     config_object.entries[key].cast_from_json(value),
                 )
-            except Exception:  # noqa BLE001
+            except Exception:  # noqa: BLE001
                 logger.opt(exception=True).warning(f"Unable to set config key {prefixed_key} from overrides:")
                 continue
             logger.info(f"Overriden config key: {prefixed_key}")
@@ -318,7 +317,8 @@ class PermitPDP:
         """
         patch fastapi to enable tracing and monitoring
         """
-        from ddtrace import config, patch
+        # Imported only when monitoring is on: importing ddtrace has side effects of its own.
+        from ddtrace import config, patch  # noqa: PLC0415
 
         # Datadog APM
         patch(fastapi=True)
@@ -742,7 +742,7 @@ class PermitPDP:
             return await self._data_trigger_debounce.trigger(
                 run=_run, window_seconds=sidecar_config.TRIGGER_DEBOUNCE_SECONDS
             )
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             raise self._control_plane_unreachable(status.HTTP_504_GATEWAY_TIMEOUT, "timed out", exc) from exc
         except aiohttp.ClientError as exc:
             raise self._control_plane_unreachable(status.HTTP_502_BAD_GATEWAY, "failed", exc) from exc
@@ -786,7 +786,7 @@ class PermitPDP:
             raise SystemExit(GUNICORN_EXIT_APP)
 
     def _inject_extra_callbacks(self) -> None:
-        register = self._opal._callbacks_register  # type: ignore
+        register = self._opal._callbacks_register
         default_config = HttpFetcherConfig(
             method=HttpMethods.POST,
             headers={"content-type": "application/json"},
@@ -804,7 +804,7 @@ class PermitPDP:
             register.put(entry.url, entry.config, entry.key)
 
     def _remove_ignored_default_callbacks_urls(self) -> None:
-        register = self._opal._callbacks_register  # type: ignore
+        register = self._opal._callbacks_register
         if not sidecar_config.IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS:
             return
         # we convert the generator to a list because we are modifying the register while iterating over it

@@ -2,6 +2,7 @@ from unittest.mock import AsyncMock, PropertyMock
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
 from horizon.authentication import enforce_pdp_token
 from horizon.connectivity.api import init_connectivity_router
 

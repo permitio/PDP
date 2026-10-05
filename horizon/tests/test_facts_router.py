@@ -1,10 +1,11 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from horizon.facts.client import FactsClient
-from horizon.facts.router import forward_remaining_requests, forward_request_then_wait_for_update
 from httpx import Response as HttpxResponse
 from starlette.requests import Request as FastApiRequest
+
+from horizon.facts.client import FactsClient
+from horizon.facts.router import forward_remaining_requests, forward_request_then_wait_for_update
 
 
 def _make_request(headers: dict[str, str] | None = None) -> FastApiRequest:

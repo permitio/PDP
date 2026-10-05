@@ -53,10 +53,11 @@ class DataUpdateSubscriber:
                 event.wait(),
                 timeout=timeout,
             )
-            return True
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(f"Timeout waiting for update id={update_id!r}")
             return False
+        else:
+            return True
         finally:
             self._update_listeners.pop(update_id, None)
 

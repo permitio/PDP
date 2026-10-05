@@ -183,9 +183,11 @@ def render(data: dict | None) -> str:
     rest = [r for r in rows if r["severity"] not in ("critical", "high")]
     body = [MARKER, f"## :x: {TITLE}", "", badges, ""]
     body += [
-        f"**{len(rows)} vulnerable crate(s) in `Cargo.lock`.** Any vulnerable crate fails this check and blocks "
-        "a release. Upgrade it (`cargo update -p NAME`), or - only with a written reachability argument - "
-        "ignore the advisory in `.cargo/audit.toml`.",
+        (
+            f"**{len(rows)} vulnerable crate(s) in `Cargo.lock`.** Any vulnerable crate fails this check and blocks "
+            "a release. Upgrade it (`cargo update -p NAME`), or - only with a written reachability argument - "
+            "ignore the advisory in `.cargo/audit.toml`."
+        ),
         "",
     ]
     body += [*_table(severe), ""] if severe else ["No critical or high vulnerabilities.", ""]

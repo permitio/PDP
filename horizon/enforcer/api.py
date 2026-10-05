@@ -109,12 +109,12 @@ def log_query_result(query: BaseSchema, response: Response):
 
         debug = result.get("debug", {})
 
-        format = color + "is allowed = {allowed} </>"
-        format += " | <cyan>{api_params}</>"
+        template = color + "is allowed = {allowed} </>"
+        template += " | <cyan>{api_params}</>"
         if sidecar_config.DECISION_LOG_DEBUG_INFO:
-            format += " | full_input=<fg #fff980>{input}</> | debug=<fg #f7e0c1>{debug}</>"
+            template += " | full_input=<fg #fff980>{input}</> | debug=<fg #f7e0c1>{debug}</>"
         logger.opt(colors=True).info(
-            format,
+            template,
             allowed=allow_output,
             api_params=params,
             input=query.dict(),
@@ -135,11 +135,11 @@ def log_query_result(query: BaseSchema, response: Response):
         )
 
 
-def log_query_result_kong(input: KongAuthorizationInput, response: Response):
+def log_query_result_kong(kong_input: KongAuthorizationInput, response: Response):
     """
     formats a nice log to default logger with the results of permit.check()
     """
-    params = f"({input.consumer.username}, {input.request.http.method}, {input.request.http.path})"
+    params = f"({kong_input.consumer.username}, {kong_input.request.http.method}, {kong_input.request.http.path})"
     try:
         result: dict = json.loads(response.body).get("result", {})
         allowed = result.get("allow", False)
@@ -148,15 +148,15 @@ def log_query_result_kong(input: KongAuthorizationInput, response: Response):
         color = "<green>"
         if not allowed:
             color = "<red>"
-        format = color + "is allowed = {allowed} </>"
-        format += " | <cyan>{api_params}</>"
+        template = color + "is allowed = {allowed} </>"
+        template += " | <cyan>{api_params}</>"
         if sidecar_config.DECISION_LOG_DEBUG_INFO:
-            format += " | full_input=<fg #fff980>{input}</> | debug=<fg #f7e0c1>{debug}</>"
+            template += " | full_input=<fg #fff980>{input}</> | debug=<fg #f7e0c1>{debug}</>"
         logger.opt(colors=True).info(
-            format,
+            template,
             allowed=allowed,
             api_params=params,
-            input=input.dict(),
+            input=kong_input.dict(),
             debug=debug,
         )
     except Exception:  # noqa: BLE001
@@ -274,7 +274,8 @@ def init_enforcer_health_router():
     return router
 
 
-def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noqa: C901
+# Registers every enforcer endpoint as a nested function, so their statements all count here.
+def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noqa: C901, PLR0915
     policy_store = policy_store or DEFAULT_POLICY_STORE_GETTER()
     router = APIRouter()
     if sidecar_config.KONG_INTEGRATION:
@@ -319,12 +320,9 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
     ):
         data = await post_to_opa(request, "mapping_rules", None)
 
-        mapping_rules = []
         data_result = json.loads(data.body).get("result") or {}
         mapping_rules_json = data_result.get("all") or []
-
-        for mapping_rule in mapping_rules_json:
-            mapping_rules.append(parse_obj_as(MappingRuleData, mapping_rule))
+        mapping_rules = [parse_obj_as(MappingRuleData, mapping_rule) for mapping_rule in mapping_rules_json]
         matched_mapping_rule = MappingRulesUtils.extract_mapping_rule_by_request(
             mapping_rules, query.http_method, query.url
         )
@@ -410,7 +408,8 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
             elif isinstance(raw_result, list):
                 tenants = raw_result
             else:
-                raise TypeError(f"Expected raw result to be dict or list, got {type(raw_result)}")
+                # Caught below on purpose: every malformed OPA result gets the same fallback.
+                raise TypeError(f"Expected raw result to be dict or list, got {type(raw_result)}")  # noqa: TRY301
             return parse_obj_as(UserTenantsResult, tenants)
         except Exception as e:  # noqa: BLE001
             logger.opt(exception=True).warning(
@@ -634,22 +633,23 @@ def _extract_regex_attributes(pattern: str, url: str) -> dict:
     """
     try:
         compiled_pattern = re.compile(pattern)
-        match = compiled_pattern.match(url)
-        if not match:
-            return {}
-
-        # Get named groups first (more specific)
-        attributes = match.groupdict()
-
-        # Only process numbered groups if we have any and didn't get named groups
-        if not attributes and match.groups():
-            # More efficient than using enumerate when we just need numbers
-            attributes = {f"capture_{i + 1}": value for i, value in enumerate(match.groups())}
-
-        return attributes
     except re.error:
         logger.warning(f"Invalid regex pattern: {pattern}")
         return {}
+
+    match = compiled_pattern.match(url)
+    if not match:
+        return {}
+
+    # Get named groups first (more specific)
+    attributes = match.groupdict()
+
+    # Only process numbered groups if we have any and didn't get named groups
+    if not attributes and match.groups():
+        # More efficient than using enumerate when we just need numbers
+        attributes = {f"capture_{i + 1}": value for i, value in enumerate(match.groups())}
+
+    return attributes
 
 
 def _extract_url_attributes(matched_rule: MappingRuleData, url: str) -> dict:

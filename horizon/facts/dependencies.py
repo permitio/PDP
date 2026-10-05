@@ -45,8 +45,7 @@ def get_wait_timeout(request: Request) -> float | None:
         ) from e
     if wait_timeout < 0:
         return None
-    else:
-        return wait_timeout
+    return wait_timeout
 
 
 WaitTimeoutDependency = Annotated[float | None, Depends(get_wait_timeout)]

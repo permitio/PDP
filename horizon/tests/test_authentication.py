@@ -7,10 +7,11 @@ constant-time token comparison, the 401/503 contract of the two dependencies, an
 public-route allowlist that the route-audit test relies on.
 """
 
-import horizon.authentication as auth
 import pytest
 from fastapi import HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
+
+import horizon.authentication as auth
 from horizon.authentication import (
     PUBLIC_ROUTE_PATHS,
     _token_matches,

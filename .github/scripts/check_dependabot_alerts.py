@@ -50,7 +50,7 @@ import importlib.util
 import json
 import sys
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 # Exit code for "the alert feed itself is unusable", distinct from "no new alerts".
@@ -191,7 +191,7 @@ def waived_cve_ids(trivyignore: Path | None = None, today: date | None = None) -
         SystemExit: The waiver file is missing or malformed, as raised by the loader.
     """
     path = trivyignore or waiver_parity.repo_root() / waiver_parity.TRIVYIGNORE
-    today = today or date.today()
+    today = today or datetime.now(UTC).date()
     return {cve for cve, expires in waiver_parity.load_trivyignore(path).items() if expires is None or expires >= today}
 
 
@@ -273,8 +273,8 @@ def _parse_created_at(value: object, number: object) -> datetime:
             f"timestamp. The feed's schema changed; --new-since cannot be applied."
         ) from exc
     if stamp.tzinfo is None:
-        return stamp.replace(tzinfo=timezone.utc)
-    return stamp.astimezone(timezone.utc)
+        return stamp.replace(tzinfo=UTC)
+    return stamp.astimezone(UTC)
 
 
 def _optional_id(value: object) -> str | None:
@@ -388,8 +388,10 @@ def slack_summary(selection: Selection, limit: int = SLACK_LIMIT) -> str:
             f"{waived} already waived in {WAIVER_FILE}."
         )
     lines = [
-        f"{len(selection.reported)} unwaived CRITICAL/HIGH Dependabot alert(s) need triage "
-        f"({waived} other open alert(s) already waived in {WAIVER_FILE}):"
+        (
+            f"{len(selection.reported)} unwaived CRITICAL/HIGH Dependabot alert(s) need triage "
+            f"({waived} other open alert(s) already waived in {WAIVER_FILE}):"
+        )
     ]
     lines += [_alert_line(alert) for alert in selection.reported[:MAX_SLACK_ALERTS]]
     if len(selection.reported) > MAX_SLACK_ALERTS:
@@ -451,7 +453,7 @@ def main() -> int:
     selection = select(
         alerts,
         waived_cve_ids(),
-        now=datetime.now(timezone.utc),
+        now=datetime.now(UTC),
         window_hours=None if args.all else args.new_since,
     )
     summary = slack_summary(selection)

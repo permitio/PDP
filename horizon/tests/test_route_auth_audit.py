@@ -25,12 +25,13 @@ import pytest
 from fastapi import APIRouter, Depends, FastAPI
 from fastapi.dependencies.utils import get_flat_dependant
 from fastapi.routing import APIRoute
+from opal_client.client import OpalClient
+from starlette.routing import Route
+
 from horizon.authentication import PUBLIC_ROUTE_PATHS, enforce_pdp_token
 from horizon.config import sidecar_config
 from horizon.pdp import OPAL_TRIGGER_ROUTE_PATHS, PermitPDP, _remove_opal_trigger_routes
 from horizon.system.consts import GUNICORN_EXIT_APP
-from opal_client.client import OpalClient
-from starlette.routing import Route
 
 # Dependency callables that count as authenticating a route. Matched by name so detection
 # survives an OPAL path rename; kept deliberately small so an *unrecognised* auth mechanism

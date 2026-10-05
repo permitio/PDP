@@ -25,8 +25,7 @@ def get_opal_data_base_url() -> str:
 def get_opal_data_topic() -> str:
     remote_config = get_remote_config()
     pdp_client_id = remote_config.context.get("client_id")
-    topic = f"{pdp_client_id}:data:policy_data"
-    return topic
+    return f"{pdp_client_id}:data:policy_data"
 
 
 def create_data_source_entry(

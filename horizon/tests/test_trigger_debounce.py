@@ -26,15 +26,16 @@ from unittest.mock import AsyncMock
 import aiohttp
 import pytest
 from fastapi.testclient import TestClient
-from horizon import debounce
-from horizon.config import sidecar_config
-from horizon.debounce import DebouncedTrigger
 from httpx import ASGITransport, AsyncClient
 
 # Basename import (not horizon.tests.*): CI installs the package non-editably, so the wheel
 # ships no tests/ package; pytest's prepend import mode puts this directory on sys.path and
 # imports test modules by basename. Same rationale as test_legacy_update_routes.py.
 from test_enforcer_api import MockPermitPDP
+
+from horizon import debounce
+from horizon.config import sidecar_config
+from horizon.debounce import DebouncedTrigger
 
 WINDOW = 10.0
 # Bounds a hang rather than a real wait: on the happy path these resolve immediately.
@@ -331,7 +332,7 @@ def test_control_plane_failure_502s_and_consumes_the_window(pdp: MockPermitPDP, 
 
 def test_control_plane_timeout_504s(pdp: MockPermitPDP, auth: dict[str, str], monkeypatch):
     monkeypatch.setattr(sidecar_config, "TRIGGER_DEBOUNCE_SECONDS", WINDOW)
-    get_base = AsyncMock(side_effect=asyncio.TimeoutError())
+    get_base = AsyncMock(side_effect=TimeoutError())
     monkeypatch.setattr(pdp._opal.data_updater, "get_base_policy_data", get_base)
     client = TestClient(pdp._app, raise_server_exceptions=False)
 

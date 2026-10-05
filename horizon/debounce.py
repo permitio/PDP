@@ -234,14 +234,15 @@ class DebouncedTrigger:
         cancelled = False
         try:
             await run()
-            self._log_dispatched()
-            return True
         except asyncio.CancelledError:
             # The attempt was ABANDONED, not made: client disconnect, or shutdown. Record no
             # dispatch (so the window is not consumed by work that never reached the control
             # plane) and arm nothing (on shutdown there would be nobody left to run it).
             cancelled = True
             raise
+        else:
+            self._log_dispatched()
+            return True
         finally:
             # INVARIANT: this block must never ``await``. The no-overlap argument for the two
             # guards rests on the handoff from ``_in_flight`` to ``_trailing_task`` being

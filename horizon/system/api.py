@@ -19,15 +19,14 @@ def init_system_api_router():
         dependencies=[Depends(enforce_pdp_token)],
     )
     async def version() -> VersionResult:
-        result = VersionResult(api_version=API_VERSION)
-        return result
+        return VersionResult(api_version=API_VERSION)
 
     @router.post(
         "/_exit",
         status_code=status.HTTP_204_NO_CONTENT,
         dependencies=[Depends(enforce_pdp_control_key)],
     )
-    async def exit():
+    async def exit():  # noqa: A001 - the name is the endpoint's OpenAPI operationId
         async def do_exit():
             await asyncio.sleep(0.1)
             logger.info("Exiting due to system request.")

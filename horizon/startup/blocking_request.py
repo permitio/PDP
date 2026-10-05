@@ -26,7 +26,7 @@ class BlockingRequest:
         response = requests.get(url, headers=self._headers(), params=params, timeout=self._timeout)
 
         if response.status_code == 401:
-            raise InvalidPDPTokenError()
+            raise InvalidPDPTokenError
 
         return response.json()
 
@@ -37,6 +37,6 @@ class BlockingRequest:
         response = requests.post(url, json=payload, headers=self._headers(), params=params, timeout=self._timeout)
 
         if response.status_code == 401:
-            raise InvalidPDPTokenError()
+            raise InvalidPDPTokenError
 
         return response.json()

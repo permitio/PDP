@@ -1,6 +1,6 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class TimeoutPolicy(str, Enum):
+class TimeoutPolicy(StrEnum):
     IGNORE = "ignore"
     FAIL = "fail"

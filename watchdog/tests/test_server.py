@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# ruff: noqa: T201, N802
+# ruff: noqa: T201
 """
 Test server for watchdog tests.
 This server listens on a configurable port and responds to various commands:
@@ -29,7 +29,6 @@ ignore_sigterm = False
 
 def sigterm_handler(signum, frame):  # noqa: ARG001
     """Custom SIGTERM handler that can be configured to ignore signals."""
-    global ignore_sigterm
     if ignore_sigterm:
         print(f"Ignoring SIGTERM signal (pid: {os.getpid()})")
     else:
@@ -81,7 +80,7 @@ class TestHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"Not found")
 
     def do_POST(self):
-        global request_count, is_healthy, is_responsive, ignore_sigterm
+        global request_count, is_healthy, is_responsive
         request_count += 1
 
         if self.path == "/crash":
@@ -91,7 +90,7 @@ class TestHandler(BaseHTTPRequestHandler):
             # Force crash the server with SIGTERM
             raise SystemExit(12)
 
-        elif self.path == "/unhealthy":
+        if self.path == "/unhealthy":
             is_healthy = False
             self._set_headers()
             self.wfile.write(b"Health status set to unhealthy")

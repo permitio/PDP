@@ -109,10 +109,11 @@ class RemoteConfigFetcher:
             except ValidationError as exc:
                 logger.error("Got invalid config contents: {exc}", exc=exc, response=response)
                 raise
-            return sidecar_config
         except requests.RequestException as exc:
             logger.error("Got exception: {exc}", exc=exc)
             raise
+        else:
+            return sidecar_config
 
 
 _remote_config: RemoteConfig | None = None

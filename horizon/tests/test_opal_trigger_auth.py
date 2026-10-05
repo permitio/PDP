@@ -19,10 +19,6 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from horizon.config import sidecar_config
-from horizon.debounce import DebouncedTrigger
-from horizon.enforcer.api import stats_manager
-from horizon.pdp import PermitPDP, _warn_if_opal_verifier_disabled
 from loguru import logger
 from opal_client.client import OpalClient
 from starlette import status
@@ -32,6 +28,11 @@ from starlette import status
 # sys.path and imports test modules by basename. Same convention as
 # test_legacy_update_routes.py.
 from test_enforcer_api import MALFORMED_AUTH_HEADERS
+
+from horizon.config import sidecar_config
+from horizon.debounce import DebouncedTrigger
+from horizon.enforcer.api import stats_manager
+from horizon.pdp import PermitPDP, _warn_if_opal_verifier_disabled
 
 VALID_TOKEN = "mock_api_key"
 TRIGGER_ROUTES = ["/policy-updater/trigger", "/data-updater/trigger"]

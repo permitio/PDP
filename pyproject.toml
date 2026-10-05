@@ -96,15 +96,13 @@ pythonpath = ["."]
 
 [tool.ruff]
 line-length = 120
-src = ["horizon"]
-# Deliberately still py310 even though the image now runs Python 3.13 (see Dockerfile).
-# This is a lint floor, not a runtime constraint - keeping it low only means ruff will not
-# push 3.11+ idioms, which is harmless. Raising it to py313 surfaces 5 findings that are
-# unrelated to the CVE work that prompted the interpreter bump (PER-15358): 3x ASYNC109
-# (rewrite `timeout` parameters as `asyncio.timeout()` context managers, a real behavioural
-# refactor of horizon/facts/update_subscriber.py and horizon/proxy/api.py), plus UP041 and
-# UP043. Raise this and land those separately.
-target-version = "py310"
+# target-version comes from [project] requires-python (3.13), the interpreter the image ships.
+# The CI helper scripts are the exception: the scheduled jobs run them on the runner's own
+# python3 (3.12 on ubuntu-24.04), so ruff must not suggest 3.13-only idioms there.
+per-file-target-version = { ".github/scripts/*.py" = "py312" }
+
+[tool.ruff.format]
+docstring-code-format = true
 
 [tool.ruff.lint]
 select = [
@@ -113,24 +111,61 @@ select = [
     "F", # https://docs.astral.sh/ruff/rules/#pyflakes-f
     "N", # https://docs.astral.sh/ruff/rules/#pep8-naming-n
     "I", # https://docs.astral.sh/ruff/rules/#isort-i
+    "A", # https://docs.astral.sh/ruff/rules/#flake8-builtins-a
+    "S", # https://docs.astral.sh/ruff/rules/#flake8-bandit-s
     "BLE", # https://docs.astral.sh/ruff/rules/#flake8-blind-except-ble
     "FBT", # https://docs.astral.sh/ruff/rules/#flake8-boolean-trap-fbt
     "B", # https://docs.astral.sh/ruff/rules/#flake8-bugbear-b
     "C4", # https://docs.astral.sh/ruff/rules/#flake8-comprehensions-c4
+    "DTZ", # https://docs.astral.sh/ruff/rules/#flake8-datetimez-dtz
+    "T10", # https://docs.astral.sh/ruff/rules/#flake8-debugger-t10
+    "EXE", # https://docs.astral.sh/ruff/rules/#flake8-executable-exe
+    "ISC", # https://docs.astral.sh/ruff/rules/#flake8-implicit-str-concat-isc
+    "ICN", # https://docs.astral.sh/ruff/rules/#flake8-import-conventions-icn
+    "LOG", # https://docs.astral.sh/ruff/rules/#flake8-logging-log
+    "G", # https://docs.astral.sh/ruff/rules/#flake8-logging-format-g
     "PIE", # https://docs.astral.sh/ruff/rules/#flake8-pie-pie
     "T20", # https://docs.astral.sh/ruff/rules/#flake8-print-t20
+    "PT", # https://docs.astral.sh/ruff/rules/#flake8-pytest-style-pt
+    "RSE", # https://docs.astral.sh/ruff/rules/#flake8-raise-rse
+    "RET", # https://docs.astral.sh/ruff/rules/#flake8-return-ret
+    "SLOT", # https://docs.astral.sh/ruff/rules/#flake8-slots-slot
     "SIM", # https://docs.astral.sh/ruff/rules/#flake8-simplify-sim
+    "TID", # https://docs.astral.sh/ruff/rules/#flake8-tidy-imports-tid
+    "INT", # https://docs.astral.sh/ruff/rules/#flake8-gettext-int
     "ARG", # https://docs.astral.sh/ruff/rules/#flake8-unused-arguments-arg
     "PTH", # https://docs.astral.sh/ruff/rules/#flake8-use-pathlib-pth
     "ASYNC", # https://docs.astral.sh/ruff/rules/#flake8-async-async
+    "FLY", # https://docs.astral.sh/ruff/rules/#flynt-fly
+    "PGH", # https://docs.astral.sh/ruff/rules/#pygrep-hooks-pgh
+    "PL", # https://docs.astral.sh/ruff/rules/#pylint-pl
+    "TRY", # https://docs.astral.sh/ruff/rules/#tryceratops-try
+    "PERF", # https://docs.astral.sh/ruff/rules/#perflint-perf
+    "FURB", # https://docs.astral.sh/ruff/rules/#refurb-furb
     "UP", # https://docs.astral.sh/ruff/rules/#pyupgrade-up
     "ERA", # https://docs.astral.sh/ruff/rules/#eradicate-era
     "C90", # https://docs.astral.sh/ruff/rules/#mccabe-c90
     "RUF", # https://docs.astral.sh/ruff/rules/#ruff-specific-rules-ruf
     "FAST", # https://docs.astral.sh/ruff/rules/#fastapi-fast
+    "YTT", # https://docs.astral.sh/ruff/rules/#flake8-2020-ytt
 ]
 ignore = [
     "FAST001", # https://docs.astral.sh/ruff/rules/fast-api-redundant-response-model/#fast-api-redundant-response-model-fast001
+    # The `timeout` parameters it flags bound one wait and return False (update_subscriber.py)
+    # or become aiohttp's ClientTimeout (proxy/api.py). A caller-side asyncio.timeout() would
+    # also cancel the publish or the request around them, which is a different contract.
+    "ASYNC109",
+    # Counts keyword-only parameters too. PLR0917 enforces the actual limit: at most five
+    # positional parameters.
+    "PLR0913",
+    # HTTP status codes and test literals read better inline than as named constants.
+    "PLR2004",
+    # The `global` statements it flags are lazily built module singletons (the facts client,
+    # the remote config) and the watchdog test server's process state.
+    "PLW0603",
+    # Exception messages here carry the context (what failed, which input, what to do), which
+    # is the point; a subclass per message would not add any.
+    "TRY003",
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -139,6 +174,10 @@ ignore = [
 # when a scan fails. T20 (flake8-print) exists to keep stray debugging prints out of the
 # application under horizon/, which is where it still applies.
 ".github/scripts/*.py" = ["T201"]
+# Tests assert (S101), hold fixed fake tokens (S105, S106), use non-crypto randomness for
+# load (S311), run the CI scripts as subprocesses (S603), and read tmp files synchronously
+# inside async tests (ASYNC240), where blocking the test's event loop is harmless.
+"horizon/tests/**" = ["S101", "S105", "S106", "S311", "S603", "ASYNC240"]
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"

@@ -11,7 +11,8 @@ SCRIPT = Path(__file__).resolve().parents[2] / ".github" / "scripts" / "format_s
 
 def _load():
     spec = importlib.util.spec_from_file_location("ci_scripts_format_security_report", SCRIPT)
-    assert spec is not None and spec.loader is not None, f"cannot load {SCRIPT}"
+    assert spec is not None, f"cannot load {SCRIPT}"
+    assert spec.loader is not None, f"cannot load {SCRIPT}"
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -24,7 +25,7 @@ def _trivy(*vulns, result_type="alpine"):
     return {"Results": [{"Target": "img", "Type": result_type, "Vulnerabilities": list(vulns)}]}
 
 
-def _vuln(cve, severity="HIGH", pkg="libssl3", fixed="3.5.8-r0", title="OpenSSL issue", score=7.5):
+def _vuln(cve, severity="HIGH", *, pkg="libssl3", fixed="3.5.8-r0", title="OpenSSL issue", score=7.5):
     return {
         "VulnerabilityID": cve,
         "PkgName": pkg,
@@ -67,7 +68,7 @@ def _sarif(*results):
     }
 
 
-def _alert(number, cve, severity="high", ghsa=None, package="starlette", summary="Starlette bug"):
+def _alert(number, cve, severity="high", *, ghsa=None, package="starlette", summary="Starlette bug"):
     return {
         "number": number,
         "state": "open",
@@ -92,7 +93,7 @@ def _cargo(*vulns, warnings=None):
     return {"vulnerabilities": {"count": len(vulns), "list": list(vulns)}, "warnings": warnings or {}}
 
 
-def _crate(rustsec, cvss=None, name="rmcp", version="0.12.0", aliases=(), patched=(">=1.4.0",)):
+def _crate(rustsec, cvss=None, *, name="rmcp", version="0.12.0", aliases=(), patched=(">=1.4.0",)):
     return {
         "advisory": {"id": rustsec, "title": f"{name} advisory", "cvss": cvss, "aliases": list(aliases)},
         "package": {"name": name, "version": version},
@@ -150,7 +151,8 @@ def test_same_cve_from_every_source_is_one_line_naming_all_sources(run):
     listed = [line for line in message.splitlines() if cve in line and line.startswith("• *high")]
     assert len(listed) == 1
     assert "Trivy latest, Trivy 0.9.16, Docker Scout latest, Dependabot" in listed[0]
-    assert "libssl3@3.5.7-r0" in listed[0] and "libcrypto3@3.5.7-r0" in listed[0]
+    assert "libssl3@3.5.7-r0" in listed[0]
+    assert "libcrypto3@3.5.7-r0" in listed[0]
     assert headline == "1 high/critical vulnerability found"
     assert outputs == {"notify": "true", "status": "warn", "severe": "1", "unscored": "0"}
 
@@ -182,7 +184,8 @@ def test_missing_report_is_incomplete_never_clean(run):
     assert "*Trivy* (`pdp-v2:0.9.16`): :warning: did not complete" in message
     assert str(Path("/")) + "private" not in message
     assert headline == "security scan incomplete"
-    assert outputs["status"] == "fail" and outputs["notify"] == "true"
+    assert outputs["status"] == "fail"
+    assert outputs["notify"] == "true"
 
 
 def test_unparseable_sarif_and_feed_are_incomplete(run):
@@ -205,7 +208,8 @@ def test_cargo_finding_is_scored_from_its_vector_and_linked_to_rustsec(run):
     line = next(line for line in message.splitlines() if "RUSTSEC-2026-0189" in line)
     assert line.startswith("• *high 7.5*")
     assert "<https://rustsec.org/advisories/RUSTSEC-2026-0189|RUSTSEC-2026-0189>" in line
-    assert "fix: &gt;=1.4.0" in line and "_(cargo audit)_" in line
+    assert "fix: &gt;=1.4.0" in line
+    assert "_(cargo audit)_" in line
     assert outputs["severe"] == "1"
 
 
@@ -296,7 +300,8 @@ def test_untrusted_text_cannot_ping_link_or_break_formatting(run):
     hostile["PrimaryURL"] = "javascript:alert(1)"
     message, _, _ = run(trivy={"latest": _trivy(hostile)}, scout=_sarif(), alerts=[])
     line = next(line for line in message.splitlines() if "CVE-2026-0009" in line)
-    assert "<!channel>" not in line and "&lt;!channel&gt;" in line
+    assert "<!channel>" not in line
+    assert "&lt;!channel&gt;" in line
     assert "<https://evil.example" not in line
     assert "javascript:" not in line
     assert "pkg'x" in line

@@ -2,10 +2,11 @@ import pytest
 from aioresponses import aioresponses
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from horizon.config import sidecar_config
-from horizon.pdp import PermitPDP
 from opal_client.client import OpalClient
 from opal_client.config import opal_client_config
+
+from horizon.config import sidecar_config
+from horizon.pdp import PermitPDP
 
 
 class MockPermitPDP(PermitPDP):

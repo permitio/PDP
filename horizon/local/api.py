@@ -30,6 +30,7 @@ def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
         response_model=list[RoleAssignment],
     )
     async def list_role_assignments(
+        *,
         user: Annotated[
             str | None,
             Query(
@@ -93,7 +94,6 @@ def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
         )
         if isinstance(result, Response):
             return parse_raw_as(WrappedResponse, result.body).result
-        else:
-            return parse_obj_as(WrappedResponse, result).result
+        return parse_obj_as(WrappedResponse, result).result
 
     return router

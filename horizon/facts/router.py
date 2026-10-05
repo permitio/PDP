@@ -88,6 +88,7 @@ async def create_tenant(
 
 @facts_router.put("/users/{user_id}")
 async def sync_user(
+    *,
     request: FastApiRequest,
     client: FactsClientDependency,
     update_subscriber: DataUpdateSubscriberDependency,
@@ -116,6 +117,7 @@ async def sync_user(
 
 @facts_router.patch("/users/{user_id}")
 async def update_user(
+    *,
     request: FastApiRequest,
     client: FactsClientDependency,
     update_subscriber: DataUpdateSubscriberDependency,
@@ -174,6 +176,7 @@ def create_role_assignment_data_entries(
 
 @facts_router.post("/users/{user_id}/roles")
 async def assign_user_role(
+    *,
     request: FastApiRequest,
     client: FactsClientDependency,
     update_subscriber: DataUpdateSubscriberDependency,
@@ -194,6 +197,7 @@ async def assign_user_role(
 
 @facts_router.delete("/users/{user_id}/roles")
 async def unassign_user_role(
+    *,
     request: FastApiRequest,
     client: FactsClientDependency,
     update_subscriber: DataUpdateSubscriberDependency,
@@ -281,6 +285,7 @@ async def create_resource_instance(
 
 @facts_router.patch("/resource_instances/{instance_id}")
 async def update_resource_instance(
+    *,
     request: FastApiRequest,
     client: FactsClientDependency,
     update_subscriber: DataUpdateSubscriberDependency,
@@ -372,15 +377,14 @@ async def forward_request_then_wait_for_update(
     )
     if wait_result:
         return client.convert_response(response)
-    elif timeout_policy == TimeoutPolicy.FAIL:
+    if timeout_policy == TimeoutPolicy.FAIL:
         logger.error("Timeout waiting for update and policy is set to fail")
         raise HTTPException(
             status_code=status.HTTP_424_FAILED_DEPENDENCY,
             detail="Timeout waiting for update to be received",
         )
-    else:
-        logger.warning("Timeout waiting for update and policy is set to ignore")
-        return client.convert_response(response)
+    logger.warning("Timeout waiting for update and policy is set to ignore")
+    return client.convert_response(response)
 
 
 @facts_router.api_route(

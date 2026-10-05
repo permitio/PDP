@@ -43,7 +43,7 @@ def check_opal_client_pin() -> None:
 
 def check_backup_store() -> None:
     # Imported here, after the pin check, so a moved opal-client fails with the message above.
-    from opal_client.client import OpalClient
+    from opal_client.client import OpalClient  # noqa: PLC0415
 
     with tempfile.TemporaryDirectory() as backup_dir:
         backup_path = Path(backup_dir) / "policy_store_backup.json"

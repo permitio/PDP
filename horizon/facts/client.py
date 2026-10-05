@@ -119,12 +119,11 @@ class FactsClient:
                 status_code=response.status_code,
                 headers=response.headers,
             )
-        else:
-            return FastApiResponse(
-                content=response.content,
-                status_code=response.status_code,
-                headers=response.headers,
-            )
+        return FastApiResponse(
+            content=response.content,
+            status_code=response.status_code,
+            headers=response.headers,
+        )
 
     @staticmethod
     def extract_body(response: HttpxResponse):

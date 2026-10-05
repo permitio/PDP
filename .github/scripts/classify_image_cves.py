@@ -51,10 +51,9 @@ import argparse
 import json
 import re
 import sys
+import tomllib
 from collections import Counter
 from pathlib import Path
-
-import tomllib
 
 # Exit code for "the report itself is unusable", distinct from a verdict.
 EXIT_UNREADABLE_REPORT = 2

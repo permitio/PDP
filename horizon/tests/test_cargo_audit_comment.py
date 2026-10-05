@@ -11,7 +11,8 @@ SCRIPT = Path(__file__).resolve().parents[2] / ".github" / "scripts" / "format_c
 
 def _load():
     spec = importlib.util.spec_from_file_location("ci_scripts_format_cargo_audit", SCRIPT)
-    assert spec is not None and spec.loader is not None, f"cannot load {SCRIPT}"
+    assert spec is not None, f"cannot load {SCRIPT}"
+    assert spec.loader is not None, f"cannot load {SCRIPT}"
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -23,7 +24,7 @@ HIGH = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"  # 7.5
 MEDIUM = "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:L/A:N"  # 4.8
 
 
-def _vuln(rustsec, cvss=None, name="h2", version="0.3.27", title="h2 issue", patched=(">=0.4.16",)):
+def _vuln(rustsec, cvss=None, *, name="h2", version="0.3.27", title="h2 issue", patched=(">=0.4.16",)):
     return {
         "advisory": {"id": rustsec, "title": title, "cvss": cvss, "url": None},
         "package": {"name": name, "version": version},
@@ -110,7 +111,8 @@ def test_findings_split_into_a_table_and_a_fold(run):
     assert "![critical: 0](https://img.shields.io/badge/critical-0-lightgrey)" in body
     table, fold = body.split("<details>", 1)
     assert "| high 7.5 | `high-crate` |" in table
-    assert "medium-crate" not in table and "unscored-crate" not in table
+    assert "medium-crate" not in table
+    assert "unscored-crate" not in table
     assert "<summary>1 medium, 1 unscored - click to expand</summary>" in fold
     assert "| unscored | `unscored-crate` |" in fold
     assert outputs == {"parse_ok": "true", "vulnerable": "3"}
@@ -135,7 +137,8 @@ def test_untrusted_advisory_text_is_inert(run):
     hostile["advisory"]["url"] = "javascript:alert(1)"
     body, _ = run(_report(hostile))
     row = next(line for line in body.splitlines() if "NOT-RUSTSEC" in line)
-    assert "<img" not in row and "&lt;img" in row
+    assert "<img" not in row
+    assert "&lt;img" in row
     assert "\\[click\\]" in row
     assert "javascript:" not in row
     assert "NOT-RUSTSEC\\|x" in row

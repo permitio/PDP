@@ -109,9 +109,11 @@ def _omitted_note(dropped: int) -> list[str]:
         return []
     return [
         "",
-        f"_... and {dropped} more finding(s), omitted to fit GitHub's 65,536-character "
-        f"comment limit. The full set is in this run's scan step logs and in the SARIF "
-        f"report uploaded to code scanning._",
+        (
+            f"_... and {dropped} more finding(s), omitted to fit GitHub's 65,536-character "
+            f"comment limit. The full set is in this run's scan step logs and in the SARIF "
+            f"report uploaded to code scanning._"
+        ),
     ]
 
 
@@ -295,8 +297,7 @@ def _trivy_rows(findings: list[dict], cap: int | None = None) -> list[str]:
 def _scout_rows(findings: list[dict], cap: int | None = None) -> list[str]:
     rows = ["| Severity | CVE | Detail |", "| --- | --- | --- |"]
     shown, dropped = _cap_rows(findings, cap)
-    for f in shown:
-        rows.append(f"| {escape_cell(f['severity'])} | {cve_link(f['cve'])} | {escape_cell(f['detail'])} |")
+    rows += [f"| {escape_cell(f['severity'])} | {cve_link(f['cve'])} | {escape_cell(f['detail'])} |" for f in shown]
     return rows + _omitted_note(dropped)
 
 

@@ -7,6 +7,11 @@ import pytest
 from aioresponses import aioresponses
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from loguru import logger
+from opal_client.client import OpalClient
+from opal_client.config import opal_client_config
+from starlette import status
+
 from horizon.config import sidecar_config
 from horizon.enforcer.api import stats_manager
 from horizon.enforcer.schemas import (
@@ -18,10 +23,6 @@ from horizon.enforcer.schemas import (
     UserTenantsQuery,
 )
 from horizon.pdp import PermitPDP
-from loguru import logger
-from opal_client.client import OpalClient
-from opal_client.config import opal_client_config
-from starlette import status
 
 
 class MockPermitPDP(PermitPDP):
@@ -871,7 +872,7 @@ ALLOWED_ENDPOINTS = [
 
 
 @pytest.mark.parametrize(
-    "endpoint, opa_endpoint, query, opa_response, expected_response",
+    ("endpoint", "opa_endpoint", "query", "opa_response", "expected_response"),
     list(filter(lambda p: not isinstance(p[2], UrlAuthorizationQuery), ALLOWED_ENDPOINTS)),
 )
 @pytest.mark.timeout(30)
@@ -956,7 +957,7 @@ async def test_enforce_endpoint_statistics(
             assert client.get("/health").status_code == status.HTTP_503_SERVICE_UNAVAILABLE
 
 
-@pytest.mark.parametrize("endpoint, opa_endpoint, query, opa_response, expected_response", ALLOWED_ENDPOINTS)
+@pytest.mark.parametrize(("endpoint", "opa_endpoint", "query", "opa_response", "expected_response"), ALLOWED_ENDPOINTS)
 def test_enforce_endpoint(
     endpoint,
     opa_endpoint,

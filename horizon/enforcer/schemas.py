@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import AnyHttpUrl, BaseModel, Field
@@ -50,7 +50,7 @@ class BulkAuthorizationQuery(BaseSchema):
         return " | ".join([repr(query) for query in self.checks])
 
 
-class UrlTypes(str, Enum):
+class UrlTypes(StrEnum):
     """Enum for URL matching types"""
 
     DEFAULT = "default"

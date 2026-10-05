@@ -530,7 +530,8 @@ def test_parity_cli_fails_once_a_waiver_has_expired(tmp_path):
     root = _waiver_tree(tmp_path, expires="2026-09-30")
     result = _run_parity("--root", str(root), "--today", "2026-10-01")
     assert result.returncode == 1
-    assert "CVE-2026-1" in result.stdout and "expired on 2026-09-30" in result.stdout
+    assert "CVE-2026-1" in result.stdout
+    assert "expired on 2026-09-30" in result.stdout
 
 
 def test_warn_days_prints_one_line_and_still_exits_zero(tmp_path):

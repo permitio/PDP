@@ -55,8 +55,8 @@ async def main():
                 logger.info("Passed")
             else:
                 logger.warning("Failed")
-        except Exception as e:
-            logger.exception(f"Error: {e}")
+        except Exception:
+            logger.exception("Permission check failed")
 
         await asyncio.sleep(1)
 

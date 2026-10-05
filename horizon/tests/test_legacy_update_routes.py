@@ -2,12 +2,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
-from horizon.config import sidecar_config
 
 # Basename import (not horizon.tests.*): CI installs the package non-editably, so
 # the wheel ships no tests/ package; pytest's prepend import mode puts this
 # directory on sys.path and imports test modules by basename.
 from test_enforcer_api import MALFORMED_AUTH_HEADERS, MockPermitPDP
+
+from horizon.config import sidecar_config
 
 
 @pytest.fixture
