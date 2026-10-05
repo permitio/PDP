@@ -1,11 +1,25 @@
+from collections.abc import Iterator
+from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from httpx import Response as HttpxResponse
+from starlette import status
 from starlette.requests import Request as FastApiRequest
 
-from horizon.facts.client import FactsClient
-from horizon.facts.router import forward_remaining_requests, forward_request_then_wait_for_update
+from horizon.config import sidecar_config
+from horizon.facts.client import FactsClient, get_facts_client
+from horizon.facts.dependencies import get_data_update_subscriber
+from horizon.facts.opal_forwarder import get_opal_data_base_url, get_opal_data_topic
+from horizon.facts.router import facts_router, forward_remaining_requests, forward_request_then_wait_for_update
+from horizon.facts.update_subscriber import DataUpdateSubscriber
+
+PDP_TOKEN = "facts-router-test-token"
+AUTH = {"Authorization": f"Bearer {PDP_TOKEN}"}
+CREATED_USER = {"id": "4f1d2a60-0000-4000-8000-000000000001", "key": "user-1"}
 
 
 def _make_request(headers: dict[str, str] | None = None) -> FastApiRequest:
@@ -73,3 +87,121 @@ async def test_forward_remaining_requests_does_not_set_consistent_update_header(
 
     assert "X-Permit-Consistent-Update" not in captured["headers"]
     assert "x-permit-consistent-update" not in captured["headers"]
+
+
+@dataclass
+class FactsHarness:
+    client: TestClient
+    subscriber: MagicMock
+    backend_calls: list[httpx.Request]
+
+
+@pytest.fixture
+def facts(monkeypatch) -> Iterator[FactsHarness]:
+    """The facts router as the PDP mounts it, with its two boundaries replaced: the control
+    plane's facts API (an httpx MockTransport answering every call with CREATED_USER) and the
+    OPAL update subscriber, whose publish_and_wait result each test sets."""
+    remote_config = MagicMock()
+    remote_config.context = {"org_id": "org", "project_id": "proj", "env_id": "env", "client_id": "pdp"}
+    monkeypatch.setattr("horizon.startup.remote_config._remote_config", remote_config)
+    monkeypatch.setattr("horizon.startup.api_keys._env_api_key", PDP_TOKEN)
+    monkeypatch.setattr(sidecar_config, "LOCAL_FACTS_TIMEOUT_POLICY", "ignore")
+    # Both are @cache'd off the remote config: start clean and leave nothing built from this fake.
+    get_opal_data_base_url.cache_clear()
+    get_opal_data_topic.cache_clear()
+
+    backend_calls: list[httpx.Request] = []
+
+    def control_plane(request: httpx.Request) -> httpx.Response:
+        backend_calls.append(request)
+        return httpx.Response(status.HTTP_200_OK, json=CREATED_USER)
+
+    facts_client = FactsClient()
+    facts_client._client = httpx.AsyncClient(
+        base_url="http://control-plane", transport=httpx.MockTransport(control_plane)
+    )
+    subscriber = MagicMock(spec=DataUpdateSubscriber)
+    subscriber.publish_and_wait = AsyncMock(return_value=True)
+
+    app = FastAPI()
+    app.include_router(facts_router, prefix="/facts")
+    app.dependency_overrides[get_facts_client] = lambda: facts_client
+    app.dependency_overrides[get_data_update_subscriber] = lambda: subscriber
+
+    yield FactsHarness(client=TestClient(app), subscriber=subscriber, backend_calls=backend_calls)
+
+    get_opal_data_base_url.cache_clear()
+    get_opal_data_topic.cache_clear()
+
+
+def _create_user(facts: FactsHarness, headers: dict[str, str]) -> httpx.Response:
+    return facts.client.post("/facts/users", headers={**AUTH, **headers}, json={"key": CREATED_USER["key"]})
+
+
+@pytest.mark.parametrize(
+    ("update_arrived", "config_policy", "headers"),
+    [
+        (True, "ignore", {"X-Timeout-Policy": "fail"}),
+        (True, "ignore", {"X-Timeout-Policy": "ignore"}),
+        (False, "ignore", {"X-Timeout-Policy": "ignore"}),
+        (False, "fail", {"X-Timeout-Policy": "IGNORE"}),
+        (False, "ignore", {}),
+    ],
+    ids=[
+        "arrived-fail",
+        "arrived-ignore",
+        "timed-out-ignore",
+        "timed-out-header-overrides-config-fail",
+        "timed-out-config-default-ignore",
+    ],
+)
+def test_facts_write_returns_the_backend_response(facts, monkeypatch, update_arrived, config_policy, headers):
+    """The backend response passes through when the update arrived, or when it timed out
+    under the ignore policy."""
+    monkeypatch.setattr(sidecar_config, "LOCAL_FACTS_TIMEOUT_POLICY", config_policy)
+    facts.subscriber.publish_and_wait.return_value = update_arrived
+
+    response = _create_user(facts, headers)
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json() == CREATED_USER
+    facts.subscriber.publish_and_wait.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    ("config_policy", "headers"),
+    [
+        ("ignore", {"X-Timeout-Policy": "fail"}),
+        ("ignore", {"X-Timeout-Policy": "FAIL"}),
+        ("fail", {}),
+    ],
+    ids=["header-fail", "header-is-case-insensitive", "config-default-fail"],
+)
+def test_facts_write_timed_out_under_fail_policy_is_424(facts, monkeypatch, config_policy, headers):
+    monkeypatch.setattr(sidecar_config, "LOCAL_FACTS_TIMEOUT_POLICY", config_policy)
+    facts.subscriber.publish_and_wait.return_value = False
+
+    response = _create_user(facts, headers)
+
+    assert response.status_code == status.HTTP_424_FAILED_DEPENDENCY
+    assert response.json() == {"detail": "Timeout waiting for update to be received"}
+    assert len(facts.backend_calls) == 1
+
+
+def test_facts_write_waits_for_the_requested_timeout(facts):
+    _create_user(facts, {"X-Wait-timeout": "0.5"})
+
+    assert facts.subscriber.publish_and_wait.await_args.kwargs["timeout"] == 0.5
+
+
+@pytest.mark.parametrize(
+    ("header", "value"),
+    [("X-Timeout-Policy", "sometimes"), ("X-Timeout-Policy", ""), ("X-Wait-timeout", "soon")],
+)
+def test_facts_write_with_an_invalid_wait_header_is_400_before_forwarding(facts, header, value):
+    response = _create_user(facts, {header: value})
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json()["detail"].startswith(f"Invalid {header} header")
+    assert facts.backend_calls == []
+    facts.subscriber.publish_and_wait.assert_not_awaited()
