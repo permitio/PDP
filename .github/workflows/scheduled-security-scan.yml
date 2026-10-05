@@ -14,7 +14,8 @@
 # report says who has to act on it (a release rebuild, permit-opa, the golang base digest, a
 # uv.lock update, an exact pin, or nobody yet because there is no fix) - the REBUILD/SOURCE
 # split classify_image_cves.py also writes to each scan job's summary. A Python finding is
-# never a rebuild: the report names main's locked version for a human to judge against the fix.
+# never a rebuild: the report names main's locked version for a human to judge against the fix,
+# or says main's lock still holds the version Trivy flagged, which a release cannot clear.
 #
 # Waivers come from .trivyignore.yaml, which mirrors .docker/scout/pdp-v2.vex.json.
 #

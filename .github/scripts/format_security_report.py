@@ -85,6 +85,9 @@ class Finding:
     packages: list[str] = field(default_factory=list)
     sources: list[str] = field(default_factory=list)
     aliases: set[str] = field(default_factory=set)
+    # A Trivy finding whose image holds the version main's uv.lock still has: its remediation
+    # says a release cannot clear it (classify_image_cves.lock_still_flagged).
+    lock_still_flagged: bool = False
 
 
 @dataclass
@@ -184,7 +187,7 @@ def trivy_source(tag: str, report: Path, pins: set[str], locked: dict[str, set[s
             fixed = str(vuln.get("FixedVersion") or "")
             installed = str(vuln.get("InstalledVersion") or "?")
             action = classifier.classify({"pkg": pkg, "fixed": fixed, "type": str(result.get("Type") or "?")}, pins)
-            hint = classifier.lock_note(pkg, action, locked) or _ACTION_HINT.get(action, "")
+            hint = classifier.lock_note(pkg, action, locked, installed=installed) or _ACTION_HINT.get(action, "")
             score = _trivy_score(vuln)
             source.findings.append(
                 Finding(
@@ -196,6 +199,7 @@ def trivy_source(tag: str, report: Path, pins: set[str], locked: dict[str, set[s
                     remediation=_remediation(fixed, hint),
                     packages=[f"{pkg}@{installed}"],
                     sources=[f"Trivy {tag}"],
+                    lock_still_flagged=classifier.lock_still_flagged(pkg, action, locked, installed=installed),
                 )
             )
     return source
@@ -368,7 +372,13 @@ def cargo_source(report: Path | None) -> tuple[Source, int]:
 
 
 def merge(sources: list[Source]) -> list[Finding]:
-    """One finding per advisory across every source, keeping the worst severity seen."""
+    """One finding per advisory across every source, keeping the worst severity seen.
+
+    The remediation is the first source's, except that a Trivy tag whose image main's uv.lock
+    still matches replaces it: a release would reinstall that tag's flagged version, so its
+    note holds for every tag on the line, while another tag's "cutting a release clears each
+    finding whose fix that version carries" would leave the call open.
+    """
     by_id: dict[str, Finding] = {}
     merged: list[Finding] = []
     for finding in (f for s in sources for f in s.findings):
@@ -379,6 +389,8 @@ def merge(sources: list[Source]) -> list[Finding]:
             merged.append(existing)
         elif SEVERITY_ORDER[finding.severity] < SEVERITY_ORDER[existing.severity]:
             existing.severity, existing.score = finding.severity, finding.score
+        if finding.lock_still_flagged and not existing.lock_still_flagged:
+            existing.remediation, existing.lock_still_flagged = finding.remediation, True
         existing.title = existing.title or finding.title
         existing.aliases |= keys
         existing.packages += [p for p in finding.packages if p not in existing.packages]

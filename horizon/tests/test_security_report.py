@@ -295,35 +295,75 @@ def test_trivy_remediation_names_who_acts(run, monkeypatch, pkg, result_type, hi
 
 
 def _in_mains_lock(pkg: str) -> str:
-    return ", ".join(sorted(report.classifier.locked_versions()[pkg]))
+    [version] = report.classifier.locked_versions()[pkg]
+    return version
+
+
+HTTPX = _in_mains_lock("httpx")
+UPGRADE_HTTPX = "run `uv lock --upgrade-package httpx`"
+HTTPX_MAYBE = (
+    f"main's uv.lock has httpx {HTTPX} - cutting a release clears each finding whose fix that version carries; "
+    f"for the rest, {UPGRADE_HTTPX}, then cut a release"
+)
+HTTPX_HELD = (
+    f"main's uv.lock still holds httpx {HTTPX}, the version Trivy flagged - {UPGRADE_HTTPX}, then cut a release"
+)
 
 
 @pytest.mark.parametrize(
-    ("installed", "fixed"),
+    ("installed", "fixed", "note"),
     [
-        pytest.param(_in_mains_lock("httpx"), "99.0.0", id="lock-holds-the-image-version"),
-        pytest.param("0.0.1", "99.0.0", id="lock-below-the-fix"),
-        pytest.param("0.0.1", _in_mains_lock("httpx"), id="lock-at-the-fix"),
-        pytest.param("0.0.1", "0.0.2", id="lock-above-the-fix"),
+        pytest.param(HTTPX, "99.0.0", HTTPX_HELD, id="lock-holds-the-image-version"),
+        pytest.param("0.0.1", "99.0.0", HTTPX_MAYBE, id="lock-below-the-fix"),
+        pytest.param("0.0.1", HTTPX, HTTPX_MAYBE, id="lock-at-the-fix"),
+        pytest.param("0.0.1", "0.0.2", HTTPX_MAYBE, id="lock-above-the-fix"),
     ],
 )
-def test_a_python_finding_names_mains_locked_version_and_is_never_a_rebuild(run, installed, fixed):
+def test_a_python_finding_names_mains_locked_version_and_is_never_a_rebuild(run, installed, fixed, note):
     vuln = _vuln("CVE-2026-0010", pkg="httpx", installed=installed, fixed=fixed)
     message, _, _ = run(trivy={"latest": _trivy(vuln, result_type="python-pkg")}, scout=_sarif(), alerts=[])
     line = next(line for line in message.splitlines() if "CVE-2026-0010" in line)
-    assert (
-        f"fix: {fixed}, main's uv.lock has httpx {_in_mains_lock('httpx')} - if that version carries the fix, "
-        "cutting a release clears this; otherwise run `uv lock --upgrade-package httpx`, then cut a release"
-    ) in line
+    assert f"fix: {fixed}, {note}" in line
     assert "a release rebuild picks it up" not in line
 
 
-def test_a_pinned_python_finding_names_mains_pinned_version(run):
-    vuln = _vuln("CVE-2026-0011", pkg="starlette", installed="0.49.0", fixed="0.49.1")
+@pytest.mark.parametrize(
+    ("installed", "held"),
+    [
+        pytest.param("0.49.0", False, id="pin-moved"),
+        pytest.param(_in_mains_lock("starlette"), True, id="pin-holds-the-image-version"),
+    ],
+)
+def test_a_pinned_python_finding_names_mains_pinned_version(run, installed, held):
+    vuln = _vuln("CVE-2026-0011", pkg="starlette", installed=installed, fixed="0.49.1")
     message, _, _ = run(trivy={"latest": _trivy(vuln, result_type="python-pkg")}, scout=_sarif(), alerts=[])
     line = next(line for line in message.splitlines() if "CVE-2026-0011" in line)
-    assert f"fix: 0.49.1, main's uv.lock has starlette {_in_mains_lock('starlette')} - if " in line
-    assert "otherwise raise the `==` pin for starlette in pyproject.toml and run `uv lock`" in line
+    starlette = _in_mains_lock("starlette")
+    if held:
+        assert f"fix: 0.49.1, main's uv.lock still holds starlette {starlette}, the version Trivy flagged - " in line
+    else:
+        assert f"fix: 0.49.1, main's uv.lock has starlette {starlette} - cutting a release clears each " in line
+    assert "raise the `==` pin for starlette in pyproject.toml and run `uv lock`, then cut a release" in line
+
+
+@pytest.mark.parametrize(
+    "tags",
+    [
+        pytest.param(("0.9.14", "latest"), id="older-tag-first"),
+        pytest.param(("latest", "0.9.14"), id="latest-first"),
+    ],
+)
+def test_a_tag_still_on_mains_locked_version_settles_the_merged_line(run, tags):
+    # The same CVE on two tags is one line. latest holds the version main's lock still has, so
+    # a release cannot clear it, whichever tag the line was started from.
+    installed = {"0.9.14": "0.0.1", "latest": HTTPX}
+    vulns = {tag: _vuln("CVE-2026-0012", pkg="httpx", installed=installed[tag], fixed="99.0.0") for tag in tags}
+    trivy = {tag: _trivy(vuln, result_type="python-pkg") for tag, vuln in vulns.items()}
+    message, _, _ = run(trivy=trivy, scout=_sarif(), alerts=[])
+    [line] = [line for line in message.splitlines() if "CVE-2026-0012" in line]
+    assert f"fix: 99.0.0, {HTTPX_HELD} " in line
+    assert "cutting a release clears" not in line
+    assert f"httpx@0.0.1, httpx@{HTTPX}" in line or f"httpx@{HTTPX}, httpx@0.0.1" in line
 
 
 def test_no_fix_is_said_out_loud(run):

@@ -22,15 +22,17 @@ absorb. Two more cases a plain rebuild cannot fix, because the Dockerfile pins t
     digest-pinned. A rebuild reuses the same toolchain; the fix arrives when Dependabot's
     `docker` PR moves the digest and that PR is merged.
   - Python packages are installed from uv.lock exactly, so a rebuild installs whatever
-    main's lock holds - and this script does not decide whether that version is fixed.
-    Trivy's FixedVersion lists only the versions that end each vulnerable range, not the
-    ranges themselves, so a version at or above it can still be vulnerable: a range left
-    open with no fix, or a regression on a later line. A fixed Python package is therefore
-    owner 'lock' (Dependabot's `uv` PR, or `uv lock --upgrade-package NAME`), or 'pinned'
-    when pyproject.toml pins it with `==` (e.g. starlette, ddtrace, websockets) and the pin
-    has to move first - never 'rebuild'. The report shows the version main's uv.lock holds
-    next to each one, for a human to judge: if that version carries the fix, cutting a
-    release clears the finding.
+    main's lock holds - and this script never decides that version is fixed. Trivy's
+    FixedVersion lists only the versions that end each vulnerable range, not the ranges
+    themselves, so a version at or above it can still be vulnerable: a range left open with
+    no fix, or a regression on a later line. A fixed Python package is therefore owner
+    'lock' (Dependabot's `uv` PR, or `uv lock --upgrade-package NAME`), or 'pinned' when
+    pyproject.toml pins it with `==` (e.g. starlette, ddtrace, websockets) and the pin has
+    to move first - never 'rebuild'. The one call it does make compares the lock with the
+    image, not with FixedVersion: when main's lock still holds the very version Trivy
+    flagged, a release reinstalls it, so the finding certainly needs the lock (or the pin)
+    to move. Otherwise the report's Next step names the version main's uv.lock holds, once
+    per package, for a human to judge against each advisory.
 
 Calling any of these "just rebuild" would send someone to cut a release that cannot fix it.
 
@@ -172,16 +174,66 @@ def classify(finding: dict, pins: Set[str] = frozenset()) -> str:
     return "rebuild"
 
 
-def lock_note(pkg: str, action: str, locked: Mapping[str, Set[str]]) -> str:
-    """What main's uv.lock holds for a 'lock' or 'pinned' finding, and what to do either way.
+_RELEASE_ONLY = re.compile(r"^\d+(?:\.\d+)*$")
 
-    Context for a human, not a verdict: whether the locked version carries the fix is theirs
-    to judge against the advisory.
+
+def _same_version(a: str, b: str) -> bool:
+    """Whether two version strings certainly name the same version.
+
+    Equal ignoring case and surrounding space, or plain release numbers that differ only in
+    trailing zeros (`1.0` and `1.0.0`). Anything else - a pre-release, a local label, an
+    epoch - has to match exactly, so an unsure answer is "no".
+    """
+    a, b = a.strip().lower(), b.strip().lower()
+    if a == b:
+        return True
+    if not (_RELEASE_ONLY.match(a) and _RELEASE_ONLY.match(b)):
+        return False
+    return _release(a) == _release(b)
+
+
+def _release(version: str) -> list[int]:
+    parts = [int(part) for part in version.split(".")]
+    while len(parts) > 1 and parts[-1] == 0:
+        parts.pop()
+    return parts
+
+
+def lock_still_flagged(pkg: str, action: str, locked: Mapping[str, Set[str]], *, installed: str) -> bool:
+    """Whether main's uv.lock still holds the version Trivy flagged for a 'lock' or 'pinned' finding.
+
+    True when every version main's lock holds for the package is the scanned image's own
+    version: a release reinstalls that very version, so it cannot clear the finding. This
+    compares the image's version with the lock's, never with Trivy's FixedVersion.
 
     Args:
         pkg: The package name as Trivy reports it.
         action: The finding's owner, from :func:`classify`.
         locked: main's uv.lock, from :func:`locked_versions`.
+        installed: The version Trivy found in the image (its InstalledVersion).
+
+    Returns:
+        False for any other owner and for a package main's uv.lock does not hold.
+    """
+    versions = locked.get(_normalise(pkg), ())
+    if action not in ("lock", "pinned") or not versions:
+        return False
+    return all(_same_version(version, installed) for version in versions)
+
+
+def lock_note(pkg: str, action: str, locked: Mapping[str, Set[str]], *, installed: str) -> str:
+    """What main's uv.lock holds for a 'lock' or 'pinned' finding, and what to do about it.
+
+    When the lock still holds the version Trivy flagged (:func:`lock_still_flagged`), the note
+    says the lock has to move. Otherwise it is context for a human, not a verdict: whether the
+    locked version carries the fix is theirs to judge against the advisory. The note covers
+    every CVE of the package, each with its own fix, so it never speaks of a single fix.
+
+    Args:
+        pkg: The package name as Trivy reports it.
+        action: The finding's owner, from :func:`classify`.
+        locked: main's uv.lock, from :func:`locked_versions`.
+        installed: The version Trivy found in the image (its InstalledVersion).
 
     Returns:
         One sentence without a final full stop, or '' for any other owner and for a package
@@ -191,18 +243,19 @@ def lock_note(pkg: str, action: str, locked: Mapping[str, Set[str]]) -> str:
     versions = sorted(locked.get(name, ()))
     if action not in ("lock", "pinned") or not versions:
         return ""
-    # `name` is a key of main's uv.lock from here on, so the sentence holds no scanner text.
-    if len(versions) == 1:
-        held, judged = f"{name} {versions[0]}", "that version carries"
-    else:
-        held, judged = f"{name} {', '.join(versions)}", "every one of those versions carries"
+    # Only `name` and the versions, both read from main's uv.lock, go into the sentence, so it
+    # holds no scanner text.
+    held = f"{name} {', '.join(versions)}"
     if action == "lock":
         update = f"run `uv lock --upgrade-package {name}`"
     else:
         update = f"raise the `==` pin for {name} in pyproject.toml and run `uv lock`"
+    if lock_still_flagged(pkg, action, locked, installed=installed):
+        return f"main's uv.lock still holds {held}, the version Trivy flagged - {update}, then cut a release"
+    judged = "that version carries" if len(versions) == 1 else "every one of those versions carries"
     return (
-        f"main's uv.lock has {held} - if {judged} the fix, cutting a release clears this; "
-        f"otherwise {update}, then cut a release"
+        f"main's uv.lock has {held} - cutting a release clears each finding whose fix {judged}; "
+        f"for the rest, {update}, then cut a release"
     )
 
 
@@ -312,8 +365,9 @@ def collect(
             repository's own uv.lock.
 
     Returns:
-        One row per (package, CVE), each with its `action` and its `lock_note` (see
-        :func:`lock_note`), worst severity first.
+        One row per (package, CVE), each with its `action`, its `lock_note` and whether
+        main's uv.lock still holds the flagged version (`lock_still_flagged`; see
+        :func:`lock_note` and :func:`lock_still_flagged`), worst severity first.
 
     Raises:
         ReportUnreadableError: The report cannot be read, or is not laid out as Trivy's.
@@ -341,7 +395,8 @@ def collect(
         )
     for f in findings.values():
         f["action"] = classify(f, pins)
-        f["lock_note"] = lock_note(f["pkg"], f["action"], locked)
+        f["lock_note"] = lock_note(f["pkg"], f["action"], locked, installed=f["installed"])
+        f["lock_still_flagged"] = lock_still_flagged(f["pkg"], f["action"], locked, installed=f["installed"])
     order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
     action_order = {"no-fix": 0, "permit-opa": 1, "base-digest": 2, "pinned": 3, "lock": 4, "rebuild": 5}
     return sorted(
@@ -489,20 +544,29 @@ def render(tag: str, findings: list[dict], verdict: str) -> str:
                 "digest-pinned golang build stage - merge Dependabot's `docker` digest PR "
                 "for it first, then rebuild"
             )
-        if lock:
+        held = [f for f in lock + pinned if f["lock_still_flagged"]]
+        lock_open = [f for f in lock if not f["lock_still_flagged"]]
+        pinned_open = [f for f in pinned if not f["lock_still_flagged"]]
+        if held:
             parts.append(
-                f"{len(lock)} finding(s) are in Python packages, which a rebuild installs from main's "
+                f"{len(held)} finding(s) are in Python packages whose flagged version main's uv.lock "
+                "still holds, so a release reinstalls it - the lock, or the `==` pin in pyproject.toml, "
+                "has to move first"
+            )
+        if lock_open:
+            parts.append(
+                f"{len(lock_open)} finding(s) are in Python packages, which a rebuild installs from main's "
                 "uv.lock as it is - unless main's locked version carries the fix, the lock has to be "
                 "updated (Next step names each locked version)"
             )
-        if pinned:
+        if pinned_open:
             parts.append(
-                f"{len(pinned)} finding(s) are in Python packages pinned with `==` in "
+                f"{len(pinned_open)} finding(s) are in Python packages pinned with `==` in "
                 "pyproject.toml - unless main's pinned version carries the fix, the pin has to "
                 "move, then the lock"
             )
-        # A Python finding may already be fixed in main's uv.lock; the others certainly are not.
-        certainly = "will NOT" if nofix or opa or base else "may not"
+        # Any other Python finding may already be fixed in main's uv.lock; these certainly are not.
+        certainly = "will NOT" if nofix or opa or base or held else "might not"
         headline = f"**A rebuild alone {certainly} clear this image.** " + "; ".join(parts) + "."
 
     lines = [

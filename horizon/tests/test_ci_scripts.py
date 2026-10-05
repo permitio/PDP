@@ -409,31 +409,119 @@ def test_a_python_package_without_a_fix_still_needs_a_decision(tmp_path):
     assert finding["lock_note"] == ""
 
 
-ONE_VERSION = "if that version carries the fix"
-EVERY_VERSION = "if every one of those versions carries the fix"
-UPGRADE = "run `uv lock --upgrade-package {}`"
+def _upgrade(name: str) -> str:
+    return f"run `uv lock --upgrade-package {name}`"
+
+
+def _raise_pin(name: str) -> str:
+    return f"raise the `==` pin for {name} in pyproject.toml and run `uv lock`"
+
+
+def _maybe_note(held: str, judged: str, update: str) -> str:
+    """The note for a lock that may carry the fix: whether it does is a human's call."""
+    return (
+        f"main's uv.lock has {held} - cutting a release clears each finding whose fix {judged}; "
+        f"for the rest, {update}, then cut a release"
+    )
+
+
+def _held_note(held: str, update: str) -> str:
+    """The note for a lock that still holds the version Trivy flagged: a release cannot clear it."""
+    return f"main's uv.lock still holds {held}, the version Trivy flagged - {update}, then cut a release"
+
+
+ONE_VERSION = "that version carries"
+EVERY_VERSION = "every one of those versions carries"
 
 
 @pytest.mark.parametrize(
-    ("pkg", "action", "held", "judged", "update"),
+    ("pkg", "action", "installed", "note"),
     [
-        ("httpx", "lock", "httpx 0.28.1", ONE_VERSION, UPGRADE.format("httpx")),
+        pytest.param(
+            "httpx", "lock", "0.28.0", _maybe_note("httpx 0.28.1", ONE_VERSION, _upgrade("httpx")), id="lock-moved"
+        ),
         # Trivy's spelling is looked up, and named, the way uv.lock normalises it.
-        ("Typing_Extensions", "lock", "typing-extensions 4.14.0", ONE_VERSION, UPGRADE.format("typing-extensions")),
-        (
+        pytest.param(
+            "Typing_Extensions",
+            "lock",
+            "4.13.0",
+            _maybe_note("typing-extensions 4.14.0", ONE_VERSION, _upgrade("typing-extensions")),
+            id="lock-moved-name-spelled-differently",
+        ),
+        pytest.param(
             "starlette",
             "pinned",
-            "starlette 0.50.0",
-            ONE_VERSION,
-            "raise the `==` pin for starlette in pyproject.toml and run `uv lock`",
+            "0.49.0",
+            _maybe_note("starlette 0.50.0", ONE_VERSION, _raise_pin("starlette")),
+            id="pin-moved",
         ),
-        ("forked", "lock", "forked 1.0, 2.0", EVERY_VERSION, UPGRADE.format("forked")),
+        pytest.param(
+            "forked",
+            "lock",
+            "3.0",
+            _maybe_note("forked 1.0, 2.0", EVERY_VERSION, _upgrade("forked")),
+            id="every-fork-moved",
+        ),
+        # One fork still holds the flagged version, the other may carry the fix.
+        pytest.param(
+            "forked",
+            "lock",
+            "1.0",
+            _maybe_note("forked 1.0, 2.0", EVERY_VERSION, _upgrade("forked")),
+            id="one-fork-holds-the-flagged-version",
+        ),
+        # Versions that may differ from main's are never read as the same one.
+        pytest.param(
+            "httpx",
+            "lock",
+            "0.28.1rc1",
+            _maybe_note("httpx 0.28.1", ONE_VERSION, _upgrade("httpx")),
+            id="pre-release",
+        ),
+        pytest.param(
+            "httpx",
+            "lock",
+            "0.28.1+local",
+            _maybe_note("httpx 0.28.1", ONE_VERSION, _upgrade("httpx")),
+            id="local-version",
+        ),
+        pytest.param(
+            "httpx",
+            "lock",
+            "?",
+            _maybe_note("httpx 0.28.1", ONE_VERSION, _upgrade("httpx")),
+            id="installed-version-unknown",
+        ),
+        # main's lock holds the version Trivy flagged, so a release would reinstall it.
+        pytest.param("httpx", "lock", "0.28.1", _held_note("httpx 0.28.1", _upgrade("httpx")), id="lock-holds-it"),
+        pytest.param(
+            "Typing_Extensions",
+            "lock",
+            "4.14.0",
+            _held_note("typing-extensions 4.14.0", _upgrade("typing-extensions")),
+            id="lock-holds-it-name-spelled-differently",
+        ),
+        pytest.param(
+            "httpx", "lock", "0.28.1.0", _held_note("httpx 0.28.1", _upgrade("httpx")), id="lock-holds-it-padded"
+        ),
+        pytest.param(
+            "starlette",
+            "pinned",
+            "0.50.0",
+            _held_note("starlette 0.50.0", _raise_pin("starlette")),
+            id="pin-holds-it",
+        ),
+        pytest.param(
+            "starlette",
+            "pinned",
+            "0.50",
+            _held_note("starlette 0.50.0", _raise_pin("starlette")),
+            id="pin-holds-it-unpadded",
+        ),
     ],
 )
-def test_lock_note_names_mains_locked_version(pkg, action, held, judged, update):
-    assert classifier.lock_note(pkg, action, MAINS_LOCK) == (
-        f"main's uv.lock has {held} - {judged}, cutting a release clears this; otherwise {update}, then cut a release"
-    )
+def test_lock_note_names_mains_locked_version(pkg, action, installed, note):
+    assert classifier.lock_note(pkg, action, MAINS_LOCK, installed=installed) == note
 
 
 @pytest.mark.parametrize(
@@ -442,14 +530,14 @@ def test_lock_note_names_mains_locked_version(pkg, action, held, judged, update)
         # Not in main's lock: say nothing about the lock at all.
         ("not-locked", "lock"),
         ("not-locked", "pinned"),
-        # In main's lock, but not a finding the lock decides.
+        # In main's lock, at the version the image has, but not a finding the lock decides.
         ("httpx", "rebuild"),
         ("httpx", "no-fix"),
         ("httpx", "permit-opa"),
     ],
 )
 def test_lock_note_is_empty_when_mains_lock_has_nothing_to_say(pkg, action):
-    assert classifier.lock_note(pkg, action, MAINS_LOCK) == ""
+    assert classifier.lock_note(pkg, action, MAINS_LOCK, installed="0.28.1") == ""
 
 
 def test_collect_reads_non_string_report_fields_as_text(tmp_path):
@@ -628,28 +716,83 @@ def test_classifier_cli_fails_loudly_on_a_report_that_is_not_shaped_like_trivys(
     assert summary.read_text().startswith("## `permitio/pdp-v2:latest` - SCAN FAILED\n")
 
 
-def _python_report(tmp_path, *cves, pkg="httpx", fixed="0.28.1"):
-    vulns = [_vuln(cve, pkg=pkg, fixed=fixed, installed="0.28.0") for cve in cves]
+def _python_report(tmp_path, *cves, pkg="httpx", fixed="0.28.1", installed="0.28.0"):
+    vulns = [_vuln(cve, pkg=pkg, fixed=fixed, installed=installed) for cve in cves]
     return _write(tmp_path / "t.json", _trivy(*vulns, target_type="python-pkg"))
 
 
+def _headline(body: str) -> str:
+    return next(line for line in body.splitlines() if line.startswith("**A rebuild alone"))
+
+
+MIGHT_NOT = "**A rebuild alone might not clear this image.** "
+WILL_NOT = "**A rebuild alone will NOT clear this image.** "
+
+
 def test_a_lock_only_report_names_uv_lock_and_mains_locked_version_once_per_package(tmp_path):
-    # main's lock is AT the fix, and the finding is still the lock's to settle.
+    # main's lock moved past the image's version to the fix, and the finding is still the lock's to settle.
     report = _python_report(tmp_path, "CVE-2026-6", "CVE-2026-7")
     findings = classifier.collect(report, pins=set(), locked={"httpx": {"0.28.1"}})
     body = classifier.render("latest", findings, "SOURCE")
     rows = [line for line in body.splitlines() if "`httpx`" in line]
     assert len(rows) == 2
     assert all(row.endswith("| **uv.lock** |") for row in rows)
-    assert "**A rebuild alone may not clear this image.** 2 finding(s) are in Python packages" in body
+    assert _headline(body).startswith(MIGHT_NOT + "2 finding(s) are in Python packages, which a rebuild installs")
     assert "- Need a uv.lock update, unless main's lock already has the fix: **2**" in body
     assert "- Cleared by rebuilding this repo: **0**" in body
-    note = (
-        "- main's uv.lock has httpx 0.28.1 - if that version carries the fix, cutting a release clears "
-        "this; otherwise run `uv lock --upgrade-package httpx`, then cut a release."
-    )
-    assert body.count(note) == 1
+    assert body.count("- " + _maybe_note("httpx 0.28.1", ONE_VERSION, _upgrade("httpx")) + ".") == 1
+    assert "still holds" not in body
     assert "Update httpx in uv.lock" not in body
+
+
+@pytest.mark.parametrize(
+    ("pins", "owner", "update"),
+    [
+        pytest.param(set(), "| **uv.lock** |", _upgrade("httpx"), id="lock"),
+        pytest.param({"httpx"}, "| **pyproject.toml pin** |", _raise_pin("httpx"), id="pinned"),
+    ],
+)
+def test_a_lock_still_holding_the_flagged_version_will_not_clear_on_a_rebuild(tmp_path, pins, owner, update):
+    # The usual case when scanning `latest`: main's lock has not moved since the image was built.
+    report = _python_report(tmp_path, "CVE-2026-6", "CVE-2026-7", fixed="0.28.2", installed="0.28.1")
+    findings = classifier.collect(report, pins=pins, locked={"httpx": {"0.28.1"}})
+    body = classifier.render("latest", findings, "SOURCE")
+    assert all(row.endswith(owner) for row in body.splitlines() if "`httpx`" in row)
+    assert _headline(body) == (
+        WILL_NOT + "2 finding(s) are in Python packages whose flagged version main's uv.lock still holds, so a "
+        "release reinstalls it - the lock, or the `==` pin in pyproject.toml, has to move first."
+    )
+    assert body.count("- " + _held_note("httpx 0.28.1", update) + ".") == 1
+    assert "main's uv.lock has" not in body
+
+
+def test_a_fork_still_holding_the_flagged_version_leaves_the_call_to_a_human(tmp_path):
+    # The other fork may be the one the image installs next time, and may carry the fix.
+    report = _python_report(tmp_path, "CVE-2026-6", fixed="0.28.2", installed="0.28.1")
+    findings = classifier.collect(report, pins=set(), locked={"httpx": {"0.28.1", "0.29.0"}})
+    body = classifier.render("latest", findings, "SOURCE")
+    assert _headline(body).startswith(MIGHT_NOT + "1 finding(s) are in Python packages, which a rebuild installs")
+    assert "- " + _maybe_note("httpx 0.28.1, 0.29.0", EVERY_VERSION, _upgrade("httpx")) + "." in body
+    assert "still holds" not in body
+
+
+def test_each_finding_gets_the_note_for_its_own_installed_version(tmp_path):
+    # anyio's lock moved on; httpx's did not. The httpx finding alone settles the headline.
+    vulns = [
+        _vuln("CVE-2026-6", pkg="httpx", fixed="0.28.2", installed="0.28.1"),
+        _vuln("CVE-2026-7", pkg="anyio", fixed="4.9.0", installed="4.8.0"),
+    ]
+    report = _write(tmp_path / "t.json", _trivy(*vulns, target_type="python-pkg"))
+    findings = classifier.collect(report, pins=set(), locked={"httpx": {"0.28.1"}, "anyio": {"4.9.0"}})
+    body = classifier.render("latest", findings, "SOURCE")
+    assert _headline(body) == (
+        WILL_NOT + "1 finding(s) are in Python packages whose flagged version main's uv.lock still holds, so a "
+        "release reinstalls it - the lock, or the `==` pin in pyproject.toml, has to move first; 1 finding(s) are "
+        "in Python packages, which a rebuild installs from main's uv.lock as it is - unless main's locked version "
+        "carries the fix, the lock has to be updated (Next step names each locked version)."
+    )
+    assert "- " + _held_note("httpx 0.28.1", _upgrade("httpx")) + "." in body
+    assert "- " + _maybe_note("anyio 4.9.0", ONE_VERSION, _upgrade("anyio")) + "." in body
 
 
 @pytest.mark.parametrize(
@@ -684,10 +827,8 @@ def test_a_pinned_report_names_mains_pinned_version(tmp_path):
     body = classifier.render("latest", findings, "SOURCE")
     row = next(line for line in body.splitlines() if "`starlette`" in line)
     assert row.endswith("| **pyproject.toml pin** |")
-    assert (
-        "- main's uv.lock has starlette 0.50.0 - if that version carries the fix, cutting a release clears "
-        "this; otherwise raise the `==` pin for starlette in pyproject.toml and run `uv lock`, then cut a release."
-    ) in body
+    assert _headline(body).startswith(MIGHT_NOT + "1 finding(s) are in Python packages pinned with `==`")
+    assert "- " + _maybe_note("starlette 0.50.0", ONE_VERSION, _raise_pin("starlette")) + "." in body
     assert "Raise the `==` pin" not in body
 
 
@@ -753,19 +894,21 @@ def test_classifier_cli_reports_a_verdict_and_exits_zero(tmp_path):
     assert summary.read_text() == result.stdout
 
 
-HTTPX_IN_MAINS_LOCK = ", ".join(sorted(classifier.locked_versions()["httpx"]))
+[HTTPX_IN_MAINS_LOCK] = classifier.locked_versions()["httpx"]
+HTTPX_MAYBE = _maybe_note(f"httpx {HTTPX_IN_MAINS_LOCK}", ONE_VERSION, _upgrade("httpx"))
+HTTPX_HELD = _held_note(f"httpx {HTTPX_IN_MAINS_LOCK}", _upgrade("httpx"))
 
 
 @pytest.mark.parametrize(
-    ("installed", "fixed"),
+    ("installed", "fixed", "note", "certainly"),
     [
-        pytest.param(HTTPX_IN_MAINS_LOCK, "99.0.0", id="lock-holds-the-image-version"),
-        pytest.param("0.0.1", "99.0.0", id="lock-below-the-fix"),
-        pytest.param("0.0.1", HTTPX_IN_MAINS_LOCK, id="lock-at-the-fix"),
-        pytest.param("0.0.1", "0.0.2", id="lock-above-the-fix"),
+        pytest.param(HTTPX_IN_MAINS_LOCK, "99.0.0", HTTPX_HELD, WILL_NOT, id="lock-holds-the-image-version"),
+        pytest.param("0.0.1", "99.0.0", HTTPX_MAYBE, MIGHT_NOT, id="lock-below-the-fix"),
+        pytest.param("0.0.1", HTTPX_IN_MAINS_LOCK, HTTPX_MAYBE, MIGHT_NOT, id="lock-at-the-fix"),
+        pytest.param("0.0.1", "0.0.2", HTTPX_MAYBE, MIGHT_NOT, id="lock-above-the-fix"),
     ],
 )
-def test_classifier_cli_never_calls_a_python_finding_a_rebuild(tmp_path, installed, fixed):
+def test_classifier_cli_never_calls_a_python_finding_a_rebuild(tmp_path, installed, fixed, note, certainly):
     report = _write(
         tmp_path / "trivy.json",
         _trivy(_vuln("CVE-2026-6", pkg="httpx", fixed=fixed, installed=installed), target_type="python-pkg"),
@@ -775,7 +918,8 @@ def test_classifier_cli_never_calls_a_python_finding_a_rebuild(tmp_path, install
     assert result.stdout.startswith("## `permitio/pdp-v2:latest` - SOURCE\n")
     row = next(line for line in result.stdout.splitlines() if "`httpx`" in line)
     assert row.endswith("| **uv.lock** |")
-    assert f"- main's uv.lock has httpx {HTTPX_IN_MAINS_LOCK} - if " in result.stdout
+    assert _headline(result.stdout).startswith(certainly)
+    assert f"- {note}." in result.stdout
 
 
 # --------------------------------------------------------------------------- check_waiver_parity
