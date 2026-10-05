@@ -207,7 +207,7 @@ def test_router_level_dependencies_surface_in_flat_dependant():
     """Empirical FastAPI contract the whole audit rests on (>=0.124.0; proven on 0.125.0).
 
     The floor is real, not decorative: ``get_flat_dependant`` only began propagating
-    sub-dependants into ``flat_dependant.dependencies`` in 0.124.0, so requirements.txt pins
+    sub-dependants into ``flat_dependant.dependencies`` in 0.124.0, so pyproject.toml pins
     ``fastapi>=0.124.0`` and this test is what that pin protects.
 
     The audit detects gates by walking ``get_flat_dependant(route.dependant)``. That only

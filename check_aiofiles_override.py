@@ -1,17 +1,17 @@
-"""Build-time check for the aiofiles override in requirements-override.txt (PER-16234).
+"""Build-time check for the aiofiles override in pyproject.toml's [tool.uv] (PER-16234).
 
-The Dockerfile pip layer bind-mounts and runs this as its last step, so it sees exactly what
-ships. It fails the image build if:
+The Dockerfile's Python dependency layer bind-mounts and runs this as its last step, so it sees
+exactly what ships. It fails the image build if:
 
-1. opal-client is no longer 0.9.6. The override is installed with --no-deps, which also silences
-   pip's conflict report, so a bumped opal-client would otherwise keep the overridden aiofiles
-   whatever it declares. Re-evaluate the override first; this check goes away with it (see the
-   exit note in requirements-override.txt).
+1. opal-client is no longer 0.9.6. uv's override-dependencies replaces opal-client's aiofiles<1
+   outright, so a bumped opal-client would keep the overridden aiofiles whatever it declares.
+   Re-evaluate the override first; this check goes away with it (see the exit note next to
+   override-dependencies in pyproject.toml).
 2. OPAL's offline-mode backup does not work in the image: the real OpalClient.backup_store() must
    write the backup and leave no *.json.tmp behind - the same call path that broke on aiofiles
    0.8.0 (delete=False/dir=/suffix= temp file, write, os.replace). backup_store() swallows its own
    exceptions, so this checks the files it leaves, not whether it raised. This check stays after
-   the override is gone: with no lockfile, release builds re-resolve without running pytests.
+   the override is gone: it exercises the installed image, which pytests never does.
 
 horizon/tests/test_offline_backup.py covers (2) in the pytests job; this covers the image itself.
 """
@@ -37,7 +37,7 @@ def check_opal_client_pin() -> None:
     if version != EXPECTED_OPAL_CLIENT:
         sys.exit(
             f"opal-client is {version}, not {EXPECTED_OPAL_CLIENT}: re-evaluate the aiofiles "
-            "override in requirements-override.txt (PER-16234)"
+            "override in pyproject.toml [tool.uv] override-dependencies (PER-16234)"
         )
 
 

@@ -405,16 +405,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install the waiver loader's dependencies
-        run: |
-          set -euo pipefail
-          # A venv, not `pip install --user`: the runner's system Python is PEP 668
-          # externally-managed, so installing into it fails. Pinned to the same PyYAML
-          # the `waiver-parity` pre-commit hook uses, so this watcher and the blocking
-          # PR check cannot disagree about how .trivyignore.yaml parses.
-          python3 -m venv "$RUNNER_TEMP/alert-venv"
-          "$RUNNER_TEMP/alert-venv/bin/pip" install \
-            --quiet --disable-pip-version-check pyyaml==6.0.3
+      # The scripts below run with PyYAML pinned to the version the `waiver-parity` pre-commit
+      # hook uses, so this watcher and the blocking PR check cannot disagree about how
+      # .trivyignore.yaml parses.
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: '0.12.19'
+          enable-cache: false
 
       - name: Fetch open Dependabot alerts
         env:
@@ -440,7 +438,8 @@ jobs:
       - name: Validate the alert feed
         run: |
           set -euo pipefail
-          "$RUNNER_TEMP/alert-venv/bin/python" .github/scripts/check_dependabot_alerts.py \
+          uv run --no-project --with pyyaml==6.0.3 \
+            python .github/scripts/check_dependabot_alerts.py \
             --alerts dependabot-alerts.json --all
 
       - name: Upload the alerts for the report job
@@ -467,18 +466,17 @@ jobs:
       message: ${{ steps.build.outputs.message }}
     steps:
       - name: Checkout code
-        # The formatter, the waiver list and requirements.txt (for exact pins) are read
+        # The formatter, the waiver list and pyproject.toml (for exact pins) are read
         # from the repo.
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Install the waiver loader's dependencies
-        run: |
-          set -euo pipefail
-          python3 -m venv "$RUNNER_TEMP/report-venv"
-          "$RUNNER_TEMP/report-venv/bin/pip" install \
-            --quiet --disable-pip-version-check pyyaml==6.0.3
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: '0.12.19'
+          enable-cache: false
 
       - name: Download the scanner reports
         # A scanner whose job died uploads nothing. That is not an error here: the formatter
@@ -510,7 +508,8 @@ jobs:
             trivy_args+=(--trivy "${tag}=reports/trivy-${tag}.json")
           done < <(printf '%s' "$MATRIX" | jq -r '.tag[]?')
 
-          "$RUNNER_TEMP/report-venv/bin/python" .github/scripts/format_security_report.py \
+          uv run --no-project --with pyyaml==6.0.3 \
+            python .github/scripts/format_security_report.py \
             --repo "$REPO" \
             --run-url "$RUN_URL" \
             "${trivy_args[@]}" \

@@ -24,8 +24,9 @@ try:
     import yaml
 except ModuleNotFoundError as exc:  # pragma: no cover - environment problem, not logic
     raise SystemExit(
-        "check_waiver_parity.py needs PyYAML to read .trivyignore.yaml. Install it with "
-        "`pip install pyyaml` (CI installs it via the pre-commit hook's additional_dependencies)."
+        "check_waiver_parity.py needs PyYAML to read .trivyignore.yaml. Run it in the project "
+        "environment, `uv run python .github/scripts/check_waiver_parity.py` (PyYAML is in the "
+        "dev group), or through prek, which installs the hook's additional_dependencies."
     ) from exc
 
 TRIVYIGNORE = Path(".trivyignore.yaml")

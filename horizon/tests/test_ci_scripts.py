@@ -362,16 +362,30 @@ def test_exact_pinned_python_package_needs_the_pin_moved(tmp_path):
         ),
     )
     actions = {f["pkg"]: f["action"] for f in classifier.collect(report, pins={"starlette"})}
-    assert actions == {"Starlette": "pinned", "httpx": "rebuild"}
+    # uv.lock fixes every Python version, so a fixed but unpinned package is a lock update,
+    # not a rebuild.
+    assert actions == {"Starlette": "pinned", "httpx": "lock"}
 
 
-def test_exact_pins_reads_only_double_equals_lines(tmp_path):
-    req = _write(
-        tmp_path / "requirements.txt",
-        "starlette==0.50.0\nddtrace[opentracing]==3.19.8\nhttpx>=0.27\n# pydantic==2\n"
-        "aiofiles==24.1.0 --hash=sha256:abc\n",
+def test_exact_pins_reads_dependencies_and_uv_overrides(tmp_path):
+    pyproject = _write(
+        tmp_path / "pyproject.toml",
+        "[project]\n"
+        'dependencies = ["starlette==0.50.0", "ddtrace[opentracing]==3.19.8", "httpx>=0.27",\n'
+        '  # "pydantic==2",\n'
+        "]\n"
+        "[dependency-groups]\n"
+        'dev = ["pytest==8.0.0"]\n'
+        "[tool.uv]\n"
+        'override-dependencies = ["aiofiles==24.1.0"]\n',
     )
-    assert classifier.exact_pins([req]) == {"starlette", "ddtrace", "aiofiles"}
+    assert classifier.exact_pins(pyproject) == {"starlette", "ddtrace", "aiofiles"}
+
+
+def test_exact_pins_reads_the_repo_pyproject():
+    pins = classifier.exact_pins(REPO_ROOT / "pyproject.toml")
+    assert {"starlette", "ddtrace", "websockets", "aiofiles"} <= pins
+    assert "fastapi" not in pins
 
 
 def test_classifier_table_cells_survive_hostile_scanner_text(tmp_path):

@@ -18,22 +18,34 @@ You can deploy the PDP to production in multiple designs. See the [Permit.io doc
 
 ### Setting up the development environment
 1. Clone the repository
-2. Install the dependencies, then the post-resolve overrides the Docker image and CI also apply
-(see `requirements-override.txt`)
+2. Install [uv](https://docs.astral.sh/uv/getting-started/installation/) 0.12.19 or later
+3. Install the locked dependencies, including the dev group, into `.venv` (uv fetches Python 3.13
+if it is missing)
 ```bash
-pip install ".[dev]"
-pip install --no-deps --require-hashes -r requirements-override.txt
+uv sync
 ```
+4. Run the tests
+```bash
+uv run pytest horizon/tests/
+```
+5. Install the git hooks (ruff, rustfmt, clippy, the waiver and lock checks), or run them on demand
+```bash
+uvx prek install
+uvx prek run --all-files
+```
+
+Dependencies live in `pyproject.toml` and are locked in `uv.lock`, which the Docker image and CI
+install as-is. After editing `pyproject.toml`, run `uv lock` and commit both files.
 
 ### Running locally (during development)
 ```
-PDP_API_KEY=<YOUR_API_KEY> uvicorn horizon.main:app --reload --port=7000
+PDP_API_KEY=<YOUR_API_KEY> uv run uvicorn horizon.main:app --reload --port=7000
 ```
 
 You can pass environment variables to control the behavior of the PDP image.
 For example, running a local PDP against the Permit API:
 ```
-PDP_CONTROL_PLANE=https://api.permit.io PDP_API_KEY=<YOUR_API_KEY> uvicorn horizon.main:app --reload --port=7000
+PDP_CONTROL_PLANE=https://api.permit.io PDP_API_KEY=<YOUR_API_KEY> uv run uvicorn horizon.main:app --reload --port=7000
 ```
 
 ## Building a Custom PDP Docker image

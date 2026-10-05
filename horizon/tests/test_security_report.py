@@ -276,7 +276,8 @@ def test_medium_findings_are_counted_but_not_alerted(run):
         ("libssl3", "alpine", "a release rebuild picks it up"),
         ("golang.org/x/net", "gobinary", "bump it in permit-opa"),
         ("stdlib", "gobinary", "needs the golang base-image digest bump"),
-        ("starlette", "python-pkg", "bump the exact pin in requirements.txt"),
+        ("starlette", "python-pkg", "bump the exact pin in pyproject.toml"),
+        ("httpx", "python-pkg", "update it in uv.lock"),
     ],
 )
 def test_trivy_remediation_names_who_acts(run, pkg, result_type, hint):

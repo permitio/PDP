@@ -47,7 +47,8 @@ _ACTION_HINT = {
     "rebuild": "a release rebuild picks it up",
     "permit-opa": "bump it in permit-opa",
     "base-digest": "needs the golang base-image digest bump",
-    "pinned": "bump the exact pin in requirements.txt",
+    "lock": "update it in uv.lock",
+    "pinned": "bump the exact pin in pyproject.toml",
 }
 
 

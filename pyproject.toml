@@ -1,3 +1,99 @@
+[project]
+name = "horizon"
+version = "0.2.0"
+description = "The Python side of the Permit.io PDP: OPAL client, policy-store sync and the PDP API."
+# uv.lock is resolved for the interpreter the image ships (Dockerfile: python:3.13-alpine3.23)
+# and nothing else. uv ignores Requires-Python UPPER bounds of dependencies when it locks, so
+# CI also installs the exported lock with pip on 3.13, which does enforce them.
+requires-python = "==3.13.*"
+dependencies = [
+    "aiohttp>=3.14.3,<4",
+    # Floor 0.124.0 matches a contract the route-auth audit depends on: get_flat_dependant only
+    # propagates sub-dependants into flat_dependant.dependencies from 0.124.0, which
+    # _route_auth_gates in horizon/tests/test_route_auth_audit.py reads. Ceiling in practice is
+    # 0.125.x, the last release supporting pydantic v1 (0.126.0 requires pydantic>=2.7.0), so the
+    # usable window is 0.124-0.125 while the pydantic<2 pin stands. See PER-15249.
+    "fastapi>=0.124.0,<1",
+    "Jinja2>=3.1.2,<4",
+    "pydantic[email]>=1.9.1,<2",
+    "requests>=2.32.4,<3",
+    "urllib3>=2.8.0,<3",
+    "gunicorn>=23.0.0,<24",
+    "tenacity>=8.0.1,<9",
+    "typer>=0.27.2,<1",
+    "uvicorn[standard]>=0.54.0,<1",
+    "logzio-python-handler",
+    # Capped <4 by opal-common 0.9.6. CVE-2026-50271 is fixed only in 4.8.2, so it is mitigated
+    # in the Dockerfile (DD_TRACE_PROPAGATION_STYLE_EXTRACT drops "baggage") and waived in
+    # .trivyignore.yaml and .docker/scout/pdp-v2.vex.json. Pinned exactly so the waiver PURL
+    # (pkg:pypi/ddtrace@3.19.8) stays bound: uv.lock holds it too, but a range would move on the
+    # next `uv lock --upgrade`. Remove the pin, the waivers and the Dockerfile ENV once OPAL
+    # relaxes ddtrace<4. See PER-15358.
+    "ddtrace==3.19.8",
+    "scalar-fastapi==1.8.2",
+    "httpx>=0.27.0,<1",
+    # TODO: switch regex matching to google-re2 once it builds on Alpine (C++ library issues).
+    "protobuf>=7.36.2", # floor clears CVE-2026-0994
+    # Floor 50.0.0 clears CVE-2026-69249 and CVE-2026-69247 (and the earlier GHSA-537c-gmf6-5ccf,
+    # CVE-2026-26007). Nothing else bounds cryptography (opal-common takes it unpinned), so the <51
+    # cap is ours, to keep a major out of a lock refresh. musllinux wheels exist for x86_64 and
+    # aarch64, so the Alpine build needs no Rust toolchain for it.
+    "cryptography>=50.0.0,<51",
+    # Capped <1 by opal-common/opal-client 0.9.6 (and <0.51.0 via fastapi-utils -> fastapi
+    # 0.125). Four CVEs (CVE-2026-54283, CVE-2026-48817, CVE-2026-48818, CVE-2026-48710) are fixed
+    # only in 1.x and are waived as unreachable in .trivyignore.yaml and the OpenVEX doc. Pinned
+    # exactly so the waiver PURLs stay bound. Remove the pin and the four waivers once OPAL relaxes
+    # starlette<1. See PER-15358.
+    "starlette==0.50.0",
+    # Pinned exactly because nothing else bounds it (OPAL allows >=10.3) and it sits on the OPAL
+    # pub/sub path: during #329 a rebuild would have taken a new major hours after validation. 17.0
+    # is the version pdp-tester validated. Bump it deliberately and let pdp-tester run on the
+    # result - a lock refresh must not pick a major on its own. See PER-15358.
+    "websockets==17.0",
+    # Transitive via opal-common (gitpython<4,>=3.1.32). The floor clears CVE-2026-78676 (critical
+    # RCE) and ten other advisories fixed by 3.1.58-3.1.59: `uv lock` can never produce a lock
+    # below it. A floor, not an exact pin - no waiver depends on it and nothing here imports it.
+    # Drop it once opal-common itself floors gitpython>=3.1.59. See PER-15358.
+    "GitPython>=3.1.59,<4",
+    # opal-common/opal-client 0.9.9 declare Requires-Python <3.13, so they cannot run on the 3.13
+    # image. Stay on 0.9.6 until an OPAL release lifts that bound.
+    "opal-common==0.9.6",
+    # opal-client caps aiofiles<1; the override is in [tool.uv] below. Changing this pin fails the
+    # image build (check_aiofiles_override.py) until that override is re-evaluated (PER-16234).
+    "opal-client==0.9.6",
+]
+
+[dependency-groups]
+# No ruff here: it runs from the ruff-pre-commit rev in .pre-commit-config.yaml (`prek run ruff`),
+# so the linter version has one source and Dependabot's pre-commit entry bumps it.
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "aioresponses",
+    # Imported by .github/scripts/check_waiver_parity.py, which horizon/tests/test_ci_scripts.py
+    # loads at collection time, so a missing PyYAML fails the whole pytests job. A test and
+    # CI-tooling dependency only; nothing under horizon/ imports it.
+    "PyYAML",
+]
+
+[tool.uv]
+# Not an installable package: the image copies horizon/ in as source and installs only the
+# locked dependencies, so there is no build backend and nothing is built.
+package = false
+required-version = ">=0.12.19"
+# opal-client 0.9.6 caps aiofiles<1, which admits only 0.8.0 (Nov 2021). Its tempfile shim
+# raises AttributeError on CPython >= 3.12, so OPAL's offline-mode backup_store() silently stops
+# updating the backup. 24.1.0 is the first release tested on 3.13 (23.2.0, the first with the
+# fix, is yanked). Exit: drop this, check_opal_client_pin() in check_aiofiles_override.py and the
+# note at the opal-client pin once an opal-client admits aiofiles>=24.1.0. PER-16234,
+# permitio/PDP#340.
+override-dependencies = ["aiofiles==24.1.0"]
+
+[tool.pytest.ini_options]
+# horizon is not installed (package = false above) - the tests import it from the repo root,
+# the way the image runs it from /app.
+pythonpath = ["."]
+
 [tool.ruff]
 line-length = 120
 src = ["horizon"]

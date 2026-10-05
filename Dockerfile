@@ -233,7 +233,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # layer skips the check, but a cache hit implies an unchanged parent and so an unchanged
 # base digest, so the floor still holds; both workflows pass `no-cache-filters: main`
 # regardless. Note the check runs in this apk layer, before the `.build-deps` install and
-# removal around `pip install` further down - so it proves the interpreter survived the
+# removal around the uv install further down - so it proves the interpreter survived the
 # sqlite surgery, not that it survives every later package mutation.
 #
 # The patch version USED to float (see the previous python:3.10-alpine3.22 base and the
@@ -258,6 +258,12 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # change is reviewed and tested. `apk upgrade` still floats the Alpine package set at
 # build time, so pinning costs no package freshness on a rebuild - only the base layer
 # becomes deterministic.
+#
+# uv installs the locked Python dependencies in the main stage below. It is mounted from this
+# stage for that one RUN, never copied, so it does not ship. Digest-pinned, and bumped by the
+# same Dependabot `docker` entry as the other base images.
+FROM ghcr.io/astral-sh/uv:0.12.19@sha256:04d046b13e60d6bcec73cbc5e1cad25d680dea90c8573340950a0ac2d1aef424 AS uv
+
 FROM python:3.13-alpine3.23@sha256:6438599575cca0d1df94aeee0d2ae088d4d8846eab554b2ee7784a3a6df0d516 AS main
 
 WORKDIR /app
@@ -270,7 +276,7 @@ RUN addgroup -S permit -g 1001 && \
 RUN mkdir -p /app/backup && chmod -R 777 /app/backup
 
 # Install runtime libraries and remove sqlite-libs.
-# Build deps (build-base, *-dev) are installed and removed in the pip install
+# Build deps (build-base, *-dev) are installed and removed in the Python dependency
 # layer to avoid persisting binutils CVEs (CVE-2025-69649, CVE-2025-69650).
 #
 # `apk upgrade` here is the ONLY thing that keeps the OS package set current, and it is
@@ -331,22 +337,28 @@ RUN chown -R permit:permit /home/permit /app /usr/local/bin
 # Copy Kong routes and Gunicorn config
 COPY kong_routes.json /config/kong_routes.json
 
-# Install python dependencies in one command to optimize layer size
-# Use cache mount for pip to speed up incremental builds
+# Install the locked Python dependencies (uv.lock) in one layer.
 #
-# requirements-override.txt pins what a dependency's metadata forbids - today aiofiles, which
-# opal-client caps at a 0.8.0 that breaks OPAL's offline-mode backup on CPython >= 3.12 - so it
-# is installed after the resolve. That file holds the rationale and the exit condition
-# (PER-16234). check_aiofiles_override.py is bind-mounted, so it never ships, and runs last:
-# it fails the build if opal-client leaves 0.9.6 or the real backup_store() stops working here.
-COPY ./requirements.txt ./requirements.txt
-COPY ./requirements-override.txt ./requirements-override.txt
-RUN --mount=type=cache,target=/root/.cache/pip \
+# uv comes from the `uv` stage and pyproject.toml/uv.lock are bind-mounted, so none of them
+# ship. `uv export` writes the exact, hash-pinned set for this platform - including the
+# [tool.uv] override that lifts opal-client's aiofiles<1 cap (PER-16234) - and `--no-deps`
+# installs exactly that set. `--compile-bytecode` precompiles .pyc as pip did: the runtime user
+# cannot write to site-packages, so without it every start would recompile. Nothing here
+# resolves: a dependency only changes when uv.lock does.
+#
+# check_aiofiles_override.py is bind-mounted, so it never ships, and runs last: it fails the
+# build if opal-client leaves 0.9.6 or the real backup_store() stops working here.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
+    --mount=type=bind,source=pyproject.toml,target=/tmp/project/pyproject.toml \
+    --mount=type=bind,source=uv.lock,target=/tmp/project/uv.lock \
     --mount=type=bind,source=check_aiofiles_override.py,target=/tmp/check_aiofiles_override.py \
     apk add --no-cache --virtual .build-deps build-base libffi-dev libressl-dev musl-dev zlib-dev && \
-    pip install --upgrade pip setuptools && \
-    pip install -r requirements.txt && \
-    pip install --no-deps --require-hashes -r requirements-override.txt && \
+    uv export --project /tmp/project --frozen --no-dev --no-emit-project --no-header \
+        --output-file /tmp/requirements.lock && \
+    uv pip install --system --require-hashes --no-deps --compile-bytecode \
+        --requirements /tmp/requirements.lock && \
+    rm /tmp/requirements.lock && \
     python -m pip uninstall -y pip setuptools wheel && \
     rm -r "$(python3 -c 'import sysconfig; print(sysconfig.get_paths()["stdlib"])')/ensurepip" && \
     apk del .build-deps && \

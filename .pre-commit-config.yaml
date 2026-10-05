@@ -61,3 +61,14 @@ repos:
         additional_dependencies: ["pyyaml==6.0.3"]
         pass_filenames: false
         files: ^(\.trivyignore\.yaml|\.docker/scout/pdp-v2\.vex\.json)$
+
+      - id: uv-lock-check
+        name: uv.lock matches pyproject.toml
+        description: >-
+          Fails when pyproject.toml changed without `uv lock`. The image and CI install
+          uv.lock with --frozen, so a stale lock would silently ship the old dependencies.
+        entry: uv lock --check
+        language: python
+        additional_dependencies: ["uv==0.12.19"]
+        pass_filenames: false
+        files: ^(pyproject\.toml|uv\.lock)$

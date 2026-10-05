@@ -8,9 +8,9 @@ often an image that has simply not been rebuilt, with every fix already sitting 
 Alpine's repos.
 
 Trivy already carries the signal needed to answer that automatically: a finding with a
-FixedVersion means upstream shipped a patch, so `apk upgrade` / `pip install` in the
-existing Dockerfile would absorb it on the next build. A finding WITHOUT one cannot be
-rebuilt away and needs a pin, a base-image move, a dependency drop, or a waiver.
+FixedVersion means upstream shipped a patch. For an Alpine package, `apk upgrade` in the
+existing Dockerfile absorbs it on the next build. A finding WITHOUT one cannot be rebuilt
+away and needs a pin, a base-image move, a dependency drop, or a waiver.
 
 One wrinkle: "has a fix" is not the same as "a rebuild of THIS repo picks it up". The
 OPA binary at /app/bin/opa is compiled from permit-opa's source, so a CVE in one of its
@@ -21,8 +21,10 @@ absorb. Two more cases a plain rebuild cannot fix, because the Dockerfile pins t
   - The Go *stdlib* comes from the `golang:1.27-bookworm@sha256:...` build stage, which is
     digest-pinned. A rebuild reuses the same toolchain; the fix arrives when Dependabot's
     `docker` PR moves the digest and that PR is merged.
-  - A Python package pinned with `==` in requirements*.txt (e.g. starlette, ddtrace,
-    websockets) stays at that version through `pip install`; the pin has to move.
+  - Python packages are locked in uv.lock, so a rebuild reinstalls the same versions: a
+    fixed Python package needs a lock update (Dependabot's `uv` PR, or
+    `uv lock --upgrade-package NAME`), and one pinned with `==` in pyproject.toml (e.g.
+    starlette, ddtrace, websockets) needs that pin moved first.
 
 Calling any of these "just rebuild" would send someone to cut a release that cannot fix it.
 
@@ -32,7 +34,7 @@ Verdicts:
             Cut a release; no code change needed.
   SOURCE  - at least one finding needs a change somewhere: no upstream fix exists at all,
             the fix lives in permit-opa's go.mod, the golang base digest has to move, or
-            an exact pin in requirements*.txt has to move.
+            a uv.lock update or an exact pin in pyproject.toml has to move.
 
 SOURCE outranks REBUILD: a report can contain both kinds, and the one that needs a human
 is the one that should set the verdict.
@@ -51,6 +53,8 @@ import re
 import sys
 from collections import Counter
 from pathlib import Path
+
+import tomllib
 
 # Exit code for "the report itself is unusable", distinct from a verdict.
 EXIT_UNREADABLE_REPORT = 2
@@ -77,27 +81,33 @@ class ReportUnreadableError(Exception):
 _PIN = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[^\]]*\])?\s*==")
 
 
-def exact_pins(paths: list[Path] | None = None) -> set[str]:
-    """Names of Python packages pinned with `==` in the repo's requirements files.
+def exact_pins(pyproject: Path | None = None) -> set[str]:
+    """Names of Python packages pinned with `==` in pyproject.toml.
 
-    Names are normalised the PEP 503 way (lower case, runs of `-_.` folded to `-`), which
-    is also how Trivy reports them closely enough to compare.
+    Reads `[project].dependencies` and `[tool.uv].override-dependencies` - an override is a pin
+    too. Names are normalised the PEP 503 way (lower case, runs of `-_.` folded to `-`), which is
+    also how Trivy reports them closely enough to compare.
 
     Args:
-        paths: Files to read. Defaults to requirements*.txt in the working directory,
-            which is the repo root in every workflow that runs this script.
+        pyproject: File to read. Defaults to pyproject.toml in the working directory, which is
+            the repo root in every workflow that runs this script.
 
     Returns:
         The set of normalised package names.
     """
-    if paths is None:
-        paths = sorted(Path().glob("requirements*.txt"))
+    path = pyproject or Path("pyproject.toml")
+    if pyproject is None and not path.is_file():
+        # Run outside the repo: no pins are known, so a fixed Python package reads as a lock
+        # update rather than a pin. Both are SOURCE verdicts; only the owner label differs.
+        return set()
+    data = tomllib.loads(path.read_text(encoding="utf-8"))
+    requirements = list(data.get("project", {}).get("dependencies", []))
+    requirements += data.get("tool", {}).get("uv", {}).get("override-dependencies", [])
     pins: set[str] = set()
-    for path in paths:
-        for line in path.read_text(encoding="utf-8").splitlines():
-            m = _PIN.match(line)
-            if m:
-                pins.add(_normalise(m.group(1)))
+    for requirement in requirements:
+        m = _PIN.match(requirement)
+        if m:
+            pins.add(_normalise(m.group(1)))
     return pins
 
 
@@ -108,7 +118,7 @@ def _normalise(name: str) -> str:
 def classify(finding: dict, pins: set[str] | frozenset[str] = frozenset()) -> str:
     """Who has to act on this finding.
 
-    Returns one of 'rebuild', 'permit-opa', 'base-digest', 'pinned' or 'no-fix'.
+    Returns one of 'rebuild', 'permit-opa', 'base-digest', 'lock', 'pinned' or 'no-fix'.
     """
     if not finding["fixed"]:
         return "no-fix"
@@ -119,8 +129,9 @@ def classify(finding: dict, pins: set[str] | frozenset[str] = frozenset()) -> st
             return "base-digest"
         # Every other Go module linked into /app/bin/opa is a permit-opa dependency.
         return "permit-opa"
-    if finding["type"] == "python-pkg" and _normalise(finding["pkg"]) in pins:
-        return "pinned"
+    if finding["type"] == "python-pkg":
+        # uv.lock fixes every Python version, so a rebuild reinstalls the vulnerable one.
+        return "pinned" if _normalise(finding["pkg"]) in pins else "lock"
     return "rebuild"
 
 
@@ -194,7 +205,7 @@ def collect(report: Path, pins: set[str] | None = None) -> list[dict]:
     for f in findings.values():
         f["action"] = classify(f, pins)
     order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
-    action_order = {"no-fix": 0, "permit-opa": 1, "base-digest": 2, "pinned": 3, "rebuild": 4}
+    action_order = {"no-fix": 0, "permit-opa": 1, "base-digest": 2, "pinned": 3, "lock": 4, "rebuild": 5}
     return sorted(
         findings.values(),
         key=lambda f: (
@@ -248,14 +259,20 @@ def _next_steps(by_action: dict[str, list[dict]]) -> list[str]:
     rebuildable = by_action["rebuild"]
     opa = by_action["permit-opa"]
     base = by_action["base-digest"]
+    lock = by_action["lock"]
     pinned = by_action["pinned"]
     nofix = by_action["no-fix"]
     steps: list[str] = []
     if rebuildable:
         steps.append(
             f"- Cut a release to clear {len(rebuildable)} finding(s). `release.yml` passes "
-            "`no-cache-filters: main`, so the build cannot replay stale `apk` / `pip` "
-            "layers from the GHA cache."
+            "`no-cache-filters: main`, so the build cannot replay a stale `apk` layer from "
+            "the GHA cache."
+        )
+    if lock:
+        steps.append(
+            f"- Update {', '.join(sorted({_cell(f['pkg']) for f in lock}))} in uv.lock (merge "
+            "Dependabot's `uv` PR, or `uv lock --upgrade-package NAME`), then cut a release."
         )
     if opa:
         steps.append(
@@ -270,7 +287,7 @@ def _next_steps(by_action: dict[str, list[dict]]) -> list[str]:
     if pinned:
         steps.append(
             f"- Raise the `==` pin for {', '.join(sorted({_cell(f['pkg']) for f in pinned}))} "
-            "in requirements*.txt (or waive it with a reachability argument)."
+            "in pyproject.toml and run `uv lock` (or waive it with a reachability argument)."
         )
     if nofix:
         steps.append(
@@ -286,11 +303,12 @@ def render(tag: str, findings: list[dict], verdict: str) -> str:
 
     by_action: dict[str, list[dict]] = {
         a: [f for f in findings if f["action"] == a]
-        for a in ("rebuild", "permit-opa", "base-digest", "pinned", "no-fix")
+        for a in ("rebuild", "permit-opa", "base-digest", "lock", "pinned", "no-fix")
     }
     rebuildable = by_action["rebuild"]
     opa = by_action["permit-opa"]
     base = by_action["base-digest"]
+    lock = by_action["lock"]
     pinned = by_action["pinned"]
     nofix = by_action["no-fix"]
 
@@ -298,7 +316,7 @@ def render(tag: str, findings: list[dict], verdict: str) -> str:
         headline = (
             "**Every finding is already patched upstream, so this image is stale rather "
             "than broken.** No source change is needed: cutting a release rebuilds it and "
-            "`apk upgrade` / `pip install` absorb the patches."
+            "`apk upgrade` absorbs the patches."
         )
     else:
         parts = []
@@ -321,11 +339,15 @@ def render(tag: str, findings: list[dict], verdict: str) -> str:
                 "digest-pinned golang build stage - merge Dependabot's `docker` digest PR "
                 "for it first, then rebuild"
             )
+        if lock:
+            parts.append(
+                f"{len(lock)} finding(s) are in Python packages locked in uv.lock - a rebuild "
+                "reinstalls the same versions, so the lock has to be updated"
+            )
         if pinned:
             parts.append(
                 f"{len(pinned)} finding(s) are in Python packages pinned with `==` in "
-                "requirements*.txt - `pip install` keeps those versions, so the pin has to "
-                "move"
+                "pyproject.toml - the pin has to move, then the lock"
             )
         headline = "**A rebuild alone will NOT clear this image.** " + "; ".join(parts) + "."
 
@@ -338,7 +360,8 @@ def render(tag: str, findings: list[dict], verdict: str) -> str:
         f"- Cleared by rebuilding this repo: **{len(rebuildable)}**",
         f"- Need a permit-opa `go.mod` bump: **{len(opa)}**",
         f"- Need the golang base digest to move: **{len(base)}**",
-        f"- Need an exact pin in requirements*.txt moved: **{len(pinned)}**",
+        f"- Need a uv.lock update: **{len(lock)}**",
+        f"- Need an exact pin in pyproject.toml moved: **{len(pinned)}**",
         f"- No upstream fix available: **{len(nofix)}**",
         "",
         "| Severity | Package | Installed | CVE | Fixed in | Owner |",
@@ -348,7 +371,8 @@ def render(tag: str, findings: list[dict], verdict: str) -> str:
         "rebuild": "rebuild (this repo)",
         "permit-opa": "**permit-opa go.mod**",
         "base-digest": "**golang base digest**",
-        "pinned": "**requirements pin**",
+        "lock": "**uv.lock**",
+        "pinned": "**pyproject.toml pin**",
         "no-fix": "**no fix - needs a decision**",
     }
     for f in findings:
