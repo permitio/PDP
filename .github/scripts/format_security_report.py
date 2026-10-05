@@ -43,6 +43,8 @@ _PURL = re.compile(r"^pkg:[^/]+/(?P<name>[^@?#]+)(?:@(?P<version>[^?#]+))?")
 _MARKDOWN_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 
 # What has to happen for a Trivy finding to go away, keyed by classify_image_cves.classify().
+# A 'lock' or 'pinned' finding whose package main's uv.lock holds gets
+# classify_image_cves.lock_note() instead, which names main's locked version.
 _ACTION_HINT = {
     "rebuild": "a release rebuild picks it up",
     "permit-opa": "bump it in permit-opa",
@@ -181,8 +183,8 @@ def trivy_source(tag: str, report: Path, pins: set[str], locked: dict[str, set[s
             seen.add((pkg, cve))
             fixed = str(vuln.get("FixedVersion") or "")
             installed = str(vuln.get("InstalledVersion") or "?")
-            row = {"pkg": pkg, "installed": installed, "fixed": fixed, "type": result.get("Type") or "?"}
-            action = classifier.classify(row, pins, locked)
+            action = classifier.classify({"pkg": pkg, "fixed": fixed, "type": str(result.get("Type") or "?")}, pins)
+            hint = classifier.lock_note(pkg, action, locked) or _ACTION_HINT.get(action, "")
             score = _trivy_score(vuln)
             source.findings.append(
                 Finding(
@@ -191,7 +193,7 @@ def trivy_source(tag: str, report: Path, pins: set[str], locked: dict[str, set[s
                     score=score,
                     title=str(vuln.get("Title") or ""),
                     url=str(vuln.get("PrimaryURL") or ""),
-                    remediation=_remediation(fixed, _ACTION_HINT.get(action, "")),
+                    remediation=_remediation(fixed, hint),
                     packages=[f"{pkg}@{installed}"],
                     sources=[f"Trivy {tag}"],
                 )

@@ -13,7 +13,8 @@
 # So this workflow scans what customers actually pull, on a clock. Each Trivy finding in the
 # report says who has to act on it (a release rebuild, permit-opa, the golang base digest, a
 # uv.lock update, an exact pin, or nobody yet because there is no fix) - the REBUILD/SOURCE
-# split classify_image_cves.py also writes to each scan job's summary.
+# split classify_image_cves.py also writes to each scan job's summary. A Python finding is
+# never a rebuild: the report names main's locked version for a human to judge against the fix.
 #
 # Waivers come from .trivyignore.yaml, which mirrors .docker/scout/pdp-v2.vex.json.
 #
@@ -466,8 +467,8 @@ jobs:
       message: ${{ steps.build.outputs.message }}
     steps:
       - name: Checkout code
-        # The formatter, the waiver list, pyproject.toml (for exact pins) and uv.lock (for
-        # the versions a rebuild installs) are read from the repo.
+        # The formatter, the waiver list, pyproject.toml (for exact pins) and uv.lock (for the
+        # locked version the report names next to each Python finding) are read from the repo.
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false

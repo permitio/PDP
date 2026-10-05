@@ -22,21 +22,27 @@ absorb. Two more cases a plain rebuild cannot fix, because the Dockerfile pins t
     digest-pinned. A rebuild reuses the same toolchain; the fix arrives when Dependabot's
     `docker` PR moves the digest and that PR is merged.
   - Python packages are installed from uv.lock exactly, so a rebuild installs whatever
-    main's lock holds. Only when main's lock already holds a version at or above Trivy's
-    FixedVersion does cutting a release pick the fix up. Otherwise the lock needs an
-    update (Dependabot's `uv` PR, or `uv lock --upgrade-package NAME`), and a package
-    pinned with `==` in pyproject.toml (e.g. starlette, ddtrace, websockets) needs that
-    pin moved first.
+    main's lock holds - and this script does not decide whether that version is fixed.
+    Trivy's FixedVersion lists only the versions that end each vulnerable range, not the
+    ranges themselves, so a version at or above it can still be vulnerable: a range left
+    open with no fix, or a regression on a later line. A fixed Python package is therefore
+    owner 'lock' (Dependabot's `uv` PR, or `uv lock --upgrade-package NAME`), or 'pinned'
+    when pyproject.toml pins it with `==` (e.g. starlette, ddtrace, websockets) and the pin
+    has to move first - never 'rebuild'. The report shows the version main's uv.lock holds
+    next to each one, for a human to judge: if that version carries the fix, cutting a
+    release clears the finding.
 
 Calling any of these "just rebuild" would send someone to cut a release that cannot fix it.
 
 Verdicts:
   CLEAN   - nothing at CRITICAL/HIGH after waivers.
-  REBUILD - findings exist and EVERY one is absorbed by rebuilding this repo's image from
-            main. Cut a release; no code change needed.
-  SOURCE  - at least one finding needs a change somewhere: no upstream fix exists at all,
-            the fix lives in permit-opa's go.mod, the golang base digest has to move, or
-            a uv.lock update or an exact pin in pyproject.toml has to move.
+  REBUILD - findings exist and EVERY one has an upstream fix that rebuilding this repo's
+            image from main absorbs, such as an Alpine package through `apk upgrade`. Cut
+            a release; no code change needed.
+  SOURCE  - at least one finding is not known to clear on a rebuild: no upstream fix exists
+            at all, the fix lives in permit-opa's go.mod, the golang base digest has to
+            move, or it is in a Python package, which needs a uv.lock update or an exact pin
+            in pyproject.toml moved unless main's locked version already carries the fix.
 
 SOURCE outranks REBUILD: a report can contain both kinds, and the one that needs a human
 is the one that should set the verdict.
@@ -138,17 +144,15 @@ def _normalise(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
-def classify(
-    finding: dict,
-    pins: Set[str] = frozenset(),
-    locked: Mapping[str, Set[str]] | None = None,
-) -> str:
+def classify(finding: dict, pins: Set[str] = frozenset()) -> str:
     """Who has to act on this finding.
 
+    A Python package with a fix is 'lock' or 'pinned', never 'rebuild', whatever main's uv.lock
+    holds: see the module docstring for why its version is not compared to Trivy's FixedVersion.
+
     Args:
-        finding: A row with `pkg`, `installed`, `fixed` and `type` (Trivy's result type).
+        finding: A row with `pkg`, `fixed` and `type` (Trivy's result type).
         pins: Normalised names pinned with `==` in pyproject.toml, from :func:`exact_pins`.
-        locked: main's uv.lock, from :func:`locked_versions`.
 
     Returns:
         One of 'rebuild', 'permit-opa', 'base-digest', 'lock', 'pinned' or 'no-fix'.
@@ -163,71 +167,42 @@ def classify(
         # Every other Go module linked into /app/bin/opa is a permit-opa dependency.
         return "permit-opa"
     if finding["type"] == "python-pkg":
-        return _python_package_owner(finding, pins, locked or {})
+        return "pinned" if _normalise(finding["pkg"]) in pins else "lock"
     return "rebuild"
 
 
-def _python_package_owner(finding: dict, pins: Set[str], locked: Mapping[str, Set[str]]) -> str:
-    """'rebuild', 'pinned' or 'lock' for a Python package that has a fixed version.
+def lock_note(pkg: str, action: str, locked: Mapping[str, Set[str]]) -> str:
+    """What main's uv.lock holds for a 'lock' or 'pinned' finding, and what to do either way.
 
-    The image installs uv.lock exactly, so a release clears the finding only when main's lock
-    already holds a fixed version - even for an `==` pin, which main has then already moved.
-    Every version the lock holds must carry the fix: uv locks one per fork of the resolution,
-    and nothing here says which fork the image installs. A lock still holding the version
-    Trivy flagged never counts, whatever it compares to: Trivy matches vulnerable ranges, and
-    a branch that has no fix yet adds nothing to FixedVersion.
+    Context for a human, not a verdict: whether the locked version carries the fix is theirs
+    to judge against the advisory.
+
+    Args:
+        pkg: The package name as Trivy reports it.
+        action: The finding's owner, from :func:`classify`.
+        locked: main's uv.lock, from :func:`locked_versions`.
+
+    Returns:
+        One sentence without a final full stop, or '' for any other owner and for a package
+        main's uv.lock does not hold.
     """
-    name = _normalise(finding["pkg"])
-    main_versions = locked.get(name, set())
-    flagged = _release(finding["installed"])
-    if main_versions and all(
-        _carries_fix(version, finding["fixed"]) and _release(version) != flagged for version in main_versions
-    ):
-        return "rebuild"
-    return "pinned" if name in pins else "lock"
-
-
-# A plain PEP 440 release: `1`, `1.2`, `1.2.3`... A pre-release, dev, post or local version,
-# an epoch, or text that is no version at all does not match.
-_PLAIN_RELEASE = re.compile(r"\d+(?:\.\d+)*")
-
-
-def _release(version: str) -> tuple[int, ...] | None:
-    """The release numbers of a plain release, trailing zeros dropped; None for anything else.
-
-    Without trailing zeros, `1.0` equals `1.0.0` and tuple order is PEP 440's release order.
-    """
-    text = version.strip()
-    if not _PLAIN_RELEASE.fullmatch(text):
-        return None
-    numbers = [int(part) for part in text.split(".")]
-    while len(numbers) > 1 and numbers[-1] == 0:
-        numbers.pop()
-    return tuple(numbers)
-
-
-def _carries_fix(version: str, fixed: str) -> bool:
-    """Whether `version` is at or above Trivy's FixedVersion.
-
-    The standard library has no PEP 440 comparison, and this script runs on the runner's bare
-    python3, so only plain releases are compared. Anything else - a pre-release, an unusual
-    spelling, text that is no version - is never taken as fixed: doubt reads as a lock update.
-
-    Trivy lists one fix per release branch when an advisory was patched on several, e.g.
-    `0.27.2, 0.28.1`. A version carries the fix when it is at or above the fix listed for its
-    own major.minor line, or at or above the highest fix listed.
-    """
-    release = _release(version)
-    listed = fixed.split(",")
-    fixes = [fix for fix in map(_release, listed) if fix is not None]
-    if release is None or len(fixes) != len(listed):
-        return False
-    on_its_line = [fix for fix in fixes if _minor_line(fix) == _minor_line(release)]
-    return any(release >= fix for fix in on_its_line) or release >= max(fixes)
-
-
-def _minor_line(release: tuple[int, ...]) -> tuple[int, ...]:
-    return (*release, 0, 0)[:2]
+    name = _normalise(pkg)
+    versions = sorted(locked.get(name, ()))
+    if action not in ("lock", "pinned") or not versions:
+        return ""
+    # `name` is a key of main's uv.lock from here on, so the sentence holds no scanner text.
+    if len(versions) == 1:
+        held, judged = f"{name} {versions[0]}", "that version carries"
+    else:
+        held, judged = f"{name} {', '.join(versions)}", "every one of those versions carries"
+    if action == "lock":
+        update = f"run `uv lock --upgrade-package {name}`"
+    else:
+        update = f"raise the `==` pin for {name} in pyproject.toml and run `uv lock`"
+    return (
+        f"main's uv.lock has {held} - if {judged} the fix, cutting a release clears this; "
+        f"otherwise {update}, then cut a release"
+    )
 
 
 def load_report(report: Path) -> dict:
@@ -281,6 +256,9 @@ def collect(
     packages to upgrade - while dropping the repeats Trivy emits when the same package
     is discovered through more than one target.
 
+    Every field is read as text, so a number or other non-string value in the report cannot
+    crash the triage.
+
     Args:
         report: Trivy JSON report.
         pins: Exact pins, as :func:`exact_pins` returns. Defaults to the repository's own.
@@ -288,7 +266,8 @@ def collect(
             repository's own uv.lock.
 
     Returns:
-        One row per (package, CVE), each with its `action`, worst severity first.
+        One row per (package, CVE), each with its `action` and its `lock_note` (see
+        :func:`lock_note`), worst severity first.
     """
     data = load_report(report)
     if pins is None:
@@ -298,22 +277,23 @@ def collect(
     findings: dict[tuple[str, str], dict] = {}
     for result in data.get("Results") or []:
         for vuln in result.get("Vulnerabilities") or []:
-            pkg = vuln.get("PkgName", "?")
-            cve = vuln.get("VulnerabilityID", "?")
+            pkg = str(vuln.get("PkgName") or "?")
+            cve = str(vuln.get("VulnerabilityID") or "?")
             findings.setdefault(
                 (pkg, cve),
                 {
                     "pkg": pkg,
                     "cve": cve,
-                    "severity": vuln.get("Severity", "UNKNOWN"),
-                    "installed": vuln.get("InstalledVersion") or "?",
-                    "fixed": vuln.get("FixedVersion") or "",
-                    "title": (vuln.get("Title") or "").strip(),
-                    "type": result.get("Type", "?"),
+                    "severity": str(vuln.get("Severity") or "UNKNOWN"),
+                    "installed": str(vuln.get("InstalledVersion") or "?"),
+                    "fixed": str(vuln.get("FixedVersion") or ""),
+                    "title": str(vuln.get("Title") or "").strip(),
+                    "type": str(result.get("Type") or "?"),
                 },
             )
     for f in findings.values():
-        f["action"] = classify(f, pins, locked)
+        f["action"] = classify(f, pins)
+        f["lock_note"] = lock_note(f["pkg"], f["action"], locked)
     order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
     action_order = {"no-fix": 0, "permit-opa": 1, "base-digest": 2, "pinned": 3, "lock": 4, "rebuild": 5}
     return sorted(
@@ -379,10 +359,11 @@ def _next_steps(by_action: dict[str, list[dict]]) -> list[str]:
             "`no-cache-filters: main`, so the build cannot replay a stale `apk` layer from "
             "the GHA cache."
         )
-    if lock:
+    steps += _lock_notes(lock)
+    if unlocked := _without_lock_note(lock):
         steps.append(
-            f"- Update {', '.join(sorted({_cell(f['pkg']) for f in lock}))} in uv.lock (merge "
-            "Dependabot's `uv` PR, or `uv lock --upgrade-package NAME`), then cut a release."
+            f"- Update {unlocked} in uv.lock (merge Dependabot's `uv` PR, or "
+            "`uv lock --upgrade-package NAME`), then cut a release."
         )
     if opa:
         steps.append(
@@ -394,10 +375,11 @@ def _next_steps(by_action: dict[str, list[dict]]) -> list[str]:
             "- Merge the open Dependabot `docker` PR that moves the golang digest "
             "(Dockerfile `opa_build`), then cut a release."
         )
-    if pinned:
+    steps += _lock_notes(pinned)
+    if unlocked := _without_lock_note(pinned):
         steps.append(
-            f"- Raise the `==` pin for {', '.join(sorted({_cell(f['pkg']) for f in pinned}))} "
-            "in pyproject.toml and run `uv lock` (or waive it with a reachability argument)."
+            f"- Raise the `==` pin for {unlocked} in pyproject.toml and run `uv lock` (or waive it "
+            "with a reachability argument)."
         )
     if nofix:
         steps.append(
@@ -405,6 +387,16 @@ def _next_steps(by_action: dict[str, list[dict]]) -> list[str]:
             "no released version fixes them yet."
         )
     return steps
+
+
+def _lock_notes(findings: list[dict]) -> list[str]:
+    """One step per package main's uv.lock holds, naming its locked version."""
+    return [f"- {note}." for note in sorted({f["lock_note"] for f in findings if f["lock_note"]})]
+
+
+def _without_lock_note(findings: list[dict]) -> str:
+    """The packages main's uv.lock does not hold, comma-separated; '' when there are none."""
+    return ", ".join(sorted({_cell(f["pkg"]) for f in findings if not f["lock_note"]}))
 
 
 def render(tag: str, findings: list[dict], verdict: str) -> str:
@@ -426,7 +418,7 @@ def render(tag: str, findings: list[dict], verdict: str) -> str:
         headline = (
             "**Every finding is already patched upstream, so this image is stale rather "
             "than broken.** No source change is needed: cutting a release rebuilds it from main, "
-            "where `apk upgrade` absorbs the Alpine patches and uv.lock installs main's Python versions."
+            "and `apk upgrade` absorbs the patches."
         )
     else:
         parts = []
@@ -451,15 +443,19 @@ def render(tag: str, findings: list[dict], verdict: str) -> str:
             )
         if lock:
             parts.append(
-                f"{len(lock)} finding(s) are in Python packages that main's uv.lock does not yet "
-                "hold at a fixed version - a rebuild installs the lock as it is, so the lock has to be updated"
+                f"{len(lock)} finding(s) are in Python packages, which a rebuild installs from main's "
+                "uv.lock as it is - unless main's locked version carries the fix, the lock has to be "
+                "updated (Next step names each locked version)"
             )
         if pinned:
             parts.append(
                 f"{len(pinned)} finding(s) are in Python packages pinned with `==` in "
-                "pyproject.toml - the pin has to move, then the lock"
+                "pyproject.toml - unless main's pinned version carries the fix, the pin has to "
+                "move, then the lock"
             )
-        headline = "**A rebuild alone will NOT clear this image.** " + "; ".join(parts) + "."
+        # A Python finding may already be fixed in main's uv.lock; the others certainly are not.
+        certainly = "will NOT" if nofix or opa or base else "may not"
+        headline = f"**A rebuild alone {certainly} clear this image.** " + "; ".join(parts) + "."
 
     lines = [
         f"## `permitio/pdp-v2:{tag}` - {verdict}",
@@ -470,8 +466,8 @@ def render(tag: str, findings: list[dict], verdict: str) -> str:
         f"- Cleared by rebuilding this repo: **{len(rebuildable)}**",
         f"- Need a permit-opa `go.mod` bump: **{len(opa)}**",
         f"- Need the golang base digest to move: **{len(base)}**",
-        f"- Need a uv.lock update: **{len(lock)}**",
-        f"- Need an exact pin in pyproject.toml moved: **{len(pinned)}**",
+        f"- Need a uv.lock update, unless main's lock already has the fix: **{len(lock)}**",
+        f"- Need an exact pin in pyproject.toml moved, unless main's pin has the fix: **{len(pinned)}**",
         f"- No upstream fix available: **{len(nofix)}**",
         "",
         "| Severity | Package | Installed | CVE | Fixed in | Owner |",

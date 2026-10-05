@@ -276,27 +276,54 @@ def test_medium_findings_are_counted_but_not_alerted(run):
     assert outputs["severe"] == "0"
 
 
-HTTPX_IN_MAINS_LOCK = min(report.classifier.locked_versions()["httpx"])
+@pytest.mark.parametrize(
+    ("pkg", "result_type", "hint"),
+    [
+        ("libssl3", "alpine", "a release rebuild picks it up"),
+        ("golang.org/x/net", "gobinary", "bump it in permit-opa"),
+        ("stdlib", "gobinary", "needs the golang base-image digest bump"),
+        ("starlette", "python-pkg", "bump the exact pin in pyproject.toml"),
+        ("httpx", "python-pkg", "update it in uv.lock"),
+    ],
+)
+def test_trivy_remediation_names_who_acts(run, monkeypatch, pkg, result_type, hint):
+    monkeypatch.setattr(report.classifier, "locked_versions", dict)
+    vuln = _vuln("CVE-2026-0007", pkg=pkg)
+    message, _, _ = run(trivy={"latest": _trivy(vuln, result_type=result_type)}, scout=_sarif(), alerts=[])
+    assert f"fix: 3.5.8-r0, {hint}" in message
+    assert "main's uv.lock has" not in message
+
+
+def _in_mains_lock(pkg: str) -> str:
+    return ", ".join(sorted(report.classifier.locked_versions()[pkg]))
 
 
 @pytest.mark.parametrize(
-    ("pkg", "installed", "fixed", "result_type", "hint"),
+    ("installed", "fixed"),
     [
-        ("libssl3", "3.5.7-r0", "3.5.8-r0", "alpine", "a release rebuild picks it up"),
-        ("golang.org/x/net", "0.40.0", "0.41.0", "gobinary", "bump it in permit-opa"),
-        ("stdlib", "1.26.0", "1.26.1", "gobinary", "needs the golang base-image digest bump"),
-        ("starlette", "0.50.0", "99.0.0", "python-pkg", "bump the exact pin in pyproject.toml"),
-        ("httpx", HTTPX_IN_MAINS_LOCK, "99.0.0", "python-pkg", "update it in uv.lock"),
-        # main's uv.lock has moved off the image's version, but not as far as the fix.
-        ("httpx", "0.0.1", "99.0.0", "python-pkg", "update it in uv.lock"),
-        # main's uv.lock already holds the fix, which the next release installs.
-        ("httpx", "0.0.1", HTTPX_IN_MAINS_LOCK, "python-pkg", "a release rebuild picks it up"),
+        pytest.param(_in_mains_lock("httpx"), "99.0.0", id="lock-holds-the-image-version"),
+        pytest.param("0.0.1", "99.0.0", id="lock-below-the-fix"),
+        pytest.param("0.0.1", _in_mains_lock("httpx"), id="lock-at-the-fix"),
+        pytest.param("0.0.1", "0.0.2", id="lock-above-the-fix"),
     ],
 )
-def test_trivy_remediation_names_who_acts(run, *, pkg, installed, fixed, result_type, hint):
-    vuln = _vuln("CVE-2026-0007", pkg=pkg, installed=installed, fixed=fixed)
-    message, _, _ = run(trivy={"latest": _trivy(vuln, result_type=result_type)}, scout=_sarif(), alerts=[])
-    assert f"fix: {fixed}, {hint}" in message
+def test_a_python_finding_names_mains_locked_version_and_is_never_a_rebuild(run, installed, fixed):
+    vuln = _vuln("CVE-2026-0010", pkg="httpx", installed=installed, fixed=fixed)
+    message, _, _ = run(trivy={"latest": _trivy(vuln, result_type="python-pkg")}, scout=_sarif(), alerts=[])
+    line = next(line for line in message.splitlines() if "CVE-2026-0010" in line)
+    assert (
+        f"fix: {fixed}, main's uv.lock has httpx {_in_mains_lock('httpx')} - if that version carries the fix, "
+        "cutting a release clears this; otherwise run `uv lock --upgrade-package httpx`, then cut a release"
+    ) in line
+    assert "a release rebuild picks it up" not in line
+
+
+def test_a_pinned_python_finding_names_mains_pinned_version(run):
+    vuln = _vuln("CVE-2026-0011", pkg="starlette", installed="0.49.0", fixed="0.49.1")
+    message, _, _ = run(trivy={"latest": _trivy(vuln, result_type="python-pkg")}, scout=_sarif(), alerts=[])
+    line = next(line for line in message.splitlines() if "CVE-2026-0011" in line)
+    assert f"fix: 0.49.1, main's uv.lock has starlette {_in_mains_lock('starlette')} - if " in line
+    assert "otherwise raise the `==` pin for starlette in pyproject.toml and run `uv lock`" in line
 
 
 def test_no_fix_is_said_out_loud(run):
