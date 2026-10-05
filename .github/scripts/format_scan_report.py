@@ -163,18 +163,18 @@ def collect_trivy(data: dict) -> list[dict]:
         for vuln in result.get("Vulnerabilities") or []:
             if not isinstance(vuln, dict):
                 continue
-            pkg = vuln.get("PkgName") or "?"
-            cve = vuln.get("VulnerabilityID") or "?"
+            pkg = str(vuln.get("PkgName") or "?")
+            cve = str(vuln.get("VulnerabilityID") or "?")
             findings.setdefault(
                 (pkg, cve),
                 {
                     "pkg": pkg,
                     "cve": cve,
-                    "severity": (vuln.get("Severity") or "UNKNOWN").upper(),
-                    "installed": vuln.get("InstalledVersion") or "?",
-                    "fixed": vuln.get("FixedVersion") or "",
-                    "title": (vuln.get("Title") or "").strip(),
-                    "type": result.get("Type") or "?",
+                    "severity": str(vuln.get("Severity") or "UNKNOWN").upper(),
+                    "installed": str(vuln.get("InstalledVersion") or "?"),
+                    "fixed": str(vuln.get("FixedVersion") or ""),
+                    "title": str(vuln.get("Title") or "").strip(),
+                    "type": str(result.get("Type") or "?"),
                 },
             )
     return sorted(

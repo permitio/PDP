@@ -105,6 +105,21 @@ def test_duplicate_rows_are_collapsed_once_not_double_counted():
     assert counts["total"] == 1
 
 
+def test_non_string_trivy_fields_are_read_as_text():
+    vuln = {"VulnerabilityID": 2026, "PkgName": 7, "InstalledVersion": 1, "FixedVersion": 2.5}
+    vuln |= {"Severity": 9, "Title": 4}
+    [row] = fmt.collect_trivy({"Results": [{"Type": 0, "Vulnerabilities": [vuln]}]})
+    assert row == {
+        "pkg": "7",
+        "cve": "2026",
+        "severity": "9",
+        "installed": "1",
+        "fixed": "2.5",
+        "title": "4",
+        "type": "?",
+    }
+
+
 @pytest.mark.parametrize(
     ("payload", "needle"),
     [
