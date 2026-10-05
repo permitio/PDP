@@ -25,7 +25,7 @@ sha2 = "0.10.8"
 thiserror = "2.0.12"
 tokio = { version = "1.44.1", features = ["full"] }
 url = "2.5.4"
-utoipa = {version = "5.3.1",features = ["axum_extras"]}
+utoipa = {version = "6.0.0",features = ["axum_extras"]}
 utoipa-axum = "0.2.0"
 utoipa-scalar = { version = "0.4.0", features = ["axum"] }
 openssl = { version = "0.10", features = ["vendored"] }  # Required for docker build on Alpine
