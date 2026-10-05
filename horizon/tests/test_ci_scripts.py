@@ -693,6 +693,23 @@ def test_lock_note_names_mains_locked_version(pkg, action, installed, note):
 
 
 @pytest.mark.parametrize(
+    ("locked", "installed", "held"),
+    [
+        pytest.param("0.28.1rc1", "0.28.1RC1", True, id="case"),
+        pytest.param("0.28.1", " 0.28.1\n", True, id="surrounding-space"),
+        pytest.param("0.28.1", "0.28.01", True, id="leading-zero-in-a-part"),
+        pytest.param("1.0", "1.0.0", True, id="trailing-zero-part"),
+        # Controls: a pre-release, or space inside the string, is never read as the same version.
+        pytest.param("0.28.1rc1", "0.28.1rc2", False, id="other-pre-release"),
+        pytest.param("0.28.1", "0.28 .1", False, id="inner-space"),
+        pytest.param("0.28.10", "0.28.1", False, id="trailing-zero-digit"),
+    ],
+)
+def test_lock_still_flagged_matches_versions_that_are_certainly_the_same(locked, installed, held):
+    assert classifier.lock_still_flagged("httpx", "lock", {"httpx": {locked}}, installed=installed) is held
+
+
+@pytest.mark.parametrize(
     ("pkg", "action"),
     [
         # Not in main's lock: say nothing about the lock at all.

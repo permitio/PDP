@@ -190,9 +190,10 @@ _RELEASE_ONLY = re.compile(r"^\d+(?:\.\d+)*$")
 def _same_version(a: str, b: str) -> bool:
     """Whether two version strings certainly name the same version.
 
-    Equal ignoring case and surrounding space, or plain release numbers that differ only in
-    trailing zeros (`1.0` and `1.0.0`). Anything else - a pre-release, a local label, an
-    epoch - has to match exactly, so an unsure answer is "no".
+    Equal ignoring case and surrounding space, or plain release numbers whose parts are equal
+    as integers once trailing zero parts are dropped, which is how PEP 440 compares release
+    numbers: `1.0` and `1.0.0`, and also `1.01` and `1.1`. Anything else - a pre-release, a
+    local label, an epoch - has to match exactly, so an unsure answer is "no".
     """
     a, b = a.strip().lower(), b.strip().lower()
     if a == b:
