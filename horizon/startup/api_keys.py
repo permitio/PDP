@@ -64,11 +64,16 @@ class EnvApiKeyFetcher:
         if api_key_level == ApiKeyLevel.ENVIRONMENT:
             return sidecar_config.API_KEY
         if api_key_level == ApiKeyLevel.PROJECT:
+            # A project key carries its own project: the control plane reports it in the key's
+            # scope, so PDP_ACTIVE_PROJECT and PDP_ORG_API_KEY play no part here.
             api_key = sidecar_config.PROJECT_API_KEY
-            active_project_id = get_scope(sidecar_config.ORG_API_KEY).get("project_id")
+            scope = self.fetch_scope(api_key)
+            active_project_id = scope.get("project_id") if scope else None
             if not active_project_id:
                 raise ApiKeyError(
-                    "PDP_PROJECT_API_KEY is set, but failed to get Project ID from provided Organization API Key."
+                    f"PDP_PROJECT_API_KEY is set, but {self.scope_url} returned no project_id for it. "
+                    "Check that PDP_PROJECT_API_KEY is a project-level API key and that the control plane "
+                    "is reachable."
                 )
         return self._fetch_env_key(api_key, active_project_id, active_env_id)
 
@@ -90,25 +95,28 @@ class EnvApiKeyFetcher:
             logger.warning(f"Failed to get Environment API Key: {e}")
             raise
         if secret is None:
-            raise ApiKeyError("No secret found in the control plane's Environment API Key response.")
+            raise ApiKeyError(f"No secret found in the Environment API Key response from {api_key_url}.")
         return secret
+
+    @property
+    def scope_url(self) -> str:
+        return f"{self._backend_url}/v2/api-key/scope"
 
     def fetch_scope(self, api_key: str) -> dict | None:
         """
         fetches the provided Project/Organization Scope.
         """
-        api_key_url = f"{self._backend_url}/v2/api-key/scope"
-        logger.info("Fetching Scope from control plane: {url}", url=api_key_url)
+        logger.info("Fetching Scope from control plane: {url}", url=self.scope_url)
         fetch_with_retry = retry(**self._retry_config)(
             lambda: BlockingRequest(
                 token=api_key,
                 timeout=self._timeout,
-            ).get(url=api_key_url)
+            ).get(url=self.scope_url)
         )
         try:
             return fetch_with_retry()
-        except requests.RequestException:
-            logger.warning("Failed to get scope from provided API Key")
+        except requests.RequestException as e:
+            logger.warning(f"Failed to get the API Key's scope from {self.scope_url}: {e}")
             return None
 
 
@@ -121,13 +129,7 @@ def get_env_api_key() -> str:
         try:
             _env_api_key = EnvApiKeyFetcher().get_env_api_key_by_level()
         except Exception as e:
-            logger.error(f"Failed to get Environment API Key: {e}")
+            # The type goes in too: some exceptions carry no message at all.
+            logger.error(f"Failed to get Environment API Key: {type(e).__name__}: {e}")
             raise SystemExit(GUNICORN_EXIT_APP) from e
     return _env_api_key
-
-
-def get_scope(api_key: str) -> dict:
-    scope = EnvApiKeyFetcher().fetch_scope(api_key)
-    if scope is None:
-        raise ApiKeyError("Failed to get the scope of the provided API Key from the control plane.")
-    return scope
