@@ -307,24 +307,13 @@ def _run(args, stdin=None):
     )
 
 
-def test_cli_reports_an_unwaived_alert_and_writes_both_outputs(tmp_path):
+def test_cli_reports_an_unwaived_alert_and_writes_the_outputs(tmp_path):
     feed = tmp_path / "alerts.json"
     feed.write_text(json.dumps([_raw(number=77, cve="CVE-2026-90001")]), encoding="utf-8")
-    slack = tmp_path / "slack.txt"
     outputs = tmp_path / "gh.txt"
-    result = _run(
-        [
-            "--alerts",
-            str(feed),
-            "--all",
-            "--slack-output",
-            str(slack),
-            "--github-output",
-            str(outputs),
-        ]
-    )
+    result = _run(["--alerts", str(feed), "--all", "--github-output", str(outputs)])
     assert result.returncode == 0, result.stderr
-    assert "#77 HIGH" in slack.read_text(encoding="utf-8")
+    assert "#77 HIGH" in result.stdout
     written = dict(line.split("=", 1) for line in outputs.read_text().splitlines())
     assert written == {"new_count": "1", "total_unwaived": "1", "waived_count": "0"}
 

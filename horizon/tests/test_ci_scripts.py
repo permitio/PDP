@@ -424,29 +424,6 @@ def test_render_reports_medium_findings_as_medium(tmp_path):
     assert "1 CRITICAL, 1 MEDIUM" in body
 
 
-def test_slack_summary_escapes_and_stays_short(tmp_path):
-    report = _write(
-        tmp_path / "t.json",
-        _trivy(*[_vuln(f"CVE-2026-{i}", "HIGH", pkg=f"p<{i}>&|") for i in range(9)]),
-    )
-    findings = classifier.collect(report)
-    text = classifier.slack_summary("latest", findings, "SOURCE")
-    # The `->` separator is ours, not scanner text, so it must survive unescaped.
-    assert text.startswith("permitio/pdp-v2:latest -> SOURCE (9 findings: 9 HIGH)")
-    assert "+4 more" in text
-    assert "&lt;" in text and "&amp;" in text
-    assert "|" not in text
-    assert "│" in text
-    assert "&amp;lt;" not in text
-    assert len(text) <= 600
-
-
-def test_slack_summary_for_a_clean_image():
-    assert classifier.slack_summary("latest", [], "CLEAN") == (
-        "permitio/pdp-v2:latest -> CLEAN (no CRITICAL/HIGH findings after waivers)"
-    )
-
-
 @pytest.mark.parametrize("payload", ["", "not json at all", '{"Results": ['])
 def test_classifier_refuses_to_call_an_unreadable_report_clean(tmp_path, payload):
     report = _write(tmp_path / "trivy.json", payload)
@@ -457,7 +434,6 @@ def test_classifier_refuses_to_call_an_unreadable_report_clean(tmp_path, payload
 def test_classifier_cli_fails_loudly_on_a_zero_byte_report(tmp_path):
     report = _write(tmp_path / "trivy.json", "")
     gh_out = tmp_path / "gh_output"
-    slack = tmp_path / "slack.txt"
     result = subprocess.run(
         [
             sys.executable,
@@ -468,8 +444,6 @@ def test_classifier_cli_fails_loudly_on_a_zero_byte_report(tmp_path):
             "latest",
             "--github-output",
             str(gh_out),
-            "--slack-output",
-            str(slack),
         ],
         capture_output=True,
         text=True,
@@ -478,10 +452,10 @@ def test_classifier_cli_fails_loudly_on_a_zero_byte_report(tmp_path):
     )
     assert result.returncode == classifier.EXIT_UNREADABLE_REPORT
     assert "::error::" in result.stdout
+    assert "is empty" in result.stderr
     outputs = dict(line.split("=", 1) for line in gh_out.read_text().splitlines())
     assert outputs["verdict"] == "ERROR"
     assert outputs["parse_ok"] == "false"
-    assert "is empty" in slack.read_text(encoding="utf-8")
 
 
 def test_classifier_cli_reports_a_verdict_and_exits_zero(tmp_path):
@@ -490,7 +464,6 @@ def test_classifier_cli_reports_a_verdict_and_exits_zero(tmp_path):
         _trivy(_vuln("CVE-2026-1", "CRITICAL"), _vuln("CVE-2026-4", "HIGH", fixed="")),
     )
     gh_out = tmp_path / "gh_output"
-    slack = tmp_path / "slack.txt"
     result = subprocess.run(
         [
             sys.executable,
@@ -501,8 +474,6 @@ def test_classifier_cli_reports_a_verdict_and_exits_zero(tmp_path):
             "latest",
             "--github-output",
             str(gh_out),
-            "--slack-output",
-            str(slack),
         ],
         capture_output=True,
         text=True,
@@ -518,7 +489,7 @@ def test_classifier_cli_reports_a_verdict_and_exits_zero(tmp_path):
         "high": "1",
         "parse_ok": "true",
     }
-    assert slack.read_text(encoding="utf-8").startswith("permitio/pdp-v2:latest -> SOURCE")
+    assert "SOURCE" in result.stdout
 
 
 # --------------------------------------------------------------------------- check_waiver_parity

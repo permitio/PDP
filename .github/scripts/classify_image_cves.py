@@ -66,11 +66,6 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--tag", required=True, help="Image tag that was scanned")
     ap.add_argument("--summary", type=Path, help="Append Markdown here ($GITHUB_STEP_SUMMARY)")
     ap.add_argument("--github-output", type=Path, help="Write outputs here ($GITHUB_OUTPUT)")
-    ap.add_argument(
-        "--slack-output",
-        type=Path,
-        help="Write a short plain-text summary here, ready to drop into a Slack message",
-    )
     return ap.parse_args()
 
 
@@ -389,48 +384,6 @@ def render(tag: str, findings: list[dict], verdict: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-def slack_escape(text: str) -> str:
-    """Escape text for a Slack message body.
-
-    Slack's mrkdwn needs `&`, `<` and `>` escaped - `&` FIRST, or `&lt;` becomes
-    `&amp;lt;` and renders literally. `|` has no entity at all, because it separates
-    url from label inside `<url|label>`, so it is swapped for U+2502 BOX DRAWINGS
-    LIGHT VERTICAL instead.
-
-    Args:
-        text: Untrusted text, e.g. a CVE title or a package name.
-
-    Returns:
-        Text that renders as written in Slack.
-    """
-    escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    return escaped.replace("|", "│")
-
-
-def slack_summary(tag: str, findings: list[dict], verdict: str, limit: int = 600) -> str:
-    """Render the one-shot Slack line for this tag.
-
-    Args:
-        tag: Image tag that was scanned.
-        findings: Rows from :func:`collect`.
-        verdict: CLEAN, REBUILD or SOURCE.
-        limit: Hard cap on the returned length, so the message stays readable.
-
-    Returns:
-        Plain text, already Slack-escaped, at most `limit` characters.
-    """
-    # Only the untrusted parts are escaped: escaping the assembled line would turn the
-    # `->` separator into `-&gt;`.
-    image = slack_escape(f"permitio/pdp-v2:{tag}")
-    if verdict == "CLEAN":
-        return f"{image} -> CLEAN (no CRITICAL/HIGH findings after waivers)"
-    head = f"{image} -> {verdict} ({len(findings)} findings: {severity_breakdown(findings)})"
-    top = ", ".join(f"{slack_escape(f['cve'])} in {slack_escape(f['pkg'])}" for f in findings[:5])
-    if len(findings) > 5:
-        top += f", +{len(findings) - 5} more"
-    return f"{head}\nTop: {top}"[:limit]
-
-
 def write_outputs(args: argparse.Namespace, verdict: str, findings: list[dict]) -> None:
     """Write the step outputs every consumer of this script reads.
 
@@ -452,7 +405,7 @@ def fail_unreadable(args: argparse.Namespace, reason: str) -> int:
     """Report an unusable report as a failure, never as CLEAN.
 
     Every artifact this script produces still gets written - a workflow annotation, the
-    job summary and the Slack line - so the failure is visible everywhere a verdict
+    job summary and the step outputs - so the failure is visible everywhere a verdict
     would have been, and the exit code turns the job red.
 
     Args:
@@ -473,8 +426,6 @@ def fail_unreadable(args: argparse.Namespace, reason: str) -> int:
     if args.summary:
         with args.summary.open("a", encoding="utf-8") as fh:
             fh.write(body + "\n")
-    if args.slack_output:
-        args.slack_output.write_text(slack_escape(message), encoding="utf-8")
     write_outputs(args, "ERROR", [])
     return EXIT_UNREADABLE_REPORT
 
@@ -499,8 +450,6 @@ def main() -> int:
     if args.summary:
         with args.summary.open("a", encoding="utf-8") as fh:
             fh.write(body + "\n")
-    if args.slack_output:
-        args.slack_output.write_text(slack_summary(args.tag, findings, verdict), encoding="utf-8")
     write_outputs(args, verdict, findings)
 
     # Exit 0 for every verdict the report supports: the workflow decides pass/fail from

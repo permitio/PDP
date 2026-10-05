@@ -429,7 +429,6 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Ignore --new-since and report the whole unwaived critical/high backlog.",
     )
-    ap.add_argument("--slack-output", type=Path, help="Write the Slack-ready summary here.")
     ap.add_argument(
         "--github-output",
         type=Path,
@@ -458,8 +457,6 @@ def main() -> int:
     summary = slack_summary(selection)
     print(summary)
 
-    if args.slack_output:
-        args.slack_output.write_text(summary, encoding="utf-8")
     if args.github_output:
         write_github_output(args.github_output, selection)
 
