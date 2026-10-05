@@ -64,11 +64,14 @@ dependencies = [
 ]
 
 [dependency-groups]
-# No ruff here: it runs from the ruff-pre-commit rev in .pre-commit-config.yaml (`prek run ruff`),
-# so the linter version has one source and Dependabot's pre-commit entry bumps it.
+# No ruff here: it runs from the ruff-pre-commit rev in .pre-commit-config.yaml
+# (`prek run ruff-check` / `prek run ruff-format`), so the linter version has one source and
+# Dependabot's pre-commit entry bumps it.
 dev = [
     "pytest",
     "pytest-asyncio",
+    # Provides @pytest.mark.timeout, which --strict-markers below would otherwise reject.
+    "pytest-timeout",
     "aioresponses",
     # Imported by .github/scripts/check_waiver_parity.py, which horizon/tests/test_ci_scripts.py
     # loads at collection time, so a missing PyYAML fails the whole pytests job. A test and
@@ -93,6 +96,8 @@ override-dependencies = ["aiofiles==24.1.0"]
 # horizon is not installed (package = false above) - the tests import it from the repo root,
 # the way the image runs it from /app.
 pythonpath = ["."]
+# A mark no plugin registers does nothing; fail on it instead of warning.
+addopts = "--strict-markers"
 
 [tool.ruff]
 line-length = 120
@@ -100,9 +105,6 @@ line-length = 120
 # The CI helper scripts are the exception: the scheduled jobs run them on the runner's own
 # python3 (3.12 on ubuntu-24.04), so ruff must not suggest 3.13-only idioms there.
 per-file-target-version = { ".github/scripts/*.py" = "py312" }
-
-[tool.ruff.format]
-docstring-code-format = true
 
 [tool.ruff.lint]
 select = [
@@ -177,15 +179,3 @@ ignore = [
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"
-
-[tool.mypy]
-# Tracks the interpreter the image actually ships (Dockerfile: python:3.13-alpine3.23).
-python_version = "3.13"
-packages = ["horizon"]
-plugins = ["pydantic.v1.mypy"]
-
-check_untyped_defs = true
-warn_unused_configs = true
-warn_redundant_casts = true
-warn_unused_ignores = true
-warn_unreachable = true
