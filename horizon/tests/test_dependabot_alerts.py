@@ -7,7 +7,7 @@ is what a real import does and what ``@dataclass`` needs.
 
 The load-bearing test in this file is the waiver one. Every open HIGH Dependabot alert
 on this repo is a CVE already waived in `.trivyignore.yaml`; if the filter regresses,
-the daily watch posts the same three CVEs every morning until somebody mutes the
+the scheduled report carries the same three CVEs every run until somebody mutes the
 channel, and the next alert that matters arrives in a muted channel.
 """
 
@@ -114,7 +114,7 @@ def test_closed_alerts_are_ignored_even_at_critical():
         assert selection.unwaived == [], state
 
 
-def test_critical_sorts_above_high_so_truncation_keeps_the_worst():
+def test_critical_sorts_above_high():
     selection = _select(
         _raw(number=1, severity="high", cve="CVE-2026-1"),
         _raw(number=2, severity="critical", cve="CVE-2026-2"),
@@ -160,7 +160,7 @@ def test_ghsa_only_alert_is_reported_not_silently_dropped():
 
 def test_ghsa_only_alert_says_why_the_waiver_list_could_not_answer_it():
     selection = _select(_raw(number=50, cve=None, ghsa="GHSA-zzzz-yyyy-xxxx"))
-    summary = watch.slack_summary(selection)
+    summary = watch.log_summary(selection)
     assert "GHSA-zzzz-yyyy-xxxx" in summary
     assert "no CVE id" in summary
     assert ".trivyignore.yaml" in summary
@@ -179,7 +179,7 @@ def test_a_null_cve_id_is_not_mistaken_for_a_waived_empty_string():
 def test_empty_array_is_a_clean_result_not_an_error():
     selection = _select()
     assert selection.reported == []
-    assert watch.slack_summary(selection).startswith("No new unwaived")
+    assert watch.log_summary(selection).startswith("No new unwaived")
 
 
 def test_malformed_json_fails_loudly(tmp_path):
@@ -235,44 +235,26 @@ def test_unparseable_created_at_is_an_error():
     assert "ISO-8601" in str(exc.value)
 
 
-# --------------------------------------------------------------------------- Slack text
+# --------------------------------------------------------------------------- log summary
 
 
-def test_slack_escapes_ampersand_first_then_angle_brackets():
-    assert watch.slack_escape("a & b < c > d") == "a &amp; b &lt; c &gt; d"
-
-
-def test_slack_escape_does_not_double_escape_the_ampersand():
-    assert "&amp;lt;" not in watch.slack_escape("<x>")
-
-
-def test_slack_escape_swaps_the_pipe_for_a_lookalike():
-    assert watch.slack_escape("a|b") == "a│b"
-
-
-def test_untrusted_package_name_is_escaped_in_the_summary():
-    selection = _select(_raw(number=60, package="<!channel>|evil&", cve="CVE-2026-8"))
-    summary = watch.slack_summary(selection)
-    assert "<!channel>" not in summary
-    assert "&lt;!channel&gt;│evil&amp;" in summary
-
-
-def test_summary_is_capped_and_folds_the_tail_into_a_count():
+def test_summary_lists_every_reported_alert():
     raws = [_raw(number=n, cve=f"CVE-2026-{n}", package=f"pkg-{n}") for n in range(30)]
-    selection = _select(*raws)
-    summary = watch.slack_summary(selection)
-    assert len(summary) <= watch.SLACK_LIMIT
-    assert f"+{30 - watch.MAX_SLACK_ALERTS} more" in summary
+    lines = watch.log_summary(_select(*raws)).splitlines()
+    assert lines[0].startswith("30 unwaived CRITICAL/HIGH Dependabot alert(s) need triage")
+    assert sorted(lines[1:]) == sorted(f"#{n} HIGH pkg-{n} CVE-2026-{n}" for n in range(30))
 
 
-def test_summary_respects_an_explicit_limit():
-    raws = [_raw(number=n, cve=f"CVE-2026-{n}") for n in range(30)]
-    assert len(watch.slack_summary(_select(*raws), limit=80)) == 80
+def test_feed_text_cannot_start_a_workflow_command_line():
+    selection = _select(_raw(number=60, package="evil\n::error::forged", cve="CVE-2026-8"))
+    lines = watch.log_summary(selection).splitlines()
+    assert not any(line.startswith("::") for line in lines)
+    assert "#60 HIGH evil ::error::forged CVE-2026-8" in lines
 
 
 def test_quiet_summary_reports_the_waived_count_so_silence_is_explainable():
     selection = _select(_raw(number=8, cve="CVE-2026-48818"))
-    summary = watch.slack_summary(selection)
+    summary = watch.log_summary(selection)
     assert "No new unwaived" in summary
     assert "1 already waived" in summary
 
@@ -308,26 +290,23 @@ def _run(args, stdin=None):
     )
 
 
-def test_cli_reports_an_unwaived_alert_and_writes_the_outputs(tmp_path):
+def test_cli_lists_an_unwaived_alert(tmp_path):
     feed = tmp_path / "alerts.json"
     feed.write_text(json.dumps([_raw(number=77, cve="CVE-2026-90001")]), encoding="utf-8")
-    outputs = tmp_path / "gh.txt"
-    result = _run(["--alerts", str(feed), "--all", "--github-output", str(outputs)])
+    result = _run(["--alerts", str(feed), "--all"])
     assert result.returncode == 0, result.stderr
-    assert "#77 HIGH" in result.stdout
-    written = dict(line.split("=", 1) for line in outputs.read_text().splitlines())
-    assert written == {"new_count": "1", "total_unwaived": "1", "waived_count": "0"}
+    assert "1 unwaived CRITICAL/HIGH Dependabot alert(s) need triage (0 other" in result.stdout
+    assert "#77 HIGH starlette CVE-2026-90001" in result.stdout
 
 
 def test_cli_suppresses_an_alert_waived_in_the_real_trivyignore(tmp_path):
     waived_id = min(watch.waived_cve_ids())
     feed = tmp_path / "alerts.json"
     feed.write_text(json.dumps([_raw(number=78, cve=waived_id)]), encoding="utf-8")
-    outputs = tmp_path / "gh.txt"
-    result = _run(["--alerts", str(feed), "--all", "--github-output", str(outputs)])
+    result = _run(["--alerts", str(feed), "--all"])
     assert result.returncode == 0, result.stderr
-    written = dict(line.split("=", 1) for line in outputs.read_text().splitlines())
-    assert written == {"new_count": "0", "total_unwaived": "0", "waived_count": "1"}
+    assert "#78" not in result.stdout
+    assert "0 unwaived open alert(s); 1 already waived in .trivyignore.yaml." in result.stdout
 
 
 def test_cli_reads_stdin_when_no_alerts_path_is_given():
@@ -336,15 +315,11 @@ def test_cli_reads_stdin_when_no_alerts_path_is_given():
     assert "No new unwaived" in result.stdout
 
 
-def test_cli_exits_non_zero_and_writes_no_counts_on_an_unreadable_feed(tmp_path):
-    outputs = tmp_path / "gh.txt"
-    result = _run(["--alerts", str(tmp_path / "missing.json"), "--github-output", str(outputs)])
+def test_cli_exits_non_zero_on_an_unreadable_feed(tmp_path):
+    result = _run(["--alerts", str(tmp_path / "missing.json")])
     assert result.returncode == watch.EXIT_UNREADABLE_FEED
     assert "::error::" in result.stdout
     assert "does not exist" in result.stderr
-    # Silence in $GITHUB_OUTPUT is what stops the workflow reading a broken fetch as
-    # `new_count=0`.
-    assert not outputs.exists()
 
 
 def test_cli_exits_non_zero_on_a_permission_error_body(tmp_path):
