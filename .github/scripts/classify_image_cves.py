@@ -22,9 +22,9 @@ absorb. Two more cases a plain rebuild cannot fix, because the Dockerfile pins t
     digest-pinned. A rebuild reuses the same toolchain; the fix arrives when Dependabot's
     `docker` PR moves the digest and that PR is merged.
   - Python packages are installed from uv.lock exactly, so a rebuild installs whatever
-    main's lock holds. When main's uv.lock still holds the version the image has, the
-    lock needs an update (Dependabot's `uv` PR, or `uv lock --upgrade-package NAME`);
-    when it already holds a different one, cutting a release picks that up. A package
+    main's lock holds. Only when main's lock already holds a version at or above Trivy's
+    FixedVersion does cutting a release pick the fix up. Otherwise the lock needs an
+    update (Dependabot's `uv` PR, or `uv lock --upgrade-package NAME`), and a package
     pinned with `==` in pyproject.toml (e.g. starlette, ddtrace, websockets) needs that
     pin moved first.
 
@@ -169,16 +169,66 @@ def classify(
 
 
 def _python_package_owner(finding: dict, pins: Set[str], locked: Mapping[str, Set[str]]) -> str:
-    """'pinned', 'rebuild' or 'lock' for a Python package that has a fixed version."""
+    """'rebuild', 'pinned' or 'lock' for a Python package that has a fixed version.
+
+    The image installs uv.lock exactly, so a release clears the finding only when main's lock
+    already holds a fixed version - even for an `==` pin, which main has then already moved.
+    Every version the lock holds must carry the fix: uv locks one per fork of the resolution,
+    and nothing here says which fork the image installs. A lock still holding the version
+    Trivy flagged never counts, whatever it compares to: Trivy matches vulnerable ranges, and
+    a branch that has no fix yet adds nothing to FixedVersion.
+    """
     name = _normalise(finding["pkg"])
-    if name in pins:
-        return "pinned"
-    # The image installs uv.lock exactly. A lock on main that has moved off the installed
-    # version is picked up by the next release; one that has not needs updating first.
     main_versions = locked.get(name, set())
-    if main_versions and finding["installed"] not in main_versions:
+    flagged = _release(finding["installed"])
+    if main_versions and all(
+        _carries_fix(version, finding["fixed"]) and _release(version) != flagged for version in main_versions
+    ):
         return "rebuild"
-    return "lock"
+    return "pinned" if name in pins else "lock"
+
+
+# A plain PEP 440 release: `1`, `1.2`, `1.2.3`... A pre-release, dev, post or local version,
+# an epoch, or text that is no version at all does not match.
+_PLAIN_RELEASE = re.compile(r"\d+(?:\.\d+)*")
+
+
+def _release(version: str) -> tuple[int, ...] | None:
+    """The release numbers of a plain release, trailing zeros dropped; None for anything else.
+
+    Without trailing zeros, `1.0` equals `1.0.0` and tuple order is PEP 440's release order.
+    """
+    text = version.strip()
+    if not _PLAIN_RELEASE.fullmatch(text):
+        return None
+    numbers = [int(part) for part in text.split(".")]
+    while len(numbers) > 1 and numbers[-1] == 0:
+        numbers.pop()
+    return tuple(numbers)
+
+
+def _carries_fix(version: str, fixed: str) -> bool:
+    """Whether `version` is at or above Trivy's FixedVersion.
+
+    The standard library has no PEP 440 comparison, and this script runs on the runner's bare
+    python3, so only plain releases are compared. Anything else - a pre-release, an unusual
+    spelling, text that is no version - is never taken as fixed: doubt reads as a lock update.
+
+    Trivy lists one fix per release branch when an advisory was patched on several, e.g.
+    `0.27.2, 0.28.1`. A version carries the fix when it is at or above the fix listed for its
+    own major.minor line, or at or above the highest fix listed.
+    """
+    release = _release(version)
+    listed = fixed.split(",")
+    fixes = [fix for fix in map(_release, listed) if fix is not None]
+    if release is None or len(fixes) != len(listed):
+        return False
+    on_its_line = [fix for fix in fixes if _minor_line(fix) == _minor_line(release)]
+    return any(release >= fix for fix in on_its_line) or release >= max(fixes)
+
+
+def _minor_line(release: tuple[int, ...]) -> tuple[int, ...]:
+    return (*release, 0, 0)[:2]
 
 
 def load_report(report: Path) -> dict:
@@ -402,8 +452,8 @@ def render(tag: str, findings: list[dict], verdict: str) -> str:
             )
         if lock:
             parts.append(
-                f"{len(lock)} finding(s) are in Python packages that main's uv.lock still holds "
-                "at the installed version - a rebuild reinstalls it, so the lock has to be updated"
+                f"{len(lock)} finding(s) are in Python packages that main's uv.lock does not yet "
+                "hold at a fixed version - a rebuild installs the lock as it is, so the lock has to be updated"
             )
         if pinned:
             parts.append(

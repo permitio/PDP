@@ -280,21 +280,23 @@ HTTPX_IN_MAINS_LOCK = min(report.classifier.locked_versions()["httpx"])
 
 
 @pytest.mark.parametrize(
-    ("pkg", "installed", "result_type", "hint"),
+    ("pkg", "installed", "fixed", "result_type", "hint"),
     [
-        ("libssl3", "3.5.7-r0", "alpine", "a release rebuild picks it up"),
-        ("golang.org/x/net", "0.40.0", "gobinary", "bump it in permit-opa"),
-        ("stdlib", "1.26.0", "gobinary", "needs the golang base-image digest bump"),
-        ("starlette", "0.50.0", "python-pkg", "bump the exact pin in pyproject.toml"),
-        ("httpx", HTTPX_IN_MAINS_LOCK, "python-pkg", "update it in uv.lock"),
-        # main's uv.lock already holds another version, which the next release installs.
-        ("httpx", "0.0.1", "python-pkg", "a release rebuild picks it up"),
+        ("libssl3", "3.5.7-r0", "3.5.8-r0", "alpine", "a release rebuild picks it up"),
+        ("golang.org/x/net", "0.40.0", "0.41.0", "gobinary", "bump it in permit-opa"),
+        ("stdlib", "1.26.0", "1.26.1", "gobinary", "needs the golang base-image digest bump"),
+        ("starlette", "0.50.0", "99.0.0", "python-pkg", "bump the exact pin in pyproject.toml"),
+        ("httpx", HTTPX_IN_MAINS_LOCK, "99.0.0", "python-pkg", "update it in uv.lock"),
+        # main's uv.lock has moved off the image's version, but not as far as the fix.
+        ("httpx", "0.0.1", "99.0.0", "python-pkg", "update it in uv.lock"),
+        # main's uv.lock already holds the fix, which the next release installs.
+        ("httpx", "0.0.1", HTTPX_IN_MAINS_LOCK, "python-pkg", "a release rebuild picks it up"),
     ],
 )
-def test_trivy_remediation_names_who_acts(run, pkg, installed, result_type, hint):
-    vuln = _vuln("CVE-2026-0007", pkg=pkg, installed=installed)
+def test_trivy_remediation_names_who_acts(run, *, pkg, installed, fixed, result_type, hint):
+    vuln = _vuln("CVE-2026-0007", pkg=pkg, installed=installed, fixed=fixed)
     message, _, _ = run(trivy={"latest": _trivy(vuln, result_type=result_type)}, scout=_sarif(), alerts=[])
-    assert f"fix: 3.5.8-r0, {hint}" in message
+    assert f"fix: {fixed}, {hint}" in message
 
 
 def test_no_fix_is_said_out_loud(run):
