@@ -135,7 +135,7 @@ websockets==17.0
 # under PER-15358 (there is no docs/ directory in this repo yet; the write-up lands with
 # the companion change). Drop this floor once opal-common itself floors
 # gitpython >= 3.1.59. See PER-15358.
-GitPython>=3.1.59,<4
+GitPython>=3.1.62,<4
 # opal-common/opal-client 0.9.9 declare Requires-Python <3.13, so pip cannot install them on
 # the 3.13 image. Stay on 0.9.6 until an OPAL release lifts that bound.
 opal-common==0.9.6
