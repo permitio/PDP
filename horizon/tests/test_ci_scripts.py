@@ -575,7 +575,7 @@ def test_a_lock_only_report_names_uv_lock_as_the_owner(tmp_path):
     ) in body
 
 
-def _classify_cli(report: Path, gh_out: Path) -> subprocess.CompletedProcess:
+def _classify_cli(report: Path, summary: Path) -> subprocess.CompletedProcess:
     """Run the classifier the way the scheduled scan does, from a directory outside the repo."""
     return subprocess.run(
         [
@@ -585,8 +585,8 @@ def _classify_cli(report: Path, gh_out: Path) -> subprocess.CompletedProcess:
             str(report),
             "--tag",
             "latest",
-            "--github-output",
-            str(gh_out),
+            "--summary",
+            str(summary),
         ],
         capture_output=True,
         text=True,
@@ -597,14 +597,13 @@ def _classify_cli(report: Path, gh_out: Path) -> subprocess.CompletedProcess:
 
 def test_classifier_cli_fails_loudly_on_a_zero_byte_report(tmp_path):
     report = _write(tmp_path / "trivy.json", "")
-    gh_out = tmp_path / "gh_output"
-    result = _classify_cli(report, gh_out)
+    summary = tmp_path / "summary.md"
+    result = _classify_cli(report, summary)
     assert result.returncode == classifier.EXIT_UNREADABLE_REPORT
     assert "::error::" in result.stdout
     assert "is empty" in result.stderr
-    outputs = dict(line.split("=", 1) for line in gh_out.read_text().splitlines())
-    assert outputs["verdict"] == "ERROR"
-    assert outputs["parse_ok"] == "false"
+    assert summary.read_text().startswith("## `permitio/pdp-v2:latest` - SCAN FAILED\n")
+    assert "has NOT been cleared" in summary.read_text()
 
 
 def test_classifier_cli_reports_a_verdict_and_exits_zero(tmp_path):
@@ -612,18 +611,12 @@ def test_classifier_cli_reports_a_verdict_and_exits_zero(tmp_path):
         tmp_path / "trivy.json",
         _trivy(_vuln("CVE-2026-1", "CRITICAL"), _vuln("CVE-2026-4", "HIGH", fixed="")),
     )
-    gh_out = tmp_path / "gh_output"
-    result = _classify_cli(report, gh_out)
+    summary = tmp_path / "summary.md"
+    result = _classify_cli(report, summary)
     assert result.returncode == 0, result.stderr
-    outputs = dict(line.split("=", 1) for line in gh_out.read_text().splitlines())
-    assert outputs == {
-        "verdict": "SOURCE",
-        "findings": "2",
-        "critical": "1",
-        "high": "1",
-        "parse_ok": "true",
-    }
-    assert "SOURCE" in result.stdout
+    assert result.stdout.startswith("## `permitio/pdp-v2:latest` - SOURCE\n")
+    assert "- Findings: **2** (1 CRITICAL, 1 HIGH)" in result.stdout
+    assert summary.read_text() == result.stdout
 
 
 HTTPX_IN_MAINS_LOCK = min(classifier.locked_versions()["httpx"])
@@ -645,11 +638,9 @@ def test_classifier_cli_judges_python_findings_against_the_repo_lock(tmp_path, i
         tmp_path / "trivy.json",
         _trivy(_vuln("CVE-2026-6", pkg="httpx", fixed=fixed, installed=installed), target_type="python-pkg"),
     )
-    gh_out = tmp_path / "gh_output"
-    result = _classify_cli(report, gh_out)
+    result = _classify_cli(report, tmp_path / "summary.md")
     assert result.returncode == 0, result.stderr
-    outputs = dict(line.split("=", 1) for line in gh_out.read_text().splitlines())
-    assert outputs["verdict"] == verdict
+    assert result.stdout.startswith(f"## `permitio/pdp-v2:latest` - {verdict}\n")
     row = next(line for line in result.stdout.splitlines() if "`httpx`" in line)
     assert row.endswith(f"| {owner} |")
 

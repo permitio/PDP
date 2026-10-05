@@ -46,8 +46,8 @@ working directory - main, on a scheduled run.
 
 A report that cannot be read is NOT clean. `--report` pointing at a missing, empty or
 truncated file means the scan step failed, and the only safe answer is a loud one: the
-script writes `parse_ok=false`, prints a workflow error annotation and exits non-zero.
-Reading a zero-byte file as `{}` once turned a broken scan into a green CLEAN run.
+script prints a workflow error annotation, writes SCAN FAILED to the job summary and exits
+non-zero. Reading a zero-byte file as `{}` once turned a broken scan into a green CLEAN run.
 """
 
 from __future__ import annotations
@@ -70,7 +70,6 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--report", required=True, type=Path, help="Trivy JSON report")
     ap.add_argument("--tag", required=True, help="Image tag that was scanned")
     ap.add_argument("--summary", type=Path, help="Append Markdown here ($GITHUB_STEP_SUMMARY)")
-    ap.add_argument("--github-output", type=Path, help="Write outputs here ($GITHUB_OUTPUT)")
     return ap.parse_args()
 
 
@@ -500,29 +499,12 @@ def render(tag: str, findings: list[dict], verdict: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-def write_outputs(args: argparse.Namespace, verdict: str, findings: list[dict]) -> None:
-    """Write the step outputs every consumer of this script reads.
-
-    `verdict` and `findings` are consumed by scheduled-security-scan.yml; renaming either
-    breaks the scheduled scan. `critical`, `high` and `parse_ok` are additive.
-    """
-    if not args.github_output:
-        return
-    counts = severity_counts(findings)
-    with args.github_output.open("a", encoding="utf-8") as fh:
-        fh.write(f"verdict={verdict}\n")
-        fh.write(f"findings={len(findings)}\n")
-        fh.write(f"critical={counts['CRITICAL']}\n")
-        fh.write(f"high={counts['HIGH']}\n")
-        fh.write(f"parse_ok={'false' if verdict == 'ERROR' else 'true'}\n")
-
-
 def fail_unreadable(args: argparse.Namespace, reason: str) -> int:
     """Report an unusable report as a failure, never as CLEAN.
 
-    Every artifact this script produces still gets written - a workflow annotation, the
-    job summary and the step outputs - so the failure is visible everywhere a verdict
-    would have been, and the exit code turns the job red.
+    Everything this script produces still gets written - a workflow annotation and the job
+    summary - so the failure is visible everywhere a verdict would have been, and the exit
+    code turns the job red.
 
     Args:
         args: Parsed CLI arguments.
@@ -542,7 +524,6 @@ def fail_unreadable(args: argparse.Namespace, reason: str) -> int:
     if args.summary:
         with args.summary.open("a", encoding="utf-8") as fh:
             fh.write(body + "\n")
-    write_outputs(args, "ERROR", [])
     return EXIT_UNREADABLE_REPORT
 
 
@@ -566,11 +547,10 @@ def main() -> int:
     if args.summary:
         with args.summary.open("a", encoding="utf-8") as fh:
             fh.write(body + "\n")
-    write_outputs(args, verdict, findings)
 
-    # Exit 0 for every verdict the report supports: the workflow decides pass/fail from
-    # the verdict output so that the SARIF upload and artifact steps still run. An
-    # unreadable report is the one exception - it is not a verdict.
+    # Exit 0 for every verdict the report supports: the scheduled scan reports findings
+    # through its `report` job and never fails a job over them. An unreadable report is the
+    # one exception - it is not a verdict.
     return 0
 
 
