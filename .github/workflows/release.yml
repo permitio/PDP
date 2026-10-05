@@ -102,7 +102,7 @@ jobs:
     # Built ONCE, for both the pre-release and the official path: the tags are applied at
     # publish time, so there is no second build that could resolve a different package set.
     - name: Build PDP image (multi-platform OCI archive, not pushed)
-      uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
+      uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
       with:
         push: false
         context: .
