@@ -65,6 +65,10 @@ updates:
         versions: [">=9"]
       - dependency-name: "scalar-fastapi"
         versions: [">=1.9.0"]
+      # fastapi 0.126.0 and later require pydantic>=2.7, so 0.125.x is the ceiling under the
+      # same OPAL pydantic<2 cap (see the fastapi note in requirements.txt).
+      - dependency-name: "fastapi"
+        versions: [">=0.126.0"]
       # websockets is pinned exactly and bumped BY HAND on purpose. requirements.txt
       # records why: during review of #329 the validated build shipped 16.1.1 and 17.0
       # published hours later, so the next rebuild would have carried an unvalidated
