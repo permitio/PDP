@@ -53,6 +53,92 @@ TRIVY_SARIF = {
     "runs": [{"tool": {"driver": {"name": "Trivy", "rules": []}}, "results": []}],
 }
 
+# Every layout Trivy's JSON format cannot produce, with the part of the error that names it. The
+# classifier and the scan gate refuse the same set.
+NOT_TRIVY_LAYOUTS = [
+    pytest.param({}, "it has no `SchemaVersion`", id="empty-object"),
+    pytest.param(TRIVY_SARIF, "it has no `SchemaVersion`", id="sarif"),
+    pytest.param({"SchemaVersion": None, "Results": []}, "it has no `SchemaVersion`", id="null-schema-version"),
+    pytest.param({"SchemaVersion": 1, "Results": []}, "has `SchemaVersion` 1,", id="older-schema-version"),
+    pytest.param({"SchemaVersion": "2", "Results": []}, "a `SchemaVersion` that is a JSON str", id="schema-as-text"),
+    pytest.param({"SchemaVersion": 2, "Results": "img"}, "`Results` is a JSON str", id="results-not-a-list"),
+    pytest.param({"SchemaVersion": 2, "Results": {}}, "`Results` is a JSON dict", id="results-an-empty-object"),
+    pytest.param({"SchemaVersion": 2, "Results": ["img"]}, "a `Results` entry is a JSON str", id="result-not-object"),
+    pytest.param(
+        {"SchemaVersion": 2, "Results": [{"Type": "alpine", "Vulnerabilities": {"CVE-2026-1": {}}}]},
+        "`Vulnerabilities` is a JSON dict",
+        id="vulnerabilities-not-a-list",
+    ),
+    pytest.param(
+        {"SchemaVersion": 2, "Results": [{"Type": "alpine", "Vulnerabilities": [_vuln("CVE-2026-1"), "CVE-2026-2"]}]},
+        "a `Vulnerabilities` entry is a JSON str",
+        id="vulnerability-not-an-object",
+    ),
+]
+
+
+def _realistic_vuln(cve, severity, *, pkg="libssl3"):
+    """One `Vulnerabilities` entry as Trivy 0.70 writes it for an Alpine package (values made up)."""
+    return {
+        "VulnerabilityID": cve,
+        "PkgID": f"{pkg}@3.5.4-r0",
+        "PkgName": pkg,
+        "PkgIdentifier": {"PURL": f"pkg:apk/alpine/{pkg}@3.5.4-r0?arch=x86_64&distro=3.23.6", "UID": "5f2c0a1b"},
+        "InstalledVersion": "3.5.4-r0",
+        "FixedVersion": "3.5.5-r0",
+        "Status": "fixed",
+        "Layer": {"Digest": "sha256:" + "a" * 64, "DiffID": "sha256:" + "b" * 64},
+        "SeveritySource": "nvd",
+        "PrimaryURL": f"https://avd.aquasec.com/nvd/{cve.lower()}",
+        "DataSource": {"ID": "alpine", "Name": "Alpine Secdb", "URL": "https://secdb.alpinelinux.org/"},
+        "Fingerprint": "sha256:" + "c" * 64,
+        "Title": "openssl: out-of-bounds write",
+        "Description": "An out-of-bounds write in OpenSSL.",
+        "Severity": severity,
+        "CweIDs": ["CWE-787"],
+        "VendorSeverity": {"alpine": 3, "nvd": 4},
+        "CVSS": {"nvd": {"V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H", "V3Score": 9.8}},
+        "References": [f"https://www.cve.org/CVERecord?id={cve}"],
+        "PublishedDate": "2026-09-01T00:00:00Z",
+        "LastModifiedDate": "2026-09-02T00:00:00Z",
+    }
+
+
+def _realistic_trivy(*vulns, results=True):
+    """A report laid out as `trivy image --format json` (Trivy 0.70) writes it, values made up.
+
+    Trivy keeps a `Results` entry per target even when it has nothing to list, leaving out
+    `Vulnerabilities`, and leaves out `Results` altogether when it found no target.
+    """
+    report = {
+        "SchemaVersion": 2,
+        "Trivy": {"Version": "0.70.0"},
+        "ReportID": "019a5c1e-7b3d-7c2e-9a41-3f6d2e8b1c05",
+        "CreatedAt": "2026-10-04T17:09:00.123456789Z",
+        "ArtifactID": "sha256:" + "d" * 64,
+        "ArtifactName": "permitio/pdp-v2:next",
+        "ArtifactType": "container_image",
+        "Metadata": {
+            "Size": 412345678,
+            "OS": {"Family": "alpine", "Name": "3.23.6"},
+            "ImageID": "sha256:" + "e" * 64,
+            "DiffIDs": ["sha256:" + "b" * 64],
+            "RepoTags": ["permitio/pdp-v2:next"],
+            "RepoDigests": ["permitio/pdp-v2@sha256:" + "f" * 64],
+            "Reference": "permitio/pdp-v2:next",
+            "ImageConfig": {"architecture": "amd64", "os": "linux", "config": {"Entrypoint": ["/app/start.sh"]}},
+            "Layers": [{"Size": 412345678, "Digest": "sha256:" + "a" * 64, "DiffID": "sha256:" + "b" * 64}],
+        },
+    }
+    if not results:
+        return report
+    alpine = {"Target": "permitio/pdp-v2:next (alpine 3.23.6)", "Class": "os-pkgs", "Type": "alpine"}
+    if vulns:
+        alpine["Vulnerabilities"] = list(vulns)
+    python = {"Target": "Python", "Class": "lang-pkgs", "Type": "python-pkg"}
+    opa = {"Target": "app/bin/opa", "Class": "lang-pkgs", "Type": "gobinary"}
+    return report | {"Results": [alpine, python, opa]}
+
 
 def _write(path: Path, payload) -> Path:
     path.write_text(payload if isinstance(payload, str) else json.dumps(payload), encoding="utf-8")
@@ -87,7 +173,7 @@ def test_clean_report_says_clean():
 
 
 def test_results_null_is_not_a_parse_failure():
-    body, counts = fmt.format_report({"Results": None}, None, "permitio/pdp-v2:next")
+    body, counts = fmt.format_report({"SchemaVersion": 2, "Results": None}, None, "permitio/pdp-v2:next")
     assert counts == {"critical": 0, "high": 0, "total": 0, "parse_ok": True}
     assert ":white_check_mark:" in body
 
@@ -104,10 +190,11 @@ def test_below_high_findings_are_folded_away():
 
 def test_duplicate_rows_are_collapsed_once_not_double_counted():
     report = {
+        "SchemaVersion": 2,
         "Results": [
             {"Type": "alpine", "Vulnerabilities": [_vuln("CVE-2026-1", "CRITICAL")]},
             {"Type": "alpine", "Vulnerabilities": [_vuln("CVE-2026-1", "CRITICAL")]},
-        ]
+        ],
     }
     _, counts = fmt.format_report(report, None, "permitio/pdp-v2:next")
     assert counts["total"] == 1
@@ -116,7 +203,7 @@ def test_duplicate_rows_are_collapsed_once_not_double_counted():
 def test_non_string_trivy_fields_are_read_as_text():
     vuln = {"VulnerabilityID": 2026, "PkgName": 7, "InstalledVersion": 1, "FixedVersion": 2.5}
     vuln |= {"Severity": 9, "Title": 4}
-    [row] = fmt.collect_trivy({"Results": [{"Type": 0, "Vulnerabilities": [vuln]}]})
+    [row] = fmt.collect_trivy({"SchemaVersion": 2, "Results": [{"Type": 0, "Vulnerabilities": [vuln]}]})
     assert row == {
         "pkg": "7",
         "cve": "2026",
@@ -198,7 +285,7 @@ def test_hostile_scanner_text_cannot_plant_its_own_link():
             }
         ]
     }
-    body, _ = fmt.format_report({}, sarif, "img:next")
+    body, _ = fmt.format_report(_trivy(), sarif, "img:next")
     assert "Click here" in body
     assert "\\[Click here\\]" in body
 
@@ -223,7 +310,7 @@ def test_scout_rule_without_a_security_severity_falls_back_instead_of_crashing()
             }
         ]
     }
-    _, counts = fmt.format_report({}, sarif, "img:next")
+    _, counts = fmt.format_report(_trivy(), sarif, "img:next")
     assert counts == {"critical": 0, "high": 1, "total": 1, "parse_ok": True}
 
 
@@ -291,7 +378,7 @@ def test_scout_sarif_findings_are_rendered_and_deduplicated_against_trivy():
 
 def test_scout_severity_falls_back_to_the_result_level():
     sarif = {"runs": [{"tool": {"driver": {}}, "results": [{"ruleId": "CVE-2026-3", "level": "error"}]}]}
-    _, counts = fmt.format_report({}, sarif, "img:next")
+    _, counts = fmt.format_report(_trivy(), sarif, "img:next")
     assert counts["high"] == 1
 
 
@@ -343,6 +430,79 @@ def test_format_cli_still_exits_zero_on_a_zero_byte_report(tmp_path):
     assert result.returncode == 0, result.stderr
     assert result.stdout.startswith(fmt.MARKER)
     assert "parse_ok=false" in gh_out.read_text()
+
+
+def _format_cli(report: Path) -> tuple[dict[str, str], str]:
+    """Run the gate's formatter the way tests.yml does; return its outputs and the comment body."""
+    gh_out, body = report.parent / "gh_output", report.parent / "body.md"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS / "format_scan_report.py"),
+            "--trivy",
+            str(report),
+            "--image",
+            "permitio/pdp-v2:next",
+            "--out",
+            str(body),
+            "--github-output",
+            str(gh_out),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    outputs = dict(line.split("=", 1) for line in gh_out.read_text(encoding="utf-8").splitlines())
+    return outputs, body.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("payload", "outputs", "headline"),
+    [
+        pytest.param(
+            _realistic_trivy(_realistic_vuln("CVE-2026-1", "CRITICAL"), _realistic_vuln("CVE-2026-2", "HIGH")),
+            {"critical": "1", "high": "1", "total": "2", "parse_ok": "true"},
+            ":x: **1 CRITICAL / 1 HIGH** finding(s) after waivers.",
+            id="findings",
+        ),
+        pytest.param(
+            _realistic_trivy(),
+            {"critical": "0", "high": "0", "total": "0", "parse_ok": "true"},
+            ":white_check_mark: **No CRITICAL or HIGH findings** after waivers.",
+            id="targets-with-nothing-to-list",
+        ),
+        pytest.param(
+            _realistic_trivy(results=False),
+            {"critical": "0", "high": "0", "total": "0", "parse_ok": "true"},
+            ":white_check_mark: **No CRITICAL or HIGH findings** after waivers.",
+            id="no-results-key",
+        ),
+    ],
+)
+def test_gate_reads_a_real_trivy_report_layout(tmp_path, payload, outputs, headline):
+    gate, body = _format_cli(_write(tmp_path / "trivy.json", payload))
+    assert gate == outputs
+    assert f"\n{headline}\n" in body
+    assert "Trivy report unavailable" not in body
+
+
+@pytest.mark.parametrize(("payload", "what"), NOT_TRIVY_LAYOUTS)
+def test_gate_fails_closed_on_a_report_not_laid_out_as_trivys(tmp_path, payload, what):
+    outputs, body = _format_cli(_write(tmp_path / "trivy.json", payload))
+    assert outputs["parse_ok"] == "false"
+    assert body.startswith(fmt.MARKER + "\n")
+    assert ":x: **Scan report could not be parsed - treat this as a FAILURE, not as clean.**" in body
+    assert f":x: **Trivy report unavailable.** {tmp_path / 'trivy.json'}" in body
+    assert what in body
+    assert ":white_check_mark:" not in body
+
+
+@pytest.mark.parametrize(("payload", "what"), NOT_TRIVY_LAYOUTS)
+def test_collect_trivy_never_skips_what_does_not_fit(payload, what):
+    # The CLI refuses these before collect_trivy() sees them; a direct caller gets the same answer.
+    with pytest.raises(fmt.classifier.ReportUnreadableError, match=what):
+        fmt.collect_trivy(payload)
 
 
 # --------------------------------------------------------------------------- classify_image_cves
@@ -672,30 +832,6 @@ def test_classifier_refuses_to_call_an_unreadable_report_clean(tmp_path, payload
     report = _write(tmp_path / "trivy.json", payload)
     with pytest.raises(classifier.ReportUnreadableError):
         classifier.collect(report)
-
-
-# Every layout Trivy's JSON format cannot produce, with the part of the error that names it. The
-# scan gate and the Slack report refuse the same set.
-NOT_TRIVY_LAYOUTS = [
-    pytest.param({}, "it has no `SchemaVersion`", id="empty-object"),
-    pytest.param(TRIVY_SARIF, "it has no `SchemaVersion`", id="sarif"),
-    pytest.param({"SchemaVersion": None, "Results": []}, "it has no `SchemaVersion`", id="null-schema-version"),
-    pytest.param({"SchemaVersion": 1, "Results": []}, "has `SchemaVersion` 1,", id="older-schema-version"),
-    pytest.param({"SchemaVersion": "2", "Results": []}, "a `SchemaVersion` that is a JSON str", id="schema-as-text"),
-    pytest.param({"SchemaVersion": 2, "Results": "img"}, "`Results` is a JSON str", id="results-not-a-list"),
-    pytest.param({"SchemaVersion": 2, "Results": {}}, "`Results` is a JSON dict", id="results-an-empty-object"),
-    pytest.param({"SchemaVersion": 2, "Results": ["img"]}, "a `Results` entry is a JSON str", id="result-not-object"),
-    pytest.param(
-        {"SchemaVersion": 2, "Results": [{"Type": "alpine", "Vulnerabilities": {"CVE-2026-1": {}}}]},
-        "`Vulnerabilities` is a JSON dict",
-        id="vulnerabilities-not-a-list",
-    ),
-    pytest.param(
-        {"SchemaVersion": 2, "Results": [{"Type": "alpine", "Vulnerabilities": [_vuln("CVE-2026-1"), "CVE-2026-2"]}]},
-        "a `Vulnerabilities` entry is a JSON str",
-        id="vulnerability-not-an-object",
-    ),
-]
 
 
 @pytest.mark.parametrize(("payload", "what"), NOT_TRIVY_LAYOUTS)

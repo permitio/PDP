@@ -333,6 +333,10 @@ def vulnerabilities(data: dict, report: Path | str) -> Iterator[tuple[dict, dict
     `Vulnerabilities` is an empty list - Trivy leaves them out when there is nothing to list.
     Anything else that is not a list of objects means the file is not a Trivy report either.
 
+    The PR and release scan gate (format_scan_report.py) and the scheduled Slack report
+    (format_security_report.py) walk Trivy reports with this too, so all three refuse the
+    same files.
+
     Args:
         data: The report, from :func:`load_report`.
         report: The report's path, or what to call it, named in the error.
