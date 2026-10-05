@@ -9,7 +9,8 @@ This server listens on a configurable port and responds to various commands:
 - POST /crash: Terminates the server to simulate a crash
 - POST /unhealthy: Makes /health return a non-200 status code
 - POST /unresponsive: Makes /health halt and not respond
-- POST /ignore_sigterm: Makes the server ignore SIGTERM signals for shutdown testing
+
+Started with --ignore-sigterm, the server ignores SIGTERM, for shutdown-timeout testing.
 """
 
 import argparse
@@ -87,7 +88,8 @@ class TestHandler(BaseHTTPRequestHandler):
             self._set_headers()
             self.wfile.write(b"Crashing now...")
             self.wfile.flush()
-            # Force crash the server with SIGTERM
+            # SystemExit escapes serve_forever(), so the process exits with code 12, which the
+            # watchdog tests assert on.
             raise SystemExit(12)
 
         if self.path == "/unhealthy":

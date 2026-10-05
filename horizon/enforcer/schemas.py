@@ -148,14 +148,14 @@ AuthorizedUsersDict = dict[str, list[AuthorizedUserAssignment]]
 class AuthorizedUsersResult(BaseSchema):
     resource: str = Field(
         ...,
-        description="The resource that the result is about.Can be either 'resource:*' or 'resource:resource_instance'",
+        description="The resource that the result is about. Can be either 'resource:*' or 'resource:resource_instance'",
     )
     tenant: str = Field(..., description="The tenant that the result is about")
     users: AuthorizedUsersDict = Field(
         ...,
         description="A key value mapping of the users that are "
-        "authorized for the resource."
-        "The key is the user key and the value is a list of assignments allowing the user to perform"
+        "authorized for the resource. "
+        "The key is the user key and the value is a list of assignments allowing the user to perform "
         "the requested action",
     )
 
