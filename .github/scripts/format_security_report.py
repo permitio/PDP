@@ -25,7 +25,7 @@ import argparse
 import importlib.util
 import re
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parent
@@ -413,7 +413,7 @@ def merge(sources: list[Source]) -> list[Finding]:
         keys = {finding.id, *finding.aliases} - {"", "?"}
         existing = next((by_id[k] for k in keys if k in by_id), None)
         if existing is None:
-            existing = Finding(**{**finding.__dict__, "packages": [], "sources": [], "aliases": set()})
+            existing = replace(finding, packages=[], sources=[], aliases=set())
             merged.append(existing)
         elif SEVERITY_ORDER[finding.severity] < SEVERITY_ORDER[existing.severity]:
             existing.severity, existing.score = finding.severity, finding.score

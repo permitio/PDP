@@ -19,7 +19,10 @@ SCRIPTS = REPO_ROOT / ".github" / "scripts"
 
 
 def _load(name: str):
-    spec = importlib.util.spec_from_file_location(f"ci_scripts_{name}", SCRIPTS / f"{name}.py")
+    path = SCRIPTS / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(f"ci_scripts_{name}", path)
+    assert spec is not None, f"cannot load {path}"
+    assert spec.loader is not None, f"cannot load {path}"
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
