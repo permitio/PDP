@@ -170,7 +170,7 @@ def log_query_result_kong(kong_input: KongAuthorizationInput, response: Response
         logger.info(
             "is allowed",
             params=params,
-            query=input.dict(),
+            query=kong_input.dict(),
             response_status=response.status_code,
             **data,
         )

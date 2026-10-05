@@ -142,7 +142,9 @@ def test_kong_endpoint_valid_token_integration_disabled_returns_503():
     assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
 
 
-def test_kong_endpoint_enabled_integration_allowed_flow(tmp_path, monkeypatch):
+@pytest.fixture
+def kong_client(tmp_path, monkeypatch) -> TestClient:
+    """A PDP app built with the Kong integration on, routing /resource1/* to resource1."""
     routes_file = tmp_path / "kong_routes.json"
     routes_file.write_text('[["^/resource1/.*$", "resource1"]]')
     monkeypatch.setattr("horizon.enforcer.api.KONG_ROUTES_TABLE_FILE", str(routes_file))
@@ -156,10 +158,11 @@ def test_kong_endpoint_enabled_integration_allowed_flow(tmp_path, monkeypatch):
     # isolate the shared stats queue so this test's OPA calls don't leak into the statistics tests
     monkeypatch.setattr(stats_manager, "_messages", asyncio.Queue())
 
-    kong_sidecar = MockPermitPDP()
-    client = TestClient(kong_sidecar._app)
+    return TestClient(MockPermitPDP()._app)
 
-    response = client.post("/kong", json=KONG_QUERY)
+
+def test_kong_endpoint_enabled_integration_allowed_flow(kong_client):
+    response = kong_client.post("/kong", json=KONG_QUERY)
     assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
     with aioresponses() as m:
@@ -168,13 +171,36 @@ def test_kong_endpoint_enabled_integration_allowed_flow(tmp_path, monkeypatch):
             status=200,
             payload={"result": {"allow": True}},
         )
-        response = client.post(
+        response = kong_client.post(
             "/kong",
             headers={"authorization": f"Bearer {sidecar_config.API_KEY}"},
             json=KONG_QUERY,
         )
     assert response.status_code == status.HTTP_200_OK
     assert response.json() == {"result": True}
+
+
+@pytest.mark.parametrize(
+    "opa_response",
+    [
+        {"payload": {"result": []}},
+        {"payload": {"result": None}},
+        {"body": "not json"},
+    ],
+    ids=["result-is-a-list", "result-is-null", "body-is-not-json"],
+)
+def test_kong_endpoint_undecodable_opa_result_denies_with_200(kong_client, opa_response):
+    """An OPA answer the decision log cannot read sends it to its fallback branch, which
+    must log and return; the endpoint then denies instead of failing the request."""
+    with aioresponses() as m:
+        m.post(f"{opal_client_config.POLICY_STORE_URL}/v1/data/permit/root", status=200, **opa_response)
+        response = kong_client.post(
+            "/kong",
+            headers={"authorization": f"Bearer {sidecar_config.API_KEY}"},
+            json=KONG_QUERY,
+        )
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json() == {"result": False}
 
 
 def test_authorized_users_endpoint_valid_token_allowed_flow(monkeypatch):
