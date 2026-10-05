@@ -85,6 +85,8 @@ class Finding:
     packages: list[str] = field(default_factory=list)
     sources: list[str] = field(default_factory=list)
     aliases: set[str] = field(default_factory=set)
+    # Who has to act on a Trivy finding (classify_image_cves.classify); '' for any other source.
+    action: str = ""
     # A Trivy finding whose image holds the version main's uv.lock still has: its remediation
     # says a release cannot clear it (classify_image_cves.lock_still_flagged).
     lock_still_flagged: bool = False
@@ -205,6 +207,7 @@ def trivy_source(tag: str, report: Path, pins: set[str], locked: dict[str, set[s
                 remediation=_remediation(fixed, hint),
                 packages=[f"{pkg}@{installed}"],
                 sources=[f"Trivy {tag}"],
+                action=action,
                 lock_still_flagged=classifier.lock_still_flagged(pkg, action, locked, installed=installed),
             )
         )
@@ -380,13 +383,29 @@ def cargo_source(report: Path | None) -> tuple[Source, int]:
 # --- Merge and render ----------------------------------------------------------------
 
 
+def _work_rank(finding: Finding) -> tuple[int, int]:
+    """How much work a finding's owner needs before the advisory goes away; lower is more.
+
+    classify_image_cves.ACTION_ORDER, except that a 'lock' or 'pinned' finding whose flagged
+    version main's uv.lock still holds comes right after 'base-digest', ahead of every other
+    'pinned' or 'lock' one: a release certainly cannot clear it, while the others may already be
+    fixed in main's lock. The classifier's verdict headline lists them in that order too. A
+    finding from another source carries no action and ranks after 'rebuild'.
+    """
+    if finding.lock_still_flagged:
+        return classifier.ACTION_ORDER["pinned"], 0
+    return classifier.ACTION_ORDER.get(finding.action, len(classifier.ACTION_ORDER)), 1
+
+
 def merge(sources: list[Source]) -> list[Finding]:
     """One finding per advisory across every source, keeping the worst severity seen.
 
-    The remediation is the first source's, except that a Trivy tag whose image main's uv.lock
-    still matches replaces it: a release would reinstall that tag's flagged version, so its
-    note holds for every tag on the line, while another tag's "cutting a release clears each
-    finding whose fix that version carries" would leave the call open.
+    The remediation is that of the owner with the most work left (:func:`_work_rank`), the
+    first one seen among equals. One advisory can hit packages with different owners - an
+    Alpine package a release rebuild clears and a Python package it cannot - and the line
+    must not tell a reader that a release clears it. Likewise a Trivy tag whose image main's
+    uv.lock still matches outranks another tag's "cutting a release clears each finding whose
+    fix that version carries", which would leave the call open.
     """
     by_id: dict[str, Finding] = {}
     merged: list[Finding] = []
@@ -398,8 +417,9 @@ def merge(sources: list[Source]) -> list[Finding]:
             merged.append(existing)
         elif SEVERITY_ORDER[finding.severity] < SEVERITY_ORDER[existing.severity]:
             existing.severity, existing.score = finding.severity, finding.score
-        if finding.lock_still_flagged and not existing.lock_still_flagged:
-            existing.remediation, existing.lock_still_flagged = finding.remediation, True
+        if _work_rank(finding) < _work_rank(existing):
+            existing.remediation, existing.action = finding.remediation, finding.action
+            existing.lock_still_flagged = finding.lock_still_flagged
         existing.title = existing.title or finding.title
         existing.aliases |= keys
         existing.packages += [p for p in finding.packages if p not in existing.packages]

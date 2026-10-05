@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
@@ -396,6 +397,102 @@ def test_a_tag_still_on_mains_locked_version_settles_the_merged_line(run, tags):
     assert f"fix: 99.0.0, {HTTPX_HELD} " in line
     assert "cutting a release clears" not in line
     assert f"httpx@0.0.1, httpx@{HTTPX}" in line or f"httpx@{HTTPX}, httpx@0.0.1" in line
+
+
+MIXED_CVE = "CVE-2026-0014"
+ALPINE_RESULT = {"Target": "img", "Type": "alpine", "Vulnerabilities": [_vuln(MIXED_CVE, pkg="libexpat")]}
+PYTHON_RESULT = {"Target": "Python", "Type": "python-pkg", "Vulnerabilities": [_vuln(MIXED_CVE, pkg="httpx")]}
+ALPINE_TAG = {"SchemaVersion": 2, "Results": [ALPINE_RESULT]}
+PYTHON_TAG = {"SchemaVersion": 2, "Results": [PYTHON_RESULT]}
+
+
+@pytest.mark.parametrize(
+    "trivy",
+    [
+        pytest.param({"latest": ALPINE_TAG, "0.9.16": PYTHON_TAG}, id="alpine-tag-first"),
+        pytest.param({"0.9.16": PYTHON_TAG, "latest": ALPINE_TAG}, id="python-tag-first"),
+        pytest.param({"latest": {"SchemaVersion": 2, "Results": [ALPINE_RESULT, PYTHON_RESULT]}}, id="one-report"),
+    ],
+)
+def test_a_cve_in_an_alpine_and_a_python_package_keeps_the_python_remediation(run, monkeypatch, trivy):
+    # One CVE id, two owners: a release rebuild clears the Alpine package, never the Python one.
+    monkeypatch.setattr(report.classifier, "locked_versions", dict)
+    message, _, _ = run(trivy=trivy, scout=_sarif(), alerts=[])
+    [line] = [line for line in message.splitlines() if MIXED_CVE in line]
+    assert "fix: 3.5.8-r0, update it in uv.lock" in line
+    assert "a release rebuild picks it up" not in line
+    assert "libexpat@3.5.7-r0" in line
+    assert "httpx@3.5.7-r0" in line
+
+
+# Owners of one advisory, most work first: (classifier action, lock still holds the flagged version).
+# "" is a Docker Scout, Dependabot or cargo audit finding, which carries no classifier action.
+OWNERS_BY_WORK = [
+    ("no-fix", False),
+    ("permit-opa", False),
+    ("base-digest", False),
+    ("lock", True),
+    ("pinned", False),
+    ("lock", False),
+    ("rebuild", False),
+    ("", False),
+]
+
+
+def _owned(owner: tuple[str, bool]):
+    action, held = owner
+    return report.Finding(
+        id="CVE-2026-0015",
+        severity="high",
+        score=7.5,
+        title="",
+        url="",
+        remediation=f"remediation of {action or 'another scanner'}{' (held)' if held else ''}",
+        packages=[f"{action or 'other'}-pkg"],
+        sources=[f"source of {action or 'another scanner'}"],
+        action=action,
+        lock_still_flagged=held,
+    )
+
+
+def _owner_id(owner: tuple[str, bool]) -> str:
+    action, held = owner
+    return f"{action or 'other'}{'-held' if held else ''}"
+
+
+def _merge_one(findings: list):
+    """merge() over one source per finding, all for the same advisory."""
+    [merged] = report.merge([report.Source(name=f"source {n}", scope="", findings=[f]) for n, f in enumerate(findings)])
+    return merged
+
+
+@pytest.mark.parametrize("first_is_more_work", [True, False], ids=["more-work-first", "more-work-second"])
+@pytest.mark.parametrize(
+    ("more", "less"),
+    [
+        pytest.param(more, less, id=f"{_owner_id(more)}-over-{_owner_id(less)}")
+        for more, less in pairwise(OWNERS_BY_WORK)
+    ],
+)
+def test_merge_keeps_the_remediation_of_the_owner_with_the_most_work(more, less, first_is_more_work):
+    findings = [_owned(more), _owned(less)]
+    if not first_is_more_work:
+        findings.reverse()
+    merged = _merge_one(findings)
+    assert merged.remediation == _owned(more).remediation
+    assert merged.packages == [f.packages[0] for f in findings]
+
+
+def test_merge_ranks_each_finding_against_the_owner_it_kept():
+    # The held lock replaces the plain one; the pinned package after it needs less work than that.
+    merged = _merge_one([_owned(("lock", False)), _owned(("lock", True)), _owned(("pinned", False))])
+    assert merged.remediation == _owned(("lock", True)).remediation
+
+
+def test_merge_keeps_the_first_remediation_among_owners_with_equal_work():
+    first, second = _owned(("rebuild", False)), _owned(("rebuild", False))
+    first.remediation, second.remediation = "fix: 3.5.8-r0, first", "fix: 3.5.9-r0, second"
+    assert _merge_one([first, second]).remediation == "fix: 3.5.8-r0, first"
 
 
 def test_no_fix_is_said_out_loud(run):

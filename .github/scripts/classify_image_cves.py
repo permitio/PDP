@@ -152,6 +152,11 @@ def _normalise(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
+# Every action classify() returns, most work first: the order the verdict's table lists them in.
+# format_security_report.py ranks the owners of an advisory several packages share by it.
+ACTION_ORDER = {"no-fix": 0, "permit-opa": 1, "base-digest": 2, "pinned": 3, "lock": 4, "rebuild": 5}
+
+
 def classify(finding: dict, pins: Set[str] = frozenset()) -> str:
     """Who has to act on this finding.
 
@@ -433,12 +438,11 @@ def collect(
         f["lock_note"] = lock_note(f["pkg"], f["action"], locked, installed=f["installed"])
         f["lock_still_flagged"] = lock_still_flagged(f["pkg"], f["action"], locked, installed=f["installed"])
     order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
-    action_order = {"no-fix": 0, "permit-opa": 1, "base-digest": 2, "pinned": 3, "lock": 4, "rebuild": 5}
     return sorted(
         findings.values(),
         key=lambda f: (
             order.get(f["severity"], 9),
-            action_order.get(f["action"], 9),
+            ACTION_ORDER.get(f["action"], 9),
             f["pkg"],
             f["cve"],
         ),
