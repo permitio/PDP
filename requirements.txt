@@ -10,7 +10,7 @@ aiohttp>=3.13.3,<4
 # sdists. Ceiling in practice is 0.125.0, the last release supporting pydantic v1 (0.126.0
 # requires pydantic>=2.7.0) - so while the `pydantic[email]<2` pin below stands, the usable
 # window is 0.124.0-0.125.0. See PER-15249.
-fastapi>=0.124.0,<1
+fastapi>=0.141.1,<1
 Jinja2>=3.1.2,<4
 pydantic[email]>=1.9.1,<2
 requests>=2.32.4,<3
