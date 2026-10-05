@@ -18,7 +18,7 @@ Go modules (google.golang.org/grpc, golang.org/x/crypto, ...) is fixed by bumpin
 permit-opa's go.mod - a change in a DIFFERENT repository, which no release cut here will
 absorb. Two more cases a plain rebuild cannot fix, because the Dockerfile pins them:
 
-  - The Go *stdlib* comes from the `golang:1.26-bookworm@sha256:...` build stage, which is
+  - The Go *stdlib* comes from the `golang:1.27-bookworm@sha256:...` build stage, which is
     digest-pinned. A rebuild reuses the same toolchain; the fix arrives when Dependabot's
     `docker` PR moves the digest and that PR is merged.
   - A Python package pinned with `==` in requirements*.txt (e.g. starlette, ddtrace,

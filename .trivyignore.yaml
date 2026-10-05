@@ -77,7 +77,9 @@ vulnerabilities:
       not_affected / inline_mitigations_already_exist. Unbounded W3C baggage
       header extraction. The Dockerfile drops "baggage" from
       DD_TRACE_PROPAGATION_STYLE_EXTRACT, removing the vulnerable parser from the
-      request path; it is only reachable at all when PDP_ENABLE_MONITORING=true
-      (default false). Fixed only in ddtrace >= 4.8.2, which opal-common's
+      request path. That env is the mitigation: PDP_ENABLE_MONITORING defaults to
+      false, but the control plane's remote config can turn monitoring on, so the
+      default alone does not keep ddtrace off the request path. Fixed only in
+      ddtrace >= 4.8.2, which opal-common's
       ddtrace<4 cap forbids. See .docker/scout/pdp-v2.vex.json.
     expired_at: 2026-12-31

@@ -12,7 +12,7 @@ ARG OPA_BUILD=permit
 # Keep this stage free of COPY/ADD. CI caches every layer of it (tests.yml, "Cache
 # the rust_chef stage") in a cache that every ref, forks included, can restore, so
 # nothing from the build context may enter it.
-FROM --platform=$BUILDPLATFORM rust:1.94-alpine@sha256:77237dd363a0b127bb5ef532c2d64c0deb380b738e43a9c4bdac73398d6d0a08 AS rust_chef
+FROM --platform=$BUILDPLATFORM rust:1.98-alpine@sha256:7cc1c22d77d9432f7fe012a70e6d3e555af54c2a6832700ed7d553f1769ae89f AS rust_chef
 WORKDIR /app
 ENV PKGCONFIG_SYSROOTDIR=/
 RUN apk add --no-cache musl-dev openssl-dev zig pkgconf perl make
@@ -37,7 +37,7 @@ ENV CARGO_INCREMENTAL=1
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/app/target \
-    cargo chef cook --recipe-path recipe.json --release --zigbuild \
+    cargo chef cook --recipe-path recipe.json --release --zigbuild --locked \
     --target x86_64-unknown-linux-musl --target aarch64-unknown-linux-musl
 
 # (4) actual project build for all targets
@@ -47,7 +47,7 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/app/target \
-    cargo zigbuild -r --target x86_64-unknown-linux-musl --target aarch64-unknown-linux-musl && \
+    cargo zigbuild -r --locked --target x86_64-unknown-linux-musl --target aarch64-unknown-linux-musl && \
     mkdir -p /app/linux/arm64/ && \
     mkdir -p /app/linux/amd64/ && \
     cp target/aarch64-unknown-linux-musl/release/pdp-server /app/linux/arm64/pdp && \
@@ -57,8 +57,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # OPA BUILD STAGE -----------------------------------
 # Build OPA from source or download precompiled binary
 # ---------------------------------------------------
-# Go 1.26 builder (was golang:1.25-bookworm), moved AHEAD of permit-opa raising its
-# `go` directive to 1.26 (permitio/permit-opa#52). That move is forced by
+# Go 1.27 builder. It first moved to 1.26 (from golang:1.25-bookworm) AHEAD of permit-opa
+# raising its `go` directive to 1.26 (permitio/permit-opa#52). That move is forced by
 # golang.org/x/crypto >= 0.56.0 - the version that clears CVE-2026-78662 /
 # CVE-2026-56855 (x/crypto/ssh) - whose own go.mod declares `go 1.26.0`. The permit-opa
 # commit pinned in tests.yml/release.yml includes it, so the permit build no longer needs
@@ -78,15 +78,15 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # golang:1.25 builder) fails in this stage, since permit-opa#52 is merged. Cut releases and
 # hotfixes from a commit that has the pin.
 #
-# What changes in /app/bin/opa: changes that come with the 1.26 toolchain land with
-# this builder (e.g. the Green Tea GC is on by default). GODEBUG-gated defaults do not:
+# What changes in /app/bin/opa: changes that come with the builder's toolchain land with
+# it (e.g. the Green Tea GC, on by default since 1.26). GODEBUG-gated defaults do not:
 # they follow permit-opa's go.mod at the pinned commit (after permit-opa#52, a
 # `godebug default=go1.25` line).
 # The binary is CGO_ENABLED=0 (below), so the builder's glibc does not reach the image.
 #
 # The FROM line is digest-pinned, so a rebuild of the same commit gets the same
 # toolchain. The `docker` entry in .github/dependabot.yml moves tag and digest together
-# daily, so a Go security release (a new go1.26.x behind the same tag) arrives as a
+# daily, so a Go security release (a new go1.27.x behind the same tag) arrives as a
 # reviewable PR instead of silently on the next build.
 #
 # This stage pins nothing beyond that floor, and that is a statement about THIS builder
@@ -121,7 +121,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # an ARG, splitting the FROM across lines or renaming the stage turns permit-opa's CI
 # red with "cannot compare go.mod's directive" - which is a fail-closed by design, but
 # it will look like an unrelated repo breaking for no reason.
-FROM --platform=$BUILDPLATFORM golang:1.26-bookworm@sha256:a688600ca24f8a4d3ca77f95b0dd40704a9fc787c826660eb7ba0b641b8b175d AS opa_build
+FROM --platform=$BUILDPLATFORM golang:1.27-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195 AS opa_build
 ENV GOTOOLCHAIN=local
 RUN v=$(go env GOVERSION) && \
     [ "$(printf '%s\n' go1.26.6 "$v" | sort -V | head -n1)" = go1.26.6 ] || \
@@ -379,8 +379,11 @@ ENV OPAL_INLINE_OPA_LOG_FORMAT="http"
 # header. The fix is only in ddtrace >= 4.8.2, which opal-common's `ddtrace<4,>=3.0.0`
 # cap forbids, so we remove the vulnerable parser from the request path instead.
 #
-# This only matters when PDP_ENABLE_MONITORING=true (default false) - that is what calls
-# patch(fastapi=True) and puts ddtrace on the inbound request path at all. Injection is
+# ddtrace reaches the inbound request path only with monitoring on - that is what calls
+# patch(fastapi=True). PDP_ENABLE_MONITORING defaults to false, but horizon/pdp.py applies
+# the control plane's remote config before it checks the flag, so monitoring can be turned
+# on without touching this image's env. That is why this ENV, not the default, is the
+# mitigation the waivers rely on. Injection is
 # left at its default, so outbound baggage propagation is unaffected. Remove this once
 # OPAL relaxes its ddtrace<4 bound and ddtrace moves to >= 4.8.2. See PER-15358.
 ENV DD_TRACE_PROPAGATION_STYLE_EXTRACT="datadog,tracecontext"

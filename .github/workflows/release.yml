@@ -47,6 +47,11 @@ jobs:
     timeout-minutes: 90
     permissions:
       contents: read
+    env:
+      # build-push-action v6+ uploads a build-record artifact (logs, provenance) by
+      # default. This public repo's build compiles the private permit-opa, so keep the
+      # build record out of the run's downloadable artifacts, as v5 did.
+      DOCKER_BUILD_RECORD_UPLOAD: 'false'
     steps:
     - name: Checkout code
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -54,12 +59,12 @@ jobs:
         persist-credentials: false
 
     - name: Set up QEMU
-      uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+      uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 
     # The docker-container driver this sets up is what makes a multi-platform OCI export
     # possible; the default docker driver cannot export more than one platform.
     - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
     # A 1-hour, read-only token on permit-opa alone, minted from the org-owned GitHub App
     # `permitio-pdp-ci` - see the matching step in tests.yml's build-pdp-image.
@@ -102,7 +107,7 @@ jobs:
     # Built ONCE, for both the pre-release and the official path: the tags are applied at
     # publish time, so there is no second build that could resolve a different package set.
     - name: Build PDP image (multi-platform OCI archive, not pushed)
-      uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
+      uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
       with:
         push: false
         context: .
@@ -143,10 +148,11 @@ jobs:
         # are never cached (no build exports them), and would barely cache anyway:
         # `rust_planner`'s `COPY . .` sees the regenerated tarball, so it and the final
         # `cargo zigbuild` re-run every build. `cargo chef cook` re-runs too despite being
-        # keyed on recipe.json - 404.6s on tests.yml run 34858998837. The likely cause is
-        # that no Cargo.lock is tracked (it is also .dockerignore'd), so `cargo chef prepare`
-        # resolves crates.io fresh each build and the lock embedded in recipe.json drifts.
-        # Do not budget this filter against a cached dependency compile.
+        # keyed on recipe.json - 404.6s on tests.yml run 34858998837, measured while no
+        # Cargo.lock was tracked, so the lock embedded in recipe.json drifted every build.
+        # Cargo.lock is now committed and the build is `--locked`; whether that lets the
+        # cook step hit a cache has not been measured, so do not budget this filter against
+        # a cached dependency compile.
         #
         # READ THAT MEASUREMENT NARROWLY: it comes from a `pull_request` run of tests.yml
         # built `--platform linux/amd64`. The rust stages are `--platform=$BUILDPLATFORM` and
@@ -192,9 +198,11 @@ jobs:
   # themselves; publish-pdp-release then pushes them with --preserve-digests and checks
   # the registry holds the same index, so "scanned" and "shipped" are the same image.
   #
-  # No Docker login: the image comes from the run artifact, not a registry. Trivy reads
-  # layers statically and never executes the image, so scanning arm64 on an amd64 runner
-  # is fine.
+  # TWO SCANNERS, as in the PR gate: Trivy and Docker Scout disagree in practice (Trivy
+  # missed two x/crypto HIGHs on a published image that Scout flagged), so linux/arm64 must
+  # not rest on Trivy alone. The image comes from the run artifact, not a registry; neither
+  # scanner executes it, so scanning arm64 on an amd64 runner is fine. The only Docker
+  # login here is Scout's pull-only OIDC login - it cannot push anything.
   scan-pdp-release:
     needs: build-pdp-release
     runs-on: ubuntu-24.04
@@ -203,6 +211,9 @@ jobs:
       contents: read
       # required to upload the SARIF report to code scanning
       security-events: write
+      # required for Docker Scout's OIDC login: it lets the job mint a GitHub ID token,
+      # which Docker exchanges for a pull-only token (`repo:permitio/PDP:*` rule).
+      id-token: write
     strategy:
       # Scan both platforms even when one fails: an arm64-only regression is exactly the
       # thing that was never visible before, and fail-fast would hide it behind an amd64
@@ -310,6 +321,47 @@ jobs:
           sarif_file: trivy-release-${{ matrix.arch }}.sarif
           category: published-release-${{ matrix.arch }}
 
+      # The extract step already wrote a docker-archive named `permitio/pdp-v2:release-scan`;
+      # loading it lets Scout read it as `local://`, the same way the PR gate reads `:next`.
+      # That name is what the OpenVEX doc's `@release-scan` product matches, so the five
+      # waivers apply here. Loading an arm64 image on an amd64 runner only stores it.
+      - name: Load the image for Docker Scout
+        if: ${{ !cancelled() && steps.extract.outputs.input != '' }}
+        env:
+          INPUT: ${{ steps.extract.outputs.input }}
+        run: docker load --input "$INPUT"
+
+      # OIDC, pull-only, same connection and rule as the Scout logins in tests.yml.
+      - name: Login to Docker Hub (OIDC)
+        if: ${{ !cancelled() }}
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        env:
+          DOCKERHUB_OIDC_CONNECTIONID: ${{ vars.DOCKERHUB_OIDC_CONNECTIONID }}
+          DOCKERHUB_OIDC_EXPIREIN: '1800'
+        with:
+          username: ${{ vars.DOCKERHUB_ORGANIZATION }}
+
+      # `exit-code: false`, like Trivy above: the fail step decides, from the rendered
+      # report. A Scout error leaves no SARIF, which the report reads as "unavailable" and
+      # the fail step blocks on - an unscanned release is never published.
+      - name: Docker Scout scan the release image
+        id: scout
+        if: ${{ !cancelled() }}
+        uses: docker/scout-action@7c6b6c3f7844478ace1ffd4e7aef649053d1f87d # v1.24.0
+        with:
+          command: cves
+          image: local://permitio/pdp-v2:release-scan
+          platform: linux/${{ matrix.arch }}
+          only-severities: critical,high
+          exit-code: false
+          sarif-file: scout-release-${{ matrix.arch }}.sarif
+          summary: true
+          write-comment: false
+          vex-location: .docker/scout
+          only-vex-affected: true
+          # REQUIRED for the waivers to apply - see the same input in tests.yml.
+          vex-author: Permit.io
+
       - name: Render the scan report
         id: report
         if: ${{ !cancelled() }}
@@ -318,24 +370,27 @@ jobs:
           DIGEST: ${{ steps.extract.outputs.digest }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
           REPORT_JSON: trivy-release-${{ matrix.arch }}.json
+          SCOUT_SARIF: scout-release-${{ matrix.arch }}.sarif
+          SCOUT_OUTCOME: ${{ steps.scout.outcome }}
         run: |
           set -euo pipefail
           if [ -z "${DIGEST:-}" ]; then
             echo "::error::No linux/${ARCH} image was extracted, so nothing was scanned. See the extract step above."
             exit 1
           fi
-          # Docker Scout is deliberately not run here: it gates the pre-push image in
-          # tests.yml against an OpenVEX doc whose statements bind to
-          # `pkg:docker/permitio/pdp-v2@next` / `@latest` and match no release tag.
-          # Omitting --scout-sarif renders "Docker Scout did not run" and leaves parse_ok
-          # true; passing a path that does not exist would render "unavailable" and set
-          # parse_ok false, which is a different claim.
-          #
+          # Scout writes no SARIF when it finds nothing. After a SUCCESSFUL scan that can
+          # only mean zero findings, so an empty SARIF is the honest stand-in; after any other
+          # outcome the file stays absent, the formatter renders "unavailable" and sets
+          # parse_ok=false, and the fail step blocks the release.
+          if [ ! -s "$SCOUT_SARIF" ] && [ "$SCOUT_OUTCOME" = "success" ]; then
+            echo '{"version":"2.1.0","runs":[]}' > "$SCOUT_SARIF"
+          fi
           # The formatter always exits 0 by design - never gate on its exit code. It
           # writes critical/high/total/parse_ok to $GITHUB_OUTPUT, and the fail step
           # below is what turns those into a red job.
           python3 .github/scripts/format_scan_report.py \
             --trivy "$REPORT_JSON" \
+            --scout-sarif "$SCOUT_SARIF" \
             --image "permitio/pdp-v2:${RELEASE_TAG} linux/${ARCH} (${DIGEST})" \
             --out scan-report.md \
             --github-output "$GITHUB_OUTPUT" > /dev/null
@@ -349,6 +404,7 @@ jobs:
           path: |
             trivy-release-${{ matrix.arch }}.json
             trivy-release-${{ matrix.arch }}.sarif
+            scout-release-${{ matrix.arch }}.sarif
             scan-report.md
           retention-days: 30
 
@@ -370,7 +426,7 @@ jobs:
             exit 1
           fi
           if [ "$PARSE_OK" != "true" ]; then
-            echo "::error::linux/${ARCH}: the Trivy report for ${DIGEST} could not be parsed. Treating an unreadable report as clean is how a zero-byte file ships a vulnerable image; see the job summary."
+            echo "::error::linux/${ARCH}: the Trivy or Docker Scout report for ${DIGEST} is missing or could not be parsed. Treating an unreadable report as clean is how a zero-byte file ships a vulnerable image; see the job summary."
             exit 1
           fi
           if [ "${CRITICAL:-0}" -ne 0 ] || [ "${HIGH:-0}" -ne 0 ]; then
@@ -385,9 +441,9 @@ jobs:
   # Three locks, any one of which stops a push:
   #   1. `environment: dockerhub-release` - GitHub only lets a job into it from a release
   #      TAG matching `[0-9]*.[0-9]*.[0-9]*` or `v[0-9]*.[0-9]*.[0-9]*` (no branch, no
-  #      PR), and only after a member of the R&D team who did not trigger the run
-  #      approves it. Approval comes AFTER the build and scan, so reviewers approve an
-  #      image that has already passed.
+  #      PR), and only after a member of the R&D team approves it. Self-review is allowed
+  #      on purpose, so whoever cut the release may approve it. Approval comes AFTER the
+  #      build and scan, so reviewers approve an image that has already passed.
   #   2. Docker's OIDC connection grants Image Push on permitio/pdp-v2 ONLY to the
   #      subject `repo:permitio/PDP:environment:dockerhub-release` - i.e. to this job.
   #      Every other job in the repo matches only the pull-only `repo:permitio/PDP:*` rule.
@@ -516,14 +572,14 @@ jobs:
     # Needs the publish, which needs the scan - so a release whose image has unwaived
     # CRITICAL/HIGH findings is neither published nor rolled out to the public PDP fleet.
     needs: publish-pdp-release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: "!github.event.release.prerelease"
     permissions:
       # AWS OIDC role assumption, below. Granted here rather than workflow-wide.
       id-token: write
     steps:
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ secrets.PDP_CICD_AWS_ROLE }}
           aws-region: us-east-1

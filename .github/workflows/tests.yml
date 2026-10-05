@@ -38,7 +38,7 @@ permissions:
 
 jobs:
   pre-commit:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -46,10 +46,23 @@ jobs:
           persist-credentials: false
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-      - name: Run pre-commit
-        uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
+        with:
+          # The interpreter the pytests job and the image use.
+          python-version: '3.13'
+      # prek runs the same .pre-commit-config.yaml as pre-commit, faster. The job keeps the
+      # name `pre-commit` because that is the required status check on main.
+      - name: Cache prek hook environments
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/prek
+          key: prek-0.5.4|${{ env.pythonLocation }}|${{ hashFiles('.pre-commit-config.yaml') }}
+      - name: Run prek
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet --disable-pip-version-check prek==0.5.4
+          prek run --show-diff-on-failure --color=always --all-files
   pytests:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Python setup
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -75,7 +88,12 @@ jobs:
           pytest -s --cache-clear horizon/tests/
 
   build-pdp-image:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    env:
+      # build-push-action v6+ uploads a build-record artifact (logs, provenance) by
+      # default. This public repo's build compiles the private permit-opa, so keep the
+      # build record out of the run's downloadable artifacts, as v5 did.
+      DOCKER_BUILD_RECORD_UPLOAD: 'false'
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -132,10 +150,10 @@ jobs:
           persist-credentials: false
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Pre build PDP tests
         # bash, so the tar pipeline below runs with pipefail (the default `run:` shell
@@ -166,7 +184,7 @@ jobs:
       # cached for every ref to restore (opa_build's `COPY custom* /custom`, and the
       # Rust stages' `COPY . .`). Keep rust_chef free of COPY/ADD (see the Dockerfile).
       - name: Cache the rust_chef stage
-        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25  # v5.4.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           outputs: type=cacheonly
           context: .
@@ -180,7 +198,7 @@ jobs:
       # exports opa_build, and its only layers before `COPY custom*` (an ENV and the
       # go1.26.6 floor check) take about 2 seconds.
       - name: Build the OPA stage for arm64
-        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25  # v5.4.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           # Only the compile matters; say so, or buildx warns that the result is discarded.
           outputs: type=cacheonly
@@ -189,7 +207,7 @@ jobs:
           platforms: linux/arm64
 
       - name: Build and load PDP Docker image
-        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           push: false
           load: true
@@ -223,7 +241,7 @@ jobs:
           retention-days: 1
 
   pdp-tester:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: build-pdp-image
     # Cap the run so a hung tester fails fast instead of holding the runner
     # until GitHub's 360-minute default. The old k3d path was bounded by
@@ -331,7 +349,7 @@ jobs:
           done
 
   docker-scout:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: build-pdp-image
     # Deliberately NOT gated on `github.event_name == 'pull_request'` any more. release.yml
     # reaches this workflow through `workflow_call`, where github.event_name is the caller's
@@ -471,11 +489,12 @@ jobs:
           #
           # SCOPE OF THE VEX DOC: every statement in pdp-v2.vex.json binds its product to
           # `pkg:docker/permitio/pdp-v2@next`, which matches the `local://...:next` image
-          # scanned here, AND to `pkg:docker/permitio/pdp-v2@latest`, which the
+          # scanned here, to `@release-scan`, the local name release.yml's scan-pdp-release
+          # gives each platform of the release archive, AND to `@latest`, which the
           # `scout-latest` job in scheduled-security-scan.yml re-scans. Scout matches VEX
-          # products on the full PURL string, so those two tags are the only ones these
+          # products on the full PURL string, so those three names are the only ones these
           # waivers suppress. Published RELEASE tags are deliberately not listed (they rotate
-          # every release); the same scheduled workflow covers them with Trivy, which reads
+          # every release); the scheduled workflow covers them with Trivy, which reads
           # .trivyignore.yaml and keys on CVE id. If Scout is ever pointed at another tag,
           # extend every product @id first or the run goes red on known non-issues.
           vex-author: Permit.io
@@ -797,7 +816,7 @@ jobs:
     # there. Deliberately not in any job's `needs:` - it is an independent gate and
     # chaining the image build behind it would only serialise CI.
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # A job-level permissions block REPLACES the workflow-level default instead of merging
     # with it, so this job restates `contents: read` alongside the write it adds.
     permissions:
@@ -832,7 +851,7 @@ jobs:
 
   rust-ci:
     name: Rust CI
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -854,10 +873,123 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run cargo check
-        run: cargo check --all --verbose
+        run: cargo check --all --locked --verbose
 
       - name: Run clippy
-        run: cargo clippy --all -- -D warnings
+        run: cargo clippy --all --locked -- -D warnings
 
       - name: Run tests
-        run: cargo test --all --verbose
+        run: cargo test --all --locked --verbose
+
+  # The third dependency scanner beside Trivy and Docker Scout (docker-scout above): those
+  # read the BUILT image, and neither reliably sees the crates compiled into the Rust
+  # binaries. cargo audit reads Cargo.lock against the RustSec advisory database. A
+  # vulnerable crate fails the job, which also blocks a release (release.yml needs this
+  # whole workflow); unmaintained and yanked crates are warnings and do not. On a PR the
+  # result is kept in one sticky comment, marker `<!-- pdp-cargo-audit -->`, the way
+  # permitio/agent-security reports its audits.
+  cargo-audit:
+    name: cargo audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      # required to create or update the sticky PR comment
+      pull-requests: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Built from crates.io with --locked rather than fetched by a third-party installer
+      # action; the binary is cached per version, so only a version bump compiles it.
+      - name: Cache cargo-audit
+        id: cargo-audit-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: cargo-audit-0.22.2-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Install cargo-audit
+        if: steps.cargo-audit-cache.outputs.cache-hit != 'true'
+        run: cargo install --locked cargo-audit@0.22.2
+
+      # cargo audit exits non-zero on any vulnerability, so its status is not the verdict:
+      # the report is rendered first and the fail step below decides from it.
+      - name: Audit Cargo.lock
+        id: audit
+        run: |
+          set -uo pipefail
+          cargo audit --json > cargo-audit.json
+          echo "cargo audit exited $?"
+
+      # Always exits 0 with a body - an unreadable report renders a "could not be parsed"
+      # comment and sets parse_ok=false, which the fail step blocks on.
+      - name: Render the audit report
+        id: report
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/format_cargo_audit.py \
+            --report cargo-audit.json \
+            --out cargo-audit-comment.md \
+            --github-output "$GITHUB_OUTPUT" > /dev/null
+          cat cargo-audit-comment.md >> "$GITHUB_STEP_SUMMARY"
+
+      # Same guards and upsert as the image-scan comment above: same-repo PRs only (a fork
+      # or Dependabot PR gets a read-only token), and listComments paginated so the marked
+      # comment is found on a busy PR.
+      - name: Post the cargo audit comment
+        if: |
+          !cancelled()
+          && steps.report.outcome == 'success'
+          && github.event_name == 'pull_request'
+          && github.event.pull_request.head.repo.full_name == github.repository
+          && github.actor != 'dependabot[bot]'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- pdp-cargo-audit -->';
+            const body = fs.readFileSync('cargo-audit-comment.md', 'utf8');
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              per_page: 100,
+            });
+            const existing = comments.find(c =>
+              c.user?.login === 'github-actions[bot]' && c.body?.startsWith(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+      - name: Fail on a vulnerable crate or an unreadable report
+        if: ${{ !cancelled() }}
+        env:
+          PARSE_OK: ${{ steps.report.outputs.parse_ok }}
+          VULNERABLE: ${{ steps.report.outputs.vulnerable }}
+        run: |
+          set -euo pipefail
+          if [ "${PARSE_OK:-}" != "true" ]; then
+            echo "::error::cargo audit produced no readable report, so Cargo.lock is UNVERIFIED. See the audit step's log."
+            exit 1
+          fi
+          if [ "${VULNERABLE:-0}" -gt 0 ]; then
+            echo "::error::cargo audit found ${VULNERABLE} vulnerable crate(s) in Cargo.lock. See the job summary. Upgrade the crate (cargo update -p NAME), or - only with a written reachability argument - ignore the advisory in .cargo/audit.toml."
+            exit 1
+          fi
+          echo "cargo audit: no vulnerable crates in Cargo.lock."

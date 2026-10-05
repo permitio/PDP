@@ -56,6 +56,19 @@ updates:
       # change, not five. See PER-15358.
       - dependency-name: "starlette"
       - dependency-name: "ddtrace"
+      # Also capped by OPAL 0.9.6: `pydantic<2` and `tenacity<9`. scalar-fastapi 1.9.0+
+      # requires pydantic>=2, so it is held at 1.8.x by the same cap. Drop these three
+      # when OPAL moves to pydantic 2 and tenacity 9.
+      - dependency-name: "pydantic"
+        versions: [">=2"]
+      - dependency-name: "tenacity"
+        versions: [">=9"]
+      - dependency-name: "scalar-fastapi"
+        versions: [">=1.9.0"]
+      # fastapi 0.126.0 and later require pydantic>=2.7, so 0.125.x is the ceiling under the
+      # same OPAL pydantic<2 cap (see the fastapi note in requirements.txt).
+      - dependency-name: "fastapi"
+        versions: [">=0.126.0"]
       # websockets is pinned exactly and bumped BY HAND on purpose. requirements.txt
       # records why: during review of #329 the validated build shipped 16.1.1 and 17.0
       # published hours later, so the next rebuild would have carried an unvalidated
@@ -135,5 +148,20 @@ updates:
     open-pull-requests-limit: 5
     cooldown:
       default-days: 7
+    commit-message:
+      prefix: "deps"
+
+  # Hook versions in .pre-commit-config.yaml (run by prek, which reads the same file).
+  - package-ecosystem: "pre-commit"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
     commit-message:
       prefix: "deps"

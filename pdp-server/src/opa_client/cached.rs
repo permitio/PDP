@@ -61,14 +61,26 @@ async fn handle_cache_set<T: serde::Serialize + Send + Sync>(
     }
 }
 
+/// The first 16 lowercase hex characters of a digest - the cache-key suffix every key
+/// has used, so existing cache entries keep matching across the sha2 0.11 upgrade.
+fn hex_prefix(digest: &[u8]) -> String {
+    let mut hex = String::with_capacity(16);
+    for byte in digest.iter().take(8) {
+        hex.push_str(&format!("{byte:02x}"));
+    }
+    hex
+}
+
 /// Generate a cache key for allowed queries
 fn generate_allowed_cache_key(query: &AllowedQuery) -> Result<String, String> {
     let mut hasher = Sha256::new();
     let serialized = serde_json::to_string(query)
         .map_err(|e| format!("Failed to serialize AllowedQuery for cache key: {e}"))?;
     hasher.update(serialized.as_bytes());
-    let hash = format!("{:x}", hasher.finalize());
-    Ok(format!("opa:allowed:{}", &hash[..16]))
+    Ok(format!(
+        "opa:allowed:{}",
+        hex_prefix(hasher.finalize().as_slice())
+    ))
 }
 
 /// Generate a cache key for user permissions queries
@@ -77,8 +89,10 @@ fn generate_user_permissions_cache_key(query: &UserPermissionsQuery) -> Result<S
     let serialized = serde_json::to_string(query)
         .map_err(|e| format!("Failed to serialize UserPermissionsQuery for cache key: {e}"))?;
     hasher.update(serialized.as_bytes());
-    let hash = format!("{:x}", hasher.finalize());
-    Ok(format!("opa:user_permissions:{}", &hash[..16]))
+    Ok(format!(
+        "opa:user_permissions:{}",
+        hex_prefix(hasher.finalize().as_slice())
+    ))
 }
 
 /// Generate a cache key for authorized users queries
@@ -87,8 +101,10 @@ fn generate_authorized_users_cache_key(query: &AuthorizedUsersQuery) -> Result<S
     let serialized = serde_json::to_string(query)
         .map_err(|e| format!("Failed to serialize AuthorizedUsersQuery for cache key: {e}"))?;
     hasher.update(serialized.as_bytes());
-    let hash = format!("{:x}", hasher.finalize());
-    Ok(format!("opa:authorized_users:{}", &hash[..16]))
+    Ok(format!(
+        "opa:authorized_users:{}",
+        hex_prefix(hasher.finalize().as_slice())
+    ))
 }
 
 /// Cached version of query_allowed with cache control support
@@ -234,6 +250,13 @@ pub async fn query_authorized_users_cached(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_hex_prefix_matches_the_old_key_format() {
+        // SHA-256("abc") starts ba7816bf8f01cfea; sha2 0.10's `{:x}` rendered the same 16 chars.
+        let digest = Sha256::digest(b"abc");
+        assert_eq!(hex_prefix(digest.as_slice()), "ba7816bf8f01cfea");
+    }
     use crate::opa_client::allowed::{Resource, User};
     use crate::test_utils::TestFixture;
     use http::{Method, StatusCode};

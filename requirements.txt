@@ -1,4 +1,4 @@
-aiohttp>=3.13.3,<4
+aiohttp>=3.14.3,<4
 # Floor raised 0.115.6 -> 0.124.0 to match a contract the route-auth audit depends on, not a
 # CVE. get_flat_dependant only started propagating sub-dependants into
 # flat_dependant.dependencies in 0.124.0; on 0.115.6-0.123.x it builds the flat dependant from
@@ -14,11 +14,11 @@ fastapi>=0.124.0,<1
 Jinja2>=3.1.2,<4
 pydantic[email]>=1.9.1,<2
 requests>=2.32.4,<3
-urllib3>=2.6.3,<3
+urllib3>=2.8.0,<3
 gunicorn>=23.0.0,<24
 tenacity>=8.0.1,<9
-typer>=0.4.1,<1
-uvicorn[standard]>=0.17.6,<1
+typer>=0.27.2,<1
+uvicorn[standard]>=0.54.0,<1
 logzio-python-handler
 # ddtrace is capped <4 by opal-common 0.9.6 (`ddtrace<4,>=3.0.0`). CVE-2026-50271 (remote
 # DoS via unbounded W3C baggage header extraction) is fixed only in ddtrace >= 4.8.2, so
@@ -39,11 +39,11 @@ ddtrace==3.19.8
 # gate for a parser the PDP never runs. Dropping the package clears them at the source.
 # Do not re-add it in a future sweep: if a scanner flags sqlparse again, it is back as a
 # transitive dependency and belongs pinned next to whatever pulled it in. See PER-15358.
-scalar-fastapi==1.0.3
+scalar-fastapi==1.8.2
 httpx>=0.27.0,<1
 # TODO: change to use re2 in the future, currently not supported in alpine due to c++ library issues
 # google-re2 # use re2 instead of re for regex matching because it's simiplier and safer for user inputted regexes
-protobuf>=6.33.5 # pinned to avoid CVE-2026-0994
+protobuf>=7.36.2 # pinned to avoid CVE-2026-0994
 # Floor raised 48.0.1 -> 50.0.0 to clear two HIGH CVEs that Docker Scout began flagging on
 # 2026-08-04: CVE-2026-69249 (CVSS 8.7, fixed in 49.0.0) and CVE-2026-69247 (CVSS 8.2,
 # Observable Timing Discrepancy, affects >=44.0.0, fixed only in 50.0.0). The floor also
@@ -136,6 +136,8 @@ websockets==17.0
 # the companion change). Drop this floor once opal-common itself floors
 # gitpython >= 3.1.59. See PER-15358.
 GitPython>=3.1.59,<4
+# opal-common/opal-client 0.9.9 declare Requires-Python <3.13, so pip cannot install them on
+# the 3.13 image. Stay on 0.9.6 until an OPAL release lifts that bound.
 opal-common==0.9.6
 # Do not add aiofiles here: opal-client 0.9.6 caps it <1 and pip cannot override that
 # (ResolutionImpossible). It is overridden after the resolve from requirements-override.txt,

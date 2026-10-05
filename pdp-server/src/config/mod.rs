@@ -173,14 +173,6 @@ mod tests {
             std::env::set_var(key, value);
         }
 
-        // Debug - print all environment variables
-        println!("Environment variables for test:");
-        for (name, value) in std::env::vars() {
-            if name.starts_with("PDP_") {
-                println!("  {name}: {value}");
-            }
-        }
-
         // Run the test function
         let result = test_fn();
 
@@ -215,7 +207,6 @@ mod tests {
             ],
             || {
                 let config = PDPConfig::new().unwrap();
-                println!("Config loaded: api_key='{}'", config.api_key);
                 assert_eq!(config.host, "0.0.0.0");
                 assert_eq!(config.port, 7766);
                 assert_eq!(config.cache.ttl, 3600);
