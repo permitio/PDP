@@ -436,7 +436,7 @@ def test_format_cli_still_exits_zero_on_a_zero_byte_report(tmp_path):
 
 
 def _format_cli(report: Path) -> tuple[dict[str, str], str]:
-    """Run the gate's formatter the way tests.yml does; return its outputs and the comment body."""
+    """Run the gate's formatter on a Trivy report alone; return its outputs and the comment body."""
     gh_out, body = report.parent / "gh_output", report.parent / "body.md"
     result = subprocess.run(
         [

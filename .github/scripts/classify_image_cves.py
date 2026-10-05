@@ -152,8 +152,8 @@ def _normalise(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
-# Every action classify() returns, most work first: the order the verdict's table lists them in.
-# format_security_report.py ranks the owners of an advisory several packages share by it.
+# Every action classify() returns, most work first. The verdict's table sorts each severity's rows
+# by it, and format_security_report.py ranks the owners of an advisory several packages share by it.
 ACTION_ORDER = {"no-fix": 0, "permit-opa": 1, "base-digest": 2, "pinned": 3, "lock": 4, "rebuild": 5}
 
 
