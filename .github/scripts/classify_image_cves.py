@@ -53,8 +53,9 @@ pyproject.toml and uv.lock are read from the checkout this script sits in, whate
 working directory - main, on a scheduled run.
 
 A report that cannot be read is NOT clean. `--report` pointing at a missing, empty or
-truncated file, or at JSON not laid out as a Trivy report, means the scan step failed, and
-the only safe answer is a loud one: the script prints a workflow error annotation, writes
+truncated file, or at JSON not laid out as a Trivy report - no `"SchemaVersion": 2`, which
+Trivy's JSON format always writes, as with `{}` or a SARIF file - means the scan step failed,
+and the only safe answer is a loud one: the script prints a workflow error annotation, writes
 SCAN FAILED to the job summary and exits non-zero. Reading a zero-byte file as `{}` once
 turned a broken scan into a green CLEAN run.
 """
@@ -72,6 +73,10 @@ from pathlib import Path
 
 # Exit code for "the report itself is unusable", distinct from a verdict.
 EXIT_UNREADABLE_REPORT = 2
+
+# The `SchemaVersion` Trivy's JSON format writes (`report.SchemaVersion` in Trivy's pkg/report),
+# and the only layout this script reads.
+TRIVY_SCHEMA_VERSION = 2
 
 
 def parse_args() -> argparse.Namespace:
@@ -298,22 +303,46 @@ def load_report(report: Path) -> dict:
     return data
 
 
-def vulnerabilities(data: dict, report: Path) -> Iterator[tuple[dict, dict]]:
+def _require_trivy_schema(data: dict, report: Path | str) -> None:
+    """Raise :class:`ReportUnreadableError` unless `SchemaVersion` is the one Trivy's JSON format writes."""
+    version = data.get("SchemaVersion")
+    if version is None:
+        raise ReportUnreadableError(
+            f"{report} is not a Trivy JSON report: it has no `SchemaVersion`, which Trivy's JSON format "
+            f"always writes. Check that the Trivy step used `format: json` (not `sarif` or a template) and "
+            f"that nothing rewrote the file."
+        )
+    if version != TRIVY_SCHEMA_VERSION:
+        found = (
+            f"`SchemaVersion` {version}"
+            if isinstance(version, int)
+            else f"a `SchemaVersion` that is a JSON {type(version).__name__}"
+        )
+        raise ReportUnreadableError(
+            f"{report} has {found}, and these scripts read Trivy's schema {TRIVY_SCHEMA_VERSION}. If Trivy "
+            f"changed its JSON layout, update vulnerabilities() in .github/scripts/classify_image_cves.py."
+        )
+
+
+def vulnerabilities(data: dict, report: Path | str) -> Iterator[tuple[dict, dict]]:
     """Walk `Results[].Vulnerabilities[]`, refusing any other layout.
 
-    A missing or null `Results` or `Vulnerabilities` is an empty list - Trivy leaves them out
-    when there is nothing to list. Anything else that is not a list of objects means the file
-    is not a Trivy report, and skipping it could turn a broken scan into CLEAN.
+    Trivy's JSON format always writes `"SchemaVersion": 2`, so a report without it - `{}`, a
+    SARIF file, anything else that merely parses as JSON - is not one, and reading it as an
+    empty report would turn a broken scan into CLEAN. A missing or null `Results` or
+    `Vulnerabilities` is an empty list - Trivy leaves them out when there is nothing to list.
+    Anything else that is not a list of objects means the file is not a Trivy report either.
 
     Args:
         data: The report, from :func:`load_report`.
-        report: Path passed to ``--report``, named in the error.
+        report: The report's path, or what to call it, named in the error.
 
     Yields:
         Each (result, vulnerability) pair, in report order.
 
     Raises:
-        ReportUnreadableError: Some level of the layout is not a list of objects.
+        ReportUnreadableError: The report has no `SchemaVersion` 2, or some level of the
+            layout is not a list of objects.
     """
 
     def unreadable(what: str, value: object) -> ReportUnreadableError:
@@ -322,6 +351,7 @@ def vulnerabilities(data: dict, report: Path) -> Iterator[tuple[dict, dict]]:
             f"Check that the Trivy step used `format: json` and that nothing rewrote the file."
         )
 
+    _require_trivy_schema(data, report)
     results = data.get("Results")
     if results is None:
         return
@@ -354,9 +384,10 @@ def collect(
     is discovered through more than one target.
 
     Every field is read as text, so a number or other non-string value in a field cannot crash
-    the triage. A layout that is not Trivy's - `Results` or `Vulnerabilities` not a list, or an
-    entry in one that is not an object - raises :class:`ReportUnreadableError`, so it is
-    reported as SCAN FAILED rather than as a traceback or a CLEAN verdict.
+    the triage. A layout that is not Trivy's - no `SchemaVersion` 2, `Results` or
+    `Vulnerabilities` not a list, or an entry in one that is not an object - raises
+    :class:`ReportUnreadableError`, so it is reported as SCAN FAILED rather than as a traceback
+    or a CLEAN verdict.
 
     Args:
         report: Trivy JSON report.

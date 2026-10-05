@@ -43,7 +43,15 @@ def _vuln(cve, severity="HIGH", pkg="openssl", fixed="3.5.5-r0", title="somethin
 
 
 def _trivy(*vulns, target_type="alpine"):
-    return {"Results": [{"Target": "img", "Type": target_type, "Vulnerabilities": list(vulns)}]}
+    return {"SchemaVersion": 2, "Results": [{"Target": "img", "Type": target_type, "Vulnerabilities": list(vulns)}]}
+
+
+# What `trivy image --format sarif` writes: valid JSON, but not the JSON format.
+TRIVY_SARIF = {
+    "version": "2.1.0",
+    "$schema": "https://json.schemastore.org/sarif-2.1.0-rtm.5.json",
+    "runs": [{"tool": {"driver": {"name": "Trivy", "rules": []}}, "results": []}],
+}
 
 
 def _write(path: Path, payload) -> Path:
@@ -666,24 +674,31 @@ def test_classifier_refuses_to_call_an_unreadable_report_clean(tmp_path, payload
         classifier.collect(report)
 
 
-@pytest.mark.parametrize(
-    ("payload", "what"),
-    [
-        pytest.param({"Results": "img"}, "`Results` is a JSON str", id="results-not-a-list"),
-        pytest.param({"Results": {}}, "`Results` is a JSON dict", id="results-an-empty-object"),
-        pytest.param({"Results": ["img"]}, "a `Results` entry is a JSON str", id="result-not-an-object"),
-        pytest.param(
-            {"Results": [{"Type": "alpine", "Vulnerabilities": {"CVE-2026-1": {}}}]},
-            "`Vulnerabilities` is a JSON dict",
-            id="vulnerabilities-not-a-list",
-        ),
-        pytest.param(
-            {"Results": [{"Type": "alpine", "Vulnerabilities": [_vuln("CVE-2026-1"), "CVE-2026-2"]}]},
-            "a `Vulnerabilities` entry is a JSON str",
-            id="vulnerability-not-an-object",
-        ),
-    ],
-)
+# Every layout Trivy's JSON format cannot produce, with the part of the error that names it. The
+# scan gate and the Slack report refuse the same set.
+NOT_TRIVY_LAYOUTS = [
+    pytest.param({}, "it has no `SchemaVersion`", id="empty-object"),
+    pytest.param(TRIVY_SARIF, "it has no `SchemaVersion`", id="sarif"),
+    pytest.param({"SchemaVersion": None, "Results": []}, "it has no `SchemaVersion`", id="null-schema-version"),
+    pytest.param({"SchemaVersion": 1, "Results": []}, "has `SchemaVersion` 1,", id="older-schema-version"),
+    pytest.param({"SchemaVersion": "2", "Results": []}, "a `SchemaVersion` that is a JSON str", id="schema-as-text"),
+    pytest.param({"SchemaVersion": 2, "Results": "img"}, "`Results` is a JSON str", id="results-not-a-list"),
+    pytest.param({"SchemaVersion": 2, "Results": {}}, "`Results` is a JSON dict", id="results-an-empty-object"),
+    pytest.param({"SchemaVersion": 2, "Results": ["img"]}, "a `Results` entry is a JSON str", id="result-not-object"),
+    pytest.param(
+        {"SchemaVersion": 2, "Results": [{"Type": "alpine", "Vulnerabilities": {"CVE-2026-1": {}}}]},
+        "`Vulnerabilities` is a JSON dict",
+        id="vulnerabilities-not-a-list",
+    ),
+    pytest.param(
+        {"SchemaVersion": 2, "Results": [{"Type": "alpine", "Vulnerabilities": [_vuln("CVE-2026-1"), "CVE-2026-2"]}]},
+        "a `Vulnerabilities` entry is a JSON str",
+        id="vulnerability-not-an-object",
+    ),
+]
+
+
+@pytest.mark.parametrize(("payload", "what"), NOT_TRIVY_LAYOUTS)
 def test_classifier_refuses_a_report_that_is_not_shaped_like_trivys(tmp_path, payload, what):
     report = _write(tmp_path / "trivy.json", payload)
     with pytest.raises(classifier.ReportUnreadableError, match=what):
@@ -693,10 +708,12 @@ def test_classifier_refuses_a_report_that_is_not_shaped_like_trivys(tmp_path, pa
 @pytest.mark.parametrize(
     "payload",
     [
-        pytest.param({}, id="no-results"),
-        pytest.param({"Results": None}, id="null-results"),
-        pytest.param({"Results": [{"Type": "alpine"}]}, id="no-vulnerabilities"),
-        pytest.param({"Results": [{"Type": "alpine", "Vulnerabilities": None}]}, id="null-vulnerabilities"),
+        pytest.param({"SchemaVersion": 2}, id="no-results"),
+        pytest.param({"SchemaVersion": 2, "Results": None}, id="null-results"),
+        pytest.param({"SchemaVersion": 2, "Results": [{"Type": "alpine"}]}, id="no-vulnerabilities"),
+        pytest.param(
+            {"SchemaVersion": 2, "Results": [{"Type": "alpine", "Vulnerabilities": None}]}, id="null-vulnerabilities"
+        ),
     ],
 )
 def test_a_report_with_nothing_to_list_is_clean(tmp_path, payload):
@@ -706,14 +723,23 @@ def test_a_report_with_nothing_to_list_is_clean(tmp_path, payload):
     assert classifier.collect(report, pins=set(), locked={}) == []
 
 
-def test_classifier_cli_fails_loudly_on_a_report_that_is_not_shaped_like_trivys(tmp_path):
-    report = _write(tmp_path / "trivy.json", {"Results": ["img"]})
+@pytest.mark.parametrize(
+    ("payload", "what"),
+    [
+        pytest.param({}, "it has no `SchemaVersion`", id="empty-object"),
+        pytest.param(TRIVY_SARIF, "it has no `SchemaVersion`", id="sarif"),
+        pytest.param({"SchemaVersion": 2, "Results": ["img"]}, "a `Results` entry is a JSON str", id="result-entry"),
+    ],
+)
+def test_classifier_cli_fails_loudly_on_a_report_that_is_not_shaped_like_trivys(tmp_path, payload, what):
+    report = _write(tmp_path / "trivy.json", payload)
     summary = tmp_path / "summary.md"
     result = _classify_cli(report, summary)
     assert result.returncode == classifier.EXIT_UNREADABLE_REPORT
     assert "Traceback" not in result.stderr
-    assert "a `Results` entry is a JSON str" in result.stderr
+    assert what in result.stderr
     assert summary.read_text().startswith("## `permitio/pdp-v2:latest` - SCAN FAILED\n")
+    assert "CLEAN" not in result.stdout
 
 
 def _python_report(tmp_path, *cves, pkg="httpx", fixed="0.28.1", installed="0.28.0"):
@@ -885,10 +911,11 @@ def test_a_finding_a_rebuild_cannot_clear_outranks_the_python_maybe(tmp_path, re
     report = _write(
         tmp_path / "t.json",
         {
+            "SchemaVersion": 2,
             "Results": [
                 {"Target": "py", "Type": "python-pkg", "Vulnerabilities": [maybe]},
                 {"Target": "other", "Type": result_type, "Vulnerabilities": [vuln]},
-            ]
+            ],
         },
     )
     locked = {"httpx": {"0.28.1"}, "anyio": {"4.8.0"}, "starlette": {"0.50.0"}}
