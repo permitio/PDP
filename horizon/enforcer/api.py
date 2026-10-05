@@ -60,11 +60,13 @@ stats_manager = StatisticsManager(
     failures_threshold_percentage=sidecar_config.OPA_CLIENT_FAILURE_THRESHOLD_PERCENTAGE,
 )
 
+AUTHZ_HEADER_PARTS = 2  # "<scheme> <token>"
+
 
 def extract_pdp_api_key(request: Request) -> str:
     authorization: str = request.headers.get(AUTHZ_HEADER, "")
     parts = authorization.split(" ")
-    if len(parts) != 2:
+    if len(parts) != AUTHZ_HEADER_PARTS:
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED,
             detail=f"bad authz header: {authorization}",

@@ -43,7 +43,7 @@ class TestHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        global request_count
+        global request_count  # noqa: PLW0603 - the server's state is module-level, shared by every request
         request_count += 1
 
         if self.path == "/ping":
@@ -80,7 +80,7 @@ class TestHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"Not found")
 
     def do_POST(self):
-        global request_count, is_healthy, is_responsive
+        global request_count, is_healthy, is_responsive  # noqa: PLW0603 - module-level server state
         request_count += 1
 
         if self.path == "/crash":
@@ -107,7 +107,7 @@ class TestHandler(BaseHTTPRequestHandler):
 
 
 def run_server(port, *, ignore_term_signals: bool = False):
-    global ignore_sigterm
+    global ignore_sigterm  # noqa: PLW0603 - read by the module-level SIGTERM handler
 
     # Set up signal handling
     ignore_sigterm = ignore_term_signals

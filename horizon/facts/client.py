@@ -134,7 +134,7 @@ class FactsClient:
             return None
 
         try:
-            if response.status_code == 204:
+            if response.status_code == status.HTTP_204_NO_CONTENT:
                 return None
             body = response.json()
         except Exception:  # noqa: BLE001
@@ -148,7 +148,7 @@ _facts_client: FactsClient | None = None
 
 
 def get_facts_client() -> FactsClient:
-    global _facts_client
+    global _facts_client  # noqa: PLW0603 - built on first use, then shared by every request
     if _facts_client is None:
         _facts_client = FactsClient()
 

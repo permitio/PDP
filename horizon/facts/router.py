@@ -340,7 +340,7 @@ async def create_relationship_tuple(
 
 
 def cast_delete_200_to_204(response: Response) -> Response:
-    if response.status_code == 200:
+    if response.status_code == status.HTTP_200_OK:
         return Response(status_code=204)
     return response
 

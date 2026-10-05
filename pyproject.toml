@@ -158,11 +158,6 @@ ignore = [
     # Counts keyword-only parameters too. PLR0917 enforces the actual limit: at most five
     # positional parameters.
     "PLR0913",
-    # HTTP status codes and test literals read better inline than as named constants.
-    "PLR2004",
-    # The `global` statements it flags are lazily built module singletons (the facts client,
-    # the remote config) and the watchdog test server's process state.
-    "PLW0603",
     # Exception messages here carry the context (what failed, which input, what to do), which
     # is the point; a subclass per message would not add any.
     "TRY003",
@@ -174,10 +169,11 @@ ignore = [
 # when a scan fails. T20 (flake8-print) exists to keep stray debugging prints out of the
 # application under horizon/, which is where it still applies.
 ".github/scripts/*.py" = ["T201"]
-# Tests assert (S101), hold fixed fake tokens (S105, S106), use non-crypto randomness for
-# load (S311), run the CI scripts as subprocesses (S603), and read tmp files synchronously
-# inside async tests (ASYNC240), where blocking the test's event loop is harmless.
-"horizon/tests/**" = ["S101", "S105", "S106", "S311", "S603", "ASYNC240"]
+# Tests assert (S101) against literal expected values (PLR2004), hold fixed fake tokens (S105),
+# use non-crypto randomness for load (S311), run the CI scripts as subprocesses (S603), and
+# read tmp files synchronously inside async tests (ASYNC240), where blocking the test's event
+# loop is harmless.
+"horizon/tests/**" = ["S101", "PLR2004", "S105", "S311", "S603", "ASYNC240"]
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"

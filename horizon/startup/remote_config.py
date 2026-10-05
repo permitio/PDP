@@ -120,7 +120,7 @@ _remote_config: RemoteConfig | None = None
 
 
 def get_remote_config():
-    global _remote_config
+    global _remote_config  # noqa: PLW0603 - fetched from the control plane once per process
     if _remote_config is None:
         _remote_config = RemoteConfigFetcher().fetch_config()
 

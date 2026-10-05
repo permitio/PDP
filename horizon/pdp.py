@@ -51,6 +51,10 @@ from horizon.system.consts import GUNICORN_EXIT_APP
 
 OPA_LOGGER_MODULE = "opal_client.opa.logger"
 
+# The range nice(2) accepts on Linux.
+MIN_NICENESS = -20
+MAX_NICENESS = 19
+
 
 def set_process_niceness(target_nice: int) -> None:
     """
@@ -61,8 +65,8 @@ def set_process_niceness(target_nice: int) -> None:
     Setting a lower niceness value (increasing priority) may require CAP_SYS_NICE
     capabilities and could fail if the process lacks sufficient privileges.
     """
-    if target_nice < -20 or target_nice > 19:
-        raise ValueError(f"Target niceness must be between -20 and 19, got {target_nice}")
+    if not MIN_NICENESS <= target_nice <= MAX_NICENESS:
+        raise ValueError(f"Target niceness must be between {MIN_NICENESS} and {MAX_NICENESS}, got {target_nice}")
 
     try:
         current_niceness = os.nice(0)  # Read current niceness without changing it

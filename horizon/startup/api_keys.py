@@ -124,7 +124,7 @@ _env_api_key: str | None = None
 
 
 def get_env_api_key() -> str:
-    global _env_api_key
+    global _env_api_key  # noqa: PLW0603 - fetched from the control plane once per process
     if not _env_api_key:
         try:
             _env_api_key = EnvApiKeyFetcher().get_env_api_key_by_level()
