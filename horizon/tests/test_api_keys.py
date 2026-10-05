@@ -125,7 +125,7 @@ def test_an_org_key_needs_an_active_project(keys):
 # --------------------------------------------------------------------------- project key
 
 
-def test_a_project_key_alone_gets_its_project_from_its_own_scope(keys, control_plane):
+def test_a_project_key_alone_gets_its_project_from_its_own_scope(keys, control_plane, logged):
     keys(PROJECT_API_KEY="project-key", ACTIVE_ENV="env")
     control_plane.answers[SCOPE_URL, "project-key"] = {"project_id": "p1"}
     control_plane.answers[f"{BACKEND}/v2/api-key/p1/env", "project-key"] = {"secret": "env-secret"}
@@ -135,15 +135,29 @@ def test_a_project_key_alone_gets_its_project_from_its_own_scope(keys, control_p
         (SCOPE_URL, "project-key"),
         (f"{BACKEND}/v2/api-key/p1/env", "project-key"),
     ]
+    assert logged == []
 
 
-def test_a_project_key_ignores_an_org_key_and_active_project_set_alongside_it(keys, control_plane):
-    keys(PROJECT_API_KEY="project-key", ORG_API_KEY="org-key", ACTIVE_PROJECT="other", ACTIVE_ENV="env")
+@pytest.mark.parametrize(
+    ("ignored", "variable"),
+    [
+        ({"ORG_API_KEY": "org-key"}, "PDP_ORG_API_KEY"),
+        ({"ACTIVE_PROJECT": "other"}, "PDP_ACTIVE_PROJECT"),
+    ],
+)
+def test_a_project_key_ignores_an_org_key_and_active_project_set_alongside_it(
+    keys, control_plane, logged, ignored, variable
+):
+    keys(PROJECT_API_KEY="project-key", ACTIVE_ENV="env", **ignored)
     control_plane.answers[SCOPE_URL, "project-key"] = {"project_id": "p1"}
     control_plane.answers[f"{BACKEND}/v2/api-key/p1/env", "project-key"] = {"secret": "env-secret"}
 
     assert env_api_key() == "env-secret"
-    assert all(token == "project-key" for _, token in control_plane.requests)
+    assert control_plane.requests == [
+        (SCOPE_URL, "project-key"),
+        (f"{BACKEND}/v2/api-key/p1/env", "project-key"),
+    ]
+    assert [line for line in logged if variable in line and "will be ignored" in line]
 
 
 def test_a_scope_without_a_project_id_is_an_api_key_error_naming_the_key_and_url(keys, control_plane):

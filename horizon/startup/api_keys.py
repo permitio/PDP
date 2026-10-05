@@ -39,6 +39,11 @@ class EnvApiKeyFetcher:
         if sidecar_config.PROJECT_API_KEY:
             if sidecar_config.ORG_API_KEY:
                 logger.warning("PDP_PROJECT_API_KEY is set, but PDP_ORG_API_KEY is also set and will be ignored.")
+            if sidecar_config.ACTIVE_PROJECT:
+                logger.warning(
+                    "PDP_PROJECT_API_KEY is set, but PDP_ACTIVE_PROJECT is also set and will be ignored: "
+                    "the project comes from the project API key's own scope."
+                )
             if not sidecar_config.ACTIVE_ENV:
                 raise ApiKeyError(
                     "PDP_PROJECT_API_KEY is set, but PDP_ACTIVE_ENV is not. Please set it with Environment ID or Key."
