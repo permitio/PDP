@@ -28,9 +28,10 @@ import pytest
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
-# Basename import (not horizon.tests.*): CI installs the package non-editably, so the wheel
-# ships no tests/ package; pytest's prepend import mode puts this directory on sys.path and
-# imports test modules by basename. Same rationale as test_legacy_update_routes.py.
+# Basename import (not horizon.tests.*): horizon/tests has no __init__.py, so pytest's prepend
+# import mode puts this directory on sys.path and imports test modules by basename. A
+# horizon.tests.test_enforcer_api import would load a second copy of it. Same rationale as
+# test_legacy_update_routes.py.
 from test_enforcer_api import MockPermitPDP
 
 from horizon import debounce
