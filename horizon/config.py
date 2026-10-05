@@ -83,23 +83,33 @@ class SidecarConfig(Confi):
     ORG_API_KEY = confi.str(
         "ORG_API_KEY",
         None,
-        description="set this to your organization's API key if you prefer to use the organization level API key. "
-        "By default, the PDP will use the project level API key",
+        description="set this to your organization's API key if you prefer to use the organization level API key; "
+        "it needs PDP_ACTIVE_PROJECT and PDP_ACTIVE_ENV. Ignored when PDP_API_KEY or PDP_PROJECT_API_KEY is set",
     )
 
     # access token to your project
     PROJECT_API_KEY = confi.str(
         "PROJECT_API_KEY",
         None,
-        description="set this to your project's API key if you prefer to use the project level API key. "
-        "By default, the PDP will use the default project API key",
+        description="set this to your project's API key if you prefer to use the project level API key; "
+        "it needs PDP_ACTIVE_ENV, and the project comes from the key's own scope. Ignored when PDP_API_KEY is set",
     )
 
-    # chosen project id/key to use for the PDP
-    ACTIVE_PROJECT = confi.str("ACTIVE_PROJECT", None, description="the project id/key to use for the PDP")
+    # chosen project id/key, used with an organization API key
+    ACTIVE_PROJECT = confi.str(
+        "ACTIVE_PROJECT",
+        None,
+        description="the project id/key to use with PDP_ORG_API_KEY; ignored with PDP_PROJECT_API_KEY, "
+        "whose scope names the project",
+    )
 
     # chosen environment id/key to use for the PDP
-    ACTIVE_ENV = confi.str("ACTIVE_ENV", None, description="the environment id/key to use for the PDP")
+    ACTIVE_ENV = confi.str(
+        "ACTIVE_ENV",
+        None,
+        description="the environment id/key to use with PDP_ORG_API_KEY or PDP_PROJECT_API_KEY; "
+        "ignored with PDP_API_KEY, which is already an environment's key",
+    )
 
     # access token to perform system control operations
     CONTAINER_CONTROL_KEY = confi.str("CONTAINER_CONTROL_KEY", MOCK_API_KEY)
