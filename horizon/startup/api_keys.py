@@ -4,7 +4,7 @@ from tenacity import retry, retry_if_not_exception_type, stop, wait
 
 from horizon.config import MOCK_API_KEY, ApiKeyLevel, sidecar_config
 from horizon.startup.blocking_request import BlockingRequest
-from horizon.startup.exceptions import NoRetryError
+from horizon.startup.exceptions import ApiKeyError, NoRetryError
 from horizon.system.consts import GUNICORN_EXIT_APP
 
 DEFAULT_RETRY_CONFIG = {
@@ -40,23 +40,20 @@ class EnvApiKeyFetcher:
             if sidecar_config.ORG_API_KEY:
                 logger.warning("PDP_PROJECT_API_KEY is set, but PDP_ORG_API_KEY is also set and will be ignored.")
             if not sidecar_config.ACTIVE_ENV:
-                logger.error(
+                raise ApiKeyError(
                     "PDP_PROJECT_API_KEY is set, but PDP_ACTIVE_ENV is not. Please set it with Environment ID or Key."
                 )
-                raise
             return ApiKeyLevel.PROJECT
 
         if sidecar_config.ORG_API_KEY:
             if not sidecar_config.ACTIVE_ENV or not sidecar_config.ACTIVE_PROJECT:
-                logger.error(
+                raise ApiKeyError(
                     "PDP_ORG_API_KEY is set, but PDP_ACTIVE_ENV or PDP_ACTIVE_PROJECT are not. "
                     "Please set them with Environment ID/Key and Project ID/Key."
                 )
-                raise
             return ApiKeyLevel.ORGANIZATION
 
-        logger.critical("No API key specified. Please specify one with the PDP_API_KEY environment variable.")
-        raise
+        raise ApiKeyError("No API key specified. Please specify one with the PDP_API_KEY environment variable.")
 
     def get_env_api_key_by_level(self) -> str:
         api_key_level = self.api_key_level
@@ -70,10 +67,9 @@ class EnvApiKeyFetcher:
             api_key = sidecar_config.PROJECT_API_KEY
             active_project_id = get_scope(sidecar_config.ORG_API_KEY).get("project_id")
             if not active_project_id:
-                logger.error(
+                raise ApiKeyError(
                     "PDP_PROJECT_API_KEY is set, but failed to get Project ID from provided Organization API Key."
                 )
-                raise
         return self._fetch_env_key(api_key, active_project_id, active_env_id)
 
     def _fetch_env_key(self, api_key: str, active_project_key: str, active_env_key: str) -> str:
@@ -90,14 +86,12 @@ class EnvApiKeyFetcher:
         )
         try:
             secret = fetch_with_retry().get("secret")
-            if secret is None:
-                logger.error("No secret found in response from control plane")
-                raise
-            return secret
-
         except requests.RequestException as e:
             logger.warning(f"Failed to get Environment API Key: {e}")
             raise
+        if secret is None:
+            raise ApiKeyError("No secret found in the control plane's Environment API Key response.")
+        return secret
 
     def fetch_scope(self, api_key: str) -> dict | None:
         """
@@ -115,7 +109,7 @@ class EnvApiKeyFetcher:
             return fetch_with_retry()
         except requests.RequestException:
             logger.warning("Failed to get scope from provided API Key")
-            return
+            return None
 
 
 _env_api_key: str | None = None
@@ -133,7 +127,7 @@ def get_env_api_key() -> str:
 
 
 def get_scope(api_key: str) -> dict:
-    if scope := EnvApiKeyFetcher().fetch_scope(api_key) is None:
-        logger.warning("Failed to get scope from provided API Key")
-        raise
+    scope = EnvApiKeyFetcher().fetch_scope(api_key)
+    if scope is None:
+        raise ApiKeyError("Failed to get the scope of the provided API Key from the control plane.")
     return scope
