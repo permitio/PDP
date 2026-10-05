@@ -32,7 +32,7 @@ openssl = { version = "0.10", features = ["vendored"] }  # Required for docker b
 
 [dev-dependencies]
 async-trait = "0.1.88"
-redis-test = "0.9.0"
+redis-test = "1.0.4"
 reqwest = { version = "0.12.15", features = ["json"] }
 tempfile = "3.10"
 tokio = { version = "1.44.1", features = ["test-util"] }
