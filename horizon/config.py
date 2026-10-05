@@ -100,7 +100,7 @@ class SidecarConfig(Confi):
         "ACTIVE_PROJECT",
         None,
         description="the project id/key to use with PDP_ORG_API_KEY; ignored with PDP_PROJECT_API_KEY, "
-        "whose scope names the project",
+        "whose scope names the project, and with PDP_API_KEY, which is already an environment's key",
     )
 
     # chosen environment id/key to use for the PDP
