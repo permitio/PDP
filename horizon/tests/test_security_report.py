@@ -22,7 +22,7 @@ report = _load()
 
 
 def _trivy(*vulns, result_type="alpine"):
-    return {"Results": [{"Target": "img", "Type": result_type, "Vulnerabilities": list(vulns)}]}
+    return {"SchemaVersion": 2, "Results": [{"Target": "img", "Type": result_type, "Vulnerabilities": list(vulns)}]}
 
 
 def _vuln(
@@ -188,6 +188,38 @@ def test_missing_report_is_incomplete_never_clean(run):
     assert headline == "security scan incomplete"
     assert outputs["status"] == "fail"
     assert outputs["notify"] == "true"
+
+
+@pytest.mark.parametrize(
+    ("payload", "why"),
+    [
+        pytest.param({}, "trivy-latest.json is not a Trivy JSON report: it has no `SchemaVersion`", id="empty-object"),
+        pytest.param(
+            {"version": "2.1.0", "runs": [{"tool": {"driver": {"name": "Trivy"}}, "results": []}]},
+            "trivy-latest.json is not a Trivy JSON report: it has no `SchemaVersion`",
+            id="sarif",
+        ),
+        pytest.param(
+            {"SchemaVersion": 2, "Results": ["img"]},
+            "trivy-latest.json is not laid out as a Trivy JSON report: a `Results` entry is a JSON str",
+            id="result-not-an-object",
+        ),
+        pytest.param(
+            {"SchemaVersion": 2, "Results": [{"Type": "alpine", "Vulnerabilities": [_vuln("CVE-2026-0013"), "x"]}]},
+            "trivy-latest.json is not laid out as a Trivy JSON report: a `Vulnerabilities` entry is a JSON str",
+            id="one-vulnerability-not-an-object",
+        ),
+    ],
+)
+def test_a_trivy_report_the_classifier_refuses_is_incomplete_never_clean(run, payload, why):
+    message, headline, outputs = run(trivy={"latest": payload}, scout=_sarif(), alerts=[])
+    assert message.startswith(":warning: *permitio/PDP: security scan incomplete*")
+    [trivy] = [line for line in message.splitlines() if line.startswith("• *Trivy*")]
+    assert trivy.startswith(f"• *Trivy* (`pdp-v2:latest`): :warning: did not complete: {why}")
+    # The classifier refuses the whole report, so no row of it is reported either.
+    assert "CVE-2026-0013" not in message
+    assert headline == "security scan incomplete"
+    assert outputs == {"notify": "true", "status": "fail", "severe": "0", "unscored": "0"}
 
 
 def test_unparseable_sarif_and_feed_are_incomplete(run):

@@ -166,42 +166,48 @@ def _trivy_score(vuln: dict) -> float | None:
 
 
 def trivy_source(tag: str, report: Path, pins: set[str], locked: dict[str, set[str]]) -> Source:
-    """Findings from one Trivy JSON report on `permitio/pdp-v2:<tag>`."""
+    """Findings from one Trivy JSON report on `permitio/pdp-v2:<tag>`.
+
+    The report is walked with classify_image_cves.vulnerabilities(), so a layout the classifier
+    refuses - no `SchemaVersion` 2, or an entry that is not an object - makes the source
+    incomplete rather than a clean one. Skipping what does not fit would report a broken scan
+    as "no high/critical vulnerabilities found" and keep Slack quiet.
+    """
     source = Source(name="Trivy", scope=f"pdp-v2:{tag}")
     data, error = scan_report.read_json(report)
     if data is None:
         source.complete, source.note = False, _unreadable(report, error)
         return source
+    try:
+        rows = list(classifier.vulnerabilities(data, report))
+    except classifier.ReportUnreadableError as exc:
+        source.complete, source.note = False, _unreadable(report, str(exc))
+        return source
     seen: set[tuple[str, str]] = set()
-    for result in data.get("Results") or []:
-        if not isinstance(result, dict):
+    for result, vuln in rows:
+        pkg = str(vuln.get("PkgName") or "?")
+        cve = str(vuln.get("VulnerabilityID") or "?")
+        if (pkg, cve) in seen:
             continue
-        for vuln in result.get("Vulnerabilities") or []:
-            if not isinstance(vuln, dict):
-                continue
-            pkg = str(vuln.get("PkgName") or "?")
-            cve = str(vuln.get("VulnerabilityID") or "?")
-            if (pkg, cve) in seen:
-                continue
-            seen.add((pkg, cve))
-            fixed = str(vuln.get("FixedVersion") or "")
-            installed = str(vuln.get("InstalledVersion") or "?")
-            action = classifier.classify({"pkg": pkg, "fixed": fixed, "type": str(result.get("Type") or "?")}, pins)
-            hint = classifier.lock_note(pkg, action, locked, installed=installed) or _ACTION_HINT.get(action, "")
-            score = _trivy_score(vuln)
-            source.findings.append(
-                Finding(
-                    id=cve,
-                    severity=normalise_severity(vuln.get("Severity"), score),
-                    score=score,
-                    title=str(vuln.get("Title") or ""),
-                    url=str(vuln.get("PrimaryURL") or ""),
-                    remediation=_remediation(fixed, hint),
-                    packages=[f"{pkg}@{installed}"],
-                    sources=[f"Trivy {tag}"],
-                    lock_still_flagged=classifier.lock_still_flagged(pkg, action, locked, installed=installed),
-                )
+        seen.add((pkg, cve))
+        fixed = str(vuln.get("FixedVersion") or "")
+        installed = str(vuln.get("InstalledVersion") or "?")
+        action = classifier.classify({"pkg": pkg, "fixed": fixed, "type": str(result.get("Type") or "?")}, pins)
+        hint = classifier.lock_note(pkg, action, locked, installed=installed) or _ACTION_HINT.get(action, "")
+        score = _trivy_score(vuln)
+        source.findings.append(
+            Finding(
+                id=cve,
+                severity=normalise_severity(vuln.get("Severity"), score),
+                score=score,
+                title=str(vuln.get("Title") or ""),
+                url=str(vuln.get("PrimaryURL") or ""),
+                remediation=_remediation(fixed, hint),
+                packages=[f"{pkg}@{installed}"],
+                sources=[f"Trivy {tag}"],
+                lock_still_flagged=classifier.lock_still_flagged(pkg, action, locked, installed=installed),
             )
+        )
     return source
 
 
@@ -237,8 +243,11 @@ def _scout_title(rule: dict) -> str:
 
 
 def _unreadable(path: Path, reason: str) -> str:
-    """read_json's reason without the absolute path, which only adds noise in Slack."""
-    return reason.replace(f"`{path}`", path.name)
+    """Why a report is unusable, naming the file without its path, which only adds noise in Slack.
+
+    read_json's reasons quote the path in backticks; the classifier's name it bare.
+    """
+    return reason.replace(f"`{path}`", path.name).replace(str(path), path.name)
 
 
 def scout_source(tag: str, sarif: Path) -> Source:
