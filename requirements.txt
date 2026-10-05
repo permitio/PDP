@@ -43,7 +43,7 @@ scalar-fastapi==1.8.2
 httpx>=0.27.0,<1
 # TODO: change to use re2 in the future, currently not supported in alpine due to c++ library issues
 # google-re2 # use re2 instead of re for regex matching because it's simiplier and safer for user inputted regexes
-protobuf>=6.33.5 # pinned to avoid CVE-2026-0994
+protobuf>=7.36.2 # pinned to avoid CVE-2026-0994
 # Floor raised 48.0.1 -> 50.0.0 to clear two HIGH CVEs that Docker Scout began flagging on
 # 2026-08-04: CVE-2026-69249 (CVSS 8.7, fixed in 49.0.0) and CVE-2026-69247 (CVSS 8.2,
 # Observable Timing Discrepancy, affects >=44.0.0, fixed only in 50.0.0). The floor also
