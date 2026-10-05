@@ -21,23 +21,28 @@ absorb. Two more cases a plain rebuild cannot fix, because the Dockerfile pins t
   - The Go *stdlib* comes from the `golang:1.27-bookworm@sha256:...` build stage, which is
     digest-pinned. A rebuild reuses the same toolchain; the fix arrives when Dependabot's
     `docker` PR moves the digest and that PR is merged.
-  - Python packages are locked in uv.lock, so a rebuild reinstalls the same versions: a
-    fixed Python package needs a lock update (Dependabot's `uv` PR, or
-    `uv lock --upgrade-package NAME`), and one pinned with `==` in pyproject.toml (e.g.
-    starlette, ddtrace, websockets) needs that pin moved first.
+  - Python packages are installed from uv.lock exactly, so a rebuild installs whatever
+    main's lock holds. When main's uv.lock still holds the version the image has, the
+    lock needs an update (Dependabot's `uv` PR, or `uv lock --upgrade-package NAME`);
+    when it already holds a different one, cutting a release picks that up. A package
+    pinned with `==` in pyproject.toml (e.g. starlette, ddtrace, websockets) needs that
+    pin moved first.
 
 Calling any of these "just rebuild" would send someone to cut a release that cannot fix it.
 
 Verdicts:
   CLEAN   - nothing at CRITICAL/HIGH after waivers.
-  REBUILD - findings exist and EVERY one is absorbed by rebuilding this repo's image.
-            Cut a release; no code change needed.
+  REBUILD - findings exist and EVERY one is absorbed by rebuilding this repo's image from
+            main. Cut a release; no code change needed.
   SOURCE  - at least one finding needs a change somewhere: no upstream fix exists at all,
             the fix lives in permit-opa's go.mod, the golang base digest has to move, or
             a uv.lock update or an exact pin in pyproject.toml has to move.
 
 SOURCE outranks REBUILD: a report can contain both kinds, and the one that needs a human
 is the one that should set the verdict.
+
+pyproject.toml and uv.lock are read from the checkout this script sits in, whatever the
+working directory - main, on a scheduled run.
 
 A report that cannot be read is NOT clean. `--report` pointing at a missing, empty or
 truncated file means the scan step failed, and the only safe answer is a loud one: the
@@ -53,6 +58,7 @@ import re
 import sys
 import tomllib
 from collections import Counter
+from collections.abc import Mapping, Set
 from pathlib import Path
 
 # Exit code for "the report itself is unusable", distinct from a verdict.
@@ -72,7 +78,13 @@ class ReportUnreadableError(Exception):
     """The Trivy report cannot be read, so no verdict can be honestly reported."""
 
 
-_PIN = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[^\]]*\])?\s*==")
+# PEP 508 allows whitespace between the name, the extras and the operator: `foo [x] == 1`.
+_PIN = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[[^\]]*\])?\s*==")
+
+
+def repo_root() -> Path:
+    """Return the repository root, derived from this script's location."""
+    return Path(__file__).resolve().parents[2]
 
 
 def exact_pins(pyproject: Path | None = None) -> set[str]:
@@ -83,17 +95,13 @@ def exact_pins(pyproject: Path | None = None) -> set[str]:
     also how Trivy reports them closely enough to compare.
 
     Args:
-        pyproject: File to read. Defaults to pyproject.toml in the working directory, which is
-            the repo root in every workflow that runs this script.
+        pyproject: File to read. Defaults to the repository's own pyproject.toml, whatever the
+            working directory.
 
     Returns:
         The set of normalised package names.
     """
-    path = pyproject or Path("pyproject.toml")
-    if pyproject is None and not path.is_file():
-        # Run outside the repo: no pins are known, so a fixed Python package reads as a lock
-        # update rather than a pin. Both are SOURCE verdicts; only the owner label differs.
-        return set()
+    path = pyproject or repo_root() / "pyproject.toml"
     data = tomllib.loads(path.read_text(encoding="utf-8"))
     requirements = list(data.get("project", {}).get("dependencies", []))
     requirements += data.get("tool", {}).get("uv", {}).get("override-dependencies", [])
@@ -105,14 +113,46 @@ def exact_pins(pyproject: Path | None = None) -> set[str]:
     return pins
 
 
+def locked_versions(lock: Path | None = None) -> dict[str, set[str]]:
+    """The versions uv.lock holds for each package.
+
+    A name maps to a set because uv writes one `[[package]]` entry per version when the
+    resolution forks on environment markers.
+
+    Args:
+        lock: File to read. Defaults to the repository's own uv.lock, whatever the working
+            directory.
+
+    Returns:
+        Locked versions keyed by normalised package name.
+    """
+    path = lock or repo_root() / "uv.lock"
+    data = tomllib.loads(path.read_text(encoding="utf-8"))
+    versions: dict[str, set[str]] = {}
+    for package in data.get("package", []):
+        if "version" in package:
+            versions.setdefault(_normalise(package["name"]), set()).add(package["version"])
+    return versions
+
+
 def _normalise(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
-def classify(finding: dict, pins: set[str] | frozenset[str] = frozenset()) -> str:
+def classify(
+    finding: dict,
+    pins: Set[str] = frozenset(),
+    locked: Mapping[str, Set[str]] | None = None,
+) -> str:
     """Who has to act on this finding.
 
-    Returns one of 'rebuild', 'permit-opa', 'base-digest', 'lock', 'pinned' or 'no-fix'.
+    Args:
+        finding: A row with `pkg`, `installed`, `fixed` and `type` (Trivy's result type).
+        pins: Normalised names pinned with `==` in pyproject.toml, from :func:`exact_pins`.
+        locked: main's uv.lock, from :func:`locked_versions`.
+
+    Returns:
+        One of 'rebuild', 'permit-opa', 'base-digest', 'lock', 'pinned' or 'no-fix'.
     """
     if not finding["fixed"]:
         return "no-fix"
@@ -124,9 +164,21 @@ def classify(finding: dict, pins: set[str] | frozenset[str] = frozenset()) -> st
         # Every other Go module linked into /app/bin/opa is a permit-opa dependency.
         return "permit-opa"
     if finding["type"] == "python-pkg":
-        # uv.lock fixes every Python version, so a rebuild reinstalls the vulnerable one.
-        return "pinned" if _normalise(finding["pkg"]) in pins else "lock"
+        return _python_package_owner(finding, pins, locked or {})
     return "rebuild"
+
+
+def _python_package_owner(finding: dict, pins: Set[str], locked: Mapping[str, Set[str]]) -> str:
+    """'pinned', 'rebuild' or 'lock' for a Python package that has a fixed version."""
+    name = _normalise(finding["pkg"])
+    if name in pins:
+        return "pinned"
+    # The image installs uv.lock exactly. A lock on main that has moved off the installed
+    # version is picked up by the next release; one that has not needs updating first.
+    main_versions = locked.get(name, set())
+    if main_versions and finding["installed"] not in main_versions:
+        return "rebuild"
+    return "lock"
 
 
 def load_report(report: Path) -> dict:
@@ -168,17 +220,32 @@ def load_report(report: Path) -> dict:
     return data
 
 
-def collect(report: Path, pins: set[str] | None = None) -> list[dict]:
+def collect(
+    report: Path,
+    pins: Set[str] | None = None,
+    locked: Mapping[str, Set[str]] | None = None,
+) -> list[dict]:
     """Flatten Trivy's per-target results, de-duplicating on (package, CVE).
 
     Trivy reports one row per affected package, so a single OpenSSL CVE shows up twice
     (libcrypto3 + libssl3). Keying on the pair keeps both - they are genuinely separate
     packages to upgrade - while dropping the repeats Trivy emits when the same package
     is discovered through more than one target.
+
+    Args:
+        report: Trivy JSON report.
+        pins: Exact pins, as :func:`exact_pins` returns. Defaults to the repository's own.
+        locked: Locked versions, as :func:`locked_versions` returns. Defaults to the
+            repository's own uv.lock.
+
+    Returns:
+        One row per (package, CVE), each with its `action`, worst severity first.
     """
     data = load_report(report)
     if pins is None:
         pins = exact_pins()
+    if locked is None:
+        locked = locked_versions()
     findings: dict[tuple[str, str], dict] = {}
     for result in data.get("Results") or []:
         for vuln in result.get("Vulnerabilities") or []:
@@ -197,7 +264,7 @@ def collect(report: Path, pins: set[str] | None = None) -> list[dict]:
                 },
             )
     for f in findings.values():
-        f["action"] = classify(f, pins)
+        f["action"] = classify(f, pins, locked)
     order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
     action_order = {"no-fix": 0, "permit-opa": 1, "base-digest": 2, "pinned": 3, "lock": 4, "rebuild": 5}
     return sorted(
@@ -309,8 +376,8 @@ def render(tag: str, findings: list[dict], verdict: str) -> str:
     if verdict == "REBUILD":
         headline = (
             "**Every finding is already patched upstream, so this image is stale rather "
-            "than broken.** No source change is needed: cutting a release rebuilds it and "
-            "`apk upgrade` absorbs the patches."
+            "than broken.** No source change is needed: cutting a release rebuilds it from main, "
+            "where `apk upgrade` absorbs the Alpine patches and uv.lock installs main's Python versions."
         )
     else:
         parts = []
@@ -335,8 +402,8 @@ def render(tag: str, findings: list[dict], verdict: str) -> str:
             )
         if lock:
             parts.append(
-                f"{len(lock)} finding(s) are in Python packages locked in uv.lock - a rebuild "
-                "reinstalls the same versions, so the lock has to be updated"
+                f"{len(lock)} finding(s) are in Python packages that main's uv.lock still holds "
+                "at the installed version - a rebuild reinstalls it, so the lock has to be updated"
             )
         if pinned:
             parts.append(

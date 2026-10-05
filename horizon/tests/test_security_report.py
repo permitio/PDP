@@ -25,11 +25,13 @@ def _trivy(*vulns, result_type="alpine"):
     return {"Results": [{"Target": "img", "Type": result_type, "Vulnerabilities": list(vulns)}]}
 
 
-def _vuln(cve, severity="HIGH", *, pkg="libssl3", fixed="3.5.8-r0", title="OpenSSL issue", score=7.5):
+def _vuln(
+    cve, severity="HIGH", *, pkg="libssl3", installed="3.5.7-r0", fixed="3.5.8-r0", title="OpenSSL issue", score=7.5
+):
     return {
         "VulnerabilityID": cve,
         "PkgName": pkg,
-        "InstalledVersion": "3.5.7-r0",
+        "InstalledVersion": installed,
         "FixedVersion": fixed,
         "Severity": severity,
         "SeveritySource": "nvd",
@@ -274,18 +276,23 @@ def test_medium_findings_are_counted_but_not_alerted(run):
     assert outputs["severe"] == "0"
 
 
+HTTPX_IN_MAINS_LOCK = min(report.classifier.locked_versions()["httpx"])
+
+
 @pytest.mark.parametrize(
-    ("pkg", "result_type", "hint"),
+    ("pkg", "installed", "result_type", "hint"),
     [
-        ("libssl3", "alpine", "a release rebuild picks it up"),
-        ("golang.org/x/net", "gobinary", "bump it in permit-opa"),
-        ("stdlib", "gobinary", "needs the golang base-image digest bump"),
-        ("starlette", "python-pkg", "bump the exact pin in pyproject.toml"),
-        ("httpx", "python-pkg", "update it in uv.lock"),
+        ("libssl3", "3.5.7-r0", "alpine", "a release rebuild picks it up"),
+        ("golang.org/x/net", "0.40.0", "gobinary", "bump it in permit-opa"),
+        ("stdlib", "1.26.0", "gobinary", "needs the golang base-image digest bump"),
+        ("starlette", "0.50.0", "python-pkg", "bump the exact pin in pyproject.toml"),
+        ("httpx", HTTPX_IN_MAINS_LOCK, "python-pkg", "update it in uv.lock"),
+        # main's uv.lock already holds another version, which the next release installs.
+        ("httpx", "0.0.1", "python-pkg", "a release rebuild picks it up"),
     ],
 )
-def test_trivy_remediation_names_who_acts(run, pkg, result_type, hint):
-    vuln = _vuln("CVE-2026-0007", pkg=pkg)
+def test_trivy_remediation_names_who_acts(run, pkg, installed, result_type, hint):
+    vuln = _vuln("CVE-2026-0007", pkg=pkg, installed=installed)
     message, _, _ = run(trivy={"latest": _trivy(vuln, result_type=result_type)}, scout=_sarif(), alerts=[])
     assert f"fix: 3.5.8-r0, {hint}" in message
 

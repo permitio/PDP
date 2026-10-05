@@ -30,11 +30,11 @@ classifier = _load("classify_image_cves")
 parity = _load("check_waiver_parity")
 
 
-def _vuln(cve, severity="HIGH", pkg="openssl", fixed="3.5.5-r0", title="something"):
+def _vuln(cve, severity="HIGH", pkg="openssl", fixed="3.5.5-r0", title="something", *, installed="3.5.4-r0"):
     return {
         "VulnerabilityID": cve,
         "PkgName": pkg,
-        "InstalledVersion": "3.5.4-r0",
+        "InstalledVersion": installed,
         "FixedVersion": fixed,
         "Severity": severity,
         "Title": title,
@@ -352,19 +352,68 @@ def test_go_stdlib_needs_the_golang_base_digest_to_move(tmp_path):
     assert classifier.collect(report, pins=set())[0]["action"] == "base-digest"
 
 
-def test_exact_pinned_python_package_needs_the_pin_moved(tmp_path):
+@pytest.mark.parametrize(
+    ("pkg", "installed", "action"),
+    [
+        # main's uv.lock has moved past the image's version: the next release installs it.
+        ("httpx", "0.28.0", "rebuild"),
+        # main's uv.lock still holds the image's version: a rebuild reinstalls it.
+        ("httpx", "0.28.1", "lock"),
+        # Trivy reports names as the package spells them; the lock holds them normalised.
+        ("Typing_Extensions", "4.14.0", "lock"),
+        # An `==` pin outranks the lock: the lock cannot move until the pin does.
+        ("Starlette", "0.49.0", "pinned"),
+        # Not in the lock at all, so there is no newer version to rebuild with.
+        ("not-locked", "1.0.0", "lock"),
+    ],
+)
+def test_python_package_owner_depends_on_mains_lock_and_pins(tmp_path, pkg, installed, action):
     report = _write(
         tmp_path / "t.json",
-        _trivy(
-            _vuln("CVE-2026-5", "HIGH", pkg="Starlette", fixed="1.3.1"),
-            _vuln("CVE-2026-6", "HIGH", pkg="httpx", fixed="0.28.2"),
-            target_type="python-pkg",
-        ),
+        _trivy(_vuln("CVE-2026-5", pkg=pkg, fixed="9.9.9", installed=installed), target_type="python-pkg"),
     )
-    actions = {f["pkg"]: f["action"] for f in classifier.collect(report, pins={"starlette"})}
-    # uv.lock fixes every Python version, so a fixed but unpinned package is a lock update,
-    # not a rebuild.
-    assert actions == {"Starlette": "pinned", "httpx": "lock"}
+    locked = {"httpx": {"0.28.1"}, "starlette": {"0.50.0"}, "typing-extensions": {"4.14.0"}}
+    assert classifier.collect(report, pins={"starlette"}, locked=locked)[0]["action"] == action
+
+
+def test_locked_versions_reads_every_package_by_normalised_name(tmp_path):
+    lock = _write(
+        tmp_path / "uv.lock",
+        "version = 1\n"
+        "[[package]]\n"
+        'name = "typing-extensions"\n'
+        'version = "4.14.0"\n'
+        "[[package]]\n"
+        'name = "Foo_Bar"\n'
+        'version = "1.0"\n'
+        "[[package]]\n"
+        'name = "foo-bar"\n'
+        'version = "2.0"\n',
+    )
+    assert classifier.locked_versions(lock) == {"typing-extensions": {"4.14.0"}, "foo-bar": {"1.0", "2.0"}}
+
+
+def test_pins_and_lock_default_to_the_repo_files_from_any_working_directory(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert "starlette" in classifier.exact_pins()
+    assert classifier.locked_versions()["starlette"]
+
+
+@pytest.mark.parametrize(
+    ("requirement", "pins"),
+    [
+        ("foo==1.0", {"foo"}),
+        ("foo == 1.0", {"foo"}),
+        ("foo[extra]==1.0", {"foo"}),
+        ("foo [extra] == 1.0", {"foo"}),
+        ("Foo.Bar==1.0 ; python_version >= '3.13'", {"foo-bar"}),
+        ("foo>=1.0", set()),
+        ("foo~=1.0", set()),
+    ],
+)
+def test_exact_pins_follows_pep_508_spacing(tmp_path, requirement, pins):
+    pyproject = _write(tmp_path / "pyproject.toml", f"[project]\ndependencies = [{json.dumps(requirement)}]\n")
+    assert classifier.exact_pins(pyproject) == pins
 
 
 def test_exact_pins_reads_dependencies_and_uv_overrides(tmp_path):
@@ -431,10 +480,27 @@ def test_classifier_refuses_to_call_an_unreadable_report_clean(tmp_path, payload
         classifier.collect(report)
 
 
-def test_classifier_cli_fails_loudly_on_a_zero_byte_report(tmp_path):
-    report = _write(tmp_path / "trivy.json", "")
-    gh_out = tmp_path / "gh_output"
-    result = subprocess.run(
+def test_a_lock_only_report_names_uv_lock_as_the_owner(tmp_path):
+    report = _write(
+        tmp_path / "t.json",
+        _trivy(_vuln("CVE-2026-6", pkg="httpx", fixed="0.28.2", installed="0.28.1"), target_type="python-pkg"),
+    )
+    findings = classifier.collect(report, pins=set(), locked={"httpx": {"0.28.1"}})
+    body = classifier.render("latest", findings, "SOURCE")
+    row = next(line for line in body.splitlines() if "`httpx`" in line)
+    assert row.endswith("| **uv.lock** |")
+    assert "**A rebuild alone will NOT clear this image.** 1 finding(s) are in Python packages" in body
+    assert "- Need a uv.lock update: **1**" in body
+    assert "- Cleared by rebuilding this repo: **0**" in body
+    assert (
+        "- Update httpx in uv.lock (merge Dependabot's `uv` PR, or `uv lock --upgrade-package NAME`), "
+        "then cut a release."
+    ) in body
+
+
+def _classify_cli(report: Path, gh_out: Path) -> subprocess.CompletedProcess:
+    """Run the classifier the way the scheduled scan does, from a directory outside the repo."""
+    return subprocess.run(
         [
             sys.executable,
             str(SCRIPTS / "classify_image_cves.py"),
@@ -447,9 +513,15 @@ def test_classifier_cli_fails_loudly_on_a_zero_byte_report(tmp_path):
         ],
         capture_output=True,
         text=True,
-        cwd=tmp_path,
+        cwd=report.parent,
         check=False,
     )
+
+
+def test_classifier_cli_fails_loudly_on_a_zero_byte_report(tmp_path):
+    report = _write(tmp_path / "trivy.json", "")
+    gh_out = tmp_path / "gh_output"
+    result = _classify_cli(report, gh_out)
     assert result.returncode == classifier.EXIT_UNREADABLE_REPORT
     assert "::error::" in result.stdout
     assert "is empty" in result.stderr
@@ -464,22 +536,7 @@ def test_classifier_cli_reports_a_verdict_and_exits_zero(tmp_path):
         _trivy(_vuln("CVE-2026-1", "CRITICAL"), _vuln("CVE-2026-4", "HIGH", fixed="")),
     )
     gh_out = tmp_path / "gh_output"
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(SCRIPTS / "classify_image_cves.py"),
-            "--report",
-            str(report),
-            "--tag",
-            "latest",
-            "--github-output",
-            str(gh_out),
-        ],
-        capture_output=True,
-        text=True,
-        cwd=tmp_path,
-        check=False,
-    )
+    result = _classify_cli(report, gh_out)
     assert result.returncode == 0, result.stderr
     outputs = dict(line.split("=", 1) for line in gh_out.read_text().splitlines())
     assert outputs == {
@@ -490,6 +547,29 @@ def test_classifier_cli_reports_a_verdict_and_exits_zero(tmp_path):
         "parse_ok": "true",
     }
     assert "SOURCE" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("installed", "verdict", "owner"),
+    [
+        # The image has what main's uv.lock holds, so only a lock update clears it.
+        (min(classifier.locked_versions()["httpx"]), "SOURCE", "**uv.lock**"),
+        # main's uv.lock has moved on, so cutting a release clears it.
+        ("0.0.1", "REBUILD", "rebuild (this repo)"),
+    ],
+)
+def test_classifier_cli_judges_python_findings_against_the_repo_lock(tmp_path, installed, verdict, owner):
+    report = _write(
+        tmp_path / "trivy.json",
+        _trivy(_vuln("CVE-2026-6", pkg="httpx", fixed="99.0.0", installed=installed), target_type="python-pkg"),
+    )
+    gh_out = tmp_path / "gh_output"
+    result = _classify_cli(report, gh_out)
+    assert result.returncode == 0, result.stderr
+    outputs = dict(line.split("=", 1) for line in gh_out.read_text().splitlines())
+    assert outputs["verdict"] == verdict
+    row = next(line for line in result.stdout.splitlines() if "`httpx`" in line)
+    assert row.endswith(f"| {owner} |")
 
 
 # --------------------------------------------------------------------------- check_waiver_parity

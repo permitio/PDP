@@ -160,7 +160,7 @@ def _trivy_score(vuln: dict) -> float | None:
     return None
 
 
-def trivy_source(tag: str, report: Path, pins: set[str]) -> Source:
+def trivy_source(tag: str, report: Path, pins: set[str], locked: dict[str, set[str]]) -> Source:
     """Findings from one Trivy JSON report on `permitio/pdp-v2:<tag>`."""
     source = Source(name="Trivy", scope=f"pdp-v2:{tag}")
     data, error = scan_report.read_json(report)
@@ -180,7 +180,9 @@ def trivy_source(tag: str, report: Path, pins: set[str]) -> Source:
                 continue
             seen.add((pkg, cve))
             fixed = str(vuln.get("FixedVersion") or "")
-            action = classifier.classify({"pkg": pkg, "fixed": fixed, "type": result.get("Type") or "?"}, pins)
+            installed = str(vuln.get("InstalledVersion") or "?")
+            row = {"pkg": pkg, "installed": installed, "fixed": fixed, "type": result.get("Type") or "?"}
+            action = classifier.classify(row, pins, locked)
             score = _trivy_score(vuln)
             source.findings.append(
                 Finding(
@@ -190,7 +192,7 @@ def trivy_source(tag: str, report: Path, pins: set[str]) -> Source:
                     title=str(vuln.get("Title") or ""),
                     url=str(vuln.get("PrimaryURL") or ""),
                     remediation=_remediation(fixed, _ACTION_HINT.get(action, "")),
-                    packages=[f"{pkg}@{vuln.get('InstalledVersion') or '?'}"],
+                    packages=[f"{pkg}@{installed}"],
                     sources=[f"Trivy {tag}"],
                 )
             )
@@ -501,7 +503,8 @@ class Report:
 
 def build(args: argparse.Namespace) -> Report:
     pins = classifier.exact_pins()
-    sources = [trivy_source(tag, path, pins) for tag, path in args.trivy]
+    locked = classifier.locked_versions()
+    sources = [trivy_source(tag, path, pins, locked) for tag, path in args.trivy]
     if not sources:
         sources.append(Source(name="Trivy", scope="published tags", complete=False, note="no tag was scanned"))
     if args.scout:
