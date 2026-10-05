@@ -51,9 +51,10 @@ pyproject.toml and uv.lock are read from the checkout this script sits in, whate
 working directory - main, on a scheduled run.
 
 A report that cannot be read is NOT clean. `--report` pointing at a missing, empty or
-truncated file means the scan step failed, and the only safe answer is a loud one: the
-script prints a workflow error annotation, writes SCAN FAILED to the job summary and exits
-non-zero. Reading a zero-byte file as `{}` once turned a broken scan into a green CLEAN run.
+truncated file, or at JSON not laid out as a Trivy report, means the scan step failed, and
+the only safe answer is a loud one: the script prints a workflow error annotation, writes
+SCAN FAILED to the job summary and exits non-zero. Reading a zero-byte file as `{}` once
+turned a broken scan into a green CLEAN run.
 """
 
 from __future__ import annotations
@@ -64,7 +65,7 @@ import re
 import sys
 import tomllib
 from collections import Counter
-from collections.abc import Mapping, Set
+from collections.abc import Iterator, Mapping, Set
 from pathlib import Path
 
 # Exit code for "the report itself is unusable", distinct from a verdict.
@@ -244,6 +245,49 @@ def load_report(report: Path) -> dict:
     return data
 
 
+def vulnerabilities(data: dict, report: Path) -> Iterator[tuple[dict, dict]]:
+    """Walk `Results[].Vulnerabilities[]`, refusing any other layout.
+
+    A missing or null `Results` or `Vulnerabilities` is an empty list - Trivy leaves them out
+    when there is nothing to list. Anything else that is not a list of objects means the file
+    is not a Trivy report, and skipping it could turn a broken scan into CLEAN.
+
+    Args:
+        data: The report, from :func:`load_report`.
+        report: Path passed to ``--report``, named in the error.
+
+    Yields:
+        Each (result, vulnerability) pair, in report order.
+
+    Raises:
+        ReportUnreadableError: Some level of the layout is not a list of objects.
+    """
+
+    def unreadable(what: str, value: object) -> ReportUnreadableError:
+        return ReportUnreadableError(
+            f"{report} is not laid out as a Trivy JSON report: {what} is a JSON {type(value).__name__}. "
+            f"Check that the Trivy step used `format: json` and that nothing rewrote the file."
+        )
+
+    results = data.get("Results")
+    if results is None:
+        return
+    if not isinstance(results, list):
+        raise unreadable("`Results`", results)
+    for result in results:
+        if not isinstance(result, dict):
+            raise unreadable("a `Results` entry", result)
+        vulns = result.get("Vulnerabilities")
+        if vulns is None:
+            continue
+        if not isinstance(vulns, list):
+            raise unreadable("`Vulnerabilities`", vulns)
+        for vuln in vulns:
+            if not isinstance(vuln, dict):
+                raise unreadable("a `Vulnerabilities` entry", vuln)
+            yield result, vuln
+
+
 def collect(
     report: Path,
     pins: Set[str] | None = None,
@@ -256,8 +300,10 @@ def collect(
     packages to upgrade - while dropping the repeats Trivy emits when the same package
     is discovered through more than one target.
 
-    Every field is read as text, so a number or other non-string value in the report cannot
-    crash the triage.
+    Every field is read as text, so a number or other non-string value in a field cannot crash
+    the triage. A layout that is not Trivy's - `Results` or `Vulnerabilities` not a list, or an
+    entry in one that is not an object - raises :class:`ReportUnreadableError`, so it is
+    reported as SCAN FAILED rather than as a traceback or a CLEAN verdict.
 
     Args:
         report: Trivy JSON report.
@@ -268,6 +314,9 @@ def collect(
     Returns:
         One row per (package, CVE), each with its `action` and its `lock_note` (see
         :func:`lock_note`), worst severity first.
+
+    Raises:
+        ReportUnreadableError: The report cannot be read, or is not laid out as Trivy's.
     """
     data = load_report(report)
     if pins is None:
@@ -275,22 +324,21 @@ def collect(
     if locked is None:
         locked = locked_versions()
     findings: dict[tuple[str, str], dict] = {}
-    for result in data.get("Results") or []:
-        for vuln in result.get("Vulnerabilities") or []:
-            pkg = str(vuln.get("PkgName") or "?")
-            cve = str(vuln.get("VulnerabilityID") or "?")
-            findings.setdefault(
-                (pkg, cve),
-                {
-                    "pkg": pkg,
-                    "cve": cve,
-                    "severity": str(vuln.get("Severity") or "UNKNOWN"),
-                    "installed": str(vuln.get("InstalledVersion") or "?"),
-                    "fixed": str(vuln.get("FixedVersion") or ""),
-                    "title": str(vuln.get("Title") or "").strip(),
-                    "type": str(result.get("Type") or "?"),
-                },
-            )
+    for result, vuln in vulnerabilities(data, report):
+        pkg = str(vuln.get("PkgName") or "?")
+        cve = str(vuln.get("VulnerabilityID") or "?")
+        findings.setdefault(
+            (pkg, cve),
+            {
+                "pkg": pkg,
+                "cve": cve,
+                "severity": str(vuln.get("Severity") or "UNKNOWN"),
+                "installed": str(vuln.get("InstalledVersion") or "?"),
+                "fixed": str(vuln.get("FixedVersion") or ""),
+                "title": str(vuln.get("Title") or "").strip(),
+                "type": str(result.get("Type") or "?"),
+            },
+        )
     for f in findings.values():
         f["action"] = classify(f, pins)
         f["lock_note"] = lock_note(f["pkg"], f["action"], locked)

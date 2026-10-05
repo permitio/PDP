@@ -578,6 +578,56 @@ def test_classifier_refuses_to_call_an_unreadable_report_clean(tmp_path, payload
         classifier.collect(report)
 
 
+@pytest.mark.parametrize(
+    ("payload", "what"),
+    [
+        pytest.param({"Results": "img"}, "`Results` is a JSON str", id="results-not-a-list"),
+        pytest.param({"Results": {}}, "`Results` is a JSON dict", id="results-an-empty-object"),
+        pytest.param({"Results": ["img"]}, "a `Results` entry is a JSON str", id="result-not-an-object"),
+        pytest.param(
+            {"Results": [{"Type": "alpine", "Vulnerabilities": {"CVE-2026-1": {}}}]},
+            "`Vulnerabilities` is a JSON dict",
+            id="vulnerabilities-not-a-list",
+        ),
+        pytest.param(
+            {"Results": [{"Type": "alpine", "Vulnerabilities": [_vuln("CVE-2026-1"), "CVE-2026-2"]}]},
+            "a `Vulnerabilities` entry is a JSON str",
+            id="vulnerability-not-an-object",
+        ),
+    ],
+)
+def test_classifier_refuses_a_report_that_is_not_shaped_like_trivys(tmp_path, payload, what):
+    report = _write(tmp_path / "trivy.json", payload)
+    with pytest.raises(classifier.ReportUnreadableError, match=what):
+        classifier.collect(report, pins=set(), locked={})
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param({}, id="no-results"),
+        pytest.param({"Results": None}, id="null-results"),
+        pytest.param({"Results": [{"Type": "alpine"}]}, id="no-vulnerabilities"),
+        pytest.param({"Results": [{"Type": "alpine", "Vulnerabilities": None}]}, id="null-vulnerabilities"),
+    ],
+)
+def test_a_report_with_nothing_to_list_is_clean(tmp_path, payload):
+    # Trivy leaves out `Results` on an image with no packages and `Vulnerabilities` on a
+    # target with no findings; neither is a malformed report.
+    report = _write(tmp_path / "trivy.json", payload)
+    assert classifier.collect(report, pins=set(), locked={}) == []
+
+
+def test_classifier_cli_fails_loudly_on_a_report_that_is_not_shaped_like_trivys(tmp_path):
+    report = _write(tmp_path / "trivy.json", {"Results": ["img"]})
+    summary = tmp_path / "summary.md"
+    result = _classify_cli(report, summary)
+    assert result.returncode == classifier.EXIT_UNREADABLE_REPORT
+    assert "Traceback" not in result.stderr
+    assert "a `Results` entry is a JSON str" in result.stderr
+    assert summary.read_text().startswith("## `permitio/pdp-v2:latest` - SCAN FAILED\n")
+
+
 def _python_report(tmp_path, *cves, pkg="httpx", fixed="0.28.1"):
     vulns = [_vuln(cve, pkg=pkg, fixed=fixed, installed="0.28.0") for cve in cves]
     return _write(tmp_path / "t.json", _trivy(*vulns, target_type="python-pkg"))
