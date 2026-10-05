@@ -1,4 +1,4 @@
-aiohttp>=3.13.3,<4
+aiohttp>=3.14.3,<4
 # Floor raised 0.115.6 -> 0.124.0 to match a contract the route-auth audit depends on, not a
 # CVE. get_flat_dependant only started propagating sub-dependants into
 # flat_dependant.dependencies in 0.124.0; on 0.115.6-0.123.x it builds the flat dependant from
