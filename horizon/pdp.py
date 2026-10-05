@@ -100,7 +100,7 @@ def apply_config(overrides_dict: dict, config_object: Confi):
                     key,
                     config_object.entries[key].cast_from_json(value),
                 )
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 - a bad control-plane override is logged; the other keys still apply
                 logger.opt(exception=True).warning(f"Unable to set config key {prefixed_key} from overrides:")
                 continue
             logger.info(f"Overriden config key: {prefixed_key}")
