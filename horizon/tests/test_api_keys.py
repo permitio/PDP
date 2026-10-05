@@ -4,6 +4,7 @@ The control plane is faked at the network boundary (``requests.get``), so the re
 BlockingRequest builds the Authorization header and turns a 401 into InvalidPDPTokenError.
 """
 
+import re
 from http import HTTPStatus
 
 import pytest
@@ -138,16 +139,27 @@ def test_a_project_key_alone_gets_its_project_from_its_own_scope(keys, control_p
     assert logged == []
 
 
+IGNORED_WITH_A_PROJECT_KEY = re.compile(r"^PDP_PROJECT_API_KEY is set, but (PDP_\w+) is also set and will be ignored")
+
+
+def _ignored_variables(logged: list[str]) -> list[str]:
+    """The variable each warning says is ignored; a warning of any other kind is kept whole."""
+    return sorted(m.group(1) if (m := IGNORED_WITH_A_PROJECT_KEY.match(line)) else line for line in logged)
+
+
 @pytest.mark.parametrize(
-    ("ignored", "variable"),
+    ("ignored", "warned"),
     [
-        ({"ORG_API_KEY": "org-key"}, "PDP_ORG_API_KEY"),
-        ({"ACTIVE_PROJECT": "other"}, "PDP_ACTIVE_PROJECT"),
+        pytest.param({"ORG_API_KEY": "org-key"}, ["PDP_ORG_API_KEY"], id="org-key"),
+        pytest.param({"ACTIVE_PROJECT": "other"}, ["PDP_ACTIVE_PROJECT"], id="active-project"),
+        pytest.param(
+            {"ORG_API_KEY": "org-key", "ACTIVE_PROJECT": "other"},
+            ["PDP_ACTIVE_PROJECT", "PDP_ORG_API_KEY"],
+            id="both",
+        ),
     ],
 )
-def test_a_project_key_ignores_an_org_key_and_active_project_set_alongside_it(
-    keys, control_plane, logged, ignored, variable
-):
+def test_a_project_key_warns_about_each_variable_it_ignores(keys, control_plane, logged, ignored, warned):
     keys(PROJECT_API_KEY="project-key", ACTIVE_ENV="env", **ignored)
     control_plane.answers[SCOPE_URL, "project-key"] = {"project_id": "p1"}
     control_plane.answers[f"{BACKEND}/v2/api-key/p1/env", "project-key"] = {"secret": "env-secret"}
@@ -157,7 +169,7 @@ def test_a_project_key_ignores_an_org_key_and_active_project_set_alongside_it(
         (SCOPE_URL, "project-key"),
         (f"{BACKEND}/v2/api-key/p1/env", "project-key"),
     ]
-    assert [line for line in logged if variable in line and "will be ignored" in line]
+    assert _ignored_variables(logged) == warned
 
 
 def test_a_scope_without_a_project_id_is_an_api_key_error_naming_the_key_and_url(keys, control_plane):
