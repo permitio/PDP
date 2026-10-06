@@ -234,34 +234,37 @@ def _pubsub_client_raising(error: Exception) -> AsyncMock:
     return client
 
 
-# The pub/sub client the OPAL data updater holds when the PDP cannot publish on it, and the reason
-# the 424 detail gives. The updater has no client until it starts. Its client raises
+# The pub/sub client the OPAL data updater holds when the PDP cannot confirm a publish on it, and the
+# reason the 424 detail gives. The updater has no client until it starts. Its client raises
 # PubSubClientInvalidStateException until it connects. It keeps a closed connection until it
 # reconnects and raises on it: ConnectionClosedError after the server dropped it, ConnectionClosedOK
 # after the PDP closed it (OPAL's DataUpdater.stop(), run by /connectivity/disable, disconnects the
-# client but keeps it). RpcChannelClosedException comes when the connection closes before the server
-# answers the publish.
-UNPUBLISHABLE_PUBSUB_CLIENTS = [
-    pytest.param(lambda: None, "no pub/sub client", id="no-client"),
+# client but keeps it). In those cases the update was not sent. RpcChannelClosedException comes when
+# the connection closes after the update was sent and before the server answered; the server starts
+# the broadcast before it answers, so the update may have been published.
+UNCONFIRMED_PUBSUB_CLIENTS = [
+    pytest.param(lambda: None, "the OPAL data updater has no pub/sub client yet", id="no-client"),
     pytest.param(
         lambda: _pubsub_client_raising(PubSubClientInvalidStateException("Client not connected")),
-        "PubSubClientInvalidStateException: Client not connected",
+        "no live connection to the OPAL server (PubSubClientInvalidStateException: Client not connected)",
         id="not-connected",
     ),
     pytest.param(
         lambda: _pubsub_client_raising(ConnectionClosedError(Close(1012, ""), Close(1012, ""), rcvd_then_sent=True)),
-        "ConnectionClosedError: received 1012 (service restart); then sent 1012 (service restart)",
+        "no live connection to the OPAL server "
+        "(ConnectionClosedError: received 1012 (service restart); then sent 1012 (service restart))",
         id="connection-closed-by-the-server",
     ),
     pytest.param(
         lambda: _pubsub_client_raising(ConnectionClosedOK(Close(1000, ""), Close(1000, ""), rcvd_then_sent=False)),
-        "ConnectionClosedOK: sent 1000 (OK); then received 1000 (OK)",
+        "no live connection to the OPAL server (ConnectionClosedOK: sent 1000 (OK); then received 1000 (OK))",
         id="connection-closed-by-the-pdp",
     ),
     pytest.param(
         lambda: _pubsub_client_raising(RpcChannelClosedException("Channel Closed before RPC response for c-1")),
-        "RpcChannelClosedException: Channel Closed before RPC response for c-1",
-        id="channel-closed",
+        "closed before the server confirmed the publish, so the update may have been published "
+        "(RpcChannelClosedException: Channel Closed before RPC response for c-1)",
+        id="channel-closed-before-the-reply",
     ),
 ]
 
@@ -275,8 +278,8 @@ def _use_the_real_subscriber(facts: FactsHarness, pubsub_client: AsyncMock | Non
     facts.app.dependency_overrides[get_data_update_subscriber] = lambda: subscriber
 
 
-@pytest.mark.parametrize(("make_pubsub_client", "reason"), UNPUBLISHABLE_PUBSUB_CLIENTS)
-def test_facts_write_the_pdp_could_not_publish_is_424_under_fail_policy_and_not_called_a_timeout(
+@pytest.mark.parametrize(("make_pubsub_client", "reason"), UNCONFIRMED_PUBSUB_CLIENTS)
+def test_facts_write_whose_publish_is_unconfirmed_is_424_under_fail_policy_and_not_called_a_timeout(
     facts,
     logged_warnings: list["Record"],
     make_pubsub_client: Callable[[], AsyncMock | None],
@@ -288,16 +291,19 @@ def test_facts_write_the_pdp_could_not_publish_is_424_under_fail_policy_and_not_
 
     assert response.status_code == status.HTTP_424_FAILED_DEPENDENCY
     detail = response.json()["detail"]
-    assert detail.startswith("Update was not published")
+    assert detail.startswith("Update could not be confirmed as published: ")
     assert reason in detail
     assert len(facts.backend_calls) == 1
     messages = [record["message"] for record in logged_warnings]
-    assert any("was not published" in message and "failing the request" in message for message in messages)
+    assert any(
+        "could not be confirmed as published" in message and reason in message and "failing the request" in message
+        for message in messages
+    )
     assert not any("Timeout" in message for message in messages)
 
 
-@pytest.mark.parametrize(("make_pubsub_client", "reason"), UNPUBLISHABLE_PUBSUB_CLIENTS)
-def test_facts_write_the_pdp_could_not_publish_returns_the_backend_response_under_ignore_policy(
+@pytest.mark.parametrize(("make_pubsub_client", "reason"), UNCONFIRMED_PUBSUB_CLIENTS)
+def test_facts_write_whose_publish_is_unconfirmed_returns_the_backend_response_under_ignore_policy(
     facts,
     logged_warnings: list["Record"],
     make_pubsub_client: Callable[[], AsyncMock | None],
@@ -311,7 +317,9 @@ def test_facts_write_the_pdp_could_not_publish_returns_the_backend_response_unde
     assert response.json() == CREATED_USER
     messages = [record["message"] for record in logged_warnings]
     assert any(
-        "was not published" in message and reason in message and "returning the backend response" in message
+        "could not be confirmed as published" in message
+        and reason in message
+        and "returning the backend response" in message
         for message in messages
     )
     assert not any("Timeout" in message for message in messages)

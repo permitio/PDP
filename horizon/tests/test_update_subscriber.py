@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi_websocket_rpc.rpc_channel import RpcChannelClosedException
 from opal_common.schemas.data import DataSourceEntry, DataUpdate
 from websockets.exceptions import ConnectionClosed, ConnectionClosedError, ConnectionClosedOK
 from websockets.frames import Close
@@ -100,8 +101,31 @@ async def test_publish_and_wait_reports_a_dropped_pubsub_connection_as_unpublish
 
 
 @pytest.mark.asyncio
+async def test_publish_and_wait_reports_a_publish_the_server_did_not_confirm_as_possibly_published():
+    """The update went out, but the connection closed before the OPAL server's reply. With sync=False
+    the server starts the broadcast before it replies, so other subscribers may have the update: the
+    caller hears that it may have been published, not that there was no connection, and the wait is
+    cancelled."""
+    unconfirmed = RpcChannelClosedException("Channel Closed before RPC response for c-1 could be received")
+    client = AsyncMock()
+    client.publish.side_effect = unconfirmed
+    subscriber = _subscriber(client)
+
+    with pytest.raises(DataUpdatePublishError) as excinfo:
+        await subscriber.publish_and_wait(_update("u-1"), timeout=None)
+
+    message = str(excinfo.value)
+    assert "closed before the server confirmed the publish, so the update may have been published" in message
+    assert "RpcChannelClosedException: Channel Closed before RPC response for c-1" in message
+    assert "no live connection" not in message
+    assert excinfo.value.__cause__ is unconfirmed
+    assert await _pending_waits() == []
+
+
+@pytest.mark.asyncio
 async def test_publish_and_wait_passes_on_any_other_publish_failure_and_ends_the_wait():
-    """Only a missing connection means "not published"; anything else is a bug the caller must see."""
+    """Only a missing or closed connection leaves a publish unconfirmed; anything else is a bug the
+    caller must see."""
     client = AsyncMock()
     client.publish.side_effect = TypeError("Object of type Decimal is not JSON serializable")
     subscriber = _subscriber(client)

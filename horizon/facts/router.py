@@ -379,14 +379,16 @@ async def forward_request_then_wait_for_update(
     except DataUpdatePublishError as e:
         if timeout_policy == TimeoutPolicy.FAIL:
             logger.error(
-                f"Data update {_update_id} was not published ({e}); failing the request per the timeout policy"
+                f"Data update {_update_id} could not be confirmed as published ({e}); "
+                "failing the request per the timeout policy"
             )
             raise HTTPException(
                 status_code=status.HTTP_424_FAILED_DEPENDENCY,
-                detail=f"Update was not published, so the PDP cannot receive it: {e}",
+                detail=f"Update could not be confirmed as published: {e}",
             ) from e
         logger.warning(
-            f"Data update {_update_id} was not published ({e}); returning the backend response per the timeout policy"
+            f"Data update {_update_id} could not be confirmed as published ({e}); "
+            "returning the backend response per the timeout policy"
         )
         return client.convert_response(response)
     if wait_result:

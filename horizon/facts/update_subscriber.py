@@ -11,15 +11,18 @@ from opal_common.schemas.data import DataUpdate, DataUpdateReport
 from websockets.exceptions import ConnectionClosed
 
 # What OPAL's pub/sub client raises from publish() when it has no live connection to the OPAL server:
-# before its first connection; on a closed connection, which the client keeps publishing on until it
-# reconnects, whether the server closed it or the PDP did (OPAL's DataUpdater.stop(), run when
-# /connectivity/disable turns OPAL connectivity off, disconnects the client but keeps it); and when the
-# connection closes before the server answers the publish.
-_PUBSUB_CONNECTION_ERRORS = (PubSubClientInvalidStateException, ConnectionClosed, RpcChannelClosedException)
+# before its first connection, and on a closed connection, which the client keeps publishing on until
+# it reconnects, whether the server closed it or the PDP did (OPAL's DataUpdater.stop(), run when
+# /connectivity/disable turns OPAL connectivity off, disconnects the client but keeps it).
+_NO_CONNECTION_ERRORS = (PubSubClientInvalidStateException, ConnectionClosed)
 
 
 class DataUpdatePublishError(Exception):
-    """A data update was not published, so nothing will report it arriving."""
+    """The PDP could not confirm that a data update was published, so it does not wait for its report.
+
+    Either the update was not sent (no pub/sub client, or no live connection to the OPAL server), or
+    the connection closed after it was sent and before the OPAL server confirmed it.
+    """
 
 
 class DataUpdateSubscriber:
@@ -80,7 +83,8 @@ class DataUpdateSubscriber:
 
         Raises:
             DataUpdatePublishError: The data updater has no pub/sub client yet, or its client has no
-                live connection to the OPAL server.
+                live connection to the OPAL server (the update was not sent), or the connection closed
+                before the OPAL server confirmed the publish (the update may have been published).
         """
         await asyncio.sleep(0)  # allow other wait task to run before publishing
         client = self._updater._client
@@ -102,9 +106,16 @@ class DataUpdateSubscriber:
                 sync=False,  # sync=False means we don't wait for the other side to acknowledge the message,
                 # as it causes a deadlock because we fake a different notifier id
             )
-        except _PUBSUB_CONNECTION_ERRORS as e:
+        except _NO_CONNECTION_ERRORS as e:
             raise DataUpdatePublishError(
                 f"the OPAL pub/sub client has no live connection to the OPAL server ({type(e).__name__}: {e})"
+            ) from e
+        except RpcChannelClosedException as e:
+            # The request went out. With sync=False the OPAL server schedules the broadcast before it
+            # replies, so other subscribers may have the update although the reply never arrived.
+            raise DataUpdatePublishError(
+                "the connection to the OPAL server closed before the server confirmed the publish, so the "
+                f"update may have been published ({type(e).__name__}: {e})"
             ) from e
 
     async def publish_and_wait(self, data_update: DataUpdate, timeout: float | None = None) -> bool:
@@ -118,7 +129,8 @@ class DataUpdateSubscriber:
             True if the update was reported (or, for a timeout of 0, published), False if the wait timed out.
 
         Raises:
-            DataUpdatePublishError: The update was not published, so there is nothing to wait for.
+            DataUpdatePublishError: The update could not be confirmed as published (see ``publish``);
+                the wait is cancelled rather than left running.
             ValueError: ``data_update`` has no id to wait for.
         """
         if timeout == 0:
@@ -134,7 +146,7 @@ class DataUpdateSubscriber:
         try:
             await self.publish(data_update)
         except BaseException:
-            wait_task.cancel()  # nothing will report an update that was not published
+            wait_task.cancel()  # the caller gets the publish error instead of a wait
             raise
 
         return await wait_task
