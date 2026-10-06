@@ -77,6 +77,8 @@ class OpalRelayAPIClient:
         self._relay_token: str | None = None
         self._available = False
         self._opal_client = opal_client
+        # Types of unexpected ping failures already logged with a traceback since the last good ping.
+        self._traced_ping_failures: set[type[Exception]] = set()
         self._apply_context(context)
 
     @property
@@ -197,13 +199,33 @@ class OpalRelayAPIClient:
                     type(e).__name__,
                     e,
                 )
-            except Exception:  # noqa: BLE001 - keep the ping loop alive: log with traceback, retry next interval
-                logger.opt(exception=True).warning(
-                    "Could not report uptime status to server. This does not affect the PDP's operational state "
-                    "or data updates."
-                )
+            except Exception as e:  # noqa: BLE001 - keep the ping loop alive: log it, retry next interval
+                self._log_unexpected_ping_failure(e)
+            else:
+                self._traced_ping_failures.clear()
 
             await asyncio.sleep(sidecar_config.PING_INTERVAL)
+
+    def _log_unexpected_ping_failure(self, error: Exception) -> None:
+        """Log a ping failure no handler above expects, with a traceback the first time its type appears.
+
+        Some of these last until a restart, such as a relay-JWT body that does not validate, and the
+        loop retries every PING_INTERVAL, so a traceback each time would flood the log. Later
+        failures of the same type log one line until a ping succeeds.
+        """
+        if type(error) in self._traced_ping_failures:
+            logger.warning(
+                "Could not report uptime status to server: {}: {}. This does not affect the PDP's operational "
+                "state or data updates.",
+                type(error).__name__,
+                error,
+            )
+            return
+        self._traced_ping_failures.add(type(error))
+        logger.opt(exception=error).warning(
+            "Could not report uptime status to server. This does not affect the PDP's operational state or data "
+            "updates. Until a ping succeeds, this error is logged again without its traceback."
+        )
 
     async def start(self):
         self._task = asyncio.create_task(self._run())
