@@ -229,19 +229,19 @@ async def test_relay_session_reuses_a_relay_jwt_far_from_expiry(relay_client: Op
 
 @pytest.mark.asyncio
 async def test_relay_session_replaces_a_relay_jwt_near_expiry(relay_client: OpalRelayAPIClient):
+    """The session that carried the replaced token is closed; one left to the garbage collector logs
+    "Unclosed client session" at every refresh."""
     near_expiry = _relay_jwt(time.time() + MAX_JWT_EXPIRY_BUFFER_TIME / 2, SUBJECTS_BY_PAYLOAD_LENGTH_MOD_4[2])
     fresh = _relay_jwt(time.time() + 24 * 3600, SUBJECTS_BY_PAYLOAD_LENGTH_MOD_4[3])
     with aioresponses() as mocked:
         mocked.post(RELAY_JWT_URL, status=200, payload={"token": near_expiry})
         mocked.post(RELAY_JWT_URL, status=200, payload={"token": fresh})
         replaced = await relay_client.relay_session()
-        try:
-            refreshed = await relay_client.relay_session()
-            reused = await relay_client.relay_session()
-        finally:
-            await replaced.close()  # the client drops the session it replaces without closing it
+        refreshed = await relay_client.relay_session()
+        reused = await relay_client.relay_session()
 
     assert refreshed is not replaced
+    assert replaced.closed
     assert refreshed.headers["Authorization"] == f"Bearer {fresh}"
     assert reused is refreshed
 

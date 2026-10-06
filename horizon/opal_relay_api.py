@@ -150,7 +150,11 @@ class OpalRelayAPIClient:
                 trust_env=True,
                 timeout=aiohttp.ClientTimeout(total=sidecar_config.CONTROL_PLANE_TIMEOUT),
             )
+            replaced = self._relay_session
             self._relay_session = session
+            if replaced is not None:
+                # Only the ping loop uses the relay session, one ping at a time, so nothing still holds this one.
+                await replaced.close()
         return session
 
     async def send_ping(self):
