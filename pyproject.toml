@@ -50,6 +50,13 @@ dependencies = [
     # is the version pdp-tester validated. Bump it deliberately and let pdp-tester run on the
     # result - a lock refresh must not pick a major on its own. See PER-15358.
     "websockets==17.0",
+    # OPAL's pub/sub transport. horizon/facts/update_subscriber.py imports exception classes from
+    # both, to tell a facts update the PDP could not publish from a bug, so they are declared here
+    # rather than left to opal-client. OPAL 0.9.6 only bounds them (<2 and <1); pinned exactly at
+    # the locked versions so a lock refresh cannot move those classes. On a bump, check that they
+    # are still what OPAL's PubSubClient.publish() raises.
+    "fastapi-websocket-pubsub==1.0.1",
+    "fastapi-websocket-rpc==0.1.29",
     # Transitive via opal-common (gitpython<4,>=3.1.32). The floor clears CVE-2026-78676 (critical
     # RCE) and ten other advisories fixed by 3.1.58-3.1.59: `uv lock` can never produce a lock
     # below it. A floor, not an exact pin - no waiver depends on it and nothing here imports it.
