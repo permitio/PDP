@@ -195,8 +195,7 @@ async def proxy_request_to_cloud_service(
     # override host header (required by k8s ingress)
     try:
         headers["host"] = urlparse(cloud_service_url).netloc
-    except Exception as e:  # noqa: BLE001
-        # fallback
+    except ValueError as e:
         logger.error(f"could not urlparse cloud service url: {cloud_service_url}, exception: {e}")
 
     logger.info(f"Proxying request: {request.method} {path}")
