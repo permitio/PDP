@@ -217,13 +217,13 @@ class PersistentStateHandler:
                 raise RuntimeError("Unable to post PDP state update to server.")
 
     async def seen_sdk(self, sdk: str):
-        if sdk not in self._state.seen_sdks:
+        if sdk not in (self._state.seen_sdks or []):
             await self._report_seen_sdk(sdk)
 
     async def _report_seen_sdk(self, sdk: str):
         async with self._seen_sdk_update_lock:
             # We check this again because we might have waited because of the lock
-            if sdk not in self._state.seen_sdks:
+            if sdk not in (self._state.seen_sdks or []):
                 try:
                     async with self.update_state() as new_state:
                         if new_state.seen_sdks is None:
