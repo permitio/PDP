@@ -21,6 +21,7 @@ import pytest
 import pytest_asyncio
 from aioresponses import aioresponses
 from loguru import logger
+from opal_client.config import opal_client_config
 from pydantic import ValidationError
 
 from horizon.config import sidecar_config
@@ -176,6 +177,34 @@ async def test_a_token_response_without_a_relay_jwt_raises_relay_api_error(
 
     assert excinfo.value.service == "relay-jwt-api"
     assert excinfo.value.status_code == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("policy_topics", "reported_topics"),
+    [(["policy:topic"], ["policy_data", "policy:topic"]), (None, ["policy_data"])],
+    ids=["policy-updater", "no-policy-updater"],
+)
+async def test_ping_reports_the_data_topics_and_any_policy_updater_topics(
+    relay_client: OpalRelayAPIClient,
+    monkeypatch: pytest.MonkeyPatch,
+    policy_topics: list[str] | None,
+    reported_topics: list[str],
+):
+    """OPAL builds no policy updater when OPAL_POLICY_UPDATER_ENABLED is false; the ping then reports
+    only the data topics."""
+    _use_pdp_state(monkeypatch, iter([RUNTIME_STATE]))
+    monkeypatch.setattr(opal_client_config, "DATA_TOPICS", ["policy_data"])
+    monkeypatch.setattr(opal_client_config, "SCOPE_ID", "default")
+    policy_updater = None if policy_topics is None else SimpleNamespace(topics=policy_topics)
+    monkeypatch.setattr(relay_client._opal_client, "policy_updater", policy_updater)
+    with aioresponses() as mocked:
+        mocked.post(RELAY_JWT_URL, status=200, payload={"token": _relay_jwt(time.time() + 24 * 3600)})
+        mocked.post(PING_URL, status=202)
+        await relay_client.send_ping()
+
+    [ping] = [call for (_, url), calls in mocked.requests.items() if PING_URL.match(str(url)) for call in calls]
+    assert ping.kwargs["json"]["topics"] == reported_topics
 
 
 @pytest.mark.asyncio
