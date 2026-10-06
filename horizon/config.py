@@ -343,6 +343,21 @@ class SidecarConfig(Confi):
 
     @staticmethod
     def parse_url_list(value: Any) -> list[str]:
+        """Read the callback URLs to ignore, from the environment or a control-plane override.
+
+        The Dockerfile sets a JSON list. Plain text is read as URLs separated by commas or
+        whitespace, because the setting used to be a raw string and plain text worked then: an
+        empty value is how a deployment clears the Dockerfile default and keeps every default
+        callback, and a single URL was matched as well. ``None`` from the control plane is no URL.
+
+        Raises:
+            ValueError: The value is JSON-shaped (it starts with ``[`` or ``{``) but is not a
+                list of URLs.
+        """
+        if value is None:
+            return []
+        if isinstance(value, str) and not value.lstrip().startswith(("[", "{")):
+            return value.replace(",", " ").split()
         try:
             if isinstance(value, str):
                 return parse_raw_as(list[str], value)
@@ -350,13 +365,16 @@ class SidecarConfig(Confi):
         except ValueError as e:
             raise ValueError(
                 "PDP_IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS must be a JSON list of URLs, "
-                f'like ["http://host/path"]; got {value!r}'
+                f'like ["http://host/path"], or URLs separated by commas; got {value!r}'
             ) from e
 
     IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS: list[str] = confi.str(  # ty: ignore[invalid-assignment]  # cast= sets the type
         "IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS",
         [],
-        description="JSON list of callback URLs to drop from the defaults, even if the control plane registers them",
+        description=(
+            "Callback URLs to drop from the defaults, even if the control plane registers them: a JSON list, "
+            "or URLs separated by commas. Empty drops none."
+        ),
         cast=parse_url_list,
         cast_from_json=parse_url_list,
     )

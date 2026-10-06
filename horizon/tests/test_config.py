@@ -2,6 +2,8 @@
 
 The PDP drops a default data-update callback whose URL is IN this setting. Read as a raw string, `in`
 was a substring test, so a callback whose URL merely appears inside the JSON text was dropped too.
+Plain text that worked as a raw string still works: an empty value, a bare URL, URLs separated by
+commas or spaces.
 """
 
 import json
@@ -18,6 +20,7 @@ from horizon.pdp import apply_config
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SETTING = "IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS"
+CACHE_REBUILD = "http://localhost:8181/v1/data/permit/rebac/cache_rebuild"
 
 
 def _shipped_value() -> str:
@@ -49,23 +52,50 @@ def test_the_shipped_value_reads_as_a_list_of_urls():
 
     assert result.returncode == 0, result.stderr
     urls = json.loads(result.stdout)
-    assert urls == ["http://localhost:8181/v1/data/permit/rebac/cache_rebuild"]
+    assert urls == [CACHE_REBUILD]
     # The substring false positive the raw string allowed: a prefix of the ignored URL.
     assert "http://localhost:8181/v1/data/permit" not in urls
 
 
-@pytest.mark.parametrize("env_value", ["http://localhost:8181/v1/data/permit", '{"url": "http://a"}', "[1, ["])
-def test_a_value_that_is_not_a_json_list_of_urls_stops_startup(env_value: str):
+@pytest.mark.parametrize(
+    ("env_value", "urls"),
+    [
+        # `docker run -e PDP_...=` or a Kubernetes `value: ""`: the way to clear the Dockerfile
+        # default and keep the cache_rebuild callback.
+        pytest.param("", [], id="empty"),
+        pytest.param("   ", [], id="blank"),
+        pytest.param(CACHE_REBUILD, [CACHE_REBUILD], id="bare-url"),
+        pytest.param("http://a/cb, http://b/cb http://c/cb", ["http://a/cb", "http://b/cb", "http://c/cb"], id="list"),
+    ],
+)
+def test_plain_text_reads_as_the_urls_it_holds(env_value: str, urls: list[str]):
+    result = _load_in_fresh_interpreter(env_value)
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == urls
+
+
+@pytest.mark.parametrize("env_value", ['{"url": "http://a"}', "[1, [", '["http://a", ["nested"]]'])
+def test_json_that_is_not_a_list_of_urls_stops_startup(env_value: str):
     result = _load_in_fresh_interpreter(env_value)
 
     assert result.returncode != 0
     assert f"PDP_{SETTING} must be a JSON list of URLs" in result.stderr
 
 
-def test_a_control_plane_override_sent_as_json_text_reads_as_a_list(monkeypatch):
+@pytest.mark.parametrize(
+    ("override", "urls"),
+    [
+        pytest.param('["http://a/cb"]', ["http://a/cb"], id="json-text"),
+        pytest.param(["http://a/cb"], ["http://a/cb"], id="json-list"),
+        pytest.param("", [], id="empty"),
+        pytest.param(None, [], id="null"),
+    ],
+)
+def test_a_control_plane_override_replaces_the_shipped_urls(monkeypatch, override, urls):
     # Registered with monkeypatch first, so the override below is undone after the test.
-    monkeypatch.setattr(sidecar_config, SETTING, [])
+    monkeypatch.setattr(sidecar_config, SETTING, [CACHE_REBUILD])
 
-    apply_config({SETTING: '["http://a/cb"]'}, sidecar_config)
+    apply_config({SETTING: override}, sidecar_config)
 
-    assert getattr(sidecar_config, SETTING) == ["http://a/cb"]
+    assert getattr(sidecar_config, SETTING) == urls
