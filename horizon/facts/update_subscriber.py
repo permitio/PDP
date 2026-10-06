@@ -3,9 +3,17 @@ from collections import defaultdict
 from functools import wraps
 from uuid import uuid4
 
+from fastapi_websocket_pubsub.exceptions import PubSubClientInvalidStateException
+from fastapi_websocket_rpc.rpc_channel import RpcChannelClosedException
 from loguru import logger
 from opal_client.data.updater import DataUpdater
 from opal_common.schemas.data import DataUpdate, DataUpdateReport
+from websockets.exceptions import ConnectionClosed
+
+# What OPAL's pub/sub client raises from publish() when it has no live connection to the OPAL server:
+# before its first connection, on a connection the server closed (the client keeps publishing on it
+# until it reconnects), and when the connection closes before the server answers the publish.
+_PUBSUB_CONNECTION_ERRORS = (PubSubClientInvalidStateException, ConnectionClosed, RpcChannelClosedException)
 
 
 class DataUpdatePublishError(Exception):
@@ -69,7 +77,8 @@ class DataUpdateSubscriber:
         """Publish a data update on the OPAL data updater's pub/sub client.
 
         Raises:
-            DataUpdatePublishError: The data updater has no pub/sub client yet.
+            DataUpdatePublishError: The data updater has no pub/sub client yet, or its client has no
+                live connection to the OPAL server.
         """
         await asyncio.sleep(0)  # allow other wait task to run before publishing
         client = self._updater._client
@@ -82,14 +91,19 @@ class DataUpdateSubscriber:
             f"Publishing data update with id={data_update.id!r} to topics {topics} as {self._notifier_id=}: "
             f"{data_update}"
         )
-        await client.publish(
-            topics=topics,
-            data=data_update.dict(),
-            notifier_id=self._notifier_id,  # we fake a different notifier id to make the other side broadcast
-            # the message back to our main channel
-            sync=False,  # sync=False means we don't wait for the other side to acknowledge the message,
-            # as it causes a deadlock because we fake a different notifier id
-        )
+        try:
+            await client.publish(
+                topics=topics,
+                data=data_update.dict(),
+                notifier_id=self._notifier_id,  # we fake a different notifier id to make the other side broadcast
+                # the message back to our main channel
+                sync=False,  # sync=False means we don't wait for the other side to acknowledge the message,
+                # as it causes a deadlock because we fake a different notifier id
+            )
+        except _PUBSUB_CONNECTION_ERRORS as e:
+            raise DataUpdatePublishError(
+                f"the OPAL pub/sub client has no live connection to the OPAL server ({type(e).__name__}: {e})"
+            ) from e
 
     async def publish_and_wait(self, data_update: DataUpdate, timeout: float | None = None) -> bool:
         """Publish a data update and wait for the PDP's own data updater to report it.

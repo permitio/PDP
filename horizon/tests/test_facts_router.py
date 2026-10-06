@@ -1,4 +1,4 @@
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
@@ -8,10 +8,14 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from fastapi_websocket_pubsub.exceptions import PubSubClientInvalidStateException
+from fastapi_websocket_rpc.rpc_channel import RpcChannelClosedException
 from httpx import Response as HttpxResponse
 from loguru import logger
 from starlette import status
 from starlette.requests import Request as FastApiRequest
+from websockets.exceptions import ConnectionClosedError
+from websockets.frames import Close
 
 from horizon.config import sidecar_config
 from horizon.facts.client import FactsClient, get_facts_client
@@ -224,41 +228,82 @@ def logged_warnings() -> Iterator[list["Record"]]:
     logger.remove(sink_id)
 
 
-def _use_a_subscriber_whose_updater_has_no_pubsub_client(facts: FactsHarness) -> None:
-    """Swap the mocked subscriber for the real one, over a stand-in for an OPAL data updater that has
-    not started yet and so has no pub/sub client to publish on."""
+def _pubsub_client_raising(error: Exception) -> AsyncMock:
+    client = AsyncMock()
+    client.publish.side_effect = error
+    return client
+
+
+# The pub/sub client the OPAL data updater holds when the PDP cannot publish on it, and the reason
+# the 424 detail gives. The updater has no client until it starts. Its client raises the first error
+# until it connects, the second on a connection the server closed (it keeps that connection until it
+# reconnects), and the third when the connection closes before the server answers the publish.
+UNPUBLISHABLE_PUBSUB_CLIENTS = [
+    pytest.param(lambda: None, "no pub/sub client", id="no-client"),
+    pytest.param(
+        lambda: _pubsub_client_raising(PubSubClientInvalidStateException("Client not connected")),
+        "PubSubClientInvalidStateException: Client not connected",
+        id="not-connected",
+    ),
+    pytest.param(
+        lambda: _pubsub_client_raising(ConnectionClosedError(Close(1012, ""), Close(1012, ""), rcvd_then_sent=True)),
+        "ConnectionClosedError: received 1012 (service restart); then sent 1012 (service restart)",
+        id="connection-closed",
+    ),
+    pytest.param(
+        lambda: _pubsub_client_raising(RpcChannelClosedException("Channel Closed before RPC response for c-1")),
+        "RpcChannelClosedException: Channel Closed before RPC response for c-1",
+        id="channel-closed",
+    ),
+]
+
+
+def _use_the_real_subscriber(facts: FactsHarness, pubsub_client: AsyncMock | None) -> None:
+    """Swap the mocked subscriber for the real one, over a stand-in for an OPAL data updater whose
+    pub/sub client is ``pubsub_client`` (None before the updater starts)."""
     reporter = SimpleNamespace(report_update_results=AsyncMock())
-    updater = SimpleNamespace(_should_send_reports=False, callbacks_reporter=reporter, _client=None)
+    updater = SimpleNamespace(_should_send_reports=False, callbacks_reporter=reporter, _client=pubsub_client)
     subscriber = DataUpdateSubscriber(updater)  # ty: ignore[invalid-argument-type]  # stand-in for OPAL's DataUpdater
     facts.app.dependency_overrides[get_data_update_subscriber] = lambda: subscriber
 
 
+@pytest.mark.parametrize(("make_pubsub_client", "reason"), UNPUBLISHABLE_PUBSUB_CLIENTS)
 def test_facts_write_the_pdp_could_not_publish_is_424_under_fail_policy_and_not_called_a_timeout(
-    facts, logged_warnings: list["Record"]
+    facts,
+    logged_warnings: list["Record"],
+    make_pubsub_client: Callable[[], AsyncMock | None],
+    reason: str,
 ):
-    _use_a_subscriber_whose_updater_has_no_pubsub_client(facts)
+    _use_the_real_subscriber(facts, make_pubsub_client())
 
     response = _create_user(facts, {"X-Timeout-Policy": "fail"})
 
     assert response.status_code == status.HTTP_424_FAILED_DEPENDENCY
     detail = response.json()["detail"]
     assert detail.startswith("Update was not published")
-    assert "no pub/sub client" in detail
+    assert reason in detail
     assert len(facts.backend_calls) == 1
     messages = [record["message"] for record in logged_warnings]
     assert any("was not published" in message and "failing the request" in message for message in messages)
     assert not any("Timeout" in message for message in messages)
 
 
+@pytest.mark.parametrize(("make_pubsub_client", "reason"), UNPUBLISHABLE_PUBSUB_CLIENTS)
 def test_facts_write_the_pdp_could_not_publish_returns_the_backend_response_under_ignore_policy(
-    facts, logged_warnings: list["Record"]
+    facts,
+    logged_warnings: list["Record"],
+    make_pubsub_client: Callable[[], AsyncMock | None],
+    reason: str,
 ):
-    _use_a_subscriber_whose_updater_has_no_pubsub_client(facts)
+    _use_the_real_subscriber(facts, make_pubsub_client())
 
     response = _create_user(facts, {"X-Timeout-Policy": "ignore"})
 
     assert response.status_code == status.HTTP_200_OK
     assert response.json() == CREATED_USER
     messages = [record["message"] for record in logged_warnings]
-    assert any("was not published" in message and "returning the backend response" in message for message in messages)
+    assert any(
+        "was not published" in message and reason in message and "returning the backend response" in message
+        for message in messages
+    )
     assert not any("Timeout" in message for message in messages)

@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 from opal_common.schemas.data import DataSourceEntry, DataUpdate
+from websockets.exceptions import ConnectionClosedError
+from websockets.frames import Close
 
 from horizon.facts.update_subscriber import DataUpdatePublishError, DataUpdateSubscriber
 
@@ -62,14 +64,30 @@ async def test_publish_and_wait_raises_without_waiting_when_the_updater_has_no_c
 
 
 @pytest.mark.asyncio
-async def test_publish_and_wait_ends_the_wait_when_the_client_fails_to_publish():
-    """OPAL's client raises when it is not connected. A wait without a timeout for an update that was
-    not published would never end, so it is cancelled and the error reaches the caller."""
+async def test_publish_and_wait_reports_a_dropped_pubsub_connection_as_unpublished_and_ends_the_wait():
+    """OPAL's client keeps a connection the server closed until it reconnects, and publishing on it
+    raises. A wait without a timeout for an update that was not published would never end, so it is
+    cancelled, and the caller hears that the update was not published."""
+    dropped = ConnectionClosedError(Close(1012, ""), Close(1012, ""), rcvd_then_sent=True)
     client = AsyncMock()
-    client.publish.side_effect = RuntimeError("Client not connected")
+    client.publish.side_effect = dropped
     subscriber = _subscriber(client)
 
-    with pytest.raises(RuntimeError, match="Client not connected"):
+    with pytest.raises(DataUpdatePublishError, match="ConnectionClosedError: received 1012") as excinfo:
+        await subscriber.publish_and_wait(_update("u-1"), timeout=None)
+
+    assert excinfo.value.__cause__ is dropped
+    assert await _pending_waits() == []
+
+
+@pytest.mark.asyncio
+async def test_publish_and_wait_passes_on_any_other_publish_failure_and_ends_the_wait():
+    """Only a missing connection means "not published"; anything else is a bug the caller must see."""
+    client = AsyncMock()
+    client.publish.side_effect = TypeError("Object of type Decimal is not JSON serializable")
+    subscriber = _subscriber(client)
+
+    with pytest.raises(TypeError, match="not JSON serializable"):
         await subscriber.publish_and_wait(_update("u-1"), timeout=None)
 
     assert await _pending_waits() == []
