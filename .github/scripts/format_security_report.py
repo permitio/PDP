@@ -57,9 +57,12 @@ _ACTION_HINT = {
 def _sibling(name: str):
     """Load another script from .github/scripts by path; the directory is not a package."""
     path = SCRIPTS / f"{name}.py"
+    # spec_from_file_location returns a spec for any .py path, so it cannot tell that one is missing.
+    if not path.is_file():
+        raise SystemExit(f"{path} is missing; format_security_report.py needs it.")
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
-        raise SystemExit(f"{path} is missing or cannot be loaded; format_security_report.py needs it.")
+        raise SystemExit(f"{path} cannot be loaded as a module; format_security_report.py needs it.")
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)

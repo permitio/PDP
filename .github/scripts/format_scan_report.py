@@ -23,10 +23,12 @@ this gate refuses whatever the classifier refuses.
 from __future__ import annotations
 
 import argparse
+import functools
 import importlib.util
 import json
 import os
 import re
+import traceback
 from pathlib import Path
 from types import ModuleType
 
@@ -46,18 +48,27 @@ MAX_BODY_CHARS = 65000
 ROW_CAPS: tuple[int | None, ...] = (None, 200, 50, 10, 0)
 
 
-def _load_classifier() -> ModuleType:
-    """Load classify_image_cves.py by path, since .github/scripts is not a package."""
-    path = Path(__file__).resolve().parent / "classify_image_cves.py"
-    spec = importlib.util.spec_from_file_location("classify_image_cves", path)
+CLASSIFIER = Path(__file__).resolve().parent / "classify_image_cves.py"
+
+
+@functools.cache
+def load_classifier() -> ModuleType:
+    """Load classify_image_cves.py by path on first use, since .github/scripts is not a package.
+
+    Not at import: :func:`read_trivy` reads a classifier that cannot load as an unusable Trivy
+    report, so the gate still writes ``parse_ok=false`` and its red comment rather than
+    crashing before either.
+
+    Raises:
+        FileNotFoundError: The file is missing.
+        Exception: Whatever running the file raises, such as a SyntaxError.
+    """
+    spec = importlib.util.spec_from_file_location("classify_image_cves", CLASSIFIER)
     if spec is None or spec.loader is None:
-        raise SystemExit(f"{path} is missing or cannot be loaded; format_scan_report.py needs it.")
+        raise ImportError(f"{CLASSIFIER} cannot be loaded as a module")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
-
-
-classifier = _load_classifier()
 
 
 def escape_cell(text: object) -> str:
@@ -168,7 +179,8 @@ def read_trivy(path: Path) -> tuple[dict | None, str]:
     :func:`read_json`'s checks, then classify_image_cves.vulnerabilities()'s over the whole
     report: no ``SchemaVersion`` 2 (``{}``, a SARIF file), or a ``Results`` or
     ``Vulnerabilities`` level that is not a list of objects. A missing or null ``Results``
-    or ``Vulnerabilities`` is still an empty report.
+    or ``Vulnerabilities`` is still an empty report. A classifier that cannot load leaves the
+    layout unchecked, so the report is unusable then too; the traceback goes to stderr.
 
     Args:
         path: The Trivy report path.
@@ -180,6 +192,11 @@ def read_trivy(path: Path) -> tuple[dict | None, str]:
     data, error = read_json(path)
     if data is None:
         return None, error
+    try:
+        classifier = load_classifier()
+    except Exception as exc:  # noqa: BLE001 - any load failure has to become parse_ok=false, never a crash
+        traceback.print_exception(exc)
+        return None, f"{CLASSIFIER.name}, which checks the report's layout, did not load: {type(exc).__name__}: {exc}"
     try:
         list(classifier.vulnerabilities(data, path))
     except classifier.ReportUnreadableError as exc:
@@ -206,7 +223,7 @@ def collect_trivy(data: dict) -> list[dict]:
             report. :func:`read_trivy` refuses such a report before it gets here.
     """
     findings: dict[tuple[str, str], dict] = {}
-    for result, vuln in classifier.vulnerabilities(data, "the Trivy report"):
+    for result, vuln in load_classifier().vulnerabilities(data, "the Trivy report"):
         pkg = str(vuln.get("PkgName") or "?")
         cve = str(vuln.get("VulnerabilityID") or "?")
         findings.setdefault(

@@ -2,6 +2,9 @@
 
 import importlib.util
 import json
+import shutil
+import subprocess
+import sys
 from itertools import pairwise
 from pathlib import Path
 
@@ -575,3 +578,19 @@ def test_bad_trivy_argument_is_a_usage_error():
     with pytest.raises(SystemExit) as exc:
         report.parse_args(["--repo", "r", "--run-url", "u", "--out", "o", "--trivy", "no-equals-sign"])
     assert exc.value.code == 2
+
+
+def test_a_missing_sibling_script_is_named_not_a_traceback(tmp_path):
+    shutil.copy(SCRIPT, tmp_path)
+
+    result = subprocess.run(
+        [sys.executable, str(tmp_path / SCRIPT.name), "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+
+    assert result.returncode == 1
+    assert f"{tmp_path / 'format_scan_report.py'} is missing; format_security_report.py needs it." in result.stderr
+    assert "Traceback" not in result.stderr

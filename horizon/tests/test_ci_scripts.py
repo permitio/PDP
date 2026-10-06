@@ -7,6 +7,7 @@ The scripts are standalone CLI tools rather than a package, so they are loaded b
 
 import importlib.util
 import json
+import shutil
 import subprocess
 import sys
 from datetime import date, timedelta
@@ -435,13 +436,13 @@ def test_format_cli_still_exits_zero_on_a_zero_byte_report(tmp_path):
     assert "parse_ok=false" in gh_out.read_text()
 
 
-def _format_cli(report: Path) -> tuple[dict[str, str], str]:
+def _format_cli(report: Path, script: Path = SCRIPTS / "format_scan_report.py") -> tuple[dict[str, str], str]:
     """Run the gate's formatter on a Trivy report alone; return its outputs and the comment body."""
     gh_out, body = report.parent / "gh_output", report.parent / "body.md"
     result = subprocess.run(
         [
             sys.executable,
-            str(SCRIPTS / "format_scan_report.py"),
+            str(script),
             "--trivy",
             str(report),
             "--image",
@@ -504,8 +505,33 @@ def test_gate_fails_closed_on_a_report_not_laid_out_as_trivys(tmp_path, payload,
 @pytest.mark.parametrize(("payload", "what"), NOT_TRIVY_LAYOUTS)
 def test_collect_trivy_never_skips_what_does_not_fit(payload, what):
     # The CLI refuses these before collect_trivy() sees them; a direct caller gets the same answer.
-    with pytest.raises(fmt.classifier.ReportUnreadableError, match=what):
+    with pytest.raises(fmt.load_classifier().ReportUnreadableError, match=what):
         fmt.collect_trivy(payload)
+
+
+@pytest.mark.parametrize(
+    ("classifier_source", "why"),
+    [
+        pytest.param(None, "FileNotFoundError", id="missing"),
+        pytest.param("def broken(:\n", "SyntaxError", id="broken"),
+    ],
+)
+def test_gate_fails_closed_with_its_comment_when_the_classifier_does_not_load(tmp_path, classifier_source, why):
+    # The comment step runs only when the formatter succeeds, so failing to load the classifier
+    # has to surface as parse_ok=false and a red body, not as a crash.
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    shutil.copy(SCRIPTS / "format_scan_report.py", scripts)
+    if classifier_source is not None:
+        (scripts / "classify_image_cves.py").write_text(classifier_source, encoding="utf-8")
+    report = _write(tmp_path / "trivy.json", _realistic_trivy(_realistic_vuln("CVE-2026-1", "CRITICAL")))
+
+    outputs, body = _format_cli(report, script=scripts / "format_scan_report.py")
+
+    assert outputs["parse_ok"] == "false"
+    assert body.startswith(fmt.MARKER + "\n")
+    assert ":x: **Scan report could not be parsed - treat this as a FAILURE, not as clean.**" in body
+    assert f"classify_image_cves.py, which checks the report's layout, did not load: {why}" in body
 
 
 # --------------------------------------------------------------------------- classify_image_cves
