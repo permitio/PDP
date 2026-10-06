@@ -91,8 +91,8 @@ def log_query_result(query: BaseSchema, response: Response):
     """
     params = repr(query)
     try:
-        result: dict = json.loads(response.body).get("result", {})
-        allowed: bool | list[dict] = result.get("allow")
+        result: dict = json.loads(bytes(response.body)).get("result", {})
+        allowed: bool | list[dict] | None = result.get("allow")
         color = "<red>"
         allow_output = False
         if isinstance(allowed, bool):
@@ -104,7 +104,8 @@ def log_query_result(query: BaseSchema, response: Response):
                 color = "<green>"
 
         if allowed is None:
-            allowed_tenants = result.get("allowed_tenants")
+            # KeyError for a result with neither key: the except below logs it raw.
+            allowed_tenants = result["allowed_tenants"]
             allow_output = [f"({a.get('tenant', {}).get('key')}, {a.get('allow', False)})" for a in allowed_tenants]
             if len(allow_output) > 0:
                 color = "<green>"
@@ -144,9 +145,10 @@ def log_query_result_kong(kong_input: KongAuthorizationInput, response: Response
     """
     formats a nice log to default logger with the results of permit.check()
     """
-    params = f"({kong_input.consumer.username}, {kong_input.request.http.method}, {kong_input.request.http.path})"
+    username = None if kong_input.consumer is None else kong_input.consumer.username
+    params = f"({username}, {kong_input.request.http.method}, {kong_input.request.http.path})"
     try:
-        result: dict = json.loads(response.body).get("result", {})
+        result: dict = json.loads(bytes(response.body)).get("result", {})
         allowed = result.get("allow", False)
         debug = result.get("debug", {})
 
@@ -215,7 +217,7 @@ async def post_to_opa(request: Request, path: str, data: dict | None):
                 url,
                 data=json.dumps(data) if data is not None else None,
                 headers=headers,
-                timeout=sidecar_config.OPA_CLIENT_QUERY_TIMEOUT,
+                timeout=aiohttp.ClientTimeout(total=sidecar_config.OPA_CLIENT_QUERY_TIMEOUT),
                 raise_for_status=True,
             ) as opa_response:
                 stats_manager.report_success()
@@ -280,7 +282,7 @@ def init_enforcer_health_router():
 
 
 # Registers every enforcer endpoint as a nested function, so their statements all count here.
-def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noqa: C901, PLR0915
+def init_enforcer_api_router(policy_store: BasePolicyStoreClient | None = None):  # noqa: C901, PLR0915
     policy_store = policy_store or DEFAULT_POLICY_STORE_GETTER()
     router = APIRouter()
     if sidecar_config.KONG_INTEGRATION:

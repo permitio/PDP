@@ -169,7 +169,9 @@ def test_trigger_fires_again_after_window_elapses(pdp: MockPermitPDP, auth: dict
 
     # Rewind the debouncer's last dispatch past the window (no real sleep): the next trigger
     # now sees the window as elapsed and fires.
-    pdp._policy_trigger_debounce._last_dispatched -= WINDOW + 1
+    debouncer = pdp._policy_trigger_debounce
+    assert debouncer._last_dispatched is not None
+    debouncer._last_dispatched -= WINDOW + 1
 
     second = client.post("/policy-updater/trigger", headers=auth, follow_redirects=False)
     assert second.status_code == 200
@@ -240,6 +242,7 @@ async def test_in_flight_guard_beats_an_elapsed_window(pdp: MockPermitPDP, auth:
         first = await client.post("/data-updater/trigger", headers=auth)
         assert first.json() == DISPATCHED
         # ...which we rewind past the window, so from here the window guard would ADMIT.
+        assert debouncer._last_dispatched is not None
         debouncer._last_dispatched -= WINDOW + 1
 
         # 2. A second trigger parks inside the reload. It cannot refresh the timestamp while

@@ -100,8 +100,10 @@ class OpalRelayAPIClient:
         return self._api_session
 
     async def relay_session(self) -> ClientSession:
+        session = self._relay_session
         if (
-            self._relay_token is None
+            session is None
+            or self._relay_token is None
             or get_jwt_expiry_time(self._relay_token) - time.time() < MAX_JWT_EXPIRY_BUFFER_TIME
         ):
             async with self.api_session().post(
@@ -135,17 +137,18 @@ class OpalRelayAPIClient:
                         f"Server responded to token request with an invalid result: {text}",
                     ) from e
             self._relay_token = obj.token
-            self._relay_session = ClientSession(
+            session = ClientSession(
                 headers={"Authorization": f"Bearer {self._relay_token}"},
                 trust_env=True,
                 timeout=aiohttp.ClientTimeout(total=sidecar_config.CONTROL_PLANE_TIMEOUT),
             )
-        return self._relay_session
+            self._relay_session = session
+        return session
 
     async def send_ping(self):
         session = await self.relay_session()
         # This is ugly but for now this is not exposed publically in OPAL
-        policy_topics = self._opal_client.policy_updater.topics
+        policy_topics = self._opal_client.policy_updater.topics  # ty: ignore[unresolved-attribute]  # the PDP never disables it
         data_topics = opal_client_config.DATA_TOPICS
         if opal_client_config.SCOPE_ID != "default":
             data_topics = [f"{opal_client_config.SCOPE_ID}:data:{topic}" for topic in opal_client_config.DATA_TOPICS]

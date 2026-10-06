@@ -51,7 +51,7 @@ async def create_user(
                 obj_type="users",
                 obj_id=body["id"],
                 obj_key=body["key"],
-                authorization_header=r.headers.get("Authorization"),
+                authorization_header=r.headers["Authorization"],
                 update_id=update_id,
             )
         ],
@@ -78,7 +78,7 @@ async def create_tenant(
                 obj_type="tenants",
                 obj_id=body["id"],
                 obj_key=body["key"],
-                authorization_header=r.headers.get("Authorization"),
+                authorization_header=r.headers["Authorization"],
                 update_id=update_id,
             )
         ],
@@ -107,7 +107,7 @@ async def sync_user(
                 obj_type="users",
                 obj_id=body["id"],
                 obj_key=body["key"],
-                authorization_header=r.headers.get("Authorization"),
+                authorization_header=r.headers["Authorization"],
                 update_id=update_id,
             )
         ],
@@ -136,7 +136,7 @@ async def update_user(
                 obj_type="users",
                 obj_id=body["id"],
                 obj_key=body["key"],
-                authorization_header=r.headers.get("Authorization"),
+                authorization_header=r.headers["Authorization"],
                 update_id=update_id,
             )
         ],
@@ -145,21 +145,21 @@ async def update_user(
 
 
 def create_role_assignment_data_entries(
-    request: FastApiRequest, body: dict[str, Any], update_id: UUID | None
+    request: FastApiRequest, body: dict[str, Any], update_id: UUID
 ) -> Iterable[DataSourceEntry]:
     if not body.get("resource_instance"):
         yield create_data_source_entry(
             obj_type="role_assignments",
             obj_id=body["user_id"],
             obj_key=f"user:{body['user']}",
-            authorization_header=request.headers.get("Authorization"),
+            authorization_header=request.headers["Authorization"],
             update_id=update_id,
         )
         yield create_data_source_entry(
             obj_type="users",
             obj_id=body["user_id"],
             obj_key=body["user"],
-            authorization_header=request.headers.get("Authorization"),
+            authorization_header=request.headers["Authorization"],
             update_id=update_id,
         )
     else:
@@ -169,7 +169,7 @@ def create_role_assignment_data_entries(
             obj_type="role_assignments",
             obj_id=body["user_id"],
             obj_key=f"user:{body['user']}",
-            authorization_header=request.headers.get("Authorization"),
+            authorization_header=request.headers["Authorization"],
             update_id=update_id,
         )
 
@@ -275,7 +275,7 @@ async def create_resource_instance(
                 obj_type="resource_instances",
                 obj_id=body["id"],
                 obj_key=f"{body['resource']}:{body['key']}",
-                authorization_header=r.headers.get("Authorization"),
+                authorization_header=r.headers["Authorization"],
                 update_id=update_id,
             ),
         ],
@@ -304,7 +304,7 @@ async def update_resource_instance(
                 obj_type="resource_instances",
                 obj_id=body["id"],
                 obj_key=f"{body['resource']}:{body['key']}",
-                authorization_header=r.headers.get("Authorization"),
+                authorization_header=r.headers["Authorization"],
                 update_id=update_id,
             ),
         ],
@@ -331,7 +331,7 @@ async def create_relationship_tuple(
                 obj_type="relationships",
                 obj_id=body["object_id"],
                 obj_key=body["object"],
-                authorization_header=r.headers.get("Authorization"),
+                authorization_header=r.headers["Authorization"],
                 update_id=update_id,
             ),
         ],
@@ -353,7 +353,7 @@ async def forward_request_then_wait_for_update(
     *,
     path: str,
     update_id: UUID | None = None,
-    entries_callback: Callable[[FastApiRequest, dict[str, Any], UUID | None], Iterable[DataSourceEntry]],
+    entries_callback: Callable[[FastApiRequest, dict[str, Any], UUID], Iterable[DataSourceEntry]],
     timeout_policy: TimeoutPolicy = TimeoutPolicy.IGNORE,
     query_params: dict[str, Any] | None = None,
 ) -> Response:

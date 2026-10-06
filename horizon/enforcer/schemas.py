@@ -67,7 +67,7 @@ class UrlAuthorizationQuery(BaseSchema):
     url: AnyHttpUrl
     tenant: str
     context: dict[str, Any] | None = Field(default_factory=dict)
-    sdk: str | None
+    sdk: str | None = None
 
 
 class UserTenantsQuery(BaseSchema):

@@ -1,11 +1,12 @@
 import asyncio
 import random
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import aiohttp
 import pytest
 from aioresponses import aioresponses
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.testclient import TestClient
 from loguru import logger
 from opal_client.client import OpalClient
@@ -13,7 +14,7 @@ from opal_client.config import opal_client_config
 from starlette import status
 
 from horizon.config import sidecar_config
-from horizon.enforcer.api import stats_manager
+from horizon.enforcer.api import log_query_result_kong, stats_manager
 from horizon.enforcer.schemas import (
     AuthorizationQuery,
     Resource,
@@ -22,6 +23,7 @@ from horizon.enforcer.schemas import (
     UserPermissionsQuery,
     UserTenantsQuery,
 )
+from horizon.enforcer.schemas_kong import KongAuthorizationInput
 from horizon.pdp import PermitPDP
 
 
@@ -43,7 +45,7 @@ sidecar = MockPermitPDP()
 
 
 @asynccontextmanager
-async def pdp_api_client() -> TestClient:
+async def pdp_api_client() -> AsyncIterator[TestClient]:
     _client = TestClient(sidecar._app)
     await stats_manager.run()
     yield _client
@@ -201,6 +203,20 @@ def test_kong_endpoint_undecodable_opa_result_denies_with_200(kong_client, opa_r
         )
     assert response.status_code == status.HTTP_200_OK
     assert response.json() == {"result": False}
+
+
+def test_kong_decision_log_names_a_missing_consumer_instead_of_raising():
+    without_consumer = KongAuthorizationInput.parse_obj(
+        {key: value for key, value in KONG_QUERY["input"].items() if key != "consumer"}
+    )
+    messages: list[str] = []
+    sink_id = logger.add(lambda message: messages.append(message.record["message"]), level="INFO")
+    try:
+        log_query_result_kong(without_consumer, Response(content=b'{"result": {"allow": false}}'))
+    finally:
+        logger.remove(sink_id)
+
+    assert any("(None, GET, /resource1/some-id)" in message for message in messages)
 
 
 def test_authorized_users_endpoint_valid_token_allowed_flow(monkeypatch):

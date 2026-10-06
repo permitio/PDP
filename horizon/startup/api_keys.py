@@ -1,3 +1,5 @@
+from typing import Any
+
 import requests
 from opal_common.logger import logger
 from tenacity import retry, retry_if_not_exception_type, stop, wait
@@ -7,7 +9,7 @@ from horizon.startup.blocking_request import BlockingRequest
 from horizon.startup.exceptions import ApiKeyError, NoRetryError
 from horizon.system.consts import GUNICORN_EXIT_APP
 
-DEFAULT_RETRY_CONFIG = {
+DEFAULT_RETRY_CONFIG: dict[str, Any] = {
     "retry": retry_if_not_exception_type(NoRetryError),
     "wait": wait.wait_random_exponential(max=10),
     "stop": stop.stop_after_attempt(10),
@@ -20,7 +22,7 @@ class EnvApiKeyFetcher:
         self,
         backend_url: str = sidecar_config.CONTROL_PLANE,
         timeout: float = sidecar_config.CONTROL_PLANE_TIMEOUT,
-        retry_config=None,
+        retry_config: dict[str, Any] | None = None,
     ):
         self._backend_url = backend_url
         self._timeout = timeout

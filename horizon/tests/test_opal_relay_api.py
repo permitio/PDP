@@ -9,7 +9,7 @@ import asyncio
 import re
 from collections.abc import AsyncIterator, Iterator
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 from uuid import uuid4
 
@@ -23,6 +23,9 @@ from pydantic import ValidationError
 from horizon.config import sidecar_config
 from horizon.opal_relay_api import OpalRelayAPIClient, RelayAPIError
 from horizon.state import PersistentStateHandler
+
+if TYPE_CHECKING:
+    from loguru import Record
 
 RELAY_JWT_URL = re.compile(r".*/v2/relay_jwt/.*")
 PING_URL = re.compile(r".*/v2/pdp/ping$")
@@ -55,9 +58,9 @@ async def relay_client(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[OpalRel
 
 
 @pytest.fixture
-def logged_warnings() -> Iterator[list[dict[str, Any]]]:
+def logged_warnings() -> Iterator[list["Record"]]:
     """Every loguru record at WARNING or above emitted during the test."""
-    records: list[dict[str, Any]] = []
+    records: list[Record] = []
     sink_id = logger.add(lambda message: records.append(message.record), level="WARNING")
     yield records
     logger.remove(sink_id)
@@ -66,7 +69,7 @@ def logged_warnings() -> Iterator[list[dict[str, Any]]]:
 @pytest.mark.asyncio
 async def test_ping_loop_logs_a_transport_failure_in_one_line_and_anything_else_with_a_traceback(
     relay_client: OpalRelayAPIClient,
-    logged_warnings: list[dict[str, Any]],
+    logged_warnings: list["Record"],
     monkeypatch: pytest.MonkeyPatch,
 ):
     """An unreachable control plane is routine and repeats every interval, so it stays one line. Any

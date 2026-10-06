@@ -50,7 +50,7 @@ def check_backup_store() -> None:
         client = object.__new__(OpalClient)  # skip __init__: no policy engine, no updaters
         client._backup_lock = asyncio.Lock()
         client.store_backup_path = str(backup_path)
-        client.policy_store = _StubPolicyStore()
+        client.policy_store = _StubPolicyStore()  # ty: ignore[invalid-assignment]  # backup_store() only calls full_export()
         asyncio.run(client.backup_store())
 
         left = sorted(path.name for path in Path(backup_dir).iterdir())

@@ -21,7 +21,7 @@ PageQuery = Annotated[int, Query(ge=1, description="The page number (starts from
 PerPageQuery = Annotated[int, Query(ge=1, le=100, description="The number of results per page (max 100).")]
 
 
-def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
+def init_local_cache_api_router(policy_store: BasePolicyStoreClient | None = None):
     policy_store = policy_store or DEFAULT_POLICY_STORE_GETTER()
     router = APIRouter(dependencies=[Depends(enforce_pdp_token)])
 
@@ -93,7 +93,7 @@ def init_local_cache_api_router(policy_store: BasePolicyStoreClient = None):
             ),
         )
         if isinstance(result, Response):
-            return parse_raw_as(WrappedResponse, result.body).result
+            return parse_raw_as(WrappedResponse, bytes(result.body)).result
         return parse_obj_as(WrappedResponse, result).result
 
     return router

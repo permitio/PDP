@@ -36,7 +36,7 @@ def _client_without_init(backup_path: Path) -> OpalClient:
     client = object.__new__(OpalClient)
     client._backup_lock = asyncio.Lock()
     client.store_backup_path = str(backup_path)
-    client.policy_store = _StubPolicyStore()
+    client.policy_store = _StubPolicyStore()  # ty: ignore[invalid-assignment]  # backup_store() only calls full_export()
     return client
 
 

@@ -50,7 +50,7 @@ async def patch_handler(response: Response) -> Response:
     if not status.HTTP_200_OK <= response.status_code < status.HTTP_400_BAD_REQUEST:
         return response
 
-    response_json = json.loads(response.body)
+    response_json = json.loads(bytes(response.body))
 
     if "patch" not in response_json:
         return response
@@ -172,7 +172,7 @@ async def proxy_request_to_cloud_service(
     path: str,
     cloud_service_url: str,
     additional_headers: dict[str, str],
-    timeout: int = sidecar_config.CONTROL_PLANE_TIMEOUT,
+    timeout: float = sidecar_config.CONTROL_PLANE_TIMEOUT,
 ) -> Response:
     auth_header = request.headers.get("Authorization")
     if auth_header is None:

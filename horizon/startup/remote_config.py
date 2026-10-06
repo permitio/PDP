@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 import requests
 from opal_common.logger import logger
@@ -13,7 +14,7 @@ from horizon.startup.offline_mode import OfflineModeManager
 from horizon.startup.schemas import RemoteConfig
 from horizon.state import PersistentStateHandler
 
-DEFAULT_RETRY_CONFIG = {
+DEFAULT_RETRY_CONFIG: dict[str, Any] = {
     "retry": retry_if_not_exception_type(NoRetryError),
     "wait": wait.wait_random_exponential(max=5),
     "stop": stop.stop_after_attempt(sidecar_config.CONFIG_FETCH_MAX_RETRIES),
@@ -51,7 +52,7 @@ class RemoteConfigFetcher:
         remote_config_route: str = sidecar_config.REMOTE_CONFIG_ENDPOINT,
         shard_id: str | None = sidecar_config.SHARD_ID,
         timeout: float = sidecar_config.CONTROL_PLANE_TIMEOUT,
-        retry_config=None,
+        retry_config: dict[str, Any] | None = None,
     ):
         """
         inits the RemoteConfigFetcher.

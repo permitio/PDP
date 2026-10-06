@@ -1,5 +1,5 @@
 from collections.abc import Iterator
-from typing import Any
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -9,6 +9,9 @@ from loguru import logger
 from starlette.requests import Request as FastApiRequest
 
 from horizon.facts.client import CONSISTENT_UPDATE_HEADER, FactsClient
+
+if TYPE_CHECKING:
+    from loguru import Record
 
 
 def _make_request(headers: dict[str, str] | None = None) -> FastApiRequest:
@@ -88,9 +91,9 @@ async def test_send_forward_request_propagates_consistent_update_kwarg():
 
 
 @pytest.fixture
-def logged_errors() -> Iterator[list[dict[str, Any]]]:
+def logged_errors() -> Iterator[list["Record"]]:
     """Every loguru record at ERROR or above emitted during the test."""
-    records: list[dict[str, Any]] = []
+    records: list[Record] = []
     sink_id = logger.add(lambda message: records.append(message.record), level="ERROR")
     yield records
     logger.remove(sink_id)
@@ -105,7 +108,7 @@ def test_extract_body_returns_the_decoded_json():
     [b"not json", b'{"truncated": ', b'{"key": "\xff"}'],
     ids=["not-json", "truncated-json", "not-utf8"],
 )
-def test_extract_body_skips_the_wait_on_an_undecodable_body(content: bytes, logged_errors: list[dict[str, Any]]):
+def test_extract_body_skips_the_wait_on_an_undecodable_body(content: bytes, logged_errors: list["Record"]):
     """A 2xx body that does not decode as JSON leaves nothing to wait for: None, logged with its traceback."""
     assert FactsClient.extract_body(HttpxResponse(200, content=content)) is None
     assert len(logged_errors) == 1

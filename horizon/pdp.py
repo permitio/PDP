@@ -275,7 +275,7 @@ class PermitPDP:
         self._configure_cloud_logging(remote_config.context)
 
         self._opal_relay = OpalRelayAPIClient(remote_config.context, self._opal)
-        self._opal.data_updater.callbacks_reporter.set_user_data_handler(
+        self._opal.data_updater.callbacks_reporter.set_user_data_handler(  # ty: ignore[unresolved-attribute]  # no data updater: startup fails here
             PersistentStateHandler.get_instance().reporter_user_data_handler
         )
 
@@ -287,7 +287,7 @@ class PermitPDP:
 
         self._app: FastAPI = app
 
-        @app.on_event("startup")
+        @app.on_event("startup")  # ty: ignore[deprecated]  # OPAL builds this app with on_event handlers
         async def _initialize_opal_relay():
             await self._opal_relay.initialize()
 
@@ -379,7 +379,7 @@ class PermitPDP:
         if sidecar_config.OPA_BEARER_TOKEN_REQUIRED:
             # overrides OPAL client config so that OPAL passes the bearer token in requests
             opal_client_config.POLICY_STORE_AUTH_TOKEN = get_env_api_key()
-            opal_client_config.POLICY_STORE_AUTH_TYPE = PolicyStoreAuth.TOKEN
+            opal_client_config.POLICY_STORE_AUTH_TYPE = PolicyStoreAuth.TOKEN  # ty: ignore[invalid-assignment]  # confi.enum() is typed as returning the class
 
             # append the bearer token authz policy to inline OPA config
             auth_policy_file_path = get_opa_authz_policy_file_path(sidecar_config)
@@ -418,7 +418,7 @@ class PermitPDP:
         configure opal to use offline mode when enabled
         """
         opal_client_config.OFFLINE_MODE_ENABLED = sidecar_config.ENABLE_OFFLINE_MODE
-        opal_client_config.STORE_BACKUP_PATH = (
+        opal_client_config.STORE_BACKUP_PATH = str(
             Path(sidecar_config.OFFLINE_MODE_BACKUP_DIR) / sidecar_config.OFFLINE_MODE_POLICY_BACKUP_FILENAME
         )
 
@@ -475,8 +475,8 @@ class PermitPDP:
         """
 
         # Init api routers with required dependencies
-        app.on_event("startup")(stats_manager.run)
-        app.on_event("shutdown")(stats_manager.stop_tasks)
+        app.on_event("startup")(stats_manager.run)  # ty: ignore[deprecated]  # OPAL builds this app with on_event handlers
+        app.on_event("shutdown")(stats_manager.stop_tasks)  # ty: ignore[deprecated]  # OPAL builds this app with on_event handlers
 
         enforcer_health_router = init_enforcer_health_router()
         enforcer_router = init_enforcer_api_router(policy_store=self._opal.policy_store)
@@ -572,8 +572,8 @@ class PermitPDP:
 
         # A trailing reload is a background task, so it has to be cancelled on the way down or
         # it outlives the event loop as a "Task was destroyed but it is pending" warning.
-        app.on_event("shutdown")(self._policy_trigger_debounce.aclose)
-        app.on_event("shutdown")(self._data_trigger_debounce.aclose)
+        app.on_event("shutdown")(self._policy_trigger_debounce.aclose)  # ty: ignore[deprecated]  # OPAL builds this app with on_event handlers
+        app.on_event("shutdown")(self._data_trigger_debounce.aclose)  # ty: ignore[deprecated]  # as above
 
         # Log the EFFECTIVE window, not the configured one: the value is remote-config
         # overridable, so a fat-fingered override should be visible at startup rather than
@@ -716,7 +716,7 @@ class PermitPDP:
         """
 
         async def _run() -> None:
-            await self._opal.policy_updater.trigger_update_policy(force_full_update=True)
+            await self._opal.policy_updater.trigger_update_policy(force_full_update=True)  # ty: ignore[unresolved-attribute]  # never disabled, see docstring
 
         return await self._policy_trigger_debounce.trigger(
             run=_run, window_seconds=sidecar_config.TRIGGER_DEBOUNCE_SECONDS
@@ -815,4 +815,4 @@ class PermitPDP:
         for callback in list(register.all()):
             if callback.url in sidecar_config.IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS:
                 logger.info(f"Removing callback '{callback.url}' from the register")
-                register.remove(callback.key)
+                register.remove(callback.key)  # ty: ignore[invalid-argument-type]  # all() builds each entry from its key

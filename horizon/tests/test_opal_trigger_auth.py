@@ -179,7 +179,7 @@ def test_warn_if_opal_verifier_disabled_silent_when_enabled(capture_loguru):
     class _Opal:
         verifier = _Verifier()
 
-    _warn_if_opal_verifier_disabled(_Opal())
+    _warn_if_opal_verifier_disabled(_Opal())  # ty: ignore[invalid-argument-type]  # reads only .verifier.enabled
     assert not any("OPAL JWT verifier is DISABLED" in record for record in capture_loguru)
 
 

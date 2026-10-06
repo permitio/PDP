@@ -37,4 +37,4 @@ if "stream_writer" in inspect.signature(_ClientResponse.__init__).parameters:
     # aioresponses._build_response falls back to this module-level name when the
     # matcher has no explicit response_class, which is the case for all of our
     # mocks. Patching it here routes every mocked response through the subclass.
-    _aioresponses_core.ClientResponse = _StreamWriterCompatClientResponse
+    _aioresponses_core.ClientResponse = _StreamWriterCompatClientResponse  # ty: ignore[invalid-assignment]  # a subclass, see above

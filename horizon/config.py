@@ -1,5 +1,5 @@
 from enum import StrEnum
-from typing import Any
+from typing import Any, ClassVar
 
 from opal_common.confi import Confi, confi
 from opal_common.schemas.data import CallbackEntry
@@ -20,6 +20,9 @@ class ApiKeyLevel(StrEnum):
 
 
 class SidecarConfig(Confi):
+    # Declared, not assigned: __new__ below sets it on first construction (hasattr is False until then).
+    instance: ClassVar["SidecarConfig"]
+
     def __new__(cls, *, prefix=None, is_model=True):  # noqa: ARG004
         """creates a singleton object, if it is not created,
         or else returns the previous singleton object"""
@@ -245,7 +248,7 @@ class SidecarConfig(Confi):
             return parse_raw_as(dict[str, dict[str, int | bool | str]], value)
         return parse_obj_as(dict[str, dict[str, int | bool | str]], value)
 
-    OPA_PLUGINS: dict[str, dict[str, int | bool | str]] = confi.str(
+    OPA_PLUGINS: dict[str, dict[str, int | bool | str]] = confi.str(  # ty: ignore[invalid-assignment]  # cast= sets the type
         "OPA_PLUGINS",
         {},
         description="List of plugins to be loaded into OPA, "
@@ -330,7 +333,7 @@ class SidecarConfig(Confi):
             return parse_raw_as(list[CallbackEntry], value)
         return parse_obj_as(list[CallbackEntry], value)
 
-    DATA_UPDATE_CALLBACKS: list[CallbackEntry] = confi.str(
+    DATA_UPDATE_CALLBACKS: list[CallbackEntry] = confi.str(  # ty: ignore[invalid-assignment]  # cast= sets the type
         "DATA_UPDATE_CALLBACKS",
         [],
         description="List of callbacks to be triggered when data is updated",
@@ -350,7 +353,7 @@ class SidecarConfig(Confi):
                 f'like ["http://host/path"]; got {value!r}'
             ) from e
 
-    IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS: list[str] = confi.str(
+    IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS: list[str] = confi.str(  # ty: ignore[invalid-assignment]  # cast= sets the type
         "IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS",
         [],
         description="JSON list of callback URLs to drop from the defaults, even if the control plane registers them",

@@ -125,7 +125,7 @@ def test_opal_trigger_route_is_pdp_gated(path: str):
     # opal_client.data.api), so "gated" cannot be satisfied by an OPAL route that merely
     # happens to carry a dependency.
     assert route.endpoint.__module__ == "horizon.pdp", (
-        f"{path} is served by {route.endpoint.__module__}.{route.endpoint.__name__}, not horizon.pdp"
+        f"{path} is served by {route.endpoint.__module__}.{route.endpoint.__name__}, not horizon.pdp"  # ty: ignore[unresolved-attribute]  # endpoints are functions
     )
     assert "enforce_pdp_token" in _route_auth_gates(route)
 

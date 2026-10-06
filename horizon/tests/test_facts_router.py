@@ -59,8 +59,9 @@ async def test_forward_request_then_wait_for_update_sets_consistent_update_flag(
     )
 
     assert client.send_forward_request.await_count == 1
-    _, kwargs = client.send_forward_request.await_args
-    assert kwargs.get("is_consistent_update") is True
+    call = client.send_forward_request.await_args
+    assert call is not None
+    assert call.kwargs.get("is_consistent_update") is True
 
 
 @pytest.mark.asyncio
