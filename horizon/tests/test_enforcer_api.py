@@ -1,7 +1,8 @@
 import asyncio
 import random
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING
 
 import aiohttp
 import pytest
@@ -14,7 +15,7 @@ from opal_client.config import opal_client_config
 from starlette import status
 
 from horizon.config import sidecar_config
-from horizon.enforcer.api import log_query_result_kong, stats_manager
+from horizon.enforcer.api import log_query_result, log_query_result_kong, stats_manager
 from horizon.enforcer.schemas import (
     AuthorizationQuery,
     Resource,
@@ -25,6 +26,9 @@ from horizon.enforcer.schemas import (
 )
 from horizon.enforcer.schemas_kong import KongAuthorizationInput
 from horizon.pdp import PermitPDP
+
+if TYPE_CHECKING:
+    from loguru import Record
 
 
 class MockPermitPDP(PermitPDP):
@@ -217,6 +221,66 @@ def test_kong_decision_log_names_a_missing_consumer_instead_of_raising():
         logger.remove(sink_id)
 
     assert any("(None, GET, /resource1/some-id)" in message for message in messages)
+
+
+@pytest.fixture
+def logged_records() -> Iterator[list["Record"]]:
+    """Every loguru record at INFO or above emitted during the test."""
+    records: list[Record] = []
+    sink_id = logger.add(lambda message: records.append(message.record), level="INFO")
+    yield records
+    logger.remove(sink_id)
+
+
+DECISION_QUERY = AuthorizationQuery(user=User(key="user1"), action="read", resource=Resource(type="doc"))
+
+
+def test_decision_log_shows_an_allow_decision(logged_records: list["Record"]):
+    log_query_result(DECISION_QUERY, Response(content=b'{"result": {"allow": true}}'))
+
+    [record] = logged_records
+    assert "is allowed = True" in record["message"]
+    assert record["exception"] is None
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b'{"result": {"permissions": {"tenant:t1": {"permissions": ["doc:read"]}}}}',
+        b'{"result": {"tenants": []}}',
+        b'{"result": [1]}',
+        b"not json",
+    ],
+    ids=["user-permissions", "user-tenants", "result-is-a-list", "body-is-not-json"],
+)
+def test_decision_log_logs_a_result_without_a_decision_raw_in_one_line(logged_records: list["Record"], body: bytes):
+    """Routine for /user-permissions, /user-tenants and /authorized_users, whose results carry no
+    "allow" or "allowed_tenants": one INFO line with the body, no warning and no traceback."""
+    log_query_result(DECISION_QUERY, Response(content=body))
+
+    [record] = logged_records
+    assert record["level"].name == "INFO"
+    assert record["message"] == "is allowed"
+    assert record["extra"]["response_body"] == body.decode()
+    assert record["exception"] is None
+
+
+@pytest.mark.parametrize(
+    "body",
+    [b'{"result": {"allow": [1]}}', b'{"result": {"allowed_tenants": [1]}}'],
+    ids=["bulk", "all-tenants"],
+)
+def test_decision_log_that_fails_to_format_a_decision_logs_the_traceback(logged_records: list["Record"], body: bytes):
+    """A result with a decision that the log line cannot format points to a bug, so it is logged with
+    its traceback, and the decision is still logged raw."""
+    log_query_result(DECISION_QUERY, Response(content=body))
+
+    warning, raw = logged_records
+    assert warning["level"].name == "WARNING"
+    assert warning["exception"] is not None
+    assert warning["exception"].type is AttributeError
+    assert raw["message"] == "is allowed"
+    assert raw["extra"]["response_body"] == body.decode()
 
 
 def test_authorized_users_endpoint_valid_token_allowed_flow(monkeypatch):

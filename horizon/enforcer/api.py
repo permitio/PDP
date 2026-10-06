@@ -85,13 +85,44 @@ def transform_headers(request: Request) -> dict:
     }
 
 
+def _opa_result(response: Response) -> dict | None:
+    """The ``result`` object of an OPA response, or None if the body is not a JSON object holding one."""
+    try:
+        body = json.loads(bytes(response.body))
+    except ValueError:  # not JSON, or not UTF-8
+        return None
+    result = body.get("result", {}) if isinstance(body, dict) else None
+    return result if isinstance(result, dict) else None
+
+
+def _log_raw_query_result(params: str, query: dict, response: Response) -> None:
+    """Log a decision with the OPA response body as it came, for a result with no decision to show."""
+    try:
+        body = str(response.body, "utf-8")
+    except ValueError:
+        body = None
+    data = {} if body is None else {"response_body": body}
+    logger.info(
+        "is allowed",
+        params=params,
+        query=query,
+        response_status=response.status_code,
+        **data,
+    )
+
+
 def log_query_result(query: BaseSchema, response: Response):
     """
     formats a nice log to default logger with the results of permit.check()
     """
     params = repr(query)
+    result = _opa_result(response)
+    # /user-permissions, /user-tenants and /authorized_users results carry neither "allow" nor
+    # "allowed_tenants". A body that is not JSON is logged with its traceback by the endpoint's fallback.
+    if result is None or (result.get("allow") is None and "allowed_tenants" not in result):
+        _log_raw_query_result(params, query.dict(), response)
+        return
     try:
-        result: dict = json.loads(bytes(response.body)).get("result", {})
         allowed: bool | list[dict] | None = result.get("allow")
         color = "<red>"
         allow_output = False
@@ -104,7 +135,6 @@ def log_query_result(query: BaseSchema, response: Response):
                 color = "<green>"
 
         if allowed is None:
-            # KeyError for a result with neither key: the except below logs it raw.
             allowed_tenants = result["allowed_tenants"]
             allow_output = [f"({a.get('tenant', {}).get('key')}, {a.get('allow', False)})" for a in allowed_tenants]
             if len(allow_output) > 0:
@@ -123,22 +153,9 @@ def log_query_result(query: BaseSchema, response: Response):
             input=query.dict(),
             debug=debug,
         )
-    except Exception:  # noqa: BLE001 - log-only: a result it cannot format is logged raw; never fail a decision
-        # Routine, not only for bad bodies: /user-permissions, /user-tenants and /authorized_users
-        # results carry neither "allow" nor "allowed_tenants", so those decisions are always logged
-        # raw. A body the endpoint cannot decode is logged with its traceback by its own fallback.
-        try:
-            body = str(response.body, "utf-8")
-        except ValueError:
-            body = None
-        data = {} if body is None else {"response_body": body}
-        logger.info(
-            "is allowed",
-            params=params,
-            query=query.dict(),
-            response_status=response.status_code,
-            **data,
-        )
+    except Exception:  # noqa: BLE001 - log-only: the decision is answered even if its log line fails
+        logger.opt(exception=True).warning("Could not format the decision log line; logging the OPA response raw")
+        _log_raw_query_result(params, query.dict(), response)
 
 
 def log_query_result_kong(kong_input: KongAuthorizationInput, response: Response):
@@ -147,8 +164,11 @@ def log_query_result_kong(kong_input: KongAuthorizationInput, response: Response
     """
     username = None if kong_input.consumer is None else kong_input.consumer.username
     params = f"({username}, {kong_input.request.http.method}, {kong_input.request.http.path})"
+    result = _opa_result(response)
+    if result is None:
+        _log_raw_query_result(params, kong_input.dict(), response)
+        return
     try:
-        result: dict = json.loads(bytes(response.body)).get("result", {})
         allowed = result.get("allow", False)
         debug = result.get("debug", {})
 
@@ -166,19 +186,9 @@ def log_query_result_kong(kong_input: KongAuthorizationInput, response: Response
             input=kong_input.dict(),
             debug=debug,
         )
-    except Exception:  # noqa: BLE001 - log-only: a result it cannot format is logged raw; never fail a decision
-        try:
-            body = str(response.body, "utf-8")
-        except ValueError:
-            body = None
-        data = {} if body is None else {"response_body": body}
-        logger.info(
-            "is allowed",
-            params=params,
-            query=kong_input.dict(),
-            response_status=response.status_code,
-            **data,
-        )
+    except Exception:  # noqa: BLE001 - log-only: the decision is answered even if its log line fails
+        logger.opt(exception=True).warning("Could not format the decision log line; logging the OPA response raw")
+        _log_raw_query_result(params, kong_input.dict(), response)
 
 
 def get_v1_processed_query(result: dict) -> dict | None:
