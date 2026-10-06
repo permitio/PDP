@@ -28,7 +28,13 @@ uv sync
 ```bash
 uv run pytest horizon/tests/
 ```
-5. Install the git hooks (ruff, rustfmt, clippy, the waiver and lock checks), or run them on demand
+5. Run the type check ([ty](https://docs.astral.sh/ty/), configured under `[tool.ty]` in
+`pyproject.toml`). CI fails on any diagnostic, warnings included.
+```bash
+uv run ty check
+```
+6. Install the git hooks (ruff, rustfmt, clippy, the ty type check, the waiver and lock checks), or
+run them on demand
 ```bash
 uvx prek install
 uvx prek run --all-files

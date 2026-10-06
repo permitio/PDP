@@ -70,3 +70,17 @@ repos:
         additional_dependencies: ["uv==0.12.19"]
         pass_filenames: false
         files: ^(pyproject\.toml|uv\.lock)$
+
+      - id: ty-check
+        name: ty type check
+        description: >-
+          Type-checks every Python file with the ty pinned in uv.lock's dev group, configured
+          in pyproject.toml [tool.ty]. `uv run --frozen` first syncs .venv to uv.lock, so third-party
+          types are those of the locked dependencies. Any diagnostic fails, warnings included.
+        # The hook runs inside its own virtualenv (the one holding uv). Unsetting VIRTUAL_ENV
+        # keeps uv on the project's .venv, which it would otherwise use with a mismatch warning.
+        entry: env -u VIRTUAL_ENV uv run --frozen ty check
+        language: python
+        additional_dependencies: ["uv==0.12.19"]
+        pass_filenames: false
+        files: (\.pyi?|^pyproject\.toml|^uv\.lock)$

@@ -77,6 +77,11 @@ dev = [
     # loads at collection time, so a missing PyYAML fails the whole pytests job. A test and
     # CI-tooling dependency only; nothing under horizon/ imports it.
     "PyYAML",
+    # Here, unlike ruff, because it types third-party imports from the project's .venv; the
+    # `ty-check` hook runs it with `uv run`. Pinned exactly: every ty release adds checks, so a
+    # lock refresh must not turn the required `pre-commit` check red on its own. Bump it
+    # deliberately and fix what the new version reports.
+    "ty==0.0.84",
 ]
 
 [tool.uv]
@@ -179,3 +184,32 @@ ignore = [
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"
+
+# ty runs as the `ty-check` hook in .pre-commit-config.yaml, so the required `pre-commit` check
+# fails on any diagnostic: errors, and warnings too (terminal.error-on-warning defaults to true).
+[tool.ty.environment]
+# The interpreter the image ships and uv.lock is resolved for. ty has no per-path version, so the
+# CI helper scripts are checked against it too although the scheduled jobs run them on 3.12.
+python-version = "3.13"
+# "." resolves `horizon` (not installed, see [tool.uv] package = false). horizon/tests has no
+# __init__.py and its modules import each other by basename (from test_enforcer_api import ...),
+# as pytest's prepend import mode allows.
+root = [".", "horizon/tests"]
+
+[tool.ty.rules]
+# Off by default, and they report nothing here: a name or attribute bound on only some paths, or
+# a `ty: ignore` without a rule, fails instead of slipping in later.
+possibly-unresolved-reference = "error"
+possibly-missing-attribute = "error"
+possibly-missing-import = "error"
+blanket-ignore-comment = "error"
+# A suppression that outlives the error it hid must go.
+unused-ignore-comment = "error"
+
+[[tool.ty.overrides]]
+# The offline-mode checker runs in its own image (test_offline_mode/Dockerfile), which installs
+# the permit SDK; uv.lock does not, and should not, carry it.
+include = ["test_offline_mode/**"]
+
+[tool.ty.overrides.analysis]
+allowed-unresolved-imports = ["permit"]
