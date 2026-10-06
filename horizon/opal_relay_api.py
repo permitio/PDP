@@ -149,16 +149,14 @@ class OpalRelayAPIClient:
                     obj = RelayJWTResponse.parse_obj(await response.json())
                 # ValueError covers pydantic's ValidationError and a body that is not JSON or not UTF-8.
                 except (ValueError, aiohttp.ContentTypeError) as e:
-                    try:
-                        # json() above already read the body, so decoding it is all text() does here.
-                        text = await response.text()
-                    except UnicodeDecodeError:
-                        text = None
-
+                    # json() above already read the body, so read() only returns it. The body may hold a token
+                    # in a shape the PDP does not expect, so the error describes it rather than quoting it.
+                    body = await response.read()
                     raise RelayAPIError(
                         "relay-jwt-api",
                         response.status,
-                        f"Server responded to token request with an invalid result: {text}",
+                        f"Server responded to token request with an invalid result: {len(body)} bytes of "
+                        f"{response.content_type}",
                     ) from e
                 # Read on arrival, so a token without a readable expiry is never kept and the next ping asks again.
                 try:

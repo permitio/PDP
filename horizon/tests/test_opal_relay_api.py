@@ -110,13 +110,16 @@ async def test_ping_loop_logs_expected_failures_in_one_line_and_anything_else_wi
     monkeypatch: pytest.MonkeyPatch,
 ):
     """An unreachable control plane, or a token response the PDP cannot use, repeats every interval, so
-    each stays one line, which says why. Any other failure keeps the loop alive too, but is logged with
+    each stays one line, which says why. A token response is described, not quoted: it may hold a token
+    under a key the PDP does not read. Any other failure keeps the loop alive too, but is logged with
     the traceback that explains it."""
     monkeypatch.setattr(sidecar_config, "PING_INTERVAL", 0)
     _use_pdp_state(monkeypatch, iter([]))
+    misplaced_token = _relay_jwt(time.time() + 24 * 3600)
+    unusable_token_body = json.dumps({"data": {"token": misplaced_token}})
     with aioresponses() as mocked:
         mocked.post(RELAY_JWT_URL, exception=aiohttp.ClientConnectionError("connection refused"))
-        mocked.post(RELAY_JWT_URL, status=200, payload={"not_a_token": "x"})
+        mocked.post(RELAY_JWT_URL, status=200, body=unusable_token_body, content_type="application/json")
         mocked.post(RELAY_JWT_URL, status=200, payload={"token": _relay_jwt(time.time() + 24 * 3600)})
         task = asyncio.create_task(relay_client._run())
         try:
@@ -130,8 +133,12 @@ async def test_ping_loop_logs_expected_failures_in_one_line_and_anything_else_wi
     transport_failure, unusable_token_response, unexpected_failure = logged_warnings[:3]
     assert "ClientConnectionError: connection refused" in transport_failure["message"]
     assert transport_failure["exception"] is None
-    reason = 'Server responded to token request with an invalid result: {"not_a_token": "x"}'
-    assert f"got status code 200 from relay-jwt-api: {reason}" in unusable_token_response["message"]
+    reason = (
+        "Server responded to token request with an invalid result: "
+        f"{len(unusable_token_body)} bytes of application/json"
+    )
+    assert f"got status code 200 from relay-jwt-api: {reason}." in unusable_token_response["message"]
+    assert misplaced_token not in unusable_token_response["message"]
     assert unusable_token_response["exception"] is None
     assert unexpected_failure["exception"] is not None
     assert unexpected_failure["exception"].type is ValidationError
@@ -191,7 +198,7 @@ async def test_a_token_response_without_a_relay_jwt_raises_relay_api_error(
     """A 200 token response the PDP cannot use is a RelayAPIError, which the ping loop logs in one line."""
     with aioresponses() as mocked:
         mocked.post(RELAY_JWT_URL, status=200, **token_response)
-        with pytest.raises(RelayAPIError, match="invalid result") as excinfo:
+        with pytest.raises(RelayAPIError, match=r"invalid result: \d+ bytes of [\w/]+$") as excinfo:
             await relay_client.relay_session()
 
     assert excinfo.value.service == "relay-jwt-api"
