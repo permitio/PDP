@@ -39,19 +39,7 @@ class MappingRulesUtils:
         )
 
     @staticmethod
-    def _compare_query_params(mapping_rule_query_string: str | None, request_url_query_string: str | None) -> bool:
-        if mapping_rule_query_string is None and request_url_query_string is None:
-            # if both are None, they are equal
-            return True
-        if mapping_rule_query_string is not None and request_url_query_string is None:
-            # if the request query string is None, but the mapping rule query string is not
-            # then the request does not match the mapping rule
-            return False
-        if mapping_rule_query_string is None and request_url_query_string is not None:
-            # if the mapping rule query string is None, but the request query string is not
-            # then the request matches the query string rules it has additional data to the rule
-            return True
-
+    def _compare_query_params(mapping_rule_query_string: str, request_url_query_string: str) -> bool:
         mapping_rule_query_params = QueryParams(mapping_rule_query_string)
         request_query_params = QueryParams(request_url_query_string)
 
