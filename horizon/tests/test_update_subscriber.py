@@ -1,12 +1,13 @@
 """DataUpdateSubscriber against a stand-in for OPAL's DataUpdater (the boundary it wraps)."""
 
 import asyncio
+import re
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 from opal_common.schemas.data import DataSourceEntry, DataUpdate
-from websockets.exceptions import ConnectionClosedError
+from websockets.exceptions import ConnectionClosed, ConnectionClosedError, ConnectionClosedOK
 from websockets.frames import Close
 
 from horizon.facts.update_subscriber import DataUpdatePublishError, DataUpdateSubscriber
@@ -64,16 +65,34 @@ async def test_publish_and_wait_raises_without_waiting_when_the_updater_has_no_c
 
 
 @pytest.mark.asyncio
-async def test_publish_and_wait_reports_a_dropped_pubsub_connection_as_unpublished_and_ends_the_wait():
-    """OPAL's client keeps a connection the server closed until it reconnects, and publishing on it
-    raises. A wait without a timeout for an update that was not published would never end, so it is
-    cancelled, and the caller hears that the update was not published."""
-    dropped = ConnectionClosedError(Close(1012, ""), Close(1012, ""), rcvd_then_sent=True)
+@pytest.mark.parametrize(
+    ("dropped", "reason"),
+    [
+        pytest.param(
+            ConnectionClosedError(Close(1012, ""), Close(1012, ""), rcvd_then_sent=True),
+            "ConnectionClosedError: received 1012 (service restart); then sent 1012 (service restart)",
+            id="closed-by-the-server",
+        ),
+        pytest.param(
+            ConnectionClosedOK(Close(1000, ""), Close(1000, ""), rcvd_then_sent=False),
+            "ConnectionClosedOK: sent 1000 (OK); then received 1000 (OK)",
+            id="closed-by-the-pdp",
+        ),
+    ],
+)
+async def test_publish_and_wait_reports_a_dropped_pubsub_connection_as_unpublished_and_ends_the_wait(
+    dropped: ConnectionClosed, reason: str
+):
+    """OPAL's client keeps a closed connection until it reconnects, and publishing on it raises. The
+    server may have closed it, or the PDP itself: OPAL's DataUpdater.stop(), run by
+    /connectivity/disable, disconnects the client but keeps it, so the next publish raises
+    ConnectionClosedOK. A wait without a timeout for an update that was not published would never
+    end, so it is cancelled, and the caller hears that the update was not published."""
     client = AsyncMock()
     client.publish.side_effect = dropped
     subscriber = _subscriber(client)
 
-    with pytest.raises(DataUpdatePublishError, match="ConnectionClosedError: received 1012") as excinfo:
+    with pytest.raises(DataUpdatePublishError, match=re.escape(reason)) as excinfo:
         await subscriber.publish_and_wait(_update("u-1"), timeout=None)
 
     assert excinfo.value.__cause__ is dropped

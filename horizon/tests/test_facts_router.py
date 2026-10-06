@@ -14,7 +14,7 @@ from httpx import Response as HttpxResponse
 from loguru import logger
 from starlette import status
 from starlette.requests import Request as FastApiRequest
-from websockets.exceptions import ConnectionClosedError
+from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 from websockets.frames import Close
 
 from horizon.config import sidecar_config
@@ -235,9 +235,12 @@ def _pubsub_client_raising(error: Exception) -> AsyncMock:
 
 
 # The pub/sub client the OPAL data updater holds when the PDP cannot publish on it, and the reason
-# the 424 detail gives. The updater has no client until it starts. Its client raises the first error
-# until it connects, the second on a connection the server closed (it keeps that connection until it
-# reconnects), and the third when the connection closes before the server answers the publish.
+# the 424 detail gives. The updater has no client until it starts. Its client raises
+# PubSubClientInvalidStateException until it connects. It keeps a closed connection until it
+# reconnects and raises on it: ConnectionClosedError after the server dropped it, ConnectionClosedOK
+# after the PDP closed it (OPAL's DataUpdater.stop(), run by /connectivity/disable, disconnects the
+# client but keeps it). RpcChannelClosedException comes when the connection closes before the server
+# answers the publish.
 UNPUBLISHABLE_PUBSUB_CLIENTS = [
     pytest.param(lambda: None, "no pub/sub client", id="no-client"),
     pytest.param(
@@ -248,7 +251,12 @@ UNPUBLISHABLE_PUBSUB_CLIENTS = [
     pytest.param(
         lambda: _pubsub_client_raising(ConnectionClosedError(Close(1012, ""), Close(1012, ""), rcvd_then_sent=True)),
         "ConnectionClosedError: received 1012 (service restart); then sent 1012 (service restart)",
-        id="connection-closed",
+        id="connection-closed-by-the-server",
+    ),
+    pytest.param(
+        lambda: _pubsub_client_raising(ConnectionClosedOK(Close(1000, ""), Close(1000, ""), rcvd_then_sent=False)),
+        "ConnectionClosedOK: sent 1000 (OK); then received 1000 (OK)",
+        id="connection-closed-by-the-pdp",
     ),
     pytest.param(
         lambda: _pubsub_client_raising(RpcChannelClosedException("Channel Closed before RPC response for c-1")),

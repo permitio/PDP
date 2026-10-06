@@ -11,8 +11,10 @@ from opal_common.schemas.data import DataUpdate, DataUpdateReport
 from websockets.exceptions import ConnectionClosed
 
 # What OPAL's pub/sub client raises from publish() when it has no live connection to the OPAL server:
-# before its first connection, on a connection the server closed (the client keeps publishing on it
-# until it reconnects), and when the connection closes before the server answers the publish.
+# before its first connection; on a closed connection, which the client keeps publishing on until it
+# reconnects, whether the server closed it or the PDP did (OPAL's DataUpdater.stop(), run when
+# /connectivity/disable turns OPAL connectivity off, disconnects the client but keeps it); and when the
+# connection closes before the server answers the publish.
 _PUBSUB_CONNECTION_ERRORS = (PubSubClientInvalidStateException, ConnectionClosed, RpcChannelClosedException)
 
 
