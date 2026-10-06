@@ -89,7 +89,8 @@ def _opa_result(response: Response) -> dict | None:
     """The ``result`` object of an OPA response, or None if the body is not a JSON object holding one."""
     try:
         body = json.loads(bytes(response.body))
-    except ValueError:  # not JSON, or not UTF-8
+    # ValueError: not JSON, or not UTF-8. RecursionError: nested deeper than the decoder can follow.
+    except (ValueError, RecursionError):
         return None
     result = body.get("result", {}) if isinstance(body, dict) else None
     return result if isinstance(result, dict) else None

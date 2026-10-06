@@ -1,4 +1,5 @@
 import asyncio
+import json
 import random
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
@@ -85,6 +86,10 @@ MALFORMED_AUTH_HEADERS = [
     f"Basic {sidecar_config.API_KEY}",  # right secret, wrong scheme -> must still 401
     f"basic {sidecar_config.API_KEY}",  # ... and lowercasing the scheme must not help either
 ]
+
+# Nested deeper than json.loads can decode: it raises RecursionError, which is not a ValueError. Kept
+# under aiohttp's 128 KiB stream buffer, which a larger body mocked by aioresponses overflows.
+DEEPLY_NESTED_OPA_BODY = '{"result": ' + "[" * 30_000 + "]" * 30_000 + "}"
 
 KONG_QUERY = {
     "input": {
@@ -192,8 +197,9 @@ def test_kong_endpoint_enabled_integration_allowed_flow(kong_client):
         {"payload": {"result": []}},
         {"payload": {"result": None}},
         {"body": "not json"},
+        {"body": DEEPLY_NESTED_OPA_BODY},
     ],
-    ids=["result-is-a-list", "result-is-null", "body-is-not-json"],
+    ids=["result-is-a-list", "result-is-null", "body-is-not-json", "body-is-nested-too-deeply"],
 )
 def test_kong_endpoint_undecodable_opa_result_denies_with_200(kong_client, opa_response):
     """An OPA answer the decision log cannot read sends it to its fallback branch, which
@@ -250,8 +256,9 @@ def test_decision_log_shows_an_allow_decision(logged_records: list["Record"]):
         b'{"result": {"tenants": []}}',
         b'{"result": [1]}',
         b"not json",
+        DEEPLY_NESTED_OPA_BODY.encode(),
     ],
-    ids=["user-permissions", "user-tenants", "result-is-a-list", "body-is-not-json"],
+    ids=["user-permissions", "user-tenants", "result-is-a-list", "body-is-not-json", "body-is-nested-too-deeply"],
 )
 def test_decision_log_logs_a_result_without_a_decision_raw_in_one_line(logged_records: list["Record"], body: bytes):
     """Routine for /user-permissions, /user-tenants and /authorized_users, whose results carry no
@@ -281,6 +288,24 @@ def test_decision_log_that_fails_to_format_a_decision_logs_the_traceback(logged_
     assert warning["exception"].type is AttributeError
     assert raw["message"] == "is allowed"
     assert raw["extra"]["response_body"] == body.decode()
+
+
+def test_allowed_with_an_opa_body_nested_too_deeply_to_decode_denies_with_200(monkeypatch):
+    """The decision log must not fail the request on a body the endpoint's own fallback answers."""
+    with pytest.raises(RecursionError):
+        json.loads(DEEPLY_NESTED_OPA_BODY)
+    monkeypatch.setattr(stats_manager, "_messages", asyncio.Queue())
+    client = TestClient(sidecar._app)
+    with aioresponses() as m:
+        m.post(f"{opal_client_config.POLICY_STORE_URL}/v1/data/permit/root", status=200, body=DEEPLY_NESTED_OPA_BODY)
+        response = client.post(
+            "/allowed",
+            headers={"authorization": f"Bearer {sidecar_config.API_KEY}"},
+            json=DECISION_QUERY.dict(),
+        )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json() == {"allow": False, "result": False}
 
 
 def test_authorized_users_endpoint_valid_token_allowed_flow(monkeypatch):
