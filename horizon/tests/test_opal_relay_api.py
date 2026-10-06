@@ -103,6 +103,19 @@ def _use_pdp_state(monkeypatch: pytest.MonkeyPatch, runtime_states: Iterator[dic
     monkeypatch.setattr(PersistentStateHandler, "get_runtime_state", lambda: next(runtime_states, {}))
 
 
+async def _run_ping_loop_until_it_warns(
+    relay_client: OpalRelayAPIClient, logged_warnings: list["Record"], times: int
+) -> None:
+    task = asyncio.create_task(relay_client._run())
+    try:
+        async with asyncio.timeout(5):
+            while len(logged_warnings) < times:  # noqa: ASYNC110 - polls a log sink, not an asyncio primitive
+                await asyncio.sleep(0)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
 @pytest.mark.asyncio
 async def test_ping_loop_logs_expected_failures_in_one_line_and_anything_else_with_a_traceback(
     relay_client: OpalRelayAPIClient,
@@ -121,14 +134,7 @@ async def test_ping_loop_logs_expected_failures_in_one_line_and_anything_else_wi
         mocked.post(RELAY_JWT_URL, exception=aiohttp.ClientConnectionError("connection refused"))
         mocked.post(RELAY_JWT_URL, status=200, body=unusable_token_body, content_type="application/json")
         mocked.post(RELAY_JWT_URL, status=200, payload={"token": _relay_jwt(time.time() + 24 * 3600)})
-        task = asyncio.create_task(relay_client._run())
-        try:
-            async with asyncio.timeout(5):
-                while len(logged_warnings) < 3:  # noqa: ASYNC110 - polls a log sink, not an asyncio primitive
-                    await asyncio.sleep(0)
-        finally:
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+        await _run_ping_loop_until_it_warns(relay_client, logged_warnings, 3)
 
     transport_failure, unusable_token_response, unexpected_failure = logged_warnings[:3]
     assert "ClientConnectionError: connection refused" in transport_failure["message"]
@@ -159,14 +165,7 @@ async def test_ping_loop_logs_a_repeated_failure_with_its_traceback_once_until_a
     with aioresponses() as mocked:
         mocked.post(RELAY_JWT_URL, status=200, payload={"token": _relay_jwt(time.time() + 24 * 3600)})
         mocked.post(PING_URL, status=202)
-        task = asyncio.create_task(relay_client._run())
-        try:
-            async with asyncio.timeout(5):
-                while len(logged_warnings) < 4:  # noqa: ASYNC110 - polls a log sink, not an asyncio primitive
-                    await asyncio.sleep(0)
-        finally:
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+        await _run_ping_loop_until_it_warns(relay_client, logged_warnings, 4)
 
     first, repeated, after_a_ping, repeated_after_a_ping = logged_warnings[:4]
     assert first["exception"] is not None
@@ -177,6 +176,40 @@ async def test_ping_loop_logs_a_repeated_failure_with_its_traceback_once_until_a
     assert after_a_ping["exception"].type is ValidationError
     assert repeated_after_a_ping["exception"] is None
     assert "ValidationError" in repeated_after_a_ping["message"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failing_url", "reason"),
+    [
+        (RELAY_JWT_URL, "relay-jwt-api: Server responded to token request with a bad status: "),
+        (PING_URL, "relay-api: Server responded to the ping with a bad status: "),
+    ],
+    ids=["token-request", "ping"],
+)
+async def test_ping_loop_logs_an_error_body_as_a_short_escaped_excerpt(
+    relay_client: OpalRelayAPIClient,
+    logged_warnings: list["Record"],
+    monkeypatch: pytest.MonkeyPatch,
+    failing_url: re.Pattern[str],
+    reason: str,
+):
+    """A gateway's error page quoted whole would make the warning, logged every PING_INTERVAL, run to
+    kilobytes over many lines."""
+    monkeypatch.setattr(sidecar_config, "PING_INTERVAL", 0)
+    _use_pdp_state(monkeypatch, iter([RUNTIME_STATE]))
+    error_page = (
+        "<html>\r\n<head><title>502 Bad Gateway</title></head>\r\n" + "<p>padding</p>\r\n" * 500 + "</html>\r\n"
+    )
+    with aioresponses() as mocked:
+        mocked.post(failing_url, status=502, body=error_page, content_type="text/html")
+        mocked.post(RELAY_JWT_URL, status=200, payload={"token": _relay_jwt(time.time() + 24 * 3600)})
+        await _run_ping_loop_until_it_warns(relay_client, logged_warnings, 1)
+
+    message = logged_warnings[0]["message"]
+    assert f"got status code 502 from {reason}'<html>\\r\\n<head><title>502 Bad Gateway</title>" in message
+    assert "\n" not in message
+    assert len(message) < 500
 
 
 @pytest.mark.asyncio

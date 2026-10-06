@@ -66,6 +66,10 @@ class PDPPingRequest(BaseModel):
 
 MAX_JWT_EXPIRY_BUFFER_TIME = 60 * 60  # 1 hour, has to be more than the ping interval
 
+# The ping loop logs a RelayAPIError's reason every PING_INTERVAL, so an error body quoted in one is escaped
+# onto a single line and, when long, cut to 200 characters taken from its start and end.
+_error_body_repr = reprlib.Repr(maxstring=200)
+
 
 def get_jwt_expiry_time(jwt: str) -> float:
     """The ``exp`` claim of a JWT, read without verifying the token (that avoids a full JWT library).
@@ -143,7 +147,7 @@ class OpalRelayAPIClient:
                     raise RelayAPIError(
                         "relay-jwt-api",
                         response.status,
-                        f"Server responded to token request with a bad status: {text}",
+                        f"Server responded to token request with a bad status: {_error_body_repr.repr(text)}",
                     )
                 try:
                     obj = RelayJWTResponse.parse_obj(await response.json())
@@ -212,7 +216,7 @@ class OpalRelayAPIClient:
                 raise RelayAPIError(
                     "relay-api",
                     response.status,
-                    f"Server responded to the ping with a bad status: {text}",
+                    f"Server responded to the ping with a bad status: {_error_body_repr.repr(text)}",
                 )
         logger.debug("Sent ping.")
 
