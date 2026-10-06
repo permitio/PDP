@@ -1,7 +1,7 @@
 import asyncio
 import json
 import time
-from base64 import b64decode
+from base64 import urlsafe_b64decode
 from urllib.parse import urljoin
 from uuid import UUID
 
@@ -65,8 +65,12 @@ MAX_JWT_EXPIRY_BUFFER_TIME = 60 * 60  # 1 hour, has to be more than the ping int
 
 
 def get_jwt_expiry_time(jwt: str) -> int:
-    # We parse it like this to avoid pulling in a full JWT library
-    claims = json.loads(b64decode(jwt.split(".")[1]))
+    """The ``exp`` claim of a JWT, read without verifying the token (that avoids a full JWT library).
+
+    JWT segments are base64url with the padding stripped (RFC 7515), so the padding is put back first.
+    """
+    payload = jwt.split(".")[1]
+    claims = json.loads(urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
     return claims["exp"]
 
 

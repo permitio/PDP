@@ -25,7 +25,12 @@ from opal_client.config import opal_client_config
 from pydantic import ValidationError
 
 from horizon.config import sidecar_config
-from horizon.opal_relay_api import OpalRelayAPIClient, RelayAPIError
+from horizon.opal_relay_api import (
+    MAX_JWT_EXPIRY_BUFFER_TIME,
+    OpalRelayAPIClient,
+    RelayAPIError,
+    get_jwt_expiry_time,
+)
 from horizon.state import PersistentStateHandler
 
 if TYPE_CHECKING:
@@ -46,6 +51,10 @@ RUNTIME_STATE = {
     },
     "opa": {"version": "1.0.0", "go_version": "go1", "platform": "linux/amd64", "have_webassembly": False},
 }
+# Relay JWT subjects keyed by the length, mod 4, of the payload segment they give a token from _relay_jwt:
+# every length an unpadded base64url segment can have. Each holds a run of "?" (0x3F3F3F), which base64url
+# writes as "Pz8_" where standard base64 writes "Pz8/".
+SUBJECTS_BY_PAYLOAD_LENGTH_MOD_4 = {0: "??????", 2: "???????", 3: "????????"}
 
 
 @pytest_asyncio.fixture
@@ -70,10 +79,16 @@ def logged_warnings() -> Iterator[list["Record"]]:
     logger.remove(sink_id)
 
 
-def _relay_jwt(expires_at: float) -> str:
-    """A token whose claims carry `exp`, which is all the client reads from it."""
-    claims = base64.b64encode(json.dumps({"exp": int(expires_at)}).encode()).decode()
-    return f"header.{claims}.signature"
+def _base64url(data: bytes) -> str:
+    """A JWT segment: base64url without its padding (RFC 7515)."""
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def _relay_jwt(expires_at: float, subject: str = "pdp") -> str:
+    """A JWT laid out as the control plane issues one. The client reads only the payload's `exp`."""
+    header = _base64url(json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
+    payload = _base64url(json.dumps({"exp": int(expires_at), "sub": subject}).encode())
+    return f"{header}.{payload}.{_base64url(b'signature')}"
 
 
 def _use_pdp_state(monkeypatch: pytest.MonkeyPatch, runtime_states: Iterator[dict]) -> None:
@@ -177,6 +192,57 @@ async def test_a_token_response_without_a_relay_jwt_raises_relay_api_error(
 
     assert excinfo.value.service == "relay-jwt-api"
     assert excinfo.value.status_code == 200
+
+
+@pytest.mark.parametrize(
+    ("payload_length_mod_4", "subject"),
+    SUBJECTS_BY_PAYLOAD_LENGTH_MOD_4.items(),
+    ids=[f"payload-length-mod-4-is-{n}" for n in SUBJECTS_BY_PAYLOAD_LENGTH_MOD_4],
+)
+def test_relay_jwt_expiry_is_read_from_its_unpadded_base64url_payload(payload_length_mod_4: int, subject: str):
+    expires_at = int(time.time()) + 24 * 3600
+    token = _relay_jwt(expires_at, subject)
+
+    payload = token.split(".")[1]
+    assert len(payload) % 4 == payload_length_mod_4
+    assert "_" in payload
+    assert get_jwt_expiry_time(token) == expires_at
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "subject",
+    SUBJECTS_BY_PAYLOAD_LENGTH_MOD_4.values(),
+    ids=[f"payload-length-mod-4-is-{n}" for n in SUBJECTS_BY_PAYLOAD_LENGTH_MOD_4],
+)
+async def test_relay_session_reuses_a_relay_jwt_far_from_expiry(relay_client: OpalRelayAPIClient, subject: str):
+    """Every ping after the first reads the cached token's expiry, so a token it cannot read fails
+    every ping until a restart. The token is requested once; a second request would find no mock."""
+    with aioresponses() as mocked:
+        mocked.post(RELAY_JWT_URL, status=200, payload={"token": _relay_jwt(time.time() + 24 * 3600, subject)})
+        first = await relay_client.relay_session()
+        second = await relay_client.relay_session()
+
+    assert second is first
+
+
+@pytest.mark.asyncio
+async def test_relay_session_replaces_a_relay_jwt_near_expiry(relay_client: OpalRelayAPIClient):
+    near_expiry = _relay_jwt(time.time() + MAX_JWT_EXPIRY_BUFFER_TIME / 2, SUBJECTS_BY_PAYLOAD_LENGTH_MOD_4[2])
+    fresh = _relay_jwt(time.time() + 24 * 3600, SUBJECTS_BY_PAYLOAD_LENGTH_MOD_4[3])
+    with aioresponses() as mocked:
+        mocked.post(RELAY_JWT_URL, status=200, payload={"token": near_expiry})
+        mocked.post(RELAY_JWT_URL, status=200, payload={"token": fresh})
+        replaced = await relay_client.relay_session()
+        try:
+            refreshed = await relay_client.relay_session()
+            reused = await relay_client.relay_session()
+        finally:
+            await replaced.close()  # the client drops the session it replaces without closing it
+
+    assert refreshed is not replaced
+    assert refreshed.headers["Authorization"] == f"Bearer {fresh}"
+    assert reused is refreshed
 
 
 @pytest.mark.asyncio
