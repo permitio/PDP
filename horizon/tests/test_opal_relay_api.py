@@ -84,11 +84,14 @@ def _base64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 
 
-def _relay_jwt(expires_at: float, subject: str = "pdp") -> str:
-    """A JWT laid out as the control plane issues one. The client reads only the payload's `exp`."""
+def _jwt_with_payload(payload: bytes) -> str:
+    """A JWT laid out as the control plane issues one, around ``payload``. The client reads only its `exp`."""
     header = _base64url(json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
-    payload = _base64url(json.dumps({"exp": int(expires_at), "sub": subject}).encode())
-    return f"{header}.{payload}.{_base64url(b'signature')}"
+    return f"{header}.{_base64url(payload)}.{_base64url(b'signature')}"
+
+
+def _relay_jwt(expires_at: float, subject: str = "pdp") -> str:
+    return _jwt_with_payload(json.dumps({"exp": int(expires_at), "sub": subject}).encode())
 
 
 def _use_pdp_state(monkeypatch: pytest.MonkeyPatch, runtime_states: Iterator[dict]) -> None:
@@ -210,6 +213,13 @@ def test_relay_jwt_expiry_is_read_from_its_unpadded_base64url_payload(payload_le
     assert get_jwt_expiry_time(token) == expires_at
 
 
+def test_relay_jwt_expiry_may_be_fractional():
+    """RFC 7519 allows a NumericDate that is not an integer."""
+    expires_at = time.time() + 24 * 3600
+
+    assert get_jwt_expiry_time(_jwt_with_payload(json.dumps({"exp": expires_at}).encode())) == expires_at
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "subject",
@@ -217,8 +227,7 @@ def test_relay_jwt_expiry_is_read_from_its_unpadded_base64url_payload(payload_le
     ids=[f"payload-length-mod-4-is-{n}" for n in SUBJECTS_BY_PAYLOAD_LENGTH_MOD_4],
 )
 async def test_relay_session_reuses_a_relay_jwt_far_from_expiry(relay_client: OpalRelayAPIClient, subject: str):
-    """Every ping after the first reads the cached token's expiry, so a token it cannot read fails
-    every ping until a restart. The token is requested once; a second request would find no mock."""
+    """The token is requested once; a second request would find no mock."""
     with aioresponses() as mocked:
         mocked.post(RELAY_JWT_URL, status=200, payload={"token": _relay_jwt(time.time() + 24 * 3600, subject)})
         first = await relay_client.relay_session()
@@ -244,6 +253,50 @@ async def test_relay_session_replaces_a_relay_jwt_near_expiry(relay_client: Opal
     assert replaced.closed
     assert refreshed.headers["Authorization"] == f"Bearer {fresh}"
     assert reused is refreshed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "token",
+    [
+        "opaque-token",
+        "header.a.signature",
+        _jwt_with_payload(b"not json"),
+        _jwt_with_payload(b"\xff"),
+        _jwt_with_payload(b"[1]"),
+        _jwt_with_payload(b'{"sub": "pdp"}'),
+        _jwt_with_payload(b'{"exp": "soon"}'),
+        _jwt_with_payload(b'{"exp": true}'),
+        _jwt_with_payload(b'{"exp": NaN}'),
+    ],
+    ids=[
+        "no-payload-segment",
+        "payload-not-base64url",
+        "payload-not-json",
+        "payload-not-utf8",
+        "payload-not-an-object",
+        "no-exp",
+        "exp-a-string",
+        "exp-a-boolean",
+        "exp-not-finite",
+    ],
+)
+async def test_a_relay_jwt_without_a_readable_expiry_is_refused_and_the_next_call_asks_again(
+    relay_client: OpalRelayAPIClient, token: str
+):
+    """The expiry decides when to ask for a new token. A token kept without a readable one would fail
+    every ping until a restart, and no new token would be requested."""
+    fresh = _relay_jwt(time.time() + 24 * 3600)
+    with aioresponses() as mocked:
+        mocked.post(RELAY_JWT_URL, status=200, payload={"token": token})
+        mocked.post(RELAY_JWT_URL, status=200, payload={"token": fresh})
+        with pytest.raises(RelayAPIError, match="invalid result: a token whose expiry cannot be read") as excinfo:
+            await relay_client.relay_session()
+        session = await relay_client.relay_session()
+
+    assert excinfo.value.service == "relay-jwt-api"
+    assert excinfo.value.status_code == 200
+    assert session.headers["Authorization"] == f"Bearer {fresh}"
 
 
 @pytest.mark.asyncio
@@ -286,7 +339,7 @@ async def test_ping_with_a_bad_status_and_an_undecodable_body_still_raises_relay
     )
     monkeypatch.setattr(PersistentStateHandler, "get_runtime_state", lambda: RUNTIME_STATE)
     with aioresponses() as mocked:
-        mocked.post(RELAY_JWT_URL, status=200, payload={"token": "header.payload.signature"})
+        mocked.post(RELAY_JWT_URL, status=200, payload={"token": _relay_jwt(time.time() + 24 * 3600)})
         mocked.post(PING_URL, status=500, body=b"\xff\xfe", content_type="text/plain; charset=utf-8")
         with pytest.raises(RelayAPIError, match="Server responded to the ping with a bad status: None") as excinfo:
             await relay_client.send_ping()

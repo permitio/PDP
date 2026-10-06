@@ -1,5 +1,7 @@
 import asyncio
 import json
+import math
+import reprlib
 import time
 from base64 import urlsafe_b64decode
 from urllib.parse import urljoin
@@ -65,21 +67,35 @@ class PDPPingRequest(BaseModel):
 MAX_JWT_EXPIRY_BUFFER_TIME = 60 * 60  # 1 hour, has to be more than the ping interval
 
 
-def get_jwt_expiry_time(jwt: str) -> int:
+def get_jwt_expiry_time(jwt: str) -> float:
     """The ``exp`` claim of a JWT, read without verifying the token (that avoids a full JWT library).
 
     JWT segments are base64url with the padding stripped (RFC 7515), so the padding is put back first.
+
+    Raises:
+        ValueError: The token has no payload segment, the payload is not base64url-encoded JSON
+            (binascii.Error, UnicodeDecodeError and JSONDecodeError are all ValueErrors), or it holds
+            no ``exp`` claim that is a finite number.
     """
-    payload = jwt.split(".")[1]
+    try:
+        payload = jwt.split(".")[1]
+    except IndexError as e:
+        raise ValueError("the token is not a JWT: it has no payload segment") from e
     claims = json.loads(urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
-    return claims["exp"]
+    if not isinstance(claims, dict) or "exp" not in claims:
+        raise ValueError("the JWT payload is not a JSON object with an exp claim")
+    expiry = claims["exp"]
+    # JSON true decodes to a bool, which is an int; Python's json also accepts NaN and Infinity.
+    if isinstance(expiry, bool) or not isinstance(expiry, int | float) or not math.isfinite(expiry):
+        raise ValueError(f"the JWT exp claim is not a finite number: {reprlib.repr(expiry)}")
+    return expiry
 
 
 class OpalRelayAPIClient:
     def __init__(self, context: dict[str, str], opal_client: OpalClient):
         self._relay_session: ClientSession | None = None
         self._api_session: ClientSession | None = None
-        self._relay_token: str | None = None
+        self._relay_token_expires_at: float | None = None
         self._available = False
         self._opal_client = opal_client
         # Types of unexpected ping failures already logged with a traceback since the last good ping.
@@ -110,8 +126,8 @@ class OpalRelayAPIClient:
         session = self._relay_session
         if (
             session is None
-            or self._relay_token is None
-            or get_jwt_expiry_time(self._relay_token) - time.time() < MAX_JWT_EXPIRY_BUFFER_TIME
+            or self._relay_token_expires_at is None
+            or self._relay_token_expires_at - time.time() < MAX_JWT_EXPIRY_BUFFER_TIME
         ):
             async with self.api_session().post(
                 urljoin(
@@ -144,14 +160,24 @@ class OpalRelayAPIClient:
                         response.status,
                         f"Server responded to token request with an invalid result: {text}",
                     ) from e
-            self._relay_token = obj.token
+                # Read on arrival, so a token without a readable expiry is never kept and the next ping asks again.
+                try:
+                    expires_at = get_jwt_expiry_time(obj.token)
+                except ValueError as e:
+                    raise RelayAPIError(
+                        "relay-jwt-api",
+                        response.status,
+                        f"Server responded to token request with an invalid result: a token whose expiry "
+                        f"cannot be read: {e}",
+                    ) from e
             session = ClientSession(
-                headers={"Authorization": f"Bearer {self._relay_token}"},
+                headers={"Authorization": f"Bearer {obj.token}"},
                 trust_env=True,
                 timeout=aiohttp.ClientTimeout(total=sidecar_config.CONTROL_PLANE_TIMEOUT),
             )
             replaced = self._relay_session
             self._relay_session = session
+            self._relay_token_expires_at = expires_at
             if replaced is not None:
                 # Only the ping loop uses the relay session, one ping at a time, so nothing still holds this one.
                 await replaced.close()
