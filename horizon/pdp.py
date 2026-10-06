@@ -4,6 +4,7 @@ import os
 import sys
 from pathlib import Path
 from typing import ClassVar, Literal
+from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 import aiohttp
@@ -30,7 +31,7 @@ from pydantic import BaseModel, Field
 from scalar_fastapi import get_scalar_api_reference
 
 from horizon.authentication import enforce_pdp_token
-from horizon.config import MOCK_API_KEY, sidecar_config
+from horizon.config import IGNORED_CALLBACK_URLS_SETTING, MOCK_API_KEY, sidecar_config
 from horizon.connectivity.api import init_connectivity_router
 from horizon.debounce import MAX_DEBOUNCE_SECONDS, DebouncedTrigger, clamp_window, resolve_window
 from horizon.enforcer.api import init_enforcer_api_router, init_enforcer_health_router, stats_manager
@@ -87,6 +88,58 @@ def set_process_niceness(target_nice: int) -> None:
         logger.warning("Failed to change process niceness to {}: {}", target_nice, exc)
 
 
+def _comparable_url(url: str) -> tuple[str, str, str]:
+    """The parts of a URL an operator usually means, ignoring case, query string and trailing slash."""
+    parts = urlsplit(url.strip().lower())
+    return parts.scheme, parts.netloc, parts.path.rstrip("/")
+
+
+def _similar_callback_urls(url: str, registered_urls: list[str]) -> list[str]:
+    """Registered callback URLs that differ from ``url`` only in ways an operator would not mean.
+
+    Equal once case, query string and trailing slash are dropped, or one contains the other (the
+    old substring match accepted those).
+    """
+    wanted = _comparable_url(url)
+    similar = {
+        registered
+        for registered in registered_urls
+        if _comparable_url(registered) == wanted or url in registered or registered in url
+    }
+    return sorted(similar)
+
+
+def _report_unmatched_ignored_callback_urls(ignored_urls: list[str], registered_urls: list[str]) -> None:
+    """Log each ignored URL that matched no registered callback, with a fix when one is likely.
+
+    Matching is exact, so a near miss (trailing slash, query string, a shortened URL) leaves the
+    callback in place. A near miss is logged as a warning naming the URL to use; a URL with nothing
+    similar registered is only logged at info, since the shipped default names a callback that a
+    control plane does not always register.
+    """
+    for url in ignored_urls:
+        if url in registered_urls:
+            continue
+        similar = _similar_callback_urls(url, registered_urls)
+        if similar:
+            logger.warning(
+                "{setting} lists {url!r}, but no registered data-update callback has exactly that URL, so "
+                "that callback is still called. Did you mean {similar}? Set the exact URL: scheme, host, port, "
+                "path, query string and trailing slash must all match.",
+                setting=IGNORED_CALLBACK_URLS_SETTING,
+                url=url,
+                similar=" or ".join(repr(candidate) for candidate in similar),
+            )
+        else:
+            logger.info(
+                "{setting} lists {url!r}, which matches no registered data-update callback; nothing was "
+                "dropped for it. Registered callbacks: {registered}",
+                setting=IGNORED_CALLBACK_URLS_SETTING,
+                url=url,
+                registered=registered_urls,
+            )
+
+
 def apply_config(overrides_dict: dict, config_object: Confi):
     """
     apply config values from dict into a confi object
@@ -101,7 +154,10 @@ def apply_config(overrides_dict: dict, config_object: Confi):
                     config_object.entries[key].cast_from_json(value),
                 )
             except Exception:  # noqa: BLE001 - a bad control-plane override is logged; the other keys still apply
-                logger.opt(exception=True).warning(f"Unable to set config key {prefixed_key} from overrides:")
+                logger.opt(exception=True).warning(
+                    f"Unable to set config key {prefixed_key} from the control-plane overrides; "
+                    "keeping its current value:"
+                )
                 continue
             logger.info(f"Overriden config key: {prefixed_key}")
             continue
@@ -820,11 +876,14 @@ class PermitPDP:
             register.put(entry.url, entry.config, entry.key)
 
     def _remove_ignored_default_callbacks_urls(self) -> None:
-        register = self._opal._callbacks_register
-        if not sidecar_config.IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS:
+        ignored_urls = sidecar_config.IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS
+        if not ignored_urls:
             return
-        # we convert the generator to a list because we are modifying the register while iterating over it
-        for callback in list(register.all()):
-            if callback.url in sidecar_config.IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS:
+        register = self._opal._callbacks_register
+        # a list, because the loop removes entries from the register it would otherwise iterate
+        callbacks = list(register.all())
+        for callback in callbacks:
+            if callback.url in ignored_urls:
                 logger.info(f"Removing callback '{callback.url}' from the register")
                 register.remove(callback.key)  # ty: ignore[invalid-argument-type]  # all() builds each entry from its key
+        _report_unmatched_ignored_callback_urls(ignored_urls, [callback.url for callback in callbacks])

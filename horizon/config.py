@@ -1,3 +1,5 @@
+import json
+import re
 from enum import StrEnum
 from typing import Any, ClassVar
 
@@ -11,6 +13,41 @@ from pydantic import parse_obj_as, parse_raw_as
 from horizon.debounce import DEFAULT_DEBOUNCE_SECONDS
 
 MOCK_API_KEY = "MUST BE DEFINED"
+
+IGNORED_CALLBACK_URLS_SETTING = "PDP_IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS"
+_SHOWN_VALUE_MAX_CHARS = 200
+
+
+def _invalid_ignored_callback_urls(raw: Any, reason: str) -> ValueError:
+    """Build the startup error for a malformed ignored-callback-URLs setting.
+
+    It names the problem, shows the value, and lists every accepted form, so the operator can fix
+    the configuration from the error alone.
+    """
+    shown = raw if isinstance(raw, str) else json.dumps(raw, default=str)
+    if len(shown) > _SHOWN_VALUE_MAX_CHARS:
+        shown = shown[:_SHOWN_VALUE_MAX_CHARS] + "..."
+    return ValueError(
+        f"{IGNORED_CALLBACK_URLS_SETTING} is invalid: {reason}.\n"
+        f"  Got: {shown}\n"
+        "  Set it to one of:\n"
+        '    - a JSON list of double-quoted URLs: ["http://localhost:8181/v1/data/permit/rebac/cache_rebuild"]\n'
+        "    - URLs separated by commas or spaces: http://host-a/callback, http://host-b/callback\n"
+        "    - an empty value, to keep every default data-update callback\n"
+        "  Each URL must equal a registered data-update callback URL exactly."
+    )
+
+
+def _json_syntax_reason(raw: str, error: json.JSONDecodeError) -> str:
+    """Explain why JSON-shaped text did not parse, naming the usual mistakes."""
+    reason = f"it starts like JSON but is not valid JSON ({error.msg} at character {error.pos})"
+    if "'" in raw and '"' not in raw:
+        return f"{reason}: JSON needs double quotes around each URL; single quotes (a Python-style list) are not JSON"
+    if re.search(r",\s*[\]}]", raw):
+        return f"{reason}: remove the trailing comma before the closing bracket"
+    if re.search(r"\[\s*[^\s\"\[\]{}]", raw):
+        return f"{reason}: put each URL in double quotes"
+    return reason
 
 
 class ApiKeyLevel(StrEnum):
@@ -350,30 +387,40 @@ class SidecarConfig(Confi):
         empty value is how a deployment clears the Dockerfile default and keeps every default
         callback, and a single URL was matched as well. ``None`` from the control plane is no URL.
 
+        Quotes around a plain-text URL are dropped (``"http://host/path"`` reads as the URL), since
+        a quoted URL could never equal a registered callback URL.
+
         Raises:
-            ValueError: The value is JSON-shaped (it starts with ``[`` or ``{``) but is not a
-                list of URLs.
+            ValueError: The value is JSON-shaped (it starts with ``[`` or ``{``) but is not a list
+                of URL strings, or the control plane sent something other than a list. The
+                message says what is wrong, shows the value and lists the accepted forms.
         """
         if value is None:
             return []
-        if isinstance(value, str) and not value.lstrip().startswith(("[", "{")):
-            return value.replace(",", " ").split()
-        try:
-            if isinstance(value, str):
-                return parse_raw_as(list[str], value)
-            return parse_obj_as(list[str], value)
-        except ValueError as e:
-            raise ValueError(
-                "PDP_IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS must be a JSON list of URLs, "
-                f'like ["http://host/path"], or URLs separated by commas; got {value!r}'
-            ) from e
+        parsed = value
+        if isinstance(value, str):
+            if not value.lstrip().startswith(("[", "{")):
+                return [url.strip("\"'") for url in value.replace(",", " ").split() if url.strip("\"'")]
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError as e:
+                raise _invalid_ignored_callback_urls(value, _json_syntax_reason(value, e)) from e
+        if not isinstance(parsed, list):
+            kind = "a JSON object" if isinstance(parsed, dict) else f"a {type(parsed).__name__}"
+            raise _invalid_ignored_callback_urls(value, f"it is {kind}, not a list of URLs")
+        for index, item in enumerate(parsed):
+            if not isinstance(item, str):
+                raise _invalid_ignored_callback_urls(
+                    value, f"item {index} is {json.dumps(item, default=str)}, which is not a URL in double quotes"
+                )
+        return [url.strip() for url in parsed if url.strip()]
 
     IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS: list[str] = confi.str(  # ty: ignore[invalid-assignment]  # cast= sets the type
         "IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS",
         [],
         description=(
             "Callback URLs to drop from the defaults, even if the control plane registers them: a JSON list, "
-            "or URLs separated by commas. Empty drops none."
+            "or URLs separated by commas. Each URL must equal a registered callback URL exactly. Empty drops none."
         ),
         cast=parse_url_list,
         cast_from_json=parse_url_list,
