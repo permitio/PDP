@@ -519,10 +519,10 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
     )
     async def is_allowed_nginx(
         request: Request,
-        permit_user_key: Annotated[str | None, Header()] = None,
+        permit_user_key: Annotated[str, Header()],
+        permit_action: Annotated[str, Header()],
+        permit_resource_type: Annotated[str, Header()],
         permit_tenant_id: Annotated[str | None, Header()] = None,
-        permit_action: Annotated[str | None, Header()] = None,
-        permit_resource_type: Annotated[str | None, Header()] = None,
     ):
         query = AuthorizationQuery(
             user=User(key=permit_user_key),

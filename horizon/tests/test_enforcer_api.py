@@ -244,6 +244,23 @@ def test_nginx_allowed_endpoint_valid_token_allowed_flow(monkeypatch):
     assert response.json()["allow"] is True
 
 
+@pytest.mark.parametrize("missing", ["permit-user-key", "permit-action", "permit-resource-type"])
+def test_nginx_allowed_without_a_required_header_is_422_and_never_asks_opa(monkeypatch, missing: str):
+    monkeypatch.setattr(stats_manager, "_messages", asyncio.Queue())
+    headers = {
+        "authorization": f"Bearer {sidecar_config.API_KEY}",
+        "permit-user-key": "user1",
+        "permit-action": "read",
+        "permit-resource-type": "resource1",
+    }
+    del headers[missing]
+    with aioresponses() as m:
+        response = TestClient(sidecar._app).post("/nginx_allowed", headers=headers)
+        assert not m.requests
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+    assert [error["loc"] for error in response.json()["detail"]] == [["header", missing]]
+
+
 ALLOWED_ENDPOINTS = [
     (
         "/allowed",
