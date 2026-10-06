@@ -8,6 +8,10 @@ from opal_client.data.updater import DataUpdater
 from opal_common.schemas.data import DataUpdate, DataUpdateReport
 
 
+class DataUpdatePublishError(Exception):
+    """A data update was not published, so nothing will report it arriving."""
+
+
 class DataUpdateSubscriber:
     def __init__(self, updater: DataUpdater):
         self._updater = updater
@@ -61,21 +65,24 @@ class DataUpdateSubscriber:
         finally:
             self._update_listeners.pop(update_id, None)
 
-    async def publish(self, data_update: DataUpdate) -> bool:
+    async def publish(self, data_update: DataUpdate) -> None:
+        """Publish a data update on the OPAL data updater's pub/sub client.
+
+        Raises:
+            DataUpdatePublishError: The data updater has no pub/sub client yet.
+        """
         await asyncio.sleep(0)  # allow other wait task to run before publishing
         client = self._updater._client
         if client is None:
-            logger.warning(
-                f"Cannot publish data update id={data_update.id!r}: the OPAL data updater has no pub/sub client "
-                "yet (it creates one when it starts)"
+            raise DataUpdatePublishError(
+                "the OPAL data updater has no pub/sub client yet (it creates one when it starts)"
             )
-            return False
         topics = [topic for entry in data_update.entries for topic in entry.topics]
         logger.debug(
             f"Publishing data update with id={data_update.id!r} to topics {topics} as {self._notifier_id=}: "
             f"{data_update}"
         )
-        return await client.publish(
+        await client.publish(
             topics=topics,
             data=data_update.dict(),
             notifier_id=self._notifier_id,  # we fake a different notifier id to make the other side broadcast
@@ -85,14 +92,22 @@ class DataUpdateSubscriber:
         )
 
     async def publish_and_wait(self, data_update: DataUpdate, timeout: float | None = None) -> bool:
-        """
-        Publish a data update and wait for it to be received by the PubSub client.
-        :param data_update: DataUpdate object to publish
-        :param timeout: Wait timeout in seconds
-        :return: True if the message was received, False if the timeout was reached or the message failed to publish
+        """Publish a data update and wait for the PDP's own data updater to report it.
+
+        Args:
+            data_update: The update to publish. It needs an id unless ``timeout`` is 0.
+            timeout: Seconds to wait; 0 publishes without waiting, None waits without a limit.
+
+        Returns:
+            True if the update was reported (or, for a timeout of 0, published), False if the wait timed out.
+
+        Raises:
+            DataUpdatePublishError: The update was not published, so there is nothing to wait for.
+            ValueError: ``data_update`` has no id to wait for.
         """
         if timeout == 0:
-            return await self.publish(data_update)
+            await self.publish(data_update)
+            return True
         if data_update.id is None:
             raise ValueError("publish_and_wait needs a DataUpdate with an id: the wait ends on the report for that id")
 
@@ -100,10 +115,10 @@ class DataUpdateSubscriber:
         wait_task = asyncio.create_task(
             self.wait_for_message(data_update.id, timeout=timeout),
         )
-
-        if not await self.publish(data_update):
-            logger.warning("Failed to publish data entry. Aborting wait.")
-            wait_task.cancel()
-            return False
+        try:
+            await self.publish(data_update)
+        except BaseException:
+            wait_task.cancel()  # nothing will report an update that was not published
+            raise
 
         return await wait_task

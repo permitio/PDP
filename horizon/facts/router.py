@@ -27,7 +27,7 @@ from horizon.facts.opal_forwarder import (
     create_data_update_entry,
 )
 from horizon.facts.timeout_policy import TimeoutPolicy
-from horizon.facts.update_subscriber import DataUpdateSubscriber
+from horizon.facts.update_subscriber import DataUpdatePublishError, DataUpdateSubscriber
 
 facts_router = APIRouter(dependencies=[Depends(enforce_pdp_token)])
 
@@ -371,10 +371,24 @@ async def forward_request_then_wait_for_update(
         logger.warning(f"Missing required field {e.args[0]} in the response body, skipping wait for update.")
         return client.convert_response(response)
 
-    wait_result = await update_subscriber.publish_and_wait(
-        data_update_entry,
-        timeout=wait_timeout,
-    )
+    try:
+        wait_result = await update_subscriber.publish_and_wait(
+            data_update_entry,
+            timeout=wait_timeout,
+        )
+    except DataUpdatePublishError as e:
+        if timeout_policy == TimeoutPolicy.FAIL:
+            logger.error(
+                f"Data update {_update_id} was not published ({e}); failing the request per the timeout policy"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_424_FAILED_DEPENDENCY,
+                detail=f"Update was not published, so the PDP cannot receive it: {e}",
+            ) from e
+        logger.warning(
+            f"Data update {_update_id} was not published ({e}); returning the backend response per the timeout policy"
+        )
+        return client.convert_response(response)
     if wait_result:
         return client.convert_response(response)
     if timeout_policy == TimeoutPolicy.FAIL:

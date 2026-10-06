@@ -1,5 +1,7 @@
 from collections.abc import Iterator
 from dataclasses import dataclass
+from types import SimpleNamespace
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -7,6 +9,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import Response as HttpxResponse
+from loguru import logger
 from starlette import status
 from starlette.requests import Request as FastApiRequest
 
@@ -16,6 +19,9 @@ from horizon.facts.dependencies import get_data_update_subscriber
 from horizon.facts.opal_forwarder import get_opal_data_base_url, get_opal_data_topic
 from horizon.facts.router import facts_router, forward_remaining_requests, forward_request_then_wait_for_update
 from horizon.facts.update_subscriber import DataUpdateSubscriber
+
+if TYPE_CHECKING:
+    from loguru import Record
 
 PDP_TOKEN = "facts-router-test-token"
 AUTH = {"Authorization": f"Bearer {PDP_TOKEN}"}
@@ -92,6 +98,7 @@ async def test_forward_remaining_requests_does_not_set_consistent_update_header(
 
 @dataclass
 class FactsHarness:
+    app: FastAPI
     client: TestClient
     subscriber: MagicMock
     backend_calls: list[httpx.Request]
@@ -129,7 +136,7 @@ def facts(monkeypatch) -> Iterator[FactsHarness]:
     app.dependency_overrides[get_facts_client] = lambda: facts_client
     app.dependency_overrides[get_data_update_subscriber] = lambda: subscriber
 
-    yield FactsHarness(client=TestClient(app), subscriber=subscriber, backend_calls=backend_calls)
+    yield FactsHarness(app=app, client=TestClient(app), subscriber=subscriber, backend_calls=backend_calls)
 
     get_opal_data_base_url.cache_clear()
     get_opal_data_topic.cache_clear()
@@ -206,3 +213,52 @@ def test_facts_write_with_an_invalid_wait_header_is_400_before_forwarding(facts,
     assert response.json()["detail"].startswith(f"Invalid {header} header")
     assert facts.backend_calls == []
     facts.subscriber.publish_and_wait.assert_not_awaited()
+
+
+@pytest.fixture
+def logged_warnings() -> Iterator[list["Record"]]:
+    """Every loguru record at WARNING or above emitted during the test."""
+    records: list[Record] = []
+    sink_id = logger.add(lambda message: records.append(message.record), level="WARNING")
+    yield records
+    logger.remove(sink_id)
+
+
+def _use_a_subscriber_whose_updater_has_no_pubsub_client(facts: FactsHarness) -> None:
+    """Swap the mocked subscriber for the real one, over a stand-in for an OPAL data updater that has
+    not started yet and so has no pub/sub client to publish on."""
+    reporter = SimpleNamespace(report_update_results=AsyncMock())
+    updater = SimpleNamespace(_should_send_reports=False, callbacks_reporter=reporter, _client=None)
+    subscriber = DataUpdateSubscriber(updater)  # ty: ignore[invalid-argument-type]  # stand-in for OPAL's DataUpdater
+    facts.app.dependency_overrides[get_data_update_subscriber] = lambda: subscriber
+
+
+def test_facts_write_the_pdp_could_not_publish_is_424_under_fail_policy_and_not_called_a_timeout(
+    facts, logged_warnings: list["Record"]
+):
+    _use_a_subscriber_whose_updater_has_no_pubsub_client(facts)
+
+    response = _create_user(facts, {"X-Timeout-Policy": "fail"})
+
+    assert response.status_code == status.HTTP_424_FAILED_DEPENDENCY
+    detail = response.json()["detail"]
+    assert detail.startswith("Update was not published")
+    assert "no pub/sub client" in detail
+    assert len(facts.backend_calls) == 1
+    messages = [record["message"] for record in logged_warnings]
+    assert any("was not published" in message and "failing the request" in message for message in messages)
+    assert not any("Timeout" in message for message in messages)
+
+
+def test_facts_write_the_pdp_could_not_publish_returns_the_backend_response_under_ignore_policy(
+    facts, logged_warnings: list["Record"]
+):
+    _use_a_subscriber_whose_updater_has_no_pubsub_client(facts)
+
+    response = _create_user(facts, {"X-Timeout-Policy": "ignore"})
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json() == CREATED_USER
+    messages = [record["message"] for record in logged_warnings]
+    assert any("was not published" in message and "returning the backend response" in message for message in messages)
+    assert not any("Timeout" in message for message in messages)
