@@ -39,7 +39,7 @@ WAIVER_FILE = ".trivyignore.yaml"
 _HTTPS_URL = re.compile(r"^https://[^\s<>|]+$")
 _WHITESPACE = re.compile(r"\s+")
 _SCOUT_FIELD = re.compile(r"^\s*([A-Za-z][A-Za-z ]*?)\s*:(.*)$")
-_PURL = re.compile(r"^pkg:[^/]+/(?P<name>[^@?#]+)(?:@(?P<version>[^?#]+))?")
+_PURL = re.compile(r"^pkg:(?P<type>[^/]+)/(?P<name>[^@?#]+)(?:@(?P<version>[^?#]+))?")
 _MARKDOWN_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 
 # What has to happen for a Trivy finding to go away, keyed by classify_image_cves.classify().
@@ -85,7 +85,8 @@ class Finding:
     packages: list[str] = field(default_factory=list)
     sources: list[str] = field(default_factory=list)
     aliases: set[str] = field(default_factory=set)
-    # Who has to act on a Trivy finding (classify_image_cves.classify); '' for any other source.
+    # Who has to act (classify_image_cves.classify): set on a Trivy finding and on a Docker Scout
+    # one in an Alpine package, '' on any other.
     action: str = ""
     # A Trivy finding whose image holds the version main's uv.lock still has: its remediation
     # says a release cannot clear it (classify_image_cves.lock_still_flagged).
@@ -227,6 +228,19 @@ def _scout_fields(message: str) -> dict[str, str]:
     return fields
 
 
+def _scout_action(purl: str, fixed: str) -> str:
+    """The classifier's action for a Scout finding in an Alpine package, '' for any other.
+
+    An Alpine package is classified as Trivy's are, so Scout agreeing with Trivy on one keeps
+    Trivy's "a release rebuild picks it up". Any other package is left unclassified, which
+    :func:`_work_rank` puts ahead of a rebuild.
+    """
+    match = _PURL.match(purl)
+    if match is None or match.group("type") != "apk":
+        return ""
+    return classifier.classify({"pkg": match.group("name"), "fixed": fixed, "type": "alpine"})
+
+
 def _purl_display(purl: str) -> str:
     match = _PURL.match(purl)
     if not match:
@@ -273,6 +287,8 @@ def scout_source(tag: str, sarif: Path) -> Source:
             fields = _scout_fields((result.get("message") or {}).get("text") or "")
             score = _float(fields.get("cvss score")) or _float((rule.get("properties") or {}).get("security-severity"))
             fixed = fields.get("fixed version", "")
+            fixed = "" if fixed.lower() in ("", "not fixed") else fixed
+            purl = fields.get("package", "")
             source.findings.append(
                 Finding(
                     id=advisory,
@@ -280,9 +296,10 @@ def scout_source(tag: str, sarif: Path) -> Source:
                     score=score,
                     title=_scout_title(rule),
                     url=str(rule.get("helpUri") or ""),
-                    remediation=_remediation("" if fixed.lower() in ("", "not fixed") else fixed),
-                    packages=[_purl_display(fields.get("package", ""))],
+                    remediation=_remediation(fixed),
+                    packages=[_purl_display(purl)],
                     sources=[f"Docker Scout {tag}"],
+                    action=_scout_action(purl, fixed),
                 )
             )
     return source
@@ -386,15 +403,19 @@ def cargo_source(report: Path | None) -> tuple[Source, int]:
 def _work_rank(finding: Finding) -> tuple[int, int]:
     """How much work a finding's owner needs before the advisory goes away; lower is more.
 
-    classify_image_cves.ACTION_ORDER, except that a 'lock' or 'pinned' finding whose flagged
-    version main's uv.lock still holds comes right after 'base-digest', ahead of every other
-    'pinned' or 'lock' one: a release certainly cannot clear it, while the others may already be
-    fixed in main's lock. The classifier's verdict headline lists them in that order too. A
-    finding from another source carries no action and ranks after 'rebuild'.
+    classify_image_cves.ACTION_ORDER, with two additions. A 'lock' or 'pinned' finding whose
+    flagged version main's uv.lock still holds comes right after 'base-digest', ahead of every
+    other 'pinned' or 'lock' one: a release certainly cannot clear it, while the others may
+    already be fixed in main's lock. The classifier's verdict headline lists them in that order
+    too. A finding no classifier owns - a Dependabot alert, a cargo audit advisory, a Scout
+    finding outside an Alpine package - comes right before 'rebuild': nothing says a release
+    clears it, so a rebuild hint must not speak for its package.
     """
     if finding.lock_still_flagged:
         return classifier.ACTION_ORDER["pinned"], 0
-    return classifier.ACTION_ORDER.get(finding.action, len(classifier.ACTION_ORDER)), 1
+    if not finding.action:
+        return classifier.ACTION_ORDER["rebuild"], 0
+    return classifier.ACTION_ORDER[finding.action], 1
 
 
 def merge(sources: list[Source]) -> list[Finding]:
@@ -402,10 +423,11 @@ def merge(sources: list[Source]) -> list[Finding]:
 
     The remediation is that of the owner with the most work left (:func:`_work_rank`), the
     first one seen among equals. One advisory can hit packages with different owners - an
-    Alpine package a release rebuild clears and a Python package it cannot - and the line
-    must not tell a reader that a release clears it. Likewise a Trivy tag whose image main's
-    uv.lock still matches outranks another tag's "cutting a release clears each finding whose
-    fix that version carries", which would leave the call open.
+    Alpine package a release rebuild clears and a Python package it cannot, whether Trivy or
+    Dependabot reports that one - and the line must not tell a reader that a release clears
+    it. Likewise a Trivy tag whose image main's uv.lock still matches outranks another tag's
+    "cutting a release clears each finding whose fix that version carries", which would leave
+    the call open.
     """
     by_id: dict[str, Finding] = {}
     merged: list[Finding] = []

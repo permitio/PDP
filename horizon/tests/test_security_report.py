@@ -425,8 +425,38 @@ def test_a_cve_in_an_alpine_and_a_python_package_keeps_the_python_remediation(ru
     assert "httpx@3.5.7-r0" in line
 
 
+# One advisory, a release rebuild for the Alpine package Trivy flags, and another source on a package
+# no classifier owns: the line takes that source's remediation, never the rebuild hint.
+@pytest.mark.parametrize(
+    "other",
+    [
+        pytest.param({"alerts": [_alert(9, MIXED_CVE, package="cryptography")]}, id="dependabot"),
+        pytest.param({"cargo": _cargo(_crate("RUSTSEC-2026-0014", aliases=(MIXED_CVE,)))}, id="cargo-audit"),
+        pytest.param(
+            {"scout": _sarif({"id": MIXED_CVE, "purl": "pkg:pypi/cryptography@46.0.0", "fixed": "46.0.1"})},
+            id="scout-python-package",
+        ),
+    ],
+)
+def test_a_release_rebuild_never_speaks_for_a_package_another_source_reports(run, other):
+    inputs = {"scout": _sarif(), "alerts": [], **other}
+    message, _, _ = run(trivy={"latest": _trivy(_vuln(MIXED_CVE, pkg="libexpat"))}, **inputs)
+    [line] = [line for line in message.splitlines() if MIXED_CVE in line or "RUSTSEC-2026-0014" in line]
+    assert "a release rebuild picks it up" not in line
+    assert "libexpat@3.5.7-r0" in line
+
+
+def test_scout_agreeing_on_an_alpine_package_keeps_the_rebuild_hint(run):
+    scout = _sarif({"id": MIXED_CVE, "purl": "pkg:apk/alpine/libexpat@3.5.7-r0?os_name=alpine", "fixed": "3.5.8-r0"})
+    message, _, _ = run(trivy={"latest": _trivy(_vuln(MIXED_CVE, pkg="libexpat"))}, scout=scout, alerts=[])
+    [line] = [line for line in message.splitlines() if MIXED_CVE in line]
+    assert "fix: 3.5.8-r0, a release rebuild picks it up" in line
+    assert "Trivy latest, Docker Scout latest" in line
+
+
 # Owners of one advisory, most work first: (classifier action, lock still holds the flagged version).
-# "" is a Docker Scout, Dependabot or cargo audit finding, which carries no classifier action.
+# "" is a finding no classifier owns: a Dependabot alert, a cargo audit advisory, or a Docker Scout
+# finding outside an Alpine package.
 OWNERS_BY_WORK = [
     ("no-fix", False),
     ("permit-opa", False),
@@ -434,8 +464,8 @@ OWNERS_BY_WORK = [
     ("lock", True),
     ("pinned", False),
     ("lock", False),
-    ("rebuild", False),
     ("", False),
+    ("rebuild", False),
 ]
 
 
