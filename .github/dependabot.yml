@@ -34,6 +34,12 @@ updates:
       default-days: 7
       semver-major-days: 14
     groups:
+      # A ty release can report new diagnostics, and any diagnostic fails the required
+      # `pre-commit` check through the ty-check hook. Its own group keeps that red PR apart
+      # from the other bumps; Dependabot puts a dependency in the first group it matches, so
+      # this one has to stay above minor-and-patch.
+      ty:
+        patterns: ["ty"]
       minor-and-patch:
         update-types: ["minor", "patch"]
     ignore:

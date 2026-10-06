@@ -79,8 +79,9 @@ dev = [
     "PyYAML",
     # Here, unlike ruff, because it types third-party imports from the project's .venv; the
     # `ty-check` hook runs it with `uv run`. Pinned exactly: every ty release adds checks, so a
-    # lock refresh must not turn the required `pre-commit` check red on its own. Bump it
-    # deliberately and fix what the new version reports.
+    # lock refresh must not turn the required `pre-commit` check red on its own. Dependabot
+    # still proposes each bump, in its own `ty` group (.github/dependabot.yml) so a release
+    # that reports new diagnostics fails only that PR; fix what it reports there.
     "ty==0.0.84",
 ]
 
