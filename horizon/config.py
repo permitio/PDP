@@ -337,10 +337,25 @@ class SidecarConfig(Confi):
         cast=parse_callbacks,
         cast_from_json=parse_callbacks,
     )
+
+    @staticmethod
+    def parse_url_list(value: Any) -> list[str]:
+        try:
+            if isinstance(value, str):
+                return parse_raw_as(list[str], value)
+            return parse_obj_as(list[str], value)
+        except ValueError as e:
+            raise ValueError(
+                "PDP_IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS must be a JSON list of URLs, "
+                f'like ["http://host/path"]; got {value!r}'
+            ) from e
+
     IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS: list[str] = confi.str(
         "IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS",
         [],
-        description="List of callbacks urls to be ignored even if they are registered in the control plane",
+        description="JSON list of callback URLs to drop from the defaults, even if the control plane registers them",
+        cast=parse_url_list,
+        cast_from_json=parse_url_list,
     )
 
     # non configurable values -------------------------------------------------
