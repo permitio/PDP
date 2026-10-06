@@ -63,12 +63,19 @@ class DataUpdateSubscriber:
 
     async def publish(self, data_update: DataUpdate) -> bool:
         await asyncio.sleep(0)  # allow other wait task to run before publishing
+        client = self._updater._client
+        if client is None:
+            logger.warning(
+                f"Cannot publish data update id={data_update.id!r}: the OPAL data updater has no pub/sub client "
+                "yet (it creates one when it starts)"
+            )
+            return False
         topics = [topic for entry in data_update.entries for topic in entry.topics]
         logger.debug(
             f"Publishing data update with id={data_update.id!r} to topics {topics} as {self._notifier_id=}: "
             f"{data_update}"
         )
-        return await self._updater._client.publish(
+        return await client.publish(
             topics=topics,
             data=data_update.dict(),
             notifier_id=self._notifier_id,  # we fake a different notifier id to make the other side broadcast
@@ -86,6 +93,8 @@ class DataUpdateSubscriber:
         """
         if timeout == 0:
             return await self.publish(data_update)
+        if data_update.id is None:
+            raise ValueError("publish_and_wait needs a DataUpdate with an id: the wait ends on the report for that id")
 
         # Start waiting before publishing, to avoid the message being received before we start waiting
         wait_task = asyncio.create_task(
