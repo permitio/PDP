@@ -124,8 +124,9 @@ class OpalRelayAPIClient:
                     obj = RelayJWTResponse.parse_obj(await response.json())
                 except TypeError as e:
                     try:
+                        # json() above already read the body, so decoding it is all text() does here.
                         text = await response.text()
-                    except Exception:  # noqa: BLE001
+                    except UnicodeDecodeError:
                         text = None
 
                     raise RelayAPIError(
@@ -165,7 +166,7 @@ class OpalRelayAPIClient:
             if response.status != status.HTTP_202_ACCEPTED:
                 try:
                     text = await response.text()
-                except Exception:  # noqa: BLE001
+                except (aiohttp.ClientError, TimeoutError, UnicodeDecodeError):
                     text = None
 
                 raise RelayAPIError(
@@ -186,11 +187,17 @@ class OpalRelayAPIClient:
                     e.status_code,
                     e.service,
                 )
-            except Exception as e:  # noqa: BLE001
+            except (aiohttp.ClientError, TimeoutError) as e:
                 logger.warning(
-                    "Could not report uptime status to server: {}. This does not affect the PDP's operational state "
-                    "or data updates.",
-                    str(e),
+                    "Could not report uptime status to server: {}: {}. This does not affect the PDP's operational "
+                    "state or data updates.",
+                    type(e).__name__,
+                    e,
+                )
+            except Exception:  # noqa: BLE001 - keep the ping loop alive: log with traceback, retry next interval
+                logger.opt(exception=True).warning(
+                    "Could not report uptime status to server. This does not affect the PDP's operational state "
+                    "or data updates."
                 )
 
             await asyncio.sleep(sidecar_config.PING_INTERVAL)
