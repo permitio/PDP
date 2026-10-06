@@ -74,14 +74,25 @@ def test_update_policy_data_triggers_updater(pdp: MockPermitPDP, auth: dict[str,
     get_base.assert_awaited_once_with(data_fetch_reason="request from sdk (legacy alias)")
 
 
-def test_update_policy_data_returns_503_when_updater_disabled(pdp: MockPermitPDP, auth: dict[str, str], monkeypatch):
-    monkeypatch.setattr(pdp._opal, "data_updater", None)
+DISABLED_UPDATER_DETAILS = {
+    "policy_updater": "Policy Updater is currently disabled. Dynamic policy updates are not available.",
+    # Exact parity with the canonical data route (opal_client/data/api.py).
+    "data_updater": "Data Updater is currently disabled. Dynamic data updates are not available.",
+}
 
-    response = TestClient(pdp._app).post("/update_policy_data", headers=auth, follow_redirects=False)
+
+@pytest.mark.parametrize(
+    ("route", "updater"), [("/update_policy", "policy_updater"), ("/update_policy_data", "data_updater")]
+)
+def test_legacy_route_returns_503_when_its_updater_is_disabled(
+    pdp: MockPermitPDP, auth: dict[str, str], monkeypatch, route: str, updater: str
+):
+    monkeypatch.setattr(pdp._opal, updater, None)
+
+    response = TestClient(pdp._app).post(route, headers=auth, follow_redirects=False)
 
     assert response.status_code == 503
-    # Exact parity with the canonical data route (opal_client/data/api.py).
-    assert response.json()["detail"] == "Data Updater is currently disabled. Dynamic data updates are not available."
+    assert response.json()["detail"] == DISABLED_UPDATER_DETAILS[updater]
 
 
 def test_update_policy_data_rejects_unauthenticated(pdp: MockPermitPDP, monkeypatch):

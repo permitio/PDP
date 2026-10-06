@@ -642,6 +642,7 @@ class PermitPDP:
             "/policy-updater/trigger",
             status_code=status.HTTP_200_OK,
             response_model=TriggerResponse,
+            responses={503: {"description": "The policy updater is disabled on this PDP"}},
             tags=["Policy Updater"],
             dependencies=[Depends(enforce_pdp_token)],
             summary="Trigger a full policy reload",
@@ -656,13 +657,16 @@ class PermitPDP:
                 "call, within `PDP_TRIGGER_DEBOUNCE_SECONDS` (default 10s). Retrying sooner is "
                 "coalesced again and only adds load to the control plane.\n\n"
                 "This is a best-effort refresh, not a read-your-writes barrier: 200 means the "
-                "reload was dispatched, not that the new policy has been loaded."
+                "reload was dispatched, not that the new policy has been loaded.\n\n"
+                "Returns 503 if the policy updater is disabled on this PDP - a configuration "
+                "state, so retrying will not help."
             ),
         )
         async def trigger_policy_update() -> TriggerResponse:
             # The reload is dispatched, not awaited to completion: the underlying OPAL call only
             # enqueues onto the policy updater's queue. That was already true of the handler this
-            # replaces, so a 200 means the same thing it always did.
+            # replaces, so a 200 means the same thing it always did. A disabled policy updater
+            # returns 503, checked BEFORE the debouncer so a 503 never consumes the window.
             logger.info("triggered policy update from api")
             return TriggerResponse(triggered=await self._debounced_policy_reload())
 
@@ -710,13 +714,21 @@ class PermitPDP:
         """Dispatch a full policy reload through the shared policy debouncer.
 
         Backs both /policy-updater/trigger and the /update_policy legacy alias so they coalesce
-        against each other. No None-guard: the PDP never disables the policy updater.
+        against each other. Raises 503 when the policy updater is disabled (OPAL builds none when
+        OPAL_POLICY_UPDATER_ENABLED is false), checked BEFORE the debouncer so a 503 never consumes
+        the window.
 
         Returns True if this call dispatched a reload, False if it was coalesced.
         """
+        policy_updater = self._opal.policy_updater
+        if policy_updater is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Policy Updater is currently disabled. Dynamic policy updates are not available.",
+            )
 
         async def _run() -> None:
-            await self._opal.policy_updater.trigger_update_policy(force_full_update=True)  # ty: ignore[unresolved-attribute]  # never disabled, see docstring
+            await policy_updater.trigger_update_policy(force_full_update=True)
 
         return await self._policy_trigger_debounce.trigger(
             run=_run, window_seconds=sidecar_config.TRIGGER_DEBOUNCE_SECONDS
