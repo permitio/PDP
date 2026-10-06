@@ -122,7 +122,10 @@ def log_query_result(query: BaseSchema, response: Response):
             input=query.dict(),
             debug=debug,
         )
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - log-only: a result it cannot format is logged raw; never fail a decision
+        # Routine, not only for bad bodies: /user-permissions, /user-tenants and /authorized_users
+        # results carry neither "allow" nor "allowed_tenants", so those decisions are always logged
+        # raw. A body the endpoint cannot decode is logged with its traceback by its own fallback.
         try:
             body = str(response.body, "utf-8")
         except ValueError:
@@ -161,7 +164,7 @@ def log_query_result_kong(kong_input: KongAuthorizationInput, response: Response
             input=kong_input.dict(),
             debug=debug,
         )
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - log-only: a result it cannot format is logged raw; never fail a decision
         try:
             body = str(response.body, "utf-8")
         except ValueError:
@@ -300,7 +303,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
             response_json = json.loads(response.body)
             raw_result = response_json.get("result", {}).get("result", {})
             result = parse_obj_as(AuthorizedUsersResult, raw_result)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001 - fallback no users: OPA output is untrusted and must not 500
             result = AuthorizedUsersResult.empty(query.resource)
             logger.opt(exception=True).warning(
                 "authorized users (fallback response), response: {res}",
@@ -383,7 +386,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
         try:
             raw_result = json.loads(response.body).get("result", {})
             return parse_obj_as(UserPermissionsResult, raw_result.get("permissions", {}))
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001 - fallback no permissions: OPA output is untrusted and must not 500
             logger.opt(exception=True).warning(
                 "is allowed (fallback response)", reason=f"cannot decode opa response: {e}"
             )
@@ -413,7 +416,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
                 # Caught below on purpose: every malformed OPA result gets the same fallback.
                 raise TypeError(f"Expected raw result to be dict or list, got {type(raw_result)}")  # noqa: TRY301
             return parse_obj_as(UserTenantsResult, tenants)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001 - fallback no tenants: OPA output is untrusted and must not 500
             logger.opt(exception=True).warning(
                 "get user tenants (fallback response)",
                 reason=f"cannot decode opa response: {e}",
@@ -438,7 +441,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
             return AllTenantsAuthorizationResult(
                 allowed_tenants=raw_result.get("allowed_tenants", []),
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001 - fallback no tenants: OPA output is untrusted and must not 500
             logger.opt(exception=True).warning(
                 "is allowed (fallback response)", reason=f"cannot decode opa response: {e}"
             )
@@ -463,7 +466,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
             return BulkAuthorizationResult(
                 allow=raw_result.get("allow", []),
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001 - fallback empty bulk: OPA output is untrusted and must not 500
             logger.opt(exception=True).warning(
                 "is allowed (fallback response)", reason=f"cannot decode opa response: {e}"
             )
@@ -502,7 +505,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
                 "query": processed_query,
                 "debug": raw_result.get("debug", {}),
             }
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001 - fallback deny: OPA output is untrusted and must not 500
             logger.opt(exception=True).warning(
                 "is allowed (fallback response)", reason=f"cannot decode opa response: {e}"
             )
@@ -538,7 +541,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
                 "query": processed_query,
                 "debug": raw_result.get("debug", {}),
             }
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001 - fallback deny: OPA output is untrusted and must not 500
             logger.opt(exception=True).warning(
                 "is allowed (fallback response)", reason=f"cannot decode opa response: {e}"
             )
@@ -614,7 +617,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
             return {
                 "result": raw_result.get("allow", False),
             }
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001 - fallback deny: OPA output is untrusted and must not 500
             logger.opt(exception=True).warning(
                 "is allowed (fallback response)",
                 reason=f"cannot decode opa response: {e}",

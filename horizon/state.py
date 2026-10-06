@@ -107,7 +107,7 @@ class PersistentStateHandler:
                     self._prev_state_update_attempt = time.time()
                 self._state = new_state.copy()
                 self._save()
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:  # noqa: BLE001 - seen-SDK report runs inside requests: revert, never 500
                 logger.exception("Failed to update state: {}, reverting...", e)
                 self._state = prev_state
 

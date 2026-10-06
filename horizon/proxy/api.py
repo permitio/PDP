@@ -62,7 +62,7 @@ async def patch_handler(response: Response) -> Response:
 
         patch = parse_obj_as(list[JSONPatchAction], patch_json)
         await store.patch_data("", patch)
-    except Exception as ex:  # noqa: BLE001
+    except Exception as ex:  # noqa: BLE001 - the backend write already succeeded; a failed local patch must not 500
         logger.exception("Failed to update OPAL store with: {err}", err=ex)
 
     del response_json["patch"]

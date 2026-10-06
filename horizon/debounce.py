@@ -324,7 +324,7 @@ class DebouncedTrigger:
             except asyncio.CancelledError:
                 cancelled = True
                 raise
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 - background task: nobody awaits it, so any reload failure is logged here
                 logger.opt(exception=True).error(
                     "Trailing {} reload failed. The triggers it was serving were not applied; "
                     "the next trigger after the debounce window will retry.",
