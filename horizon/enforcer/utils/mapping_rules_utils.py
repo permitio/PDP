@@ -108,18 +108,7 @@ class MappingRulesUtils:
             logger.debug("regex url comparison", pattern=mapping_rule_url, url=request_url, matched=match_result)
             return match_result
 
-        # For traditional URL matching
-        try:
-            return cls._compare_httpurls(mapping_rule_url, request_url)
-        except Exception as e:  # noqa: BLE001
-            logger.warning(
-                "URL comparison failed - verify URL format and structure",
-                mapping_url=mapping_rule_url,
-                request_url=request_url,
-                error_message=str(e),
-                error_type=type(e).__name__,
-            )
-            return False
+        return cls._compare_httpurls(mapping_rule_url, request_url)
 
     @classmethod
     def extract_mapping_rule_by_request(
