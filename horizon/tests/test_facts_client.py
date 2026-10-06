@@ -1,6 +1,11 @@
+from collections.abc import Iterator
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from httpx import ByteStream, ResponseNotRead
+from httpx import Response as HttpxResponse
+from loguru import logger
 from starlette.requests import Request as FastApiRequest
 
 from horizon.facts.client import CONSISTENT_UPDATE_HEADER, FactsClient
@@ -80,3 +85,37 @@ async def test_send_forward_request_propagates_consistent_update_kwarg():
         assert mock_send.call_args is not None
         sent_request = mock_send.call_args.args[0]
         assert sent_request.headers.get("X-Permit-Consistent-Update") == "true"
+
+
+@pytest.fixture
+def logged_errors() -> Iterator[list[dict[str, Any]]]:
+    """Every loguru record at ERROR or above emitted during the test."""
+    records: list[dict[str, Any]] = []
+    sink_id = logger.add(lambda message: records.append(message.record), level="ERROR")
+    yield records
+    logger.remove(sink_id)
+
+
+def test_extract_body_returns_the_decoded_json():
+    assert FactsClient.extract_body(HttpxResponse(200, json={"id": "user-1"})) == {"id": "user-1"}
+
+
+@pytest.mark.parametrize(
+    "content",
+    [b"not json", b'{"truncated": ', b'{"key": "\xff"}'],
+    ids=["not-json", "truncated-json", "not-utf8"],
+)
+def test_extract_body_skips_the_wait_on_an_undecodable_body(content: bytes, logged_errors: list[dict[str, Any]]):
+    """A 2xx body that does not decode as JSON leaves nothing to wait for: None, logged with its traceback."""
+    assert FactsClient.extract_body(HttpxResponse(200, content=content)) is None
+    assert len(logged_errors) == 1
+    assert logged_errors[0]["exception"] is not None
+
+
+def test_extract_body_raises_on_a_streamed_response_nobody_read():
+    """Only an undecodable body is skipped. A streamed response that was never read is a caller bug,
+    so it must surface instead of silently skipping the wait for the update."""
+    response = HttpxResponse(200, stream=ByteStream(b"{}"))
+
+    with pytest.raises(ResponseNotRead):
+        FactsClient.extract_body(response)

@@ -137,7 +137,7 @@ class FactsClient:
             if response.status_code == status.HTTP_204_NO_CONTENT:
                 return None
             body = response.json()
-        except Exception:  # noqa: BLE001
+        except ValueError:
             logger.exception("Failed to parse response body as JSON, skipping wait for update.")
             return None
         else:
