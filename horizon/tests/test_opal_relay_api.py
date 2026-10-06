@@ -107,8 +107,8 @@ async def test_ping_loop_logs_expected_failures_in_one_line_and_anything_else_wi
     monkeypatch: pytest.MonkeyPatch,
 ):
     """An unreachable control plane, or a token response the PDP cannot use, repeats every interval, so
-    each stays one line. Any other failure keeps the loop alive too, but is logged with the traceback
-    that explains it."""
+    each stays one line, which says why. Any other failure keeps the loop alive too, but is logged with
+    the traceback that explains it."""
     monkeypatch.setattr(sidecar_config, "PING_INTERVAL", 0)
     _use_pdp_state(monkeypatch, iter([]))
     with aioresponses() as mocked:
@@ -127,7 +127,8 @@ async def test_ping_loop_logs_expected_failures_in_one_line_and_anything_else_wi
     transport_failure, unusable_token_response, unexpected_failure = logged_warnings[:3]
     assert "ClientConnectionError: connection refused" in transport_failure["message"]
     assert transport_failure["exception"] is None
-    assert "got status code 200 from relay-jwt-api" in unusable_token_response["message"]
+    reason = 'Server responded to token request with an invalid result: {"not_a_token": "x"}'
+    assert f"got status code 200 from relay-jwt-api: {reason}" in unusable_token_response["message"]
     assert unusable_token_response["exception"] is None
     assert unexpected_failure["exception"] is not None
     assert unexpected_failure["exception"].type is ValidationError
@@ -287,7 +288,7 @@ async def test_ping_with_a_bad_status_and_an_undecodable_body_still_raises_relay
     with aioresponses() as mocked:
         mocked.post(RELAY_JWT_URL, status=200, payload={"token": "header.payload.signature"})
         mocked.post(PING_URL, status=500, body=b"\xff\xfe", content_type="text/plain; charset=utf-8")
-        with pytest.raises(RelayAPIError) as excinfo:
+        with pytest.raises(RelayAPIError, match="Server responded to the ping with a bad status: None") as excinfo:
             await relay_client.send_ping()
 
     assert excinfo.value.service == "relay-api"

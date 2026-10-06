@@ -23,6 +23,7 @@ class RelayAPIError(Exception):
     def __init__(self, service: str, status_code: int, message: str):
         self.service = service
         self.status_code = status_code
+        self.reason = message
         self.message = f"Relay API exception from {service} of {status_code}: {message}"
         super().__init__(self.message)
 
@@ -183,7 +184,7 @@ class OpalRelayAPIClient:
                 raise RelayAPIError(
                     "relay-api",
                     response.status,
-                    f"Server responded to token request with a bad status: {text}",
+                    f"Server responded to the ping with a bad status: {text}",
                 )
         logger.debug("Sent ping.")
 
@@ -193,10 +194,11 @@ class OpalRelayAPIClient:
                 await self.send_ping()
             except RelayAPIError as e:
                 logger.warning(
-                    "Could not report uptime status to server: got status code {} from {}. "
+                    "Could not report uptime status to server: got status code {} from {}: {}. "
                     "This does not affect the PDP's operational state or data updates.",
                     e.status_code,
                     e.service,
+                    e.reason,
                 )
             except (aiohttp.ClientError, TimeoutError) as e:
                 logger.warning(
