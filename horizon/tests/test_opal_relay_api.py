@@ -69,38 +69,53 @@ def logged_warnings() -> Iterator[list["Record"]]:
     logger.remove(sink_id)
 
 
+def _relay_jwt(expires_at: float) -> str:
+    """A token whose claims carry `exp`, which is all the client reads from it."""
+    claims = base64.b64encode(json.dumps({"exp": int(expires_at)}).encode()).decode()
+    return f"header.{claims}.signature"
+
+
+def _use_pdp_state(monkeypatch: pytest.MonkeyPatch, runtime_states: Iterator[dict]) -> None:
+    """Give pings a PDP instance id and take their runtime states from ``runtime_states``. Once it runs
+    out, every runtime state is ``{}``, which PDPPingPlatformState does not validate."""
+    monkeypatch.setattr(
+        PersistentStateHandler, "_instance", SimpleNamespace(_state=SimpleNamespace(pdp_instance_id=uuid4()))
+    )
+    monkeypatch.setattr(PersistentStateHandler, "get_runtime_state", lambda: next(runtime_states, {}))
+
+
 @pytest.mark.asyncio
-async def test_ping_loop_logs_a_transport_failure_in_one_line_and_anything_else_with_a_traceback(
+async def test_ping_loop_logs_expected_failures_in_one_line_and_anything_else_with_a_traceback(
     relay_client: OpalRelayAPIClient,
     logged_warnings: list["Record"],
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """An unreachable control plane is routine and repeats every interval, so it stays one line. Any
-    other failure keeps the loop alive too, but is logged with the traceback that explains it."""
+    """An unreachable control plane, or a token response the PDP cannot use, repeats every interval, so
+    each stays one line. Any other failure keeps the loop alive too, but is logged with the traceback
+    that explains it."""
     monkeypatch.setattr(sidecar_config, "PING_INTERVAL", 0)
+    _use_pdp_state(monkeypatch, iter([]))
     with aioresponses() as mocked:
         mocked.post(RELAY_JWT_URL, exception=aiohttp.ClientConnectionError("connection refused"))
         mocked.post(RELAY_JWT_URL, status=200, payload={"not_a_token": "x"})
+        mocked.post(RELAY_JWT_URL, status=200, payload={"token": _relay_jwt(time.time() + 24 * 3600)})
         task = asyncio.create_task(relay_client._run())
         try:
             async with asyncio.timeout(5):
-                while len(logged_warnings) < 2:  # noqa: ASYNC110 - polls a log sink, not an asyncio primitive
+                while len(logged_warnings) < 3:  # noqa: ASYNC110 - polls a log sink, not an asyncio primitive
                     await asyncio.sleep(0)
         finally:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
 
-    transport_failure, unexpected_failure = logged_warnings[:2]
+    transport_failure, unusable_token_response, unexpected_failure = logged_warnings[:3]
     assert "ClientConnectionError: connection refused" in transport_failure["message"]
     assert transport_failure["exception"] is None
+    assert "got status code 200 from relay-jwt-api" in unusable_token_response["message"]
+    assert unusable_token_response["exception"] is None
     assert unexpected_failure["exception"] is not None
     assert unexpected_failure["exception"].type is ValidationError
-
-
-def _relay_jwt(expires_at: float) -> str:
-    """A token whose claims carry `exp`, which is all the client reads from it."""
-    claims = base64.b64encode(json.dumps({"exp": int(expires_at)}).encode()).decode()
-    return f"header.{claims}.signature"
+    assert "PDPPingPlatformState" in str(unexpected_failure["exception"].value)
 
 
 @pytest.mark.asyncio
@@ -112,14 +127,9 @@ async def test_ping_loop_logs_a_repeated_failure_with_its_traceback_once_until_a
     """The loop retries every PING_INTERVAL and some failures last until a restart, so a traceback each
     time would flood the log. The first failure of a type carries it; a successful ping starts over."""
     monkeypatch.setattr(sidecar_config, "PING_INTERVAL", 0)
-    monkeypatch.setattr(
-        PersistentStateHandler, "_instance", SimpleNamespace(_state=SimpleNamespace(pdp_instance_id=uuid4()))
-    )
-    # The first ping that gets this far is sent; every later one has a runtime state that does not validate.
-    runtime_states = iter([RUNTIME_STATE])
-    monkeypatch.setattr(PersistentStateHandler, "get_runtime_state", lambda: next(runtime_states, {}))
+    # Two pings fail on their runtime state, the third is sent, and every later one fails again.
+    _use_pdp_state(monkeypatch, iter([{}, {}, RUNTIME_STATE]))
     with aioresponses() as mocked:
-        mocked.post(RELAY_JWT_URL, status=200, payload={"not_a_token": "x"}, repeat=2)
         mocked.post(RELAY_JWT_URL, status=200, payload={"token": _relay_jwt(time.time() + 24 * 3600)})
         mocked.post(PING_URL, status=202)
         task = asyncio.create_task(relay_client._run())
@@ -135,11 +145,37 @@ async def test_ping_loop_logs_a_repeated_failure_with_its_traceback_once_until_a
     assert first["exception"] is not None
     assert first["exception"].type is ValidationError
     assert repeated["exception"] is None
-    assert "ValidationError: 1 validation error for RelayJWTResponse" in repeated["message"]
+    assert "ValidationError: 2 validation errors for PDPPingPlatformState" in repeated["message"]
     assert after_a_ping["exception"] is not None
     assert after_a_ping["exception"].type is ValidationError
     assert repeated_after_a_ping["exception"] is None
     assert "ValidationError" in repeated_after_a_ping["message"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "token_response",
+    [
+        {"payload": {"not_a_token": "x"}},
+        {"payload": [1]},
+        {"body": "", "content_type": "application/json"},
+        {"body": "not json", "content_type": "application/json"},
+        {"body": b"\xff\xfe", "content_type": "application/json"},
+        {"body": "<html>bad gateway</html>", "content_type": "text/html"},
+    ],
+    ids=["no-token", "not-an-object", "empty", "not-json", "not-utf8", "html"],
+)
+async def test_a_token_response_without_a_relay_jwt_raises_relay_api_error(
+    relay_client: OpalRelayAPIClient, token_response: dict
+):
+    """A 200 token response the PDP cannot use is a RelayAPIError, which the ping loop logs in one line."""
+    with aioresponses() as mocked:
+        mocked.post(RELAY_JWT_URL, status=200, **token_response)
+        with pytest.raises(RelayAPIError, match="invalid result") as excinfo:
+            await relay_client.relay_session()
+
+    assert excinfo.value.service == "relay-jwt-api"
+    assert excinfo.value.status_code == 200
 
 
 @pytest.mark.asyncio

@@ -126,7 +126,8 @@ class OpalRelayAPIClient:
                     )
                 try:
                     obj = RelayJWTResponse.parse_obj(await response.json())
-                except TypeError as e:
+                # ValueError covers pydantic's ValidationError and a body that is not JSON or not UTF-8.
+                except (ValueError, aiohttp.ContentTypeError) as e:
                     try:
                         # json() above already read the body, so decoding it is all text() does here.
                         text = await response.text()
@@ -209,7 +210,7 @@ class OpalRelayAPIClient:
     def _log_unexpected_ping_failure(self, error: Exception) -> None:
         """Log a ping failure no handler above expects, with a traceback the first time its type appears.
 
-        Some of these last until a restart, such as a relay-JWT body that does not validate, and the
+        Some of these last until a restart, such as a runtime state that does not validate, and the
         loop retries every PING_INTERVAL, so a traceback each time would flood the log. Later
         failures of the same type log one line until a ping succeeds.
         """
