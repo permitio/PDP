@@ -560,83 +560,6 @@ wheels = [
 ]
 
 [[package]]
-name = "horizon"
-version = "0.2.0"
-source = { virtual = "." }
-dependencies = [
-    { name = "aiohttp" },
-    { name = "cryptography" },
-    { name = "ddtrace" },
-    { name = "fastapi" },
-    { name = "fastapi-websocket-pubsub" },
-    { name = "fastapi-websocket-rpc" },
-    { name = "gitpython" },
-    { name = "gunicorn" },
-    { name = "httpx" },
-    { name = "jinja2" },
-    { name = "logzio-python-handler" },
-    { name = "opal-client" },
-    { name = "opal-common" },
-    { name = "protobuf" },
-    { name = "pydantic", extra = ["email"] },
-    { name = "requests" },
-    { name = "scalar-fastapi" },
-    { name = "starlette" },
-    { name = "tenacity" },
-    { name = "typer" },
-    { name = "urllib3" },
-    { name = "uvicorn", extra = ["standard"] },
-    { name = "websockets" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "aioresponses" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-timeout" },
-    { name = "pyyaml" },
-    { name = "ty" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiohttp", specifier = ">=3.14.3,<4" },
-    { name = "cryptography", specifier = ">=50.0.0,<51" },
-    { name = "ddtrace", specifier = "==3.19.8" },
-    { name = "fastapi", specifier = ">=0.124.0,<1" },
-    { name = "fastapi-websocket-pubsub", specifier = "==1.0.1" },
-    { name = "fastapi-websocket-rpc", specifier = "==0.1.29" },
-    { name = "gitpython", specifier = ">=3.1.59,<4" },
-    { name = "gunicorn", specifier = ">=23.0.0,<24" },
-    { name = "httpx", specifier = ">=0.27.0,<1" },
-    { name = "jinja2", specifier = ">=3.1.2,<4" },
-    { name = "logzio-python-handler" },
-    { name = "opal-client", specifier = "==0.9.6" },
-    { name = "opal-common", specifier = "==0.9.6" },
-    { name = "protobuf", specifier = ">=7.36.2" },
-    { name = "pydantic", extras = ["email"], specifier = ">=1.9.1,<2" },
-    { name = "requests", specifier = ">=2.32.4,<3" },
-    { name = "scalar-fastapi", specifier = "==1.8.2" },
-    { name = "starlette", specifier = "==0.50.0" },
-    { name = "tenacity", specifier = ">=8.0.1,<9" },
-    { name = "typer", specifier = ">=0.27.2,<1" },
-    { name = "urllib3", specifier = ">=2.8.0,<3" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.54.0,<1" },
-    { name = "websockets", specifier = "==17.0" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "aioresponses" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-timeout" },
-    { name = "pyyaml" },
-    { name = "ty", specifier = "==0.0.84" },
-]
-
-[[package]]
 name = "httpcore"
 version = "1.0.9"
 source = { registry = "https://pypi.org/simple" }
@@ -945,6 +868,83 @@ postgres = [
 ]
 redis = [
     { name = "asyncio-redis" },
+]
+
+[[package]]
+name = "permit-pdp"
+version = "0.2.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "cryptography" },
+    { name = "ddtrace" },
+    { name = "fastapi" },
+    { name = "fastapi-websocket-pubsub" },
+    { name = "fastapi-websocket-rpc" },
+    { name = "gitpython" },
+    { name = "gunicorn" },
+    { name = "httpx" },
+    { name = "jinja2" },
+    { name = "logzio-python-handler" },
+    { name = "opal-client" },
+    { name = "opal-common" },
+    { name = "protobuf" },
+    { name = "pydantic", extra = ["email"] },
+    { name = "requests" },
+    { name = "scalar-fastapi" },
+    { name = "starlette" },
+    { name = "tenacity" },
+    { name = "typer" },
+    { name = "urllib3" },
+    { name = "uvicorn", extra = ["standard"] },
+    { name = "websockets" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "aioresponses" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-timeout" },
+    { name = "pyyaml" },
+    { name = "ty" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", specifier = ">=3.14.3,<4" },
+    { name = "cryptography", specifier = ">=50.0.0,<51" },
+    { name = "ddtrace", specifier = "==3.19.8" },
+    { name = "fastapi", specifier = ">=0.124.0,<1" },
+    { name = "fastapi-websocket-pubsub", specifier = "==1.0.1" },
+    { name = "fastapi-websocket-rpc", specifier = "==0.1.29" },
+    { name = "gitpython", specifier = ">=3.1.59,<4" },
+    { name = "gunicorn", specifier = ">=23.0.0,<24" },
+    { name = "httpx", specifier = ">=0.27.0,<1" },
+    { name = "jinja2", specifier = ">=3.1.2,<4" },
+    { name = "logzio-python-handler" },
+    { name = "opal-client", specifier = "==0.9.6" },
+    { name = "opal-common", specifier = "==0.9.6" },
+    { name = "protobuf", specifier = ">=7.36.2" },
+    { name = "pydantic", extras = ["email"], specifier = ">=1.9.1,<2" },
+    { name = "requests", specifier = ">=2.32.4,<3" },
+    { name = "scalar-fastapi", specifier = "==1.8.2" },
+    { name = "starlette", specifier = "==0.50.0" },
+    { name = "tenacity", specifier = ">=8.0.1,<9" },
+    { name = "typer", specifier = ">=0.27.2,<1" },
+    { name = "urllib3", specifier = ">=2.8.0,<3" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.54.0,<1" },
+    { name = "websockets", specifier = "==17.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "aioresponses" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-timeout" },
+    { name = "pyyaml" },
+    { name = "ty", specifier = "==0.0.84" },
 ]
 
 [[package]]

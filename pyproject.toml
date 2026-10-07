@@ -1,5 +1,8 @@
 [project]
-name = "horizon"
+# The distribution name; the import package is still `horizon` (horizon/). Not "horizon": GitHub's
+# dependency graph matched that name to an unrelated PyPI project and raised its alerts here
+# (PER-16930). Nothing reads this name: the image and CI export the lock with --no-emit-project.
+name = "permit-pdp"
 version = "0.2.0"
 description = "The Python side of the Permit.io PDP: OPAL client, policy-store sync and the PDP API."
 # uv.lock is resolved for the interpreter the image ships (Dockerfile: python:3.13-alpine3.23)
