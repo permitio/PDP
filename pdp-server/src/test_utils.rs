@@ -7,6 +7,7 @@ use http::{Method, Request, StatusCode};
 use http_body_util::BodyExt;
 use log::LevelFilter;
 use serde::{de::DeserializeOwned, Serialize};
+use std::cell::RefCell;
 use tower::ServiceExt;
 use wiremock::matchers;
 use wiremock::Mock;
@@ -82,11 +83,7 @@ impl TestFixture {
     /// }
     /// ```
     pub async fn new() -> Self {
-        // Initialize test logger
-        let _ = env_logger::builder()
-            .filter_level(LevelFilter::Debug)
-            .is_test(true)
-            .try_init();
+        Self::setup_logger(LevelFilter::Debug);
 
         // Create mock servers
         let opa_mock = MockServer::start().await;
@@ -239,10 +236,14 @@ impl TestFixture {
     /// }
     /// ```
     pub fn setup_logger(level: LevelFilter) {
-        let _ = env_logger::builder()
+        let inner = env_logger::builder()
             .filter_level(level)
             .is_test(true)
-            .try_init();
+            .build();
+        let max_level = inner.filter();
+        if log::set_boxed_logger(Box::new(TestLogger { inner })).is_ok() {
+            log::set_max_level(max_level);
+        }
     }
 
     /// Creates a request builder with pre-configured headers.
@@ -705,5 +706,60 @@ impl TestResponse {
     #[allow(dead_code)]
     pub fn text(&self) -> String {
         String::from_utf8_lossy(&self.body).to_string()
+    }
+}
+
+thread_local! {
+    static CAPTURED_LOG_LINES: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
+}
+
+/// The logger [`TestFixture::setup_logger`] installs: env_logger, which prints through the test
+/// harness's output capture, plus the per-thread collection behind [`LogCapture`].
+struct TestLogger {
+    inner: env_logger::Logger,
+}
+
+impl log::Log for TestLogger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        self.inner.enabled(metadata)
+    }
+
+    fn log(&self, record: &log::Record) {
+        CAPTURED_LOG_LINES.with_borrow_mut(|lines| {
+            if let Some(lines) = lines {
+                lines.push(format!("{} {}", record.level(), record.args()));
+            }
+        });
+        self.inner.log(record);
+    }
+
+    fn flush(&self) {
+        self.inner.flush();
+    }
+}
+
+/// Collects the log lines emitted on the current thread, from [`LogCapture::start`] until it is
+/// dropped.
+///
+/// `#[tokio::test]` runs on a single-threaded runtime, so a request a test sends through a router
+/// with `oneshot` is handled on the test's thread and its log lines are the test's alone.
+pub struct LogCapture;
+
+impl LogCapture {
+    pub fn start() -> Self {
+        TestFixture::setup_logger(LevelFilter::Debug);
+        CAPTURED_LOG_LINES.set(Some(Vec::new()));
+        Self
+    }
+
+    /// Each line collected so far, as "LEVEL message".
+    pub fn lines(&self) -> Vec<String> {
+        CAPTURED_LOG_LINES.with_borrow(|lines| lines.clone().unwrap_or_default())
+    }
+}
+
+impl Drop for LogCapture {
+    fn drop(&mut self) {
+        CAPTURED_LOG_LINES.set(None);
     }
 }
