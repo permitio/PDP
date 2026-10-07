@@ -104,6 +104,14 @@ jobs:
           python -m pip install --dry-run --quiet --disable-pip-version-check \
             --require-hashes --no-deps --requirement "$RUNNER_TEMP/lock.txt"
 
+      # For horizon/tests/test_helm_chart.py, which renders and lints charts/pdp. Pinned so a
+      # Helm release cannot change the result on its own; the tests fail, not skip, when CI is set
+      # and helm is missing.
+      - name: Install Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.3.0
+
       - name: Run Pytests
         run: uv run --frozen pytest -s --cache-clear horizon/tests/
 

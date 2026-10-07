@@ -43,6 +43,28 @@ pdp:
       index: "<elasticsearch index>"
   debug_mode: false
 
+  # Pod scheduling, copied into the PDP pod spec as given. Empty values render nothing.
+  # Example - run only on a dedicated, tainted node pool:
+  #   nodeSelector:
+  #     pool: pdp
+  #   tolerations:
+  #     - key: "dedicated"
+  #       operator: "Equal"
+  #       value: "pdp"
+  #       effect: "NoSchedule"
+  #   affinity:
+  #     podAntiAffinity:
+  #       preferredDuringSchedulingIgnoredDuringExecution:
+  #         - weight: 100
+  #           podAffinityTerm:
+  #             topologyKey: kubernetes.io/hostname
+  #             labelSelector:
+  #               matchLabels:
+  #                 app: permitio-pdp
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
 podDisruptionBudget:
   # Automatically enabled when replicas > 1
   # Set minAvailable OR maxUnavailable (not both)
