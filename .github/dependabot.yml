@@ -83,6 +83,16 @@ updates:
       # exercises end to end. Majors stay manual; minors and patches are fine.
       - dependency-name: "websockets"
         update-types: ["version-update:semver-major"]
+      # opal-common and opal-client 0.9.9, the first final release after the 0.9.6 pinned in
+      # pyproject.toml, declare Requires-Python <3.13 and cannot run on the 3.13 image (see the
+      # note at that pin). uv ignores Requires-Python upper bounds when it locks, so Dependabot
+      # would still open the PR and only the pytests job's pip check would catch it. 0.10 stays
+      # in, so a release that lifts the bound still arrives as a PR. Drop these two once an
+      # OPAL 0.9.x release supports Python 3.13.
+      - dependency-name: "opal-common"
+        versions: [">=0.9.7, <0.10"]
+      - dependency-name: "opal-client"
+        versions: [">=0.9.7, <0.10"]
     commit-message:
       prefix: "deps"
       prefix-development: "deps-dev"
