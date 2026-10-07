@@ -9,7 +9,7 @@ import aiohttp
 import httpx
 import pytest
 from aioresponses import aioresponses
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.testclient import TestClient
 from loguru import logger
 from opal_client.client import OpalClient
@@ -17,7 +17,7 @@ from opal_client.config import opal_client_config
 from starlette import status
 
 from horizon.config import sidecar_config
-from horizon.enforcer.api import log_query_result, log_query_result_kong, stats_manager
+from horizon.enforcer.api import extract_pdp_api_key, log_query_result, log_query_result_kong, stats_manager
 from horizon.enforcer.schemas import (
     AuthorizationQuery,
     Resource,
@@ -134,6 +134,22 @@ def test_enforcer_endpoint_malformed_header_is_401_not_500(endpoint, value):
     client = TestClient(sidecar._app)
     response = client.post(endpoint, headers={"authorization": value}, json={})
     assert response.status_code == status.HTTP_401_UNAUTHORIZED
+    assert value.strip() not in response.text
+
+
+@pytest.mark.parametrize(
+    "authorization",
+    [f"Bearer {sidecar_config.API_KEY} trailing-part", sidecar_config.API_KEY],
+    ids=["three-parts", "no-scheme"],
+)
+def test_extract_pdp_api_key_401_does_not_repeat_the_header(authorization: str):
+    request = Request({"type": "http", "headers": [(b"authorization", authorization.encode())]})
+
+    with pytest.raises(HTTPException) as raised:
+        extract_pdp_api_key(request)
+
+    assert raised.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert raised.value.detail == "bad authz header"
 
 
 def test_health_endpoint_is_public(monkeypatch):

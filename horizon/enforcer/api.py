@@ -67,10 +67,7 @@ def extract_pdp_api_key(request: Request) -> str:
     authorization: str = request.headers.get(AUTHZ_HEADER, "")
     parts = authorization.split(" ")
     if len(parts) != AUTHZ_HEADER_PARTS:
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED,
-            detail=f"bad authz header: {authorization}",
-        )
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="bad authz header")
     schema, token = parts
     if schema.strip().lower() != "bearer":
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid PDP token")
