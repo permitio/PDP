@@ -140,12 +140,16 @@ class MappingRulesUtils:
     ) -> MappingRuleData | None:
         """The highest-priority mapping rule for the request's method and URL, or None if none matches.
 
+        Rules of equal priority keep their order in ``mapping_rules``.
+
         Raises:
-            ConflictingQueryParameterError: a rule for the method and path could match, but a query
+            ConflictingQueryParameterError: the rule that would come first could match, but a query
                 parameter it reads has more than one distinct value. The request then gets no rule at
-                all, rather than a lower-priority one that skips the parameter.
+                all, rather than a lower-priority one that skips the parameter. A conflict in a rule
+                that a matching rule outranks does not matter: that rule comes first whatever value
+                is read.
         """
-        matched_mapping_rules = []
+        candidates: list[tuple[MappingRuleData, ConflictingQueryParameterError | None]] = []
         http_method = http_method.lower()  # Convert once instead of in each iteration
 
         for mapping_rule in mapping_rules:
@@ -166,14 +170,19 @@ class MappingRulesUtils:
                 # if the method is not the same, we don't need to check the url
                 continue
 
-            if not cls._compare_urls(mapping_rule.url, url, is_regex=is_regex):
-                continue
+            try:
+                if not cls._compare_urls(mapping_rule.url, url, is_regex=is_regex):
+                    continue
+            except ConflictingQueryParameterError as conflict:
+                candidates.append((mapping_rule, conflict))
+            else:
+                candidates.append((mapping_rule, None))
 
-            matched_mapping_rules.append(mapping_rule)
-
-        # most priority first
-        matched_mapping_rules.sort(key=lambda rule: rule.priority or 0, reverse=True)
-        if len(matched_mapping_rules) > 0:
-            return matched_mapping_rules[0]
-
-        return None
+        if not candidates:
+            return None
+        # most priority first; the sort is stable, so equal priorities keep the rules' order
+        candidates.sort(key=lambda candidate: candidate[0].priority or 0, reverse=True)
+        first_rule, conflict = candidates[0]
+        if conflict is not None:
+            raise conflict
+        return first_rule

@@ -442,6 +442,25 @@ def test_allowed_url_with_conflicting_values_for_a_rule_query_parameter_is_not_a
     assert checks == []
 
 
+@pytest.mark.parametrize("tag_rule_first", [True, False], ids=["tag-rule-listed-first", "tag-rule-listed-last"])
+def test_allowed_url_checks_a_higher_priority_rule_that_reads_no_conflicting_parameter(
+    monkeypatch, *, tag_rule_first: bool
+):
+    """tag=x&tag=y could select the lower-priority tag rule, but the id rule comes first either way."""
+    tag_rule = {"url": DOCUMENTS_URL + "?tag=x", "http_method": "get", "action": "tag", "resource": "document"}
+    mapping_rules = [{**DOC_ID_RULE, "priority": 10}, {**tag_rule, "priority": 1}]
+    if tag_rule_first:
+        mapping_rules.reverse()
+
+    response, checks = _post_allowed_url(monkeypatch, DOCUMENTS_URL + "?id=7&tag=x&tag=y", mapping_rules)
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["allow"] is True
+    (check,) = checks
+    assert check["action"] == "read"
+    assert check["resource"]["attributes"] == {"doc_id": "7"}
+
+
 ALLOWED_ENDPOINTS = [
     (
         "/allowed",
