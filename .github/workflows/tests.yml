@@ -271,6 +271,15 @@ jobs:
   pdp-tester:
     runs-on: ubuntu-24.04
     needs: build-pdp-image
+    # One run at a time across the repository - PRs, pushes and releases, which reach this
+    # job through release.yml - because every run writes to the same staging environment and
+    # overlapping runs failed each other's sync cases (PER-16929). `queue: max` lets up to 100
+    # runs wait their turn. The default queue holds one, and a newer run cancels the one already
+    # waiting, which would leave another PR with a cancelled required check. GitHub rejects
+    # `queue: max` together with cancel-in-progress, so a running test always finishes.
+    concurrency:
+      group: pdp-tester-staging
+      queue: max
     # Cap the run so a hung tester fails fast instead of holding the runner
     # until GitHub's 360-minute default. The old k3d path was bounded by
     # `kubectl wait --timeout=600s`; the tester's own max_running_time only
