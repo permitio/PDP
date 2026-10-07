@@ -1,6 +1,7 @@
 # TODO: change to use re2 in the future, currently not supported in alpine due to c++ library issues
 # import re2 as re  # use re2 instead of re for regex matching because it's simiplier and safer for user inputted regexes  # noqa: ERA001,E501
 import re
+from urllib.parse import parse_qsl
 
 from loguru import logger
 from pydantic import AnyHttpUrl
@@ -13,7 +14,8 @@ class ConflictingQueryParameterError(ValueError):
     """A query parameter a mapping rule reads has more than one distinct value in the requested URL.
 
     Which value the protected app reads for such a parameter is up to the app, so the PDP cannot
-    tell which rule applies or which attribute value to check.
+    tell which rule applies or which attribute value to check. For a regex rule, the parameter is one
+    whose value can change whether the rule matches or what its named groups capture.
     """
 
     def __init__(self, key: str):
@@ -115,8 +117,16 @@ class MappingRulesUtils:
 
     @classmethod
     def _compare_urls(cls, mapping_rule_url: str, request_url: str, *, is_regex: bool = False) -> bool:
-        """
-        Compare a mapping rule URL against a request URL.
+        """Whether the request URL matches the mapping rule URL.
+
+        A regex rule is matched against the raw URL, so which query parameters it reads is unknown. When
+        a parameter has more than one distinct value, the rule is also matched against the URL as an app
+        reading the first value and as one reading the last value of each such parameter.
+
+        Raises:
+            ConflictingQueryParameterError: the rule could match, but whether it does, or what it reads,
+                depends on which value of a repeated query parameter is read. For a regex rule the error
+                names the first parameter with more than one distinct value.
         """
         # If the mapping rule is a regex pattern
         if is_regex:
@@ -125,11 +135,56 @@ class MappingRulesUtils:
             except re.error as e:
                 logger.warning("regex pattern compilation failed", pattern=mapping_rule_url, error=str(e))
                 return False
-            match_result = bool(pattern.match(request_url))
-            logger.debug("regex url comparison", pattern=mapping_rule_url, url=request_url, matched=match_result)
-            return match_result
+            groups = cls._regex_match_groups(pattern, request_url)
+            logger.debug("regex url comparison", pattern=mapping_rule_url, url=request_url, matched=groups is not None)
+            readings = cls._first_and_last_value_readings(request_url)
+            if readings is not None:
+                key, reading_urls = readings
+                if any(cls._regex_match_groups(pattern, reading_url) != groups for reading_url in reading_urls):
+                    raise ConflictingQueryParameterError(key)
+            return groups is not None
 
         return cls._compare_httpurls(mapping_rule_url, request_url)
+
+    @staticmethod
+    def _regex_match_groups(pattern: re.Pattern[str], url: str) -> dict[str, str | None] | None:
+        """The named groups of the pattern's match at the start of the URL, or None if it does not match."""
+        match = pattern.match(url)
+        return match.groupdict() if match else None
+
+    @staticmethod
+    def _first_and_last_value_readings(request_url: str) -> tuple[str, tuple[str, str]] | None:
+        """The request URL as an app reading the first, and as one reading the last, value of each query
+        parameter that has more than one distinct value.
+
+        Each reading drops the occurrences of such a parameter that carry another value and keeps the
+        rest of the URL as it was, so a pattern sees the same characters as in the original.
+
+        Returns:
+            The first parameter with more than one distinct value and the two readings, or None if no
+            parameter has more than one distinct value.
+        """
+        path, separator, query = request_url.partition("?")
+        if not separator:
+            return None
+        segments = [(segment, parse_qsl(segment, keep_blank_values=True)) for segment in query.split("&")]
+        values_by_key: dict[str, list[str]] = {}
+        for _, pairs in segments:
+            for key, value in pairs:
+                values_by_key.setdefault(key, []).append(value)
+        kept_values = {key: (values[0], values[-1]) for key, values in values_by_key.items() if len(set(values)) > 1}
+        if not kept_values:
+            return None
+
+        def reading(position: int) -> str:
+            kept_segments = [
+                segment
+                for segment, pairs in segments
+                if all(key not in kept_values or value == kept_values[key][position] for key, value in pairs)
+            ]
+            return f"{path}?{'&'.join(kept_segments)}"
+
+        return next(iter(kept_values)), (reading(0), reading(1))
 
     @classmethod
     def extract_mapping_rule_by_request(

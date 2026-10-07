@@ -465,6 +465,37 @@ def test_allowed_url_checks_a_higher_priority_rule_that_reads_no_conflicting_par
     assert check["resource"]["attributes"] == {"doc_id": "7"}
 
 
+DOC_ID_REGEX_RULE = {
+    "url": r"^https://api\.example\.com/documents\?id=(?P<doc_id>\d+)",
+    "url_type": "regex",
+    "http_method": "get",
+    "action": "read",
+    "resource": "document",
+}
+
+
+def test_allowed_url_checks_the_value_a_regex_rule_captures(monkeypatch):
+    response, checks = _post_allowed_url(monkeypatch, DOCUMENTS_URL + "?id=7&tag=a&tag=b", [DOC_ID_REGEX_RULE])
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["allow"] is True
+    (check,) = checks
+    assert check["resource"]["attributes"] == {"doc_id": "7"}
+
+
+@pytest.mark.parametrize(
+    "query_string", ["?id=7&id=8", "?id=8&id=7"], ids=["captured-value-first", "captured-value-last"]
+)
+def test_allowed_url_with_conflicting_values_for_a_regex_rule_is_not_allowed(monkeypatch, query_string: str):
+    response, checks = _post_allowed_url(monkeypatch, DOCUMENTS_URL + query_string, [DOC_ID_REGEX_RULE])
+
+    assert response.status_code == status.HTTP_200_OK
+    body = response.json()
+    assert body["allow"] is False
+    assert body["debug"] == {"reason": "Query parameter 'id' has more than one distinct value in the requested URL"}
+    assert checks == []
+
+
 ALLOWED_ENDPOINTS = [
     (
         "/allowed",
