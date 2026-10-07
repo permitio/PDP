@@ -21,7 +21,7 @@ from opal_client.config import (
     opal_common_config,
 )
 from opal_client.engine.options import OpaServerOptions
-from opal_common.confi import Confi
+from opal_common.confi import Confi, UndefinedValueError, cast_boolean
 from opal_common.fetcher.providers.http_fetch_provider import (
     HttpFetcherConfig,
     HttpMethods,
@@ -164,6 +164,54 @@ def apply_config(overrides_dict: dict, config_object: Confi):
         logger.warning(f"Ignored non-existing config key: {prefixed_key}")
 
 
+DECISION_LOG_ENABLED_KEY = "OPA_DECISION_LOG_ENABLED"
+
+
+def apply_pdp_overrides(overrides_dict: dict) -> None:
+    """Apply the control plane's PDP config overrides to ``sidecar_config``.
+
+    The control plane sends the same ``OPA_DECISION_LOG_ENABLED`` to every PDP. When
+    ``PDP_OPA_DECISION_LOG_ENABLED`` is set to a boolean in this PDP's environment, the local
+    value is kept and that one override is skipped. An empty or non-boolean value is logged as a
+    warning and the control plane's value is used. Which of the two values is used is logged.
+
+    Args:
+        overrides_dict: the ``pdp`` section of the remote config.
+    """
+    overrides = dict(overrides_dict)
+    if DECISION_LOG_ENABLED_KEY in overrides:
+        env_name = sidecar_config._prefix_key(DECISION_LOG_ENABLED_KEY)
+        remote_value = overrides[DECISION_LOG_ENABLED_KEY]
+        local_text = os.environ.get(env_name)
+        if local_text is None:
+            logger.info(
+                "{env_name} is not set for this PDP; using the control plane's value ({remote}).",
+                env_name=env_name,
+                remote=remote_value,
+            )
+        else:
+            try:
+                local_value = cast_boolean(local_text)
+            except UndefinedValueError:
+                logger.warning(
+                    "{env_name} is set to {local!r}, which is not true, false, 1 or 0; "
+                    "using the control plane's value ({remote}).",
+                    env_name=env_name,
+                    local=local_text,
+                    remote=remote_value,
+                )
+            else:
+                del overrides[DECISION_LOG_ENABLED_KEY]
+                logger.info(
+                    "{env_name} is set for this PDP ({local}); "
+                    "using it instead of the control plane's value ({remote}).",
+                    env_name=env_name,
+                    local=local_value,
+                    remote=remote_value,
+                )
+    apply_config(overrides, sidecar_config)
+
+
 # Declared as a ``response_model`` (rather than left as a bare dict) because the trigger routes'
 # customer-facing OpenAPI description tells integrators to branch on ``triggered``: without one,
 # FastAPI publishes an empty 200 schema, so the prose would reference a field the machine-readable
@@ -295,7 +343,7 @@ class PermitPDP:
 
         apply_config(remote_config.opal_common or {}, opal_common_config)
         apply_config(remote_config.opal_client or {}, opal_client_config)
-        apply_config(remote_config.pdp or {}, sidecar_config)
+        apply_pdp_overrides(remote_config.pdp or {})
 
         self._log_environment(remote_config.context)
 

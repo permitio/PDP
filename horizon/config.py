@@ -245,7 +245,9 @@ class SidecarConfig(Confi):
     OPA_DECISION_LOG_ENABLED = confi.bool(
         "OPA_DECISION_LOG_ENABLED",
         True,
-        description="if true, OPA decision logs will be uploaded to the Permit.io cloud console",
+        description="if true, OPA decision logs will be uploaded to the Permit.io cloud console. "
+        "The control plane also sends this setting; a value set in the PDP's environment takes "
+        "precedence over it",
     )
     OPA_DECISION_LOG_CONSOLE = confi.bool(
         "OPA_DECISION_LOG_CONSOLE",
