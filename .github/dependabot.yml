@@ -16,15 +16,15 @@
 # scheduled-security-scan.yml, and the two are complementary rather than alternatives.
 # See docs/image-vulnerability-management.md.
 #
-# `cooldown` note: default-days is supported on all four ecosystems below, but the
+# `cooldown` note: default-days is supported on every ecosystem below, but the
 # semver-specific knobs (semver-major-days etc.) are only supported on semver-strict
-# ecosystems - pip and cargo here, NOT docker or github-actions. The cooldown is not
+# ecosystems - uv and cargo here, NOT docker, github-actions or pre-commit. The cooldown is not
 # noise reduction, it is supply-chain defence: most malicious-release incidents are
 # caught within a week. Security updates are never delayed by cooldown.
 version: 2
 updates:
-  # Python dependencies (requirements.txt drives the image build)
-  - package-ecosystem: "pip"
+  # Python dependencies: pyproject.toml and uv.lock (the image installs the lock)
+  - package-ecosystem: "uv"
     directory: "/"
     schedule:
       interval: "weekly"
@@ -34,12 +34,18 @@ updates:
       default-days: 7
       semver-major-days: 14
     groups:
+      # A ty release can report new diagnostics, and any diagnostic fails the required
+      # `pre-commit` check through the ty-check hook. Its own group keeps that red PR apart
+      # from the other bumps; Dependabot puts a dependency in the first group it matches, so
+      # this one has to stay above minor-and-patch.
+      ty:
+        patterns: ["ty"]
       minor-and-patch:
         update-types: ["minor", "patch"]
     ignore:
       # starlette and ddtrace are CAPPED BY OPAL, not by us: opal-common/opal-client
       # 0.9.6 require `starlette<1` and `ddtrace<4,>=3.0.0`. Both are pinned exactly in
-      # requirements.txt so the OpenVEX/trivyignore waiver PURLs stay bound to a known
+      # pyproject.toml so the OpenVEX/trivyignore waiver PURLs stay bound to a known
       # version, and the CVEs that would be fixed by upgrading (starlette CVE-2026-48818,
       # CVE-2026-54283, CVE-2026-48710 and CVE-2026-48817; ddtrace CVE-2026-50271) are
       # waived as unreachable instead.
@@ -50,7 +56,7 @@ updates:
       # merge.
       #
       # Removal gate: drop these two entries the moment opal-common relaxes its caps.
-      # At that point also delete the exact pins in requirements.txt, the five
+      # At that point also delete the exact pins in pyproject.toml, the five
       # .trivyignore.yaml entries, the matching OpenVEX statements, and the
       # DD_TRACE_PROPAGATION_STYLE_EXTRACT override in the Dockerfile - they are one
       # change, not five. See PER-15358.
@@ -66,10 +72,10 @@ updates:
       - dependency-name: "scalar-fastapi"
         versions: [">=1.9.0"]
       # fastapi 0.126.0 and later require pydantic>=2.7, so 0.125.x is the ceiling under the
-      # same OPAL pydantic<2 cap (see the fastapi note in requirements.txt).
+      # same OPAL pydantic<2 cap (see the fastapi note in pyproject.toml).
       - dependency-name: "fastapi"
         versions: [">=0.126.0"]
-      # websockets is pinned exactly and bumped BY HAND on purpose. requirements.txt
+      # websockets is pinned exactly and bumped BY HAND on purpose. pyproject.toml
       # records why: during review of #329 the validated build shipped 16.1.1 and 17.0
       # published hours later, so the next rebuild would have carried an unvalidated
       # major straight into a release. The cooldown above narrows that window but does
@@ -100,7 +106,7 @@ updates:
 
   # GitHub Actions versions
   # Note: cooldown.semver-major-days is not supported for github-actions
-  # (Dependabot only supports it on semver-strict ecosystems like pip and cargo).
+  # (Dependabot only supports it on semver-strict ecosystems like uv and cargo).
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
@@ -118,7 +124,7 @@ updates:
 
   # Docker base images
   # Note: cooldown.semver-major-days is not supported for docker
-  # (Dependabot only supports it on semver-strict ecosystems like pip and cargo).
+  # (Dependabot only supports it on semver-strict ecosystems like uv and cargo).
   #
   # This entry only earns its place because the Dockerfile now pins base images BY
   # DIGEST. Against a floating tag like `python:3.13-alpine3.23`, Dependabot has

@@ -1,14 +1,22 @@
 import asyncio
+import json
 import random
+from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING
 
 import aiohttp
 import pytest
 from aioresponses import aioresponses
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.testclient import TestClient
+from loguru import logger
+from opal_client.client import OpalClient
+from opal_client.config import opal_client_config
+from starlette import status
+
 from horizon.config import sidecar_config
-from horizon.enforcer.api import stats_manager
+from horizon.enforcer.api import log_query_result, log_query_result_kong, stats_manager
 from horizon.enforcer.schemas import (
     AuthorizationQuery,
     Resource,
@@ -17,11 +25,11 @@ from horizon.enforcer.schemas import (
     UserPermissionsQuery,
     UserTenantsQuery,
 )
+from horizon.enforcer.schemas_kong import KongAuthorizationInput
 from horizon.pdp import PermitPDP
-from loguru import logger
-from opal_client.client import OpalClient
-from opal_client.config import opal_client_config
-from starlette import status
+
+if TYPE_CHECKING:
+    from loguru import Record
 
 
 class MockPermitPDP(PermitPDP):
@@ -42,7 +50,7 @@ sidecar = MockPermitPDP()
 
 
 @asynccontextmanager
-async def pdp_api_client() -> TestClient:
+async def pdp_api_client() -> AsyncIterator[TestClient]:
     _client = TestClient(sidecar._app)
     await stats_manager.run()
     yield _client
@@ -78,6 +86,10 @@ MALFORMED_AUTH_HEADERS = [
     f"Basic {sidecar_config.API_KEY}",  # right secret, wrong scheme -> must still 401
     f"basic {sidecar_config.API_KEY}",  # ... and lowercasing the scheme must not help either
 ]
+
+# Nested deeper than json.loads can decode: it raises RecursionError, which is not a ValueError. Kept
+# under aiohttp's 128 KiB stream buffer, which a larger body mocked by aioresponses overflows.
+DEEPLY_NESTED_OPA_BODY = '{"result": ' + "[" * 30_000 + "]" * 30_000 + "}"
 
 KONG_QUERY = {
     "input": {
@@ -141,7 +153,9 @@ def test_kong_endpoint_valid_token_integration_disabled_returns_503():
     assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
 
 
-def test_kong_endpoint_enabled_integration_allowed_flow(tmp_path, monkeypatch):
+@pytest.fixture
+def kong_client(tmp_path, monkeypatch) -> TestClient:
+    """A PDP app built with the Kong integration on, routing /resource1/* to resource1."""
     routes_file = tmp_path / "kong_routes.json"
     routes_file.write_text('[["^/resource1/.*$", "resource1"]]')
     monkeypatch.setattr("horizon.enforcer.api.KONG_ROUTES_TABLE_FILE", str(routes_file))
@@ -155,10 +169,11 @@ def test_kong_endpoint_enabled_integration_allowed_flow(tmp_path, monkeypatch):
     # isolate the shared stats queue so this test's OPA calls don't leak into the statistics tests
     monkeypatch.setattr(stats_manager, "_messages", asyncio.Queue())
 
-    kong_sidecar = MockPermitPDP()
-    client = TestClient(kong_sidecar._app)
+    return TestClient(MockPermitPDP()._app)
 
-    response = client.post("/kong", json=KONG_QUERY)
+
+def test_kong_endpoint_enabled_integration_allowed_flow(kong_client):
+    response = kong_client.post("/kong", json=KONG_QUERY)
     assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
     with aioresponses() as m:
@@ -167,13 +182,130 @@ def test_kong_endpoint_enabled_integration_allowed_flow(tmp_path, monkeypatch):
             status=200,
             payload={"result": {"allow": True}},
         )
-        response = client.post(
+        response = kong_client.post(
             "/kong",
             headers={"authorization": f"Bearer {sidecar_config.API_KEY}"},
             json=KONG_QUERY,
         )
     assert response.status_code == status.HTTP_200_OK
     assert response.json() == {"result": True}
+
+
+@pytest.mark.parametrize(
+    "opa_response",
+    [
+        {"payload": {"result": []}},
+        {"payload": {"result": None}},
+        {"body": "not json"},
+        {"body": DEEPLY_NESTED_OPA_BODY},
+    ],
+    ids=["result-is-a-list", "result-is-null", "body-is-not-json", "body-is-nested-too-deeply"],
+)
+def test_kong_endpoint_undecodable_opa_result_denies_with_200(kong_client, opa_response):
+    """An OPA answer the decision log cannot read sends it to its fallback branch, which
+    must log and return; the endpoint then denies instead of failing the request."""
+    with aioresponses() as m:
+        m.post(f"{opal_client_config.POLICY_STORE_URL}/v1/data/permit/root", status=200, **opa_response)
+        response = kong_client.post(
+            "/kong",
+            headers={"authorization": f"Bearer {sidecar_config.API_KEY}"},
+            json=KONG_QUERY,
+        )
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json() == {"result": False}
+
+
+def test_kong_decision_log_names_a_missing_consumer_instead_of_raising():
+    without_consumer = KongAuthorizationInput.parse_obj(
+        {key: value for key, value in KONG_QUERY["input"].items() if key != "consumer"}
+    )
+    messages: list[str] = []
+    sink_id = logger.add(lambda message: messages.append(message.record["message"]), level="INFO")
+    try:
+        log_query_result_kong(without_consumer, Response(content=b'{"result": {"allow": false}}'))
+    finally:
+        logger.remove(sink_id)
+
+    assert any("(None, GET, /resource1/some-id)" in message for message in messages)
+
+
+@pytest.fixture
+def logged_records() -> Iterator[list["Record"]]:
+    """Every loguru record at INFO or above emitted during the test."""
+    records: list[Record] = []
+    sink_id = logger.add(lambda message: records.append(message.record), level="INFO")
+    yield records
+    logger.remove(sink_id)
+
+
+DECISION_QUERY = AuthorizationQuery(user=User(key="user1"), action="read", resource=Resource(type="doc"))
+
+
+def test_decision_log_shows_an_allow_decision(logged_records: list["Record"]):
+    log_query_result(DECISION_QUERY, Response(content=b'{"result": {"allow": true}}'))
+
+    [record] = logged_records
+    assert "is allowed = True" in record["message"]
+    assert record["exception"] is None
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b'{"result": {"permissions": {"tenant:t1": {"permissions": ["doc:read"]}}}}',
+        b'{"result": {"tenants": []}}',
+        b'{"result": [1]}',
+        b"not json",
+        DEEPLY_NESTED_OPA_BODY.encode(),
+    ],
+    ids=["user-permissions", "user-tenants", "result-is-a-list", "body-is-not-json", "body-is-nested-too-deeply"],
+)
+def test_decision_log_logs_a_result_without_a_decision_raw_in_one_line(logged_records: list["Record"], body: bytes):
+    """Routine for /user-permissions, /user-tenants and /authorized_users, whose results carry no
+    "allow" or "allowed_tenants": one INFO line with the body, no warning and no traceback."""
+    log_query_result(DECISION_QUERY, Response(content=body))
+
+    [record] = logged_records
+    assert record["level"].name == "INFO"
+    assert record["message"] == "is allowed"
+    assert record["extra"]["response_body"] == body.decode()
+    assert record["exception"] is None
+
+
+@pytest.mark.parametrize(
+    "body",
+    [b'{"result": {"allow": [1]}}', b'{"result": {"allowed_tenants": [1]}}'],
+    ids=["bulk", "all-tenants"],
+)
+def test_decision_log_that_fails_to_format_a_decision_logs_the_traceback(logged_records: list["Record"], body: bytes):
+    """A result with a decision that the log line cannot format points to a bug, so it is logged with
+    its traceback, and the decision is still logged raw."""
+    log_query_result(DECISION_QUERY, Response(content=body))
+
+    warning, raw = logged_records
+    assert warning["level"].name == "WARNING"
+    assert warning["exception"] is not None
+    assert warning["exception"].type is AttributeError
+    assert raw["message"] == "is allowed"
+    assert raw["extra"]["response_body"] == body.decode()
+
+
+def test_allowed_with_an_opa_body_nested_too_deeply_to_decode_denies_with_200(monkeypatch):
+    """The decision log must not fail the request on a body the endpoint's own fallback answers."""
+    with pytest.raises(RecursionError):
+        json.loads(DEEPLY_NESTED_OPA_BODY)
+    monkeypatch.setattr(stats_manager, "_messages", asyncio.Queue())
+    client = TestClient(sidecar._app)
+    with aioresponses() as m:
+        m.post(f"{opal_client_config.POLICY_STORE_URL}/v1/data/permit/root", status=200, body=DEEPLY_NESTED_OPA_BODY)
+        response = client.post(
+            "/allowed",
+            headers={"authorization": f"Bearer {sidecar_config.API_KEY}"},
+            json=DECISION_QUERY.dict(),
+        )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json() == {"allow": False, "result": False}
 
 
 def test_authorized_users_endpoint_valid_token_allowed_flow(monkeypatch):
@@ -215,6 +347,23 @@ def test_nginx_allowed_endpoint_valid_token_allowed_flow(monkeypatch):
         )
     assert response.status_code == status.HTTP_200_OK
     assert response.json()["allow"] is True
+
+
+@pytest.mark.parametrize("missing", ["permit-user-key", "permit-action", "permit-resource-type"])
+def test_nginx_allowed_without_a_required_header_is_422_and_never_asks_opa(monkeypatch, missing: str):
+    monkeypatch.setattr(stats_manager, "_messages", asyncio.Queue())
+    headers = {
+        "authorization": f"Bearer {sidecar_config.API_KEY}",
+        "permit-user-key": "user1",
+        "permit-action": "read",
+        "permit-resource-type": "resource1",
+    }
+    del headers[missing]
+    with aioresponses() as m:
+        response = TestClient(sidecar._app).post("/nginx_allowed", headers=headers)
+        assert not m.requests
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+    assert [error["loc"] for error in response.json()["detail"]] == [["header", missing]]
 
 
 ALLOWED_ENDPOINTS = [
@@ -871,7 +1020,7 @@ ALLOWED_ENDPOINTS = [
 
 
 @pytest.mark.parametrize(
-    "endpoint, opa_endpoint, query, opa_response, expected_response",
+    ("endpoint", "opa_endpoint", "query", "opa_response", "expected_response"),
     list(filter(lambda p: not isinstance(p[2], UrlAuthorizationQuery), ALLOWED_ENDPOINTS)),
 )
 @pytest.mark.timeout(30)
@@ -956,7 +1105,7 @@ async def test_enforce_endpoint_statistics(
             assert client.get("/health").status_code == status.HTTP_503_SERVICE_UNAVAILABLE
 
 
-@pytest.mark.parametrize("endpoint, opa_endpoint, query, opa_response, expected_response", ALLOWED_ENDPOINTS)
+@pytest.mark.parametrize(("endpoint", "opa_endpoint", "query", "opa_response", "expected_response"), ALLOWED_ENDPOINTS)
 def test_enforce_endpoint(
     endpoint,
     opa_endpoint,

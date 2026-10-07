@@ -14,16 +14,23 @@ Fail-closed and always-exit-0 are both required here and they do not conflict: a
 unparseable report writes ``parse_ok=false`` and renders a loud red body, then exits 0.
 Exiting non-zero would skip the comment step and leave the PR silent, which is the one
 outcome worse than a red comment. The blocking decision belongs to the workflow's
-separate fail step, which fails on ``parse_ok != 'true'``.
+separate fail step, which fails on ``parse_ok != 'true'``. A Trivy report that parses but
+is not laid out as Trivy's JSON format - ``{}``, a SARIF file, an entry that is not an
+object - is unparseable in that sense too: classify_image_cves.py defines the layout, and
+this gate refuses whatever the classifier refuses.
 """
 
 from __future__ import annotations
 
 import argparse
+import functools
+import importlib.util
 import json
 import os
 import re
+import traceback
 from pathlib import Path
+from types import ModuleType
 
 MARKER = "<!-- pdp-image-scan -->"
 SEVERITY_RANK = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "UNKNOWN": 4}
@@ -39,6 +46,29 @@ _CVE_ID = re.compile(r"^CVE-\d{4}-\d+$")
 # progressively smaller per-table row caps until it fits; ``None`` means "no cap".
 MAX_BODY_CHARS = 65000
 ROW_CAPS: tuple[int | None, ...] = (None, 200, 50, 10, 0)
+
+
+CLASSIFIER = Path(__file__).resolve().parent / "classify_image_cves.py"
+
+
+@functools.cache
+def load_classifier() -> ModuleType:
+    """Load classify_image_cves.py by path on first use, since .github/scripts is not a package.
+
+    Not at import: :func:`read_trivy` reads a classifier that cannot load as an unusable Trivy
+    report, so the gate still writes ``parse_ok=false`` and its red comment rather than
+    crashing before either.
+
+    Raises:
+        FileNotFoundError: The file is missing.
+        Exception: Whatever running the file raises, such as a SyntaxError.
+    """
+    spec = importlib.util.spec_from_file_location("classify_image_cves", CLASSIFIER)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"{CLASSIFIER} cannot be loaded as a module")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def escape_cell(text: object) -> str:
@@ -109,9 +139,11 @@ def _omitted_note(dropped: int) -> list[str]:
         return []
     return [
         "",
-        f"_... and {dropped} more finding(s), omitted to fit GitHub's 65,536-character "
-        f"comment limit. The full set is in this run's scan step logs and in the SARIF "
-        f"report uploaded to code scanning._",
+        (
+            f"_... and {dropped} more finding(s), omitted to fit GitHub's 65,536-character "
+            f"comment limit. The full set is in this run's scan step logs and in the SARIF "
+            f"report uploaded to code scanning._"
+        ),
     ]
 
 
@@ -141,40 +173,71 @@ def read_json(path: Path | None) -> tuple[dict | None, str]:
     return data, ""
 
 
+def read_trivy(path: Path) -> tuple[dict | None, str]:
+    """Load a Trivy JSON report, treating one not laid out as Trivy's as unusable.
+
+    :func:`read_json`'s checks, then classify_image_cves.vulnerabilities()'s over the whole
+    report: no ``SchemaVersion`` 2 (``{}``, a SARIF file), or a ``Results`` or
+    ``Vulnerabilities`` level that is not a list of objects. A missing or null ``Results``
+    or ``Vulnerabilities`` is still an empty report. A classifier that cannot load leaves the
+    layout unchecked, so the report is unusable then too; the traceback goes to stderr.
+
+    Args:
+        path: The Trivy report path.
+
+    Returns:
+        ``(data, "")`` on success, or ``(None, reason)`` where ``reason`` names the file and
+        the problem.
+    """
+    data, error = read_json(path)
+    if data is None:
+        return None, error
+    try:
+        classifier = load_classifier()
+    except Exception as exc:  # noqa: BLE001 - any load failure has to become parse_ok=false, never a crash
+        traceback.print_exception(exc)
+        return None, f"{CLASSIFIER.name}, which checks the report's layout, did not load: {type(exc).__name__}: {exc}"
+    try:
+        list(classifier.vulnerabilities(data, path))
+    except classifier.ReportUnreadableError as exc:
+        return None, str(exc)
+    return data, ""
+
+
 def collect_trivy(data: dict) -> list[dict]:
     """Flatten ``Results[].Vulnerabilities[]``, de-duplicating on (package, CVE).
 
-    The traversal is shape-anchored on purpose. A recursive walk over the document
-    double-counts, because Trivy nests a second ``Severity`` inside each advisory's
-    per-source ``CVSS`` block.
+    The traversal is classify_image_cves.vulnerabilities(), shape-anchored on purpose. A
+    recursive walk over the document double-counts, because Trivy nests a second
+    ``Severity`` inside each advisory's per-source ``CVSS`` block. It never skips an entry
+    that does not fit, which would turn a broken scan into "No CRITICAL or HIGH findings".
 
     Args:
-        data: A parsed Trivy JSON report.
+        data: A parsed Trivy JSON report, as :func:`read_trivy` returns it.
 
     Returns:
         Findings sorted by severity, then package, then CVE id.
+
+    Raises:
+        classify_image_cves.ReportUnreadableError: ``data`` is not laid out as a Trivy JSON
+            report. :func:`read_trivy` refuses such a report before it gets here.
     """
     findings: dict[tuple[str, str], dict] = {}
-    for result in data.get("Results") or []:
-        if not isinstance(result, dict):
-            continue
-        for vuln in result.get("Vulnerabilities") or []:
-            if not isinstance(vuln, dict):
-                continue
-            pkg = vuln.get("PkgName") or "?"
-            cve = vuln.get("VulnerabilityID") or "?"
-            findings.setdefault(
-                (pkg, cve),
-                {
-                    "pkg": pkg,
-                    "cve": cve,
-                    "severity": (vuln.get("Severity") or "UNKNOWN").upper(),
-                    "installed": vuln.get("InstalledVersion") or "?",
-                    "fixed": vuln.get("FixedVersion") or "",
-                    "title": (vuln.get("Title") or "").strip(),
-                    "type": result.get("Type") or "?",
-                },
-            )
+    for result, vuln in load_classifier().vulnerabilities(data, "the Trivy report"):
+        pkg = str(vuln.get("PkgName") or "?")
+        cve = str(vuln.get("VulnerabilityID") or "?")
+        findings.setdefault(
+            (pkg, cve),
+            {
+                "pkg": pkg,
+                "cve": cve,
+                "severity": str(vuln.get("Severity") or "UNKNOWN").upper(),
+                "installed": str(vuln.get("InstalledVersion") or "?"),
+                "fixed": str(vuln.get("FixedVersion") or ""),
+                "title": str(vuln.get("Title") or "").strip(),
+                "type": str(result.get("Type") or "?"),
+            },
+        )
     return sorted(
         findings.values(),
         key=lambda f: (SEVERITY_RANK.get(f["severity"], 9), f["pkg"], f["cve"]),
@@ -295,8 +358,7 @@ def _trivy_rows(findings: list[dict], cap: int | None = None) -> list[str]:
 def _scout_rows(findings: list[dict], cap: int | None = None) -> list[str]:
     rows = ["| Severity | CVE | Detail |", "| --- | --- | --- |"]
     shown, dropped = _cap_rows(findings, cap)
-    for f in shown:
-        rows.append(f"| {escape_cell(f['severity'])} | {cve_link(f['cve'])} | {escape_cell(f['detail'])} |")
+    rows += [f"| {escape_cell(f['severity'])} | {cve_link(f['cve'])} | {escape_cell(f['detail'])} |" for f in shown]
     return rows + _omitted_note(dropped)
 
 
@@ -365,7 +427,7 @@ def format_report(
     """Render the sticky-comment body and the counts the workflow gates on.
 
     Args:
-        trivy: Parsed Trivy JSON, or None when it could not be read.
+        trivy: Parsed Trivy JSON from :func:`read_trivy`, or None when it could not be read.
         scout: Parsed Docker Scout SARIF, or None when Scout did not run or failed.
         image: Image reference the scan targeted, e.g. ``permitio/pdp-v2:next``.
         trivy_error: Why the Trivy report is unusable; empty when it parsed.
@@ -427,7 +489,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    trivy, trivy_error = read_json(args.trivy)
+    trivy, trivy_error = read_trivy(args.trivy)
     scout, scout_error = (None, "")
     if args.scout_sarif is not None:
         scout, scout_error = read_json(args.scout_sarif)

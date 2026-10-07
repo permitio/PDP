@@ -20,9 +20,7 @@ class MappingRulesUtils:
         # Compare query parameters if they exist
         if len(mapping_rule_parts) > 1 and len(request_parts) > 1:
             return MappingRulesUtils._compare_query_params(mapping_rule_parts[1], request_parts[1])
-        elif len(mapping_rule_parts) > 1:
-            return False
-        return True
+        return len(mapping_rule_parts) <= 1
 
     @staticmethod
     def _compare_url_path(mapping_rule_url: str | None, request_url: str | None) -> bool:
@@ -41,19 +39,7 @@ class MappingRulesUtils:
         )
 
     @staticmethod
-    def _compare_query_params(mapping_rule_query_string: str | None, request_url_query_string: str | None) -> bool:
-        if mapping_rule_query_string is None and request_url_query_string is None:
-            # if both are None, they are equal
-            return True
-        if mapping_rule_query_string is not None and request_url_query_string is None:
-            # if the request query string is None, but the mapping rule query string is not
-            # then the request does not match the mapping rule
-            return False
-        if mapping_rule_query_string is None and request_url_query_string is not None:
-            # if the mapping rule query string is None, but the request query string is not
-            # then the request matches the query string rules it has additional data to the rule
-            return True
-
+    def _compare_query_params(mapping_rule_query_string: str, request_url_query_string: str) -> bool:
         mapping_rule_query_params = QueryParams(mapping_rule_query_string)
         request_query_params = QueryParams(request_url_query_string)
 
@@ -65,7 +51,7 @@ class MappingRulesUtils:
                 # if the value is an attribute
                 # we just need to make sure the attribute is in the request query params
                 continue
-            elif mapping_rule_query_params[key] != request_query_params[key]:
+            if mapping_rule_query_params[key] != request_query_params[key]:
                 # if the value is not an attribute, verify that the values are the same
                 return False
         return True
@@ -103,25 +89,14 @@ class MappingRulesUtils:
         if is_regex:
             try:
                 pattern = re.compile(mapping_rule_url)
-                match_result = bool(pattern.match(request_url))
-                logger.debug("regex url comparison", pattern=mapping_rule_url, url=request_url, matched=match_result)
-                return match_result
             except re.error as e:
                 logger.warning("regex pattern compilation failed", pattern=mapping_rule_url, error=str(e))
                 return False
+            match_result = bool(pattern.match(request_url))
+            logger.debug("regex url comparison", pattern=mapping_rule_url, url=request_url, matched=match_result)
+            return match_result
 
-        # For traditional URL matching
-        try:
-            return cls._compare_httpurls(mapping_rule_url, request_url)
-        except Exception as e:  # noqa: BLE001
-            logger.warning(
-                "URL comparison failed - verify URL format and structure",
-                mapping_url=mapping_rule_url,
-                request_url=request_url,
-                error_message=str(e),
-                error_type=type(e).__name__,
-            )
-            return False
+        return cls._compare_httpurls(mapping_rule_url, request_url)
 
     @classmethod
     def extract_mapping_rule_by_request(

@@ -234,14 +234,15 @@ class DebouncedTrigger:
         cancelled = False
         try:
             await run()
-            self._log_dispatched()
-            return True
         except asyncio.CancelledError:
             # The attempt was ABANDONED, not made: client disconnect, or shutdown. Record no
             # dispatch (so the window is not consumed by work that never reached the control
             # plane) and arm nothing (on shutdown there would be nobody left to run it).
             cancelled = True
             raise
+        else:
+            self._log_dispatched()
+            return True
         finally:
             # INVARIANT: this block must never ``await``. The no-overlap argument for the two
             # guards rests on the handoff from ``_in_flight`` to ``_trailing_task`` being
@@ -323,7 +324,7 @@ class DebouncedTrigger:
             except asyncio.CancelledError:
                 cancelled = True
                 raise
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 - background task: nobody awaits it, so any reload failure is logged here
                 logger.opt(exception=True).error(
                     "Trailing {} reload failed. The triggers it was serving were not applied; "
                     "the next trigger after the debounce window will retry.",

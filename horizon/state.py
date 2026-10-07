@@ -86,7 +86,7 @@ class PersistentStateHandler:
         return cls.get_instance()._state
 
     @asynccontextmanager
-    async def update_state(self) -> AsyncGenerator[PersistentState, None]:
+    async def update_state(self) -> AsyncGenerator[PersistentState]:
         async with self._state_update_lock:
             next_allowed_update = MAX_STATE_UPDATE_INTERVAL_SECONDS - (time.time() - self._prev_state_update_attempt)
             # Since state updated are (for now) opportunistic and happen
@@ -107,7 +107,7 @@ class PersistentStateHandler:
                     self._prev_state_update_attempt = time.time()
                 self._state = new_state.copy()
                 self._save()
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:  # noqa: BLE001 - seen-SDK report runs inside requests: revert, never 500
                 logger.exception("Failed to update state: {}, reverting...", e)
                 self._state = prev_state
 
@@ -135,7 +135,8 @@ class PersistentStateHandler:
 
     @classmethod
     def _get_opa_version_vars(cls) -> dict:
-        opa_proc = subprocess.run(["opa", "version"], capture_output=True)
+        # `opa` is resolved from PATH, which is where the image installs it.
+        opa_proc = subprocess.run(["opa", "version"], capture_output=True, check=False)  # noqa: S607
         if opa_proc.returncode != 0:
             logger.warning(
                 "Unable to get OPA version: {}",
@@ -216,13 +217,13 @@ class PersistentStateHandler:
                 raise RuntimeError("Unable to post PDP state update to server.")
 
     async def seen_sdk(self, sdk: str):
-        if sdk not in self._state.seen_sdks:
+        if sdk not in (self._state.seen_sdks or []):
             await self._report_seen_sdk(sdk)
 
     async def _report_seen_sdk(self, sdk: str):
         async with self._seen_sdk_update_lock:
             # We check this again because we might have waited because of the lock
-            if sdk not in self._state.seen_sdks:
+            if sdk not in (self._state.seen_sdks or []):
                 try:
                     async with self.update_state() as new_state:
                         if new_state.seen_sdks is None:

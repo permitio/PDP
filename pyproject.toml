@@ -1,14 +1,123 @@
+[project]
+name = "horizon"
+version = "0.2.0"
+description = "The Python side of the Permit.io PDP: OPAL client, policy-store sync and the PDP API."
+# uv.lock is resolved for the interpreter the image ships (Dockerfile: python:3.13-alpine3.23)
+# and nothing else. uv ignores Requires-Python UPPER bounds of dependencies when it locks, so
+# CI also installs the exported lock with pip on 3.13, which does enforce them.
+requires-python = "==3.13.*"
+dependencies = [
+    "aiohttp>=3.14.3,<4",
+    # Floor 0.124.0 matches a contract the route-auth audit depends on: get_flat_dependant only
+    # propagates sub-dependants into flat_dependant.dependencies from 0.124.0, which
+    # _route_auth_gates in horizon/tests/test_route_auth_audit.py reads. Ceiling in practice is
+    # 0.125.x, the last release supporting pydantic v1 (0.126.0 requires pydantic>=2.7.0), so the
+    # usable window is 0.124-0.125 while the pydantic<2 pin stands. See PER-15249.
+    "fastapi>=0.124.0,<1",
+    "Jinja2>=3.1.2,<4",
+    "pydantic[email]>=1.9.1,<2",
+    "requests>=2.32.4,<3",
+    "urllib3>=2.8.0,<3",
+    "gunicorn>=23.0.0,<24",
+    "tenacity>=8.0.1,<9",
+    "typer>=0.27.2,<1",
+    "uvicorn[standard]>=0.54.0,<1",
+    "logzio-python-handler",
+    # Capped <4 by opal-common 0.9.6. CVE-2026-50271 is fixed only in 4.8.2, so it is mitigated
+    # in the Dockerfile (DD_TRACE_PROPAGATION_STYLE_EXTRACT drops "baggage") and waived in
+    # .trivyignore.yaml and .docker/scout/pdp-v2.vex.json. Pinned exactly so the waiver PURL
+    # (pkg:pypi/ddtrace@3.19.8) stays bound: uv.lock holds it too, but a range would move on the
+    # next `uv lock --upgrade`. Remove the pin, the waivers and the Dockerfile ENV once OPAL
+    # relaxes ddtrace<4. See PER-15358.
+    "ddtrace==3.19.8",
+    "scalar-fastapi==1.8.2",
+    "httpx>=0.27.0,<1",
+    # TODO: switch regex matching to google-re2 once it builds on Alpine (C++ library issues).
+    "protobuf>=7.36.2", # floor clears CVE-2026-0994
+    # Floor 50.0.0 clears CVE-2026-69249 and CVE-2026-69247 (and the earlier GHSA-537c-gmf6-5ccf,
+    # CVE-2026-26007). Nothing else bounds cryptography (opal-common takes it unpinned), so the <51
+    # cap is ours, to keep a major out of a lock refresh. musllinux wheels exist for x86_64 and
+    # aarch64, so the Alpine build needs no Rust toolchain for it.
+    "cryptography>=50.0.0,<51",
+    # Capped <1 by opal-common/opal-client 0.9.6 (and <0.51.0 via fastapi-utils -> fastapi
+    # 0.125). Four CVEs (CVE-2026-54283, CVE-2026-48817, CVE-2026-48818, CVE-2026-48710) are fixed
+    # only in 1.x and are waived as unreachable in .trivyignore.yaml and the OpenVEX doc. Pinned
+    # exactly so the waiver PURLs stay bound. Remove the pin and the four waivers once OPAL relaxes
+    # starlette<1. See PER-15358.
+    "starlette==0.50.0",
+    # Pinned exactly because nothing else bounds it (OPAL allows >=10.3) and it sits on the OPAL
+    # pub/sub path: during #329 a rebuild would have taken a new major hours after validation. 17.0
+    # is the version pdp-tester validated. Bump it deliberately and let pdp-tester run on the
+    # result - a lock refresh must not pick a major on its own. See PER-15358.
+    "websockets==17.0",
+    # OPAL's pub/sub transport. horizon/facts/update_subscriber.py imports exception classes from
+    # both, to tell a facts update the PDP could not publish from a bug, so they are declared here
+    # rather than left to opal-client. OPAL 0.9.6 only bounds them (<2 and <1); pinned exactly at
+    # the locked versions so a lock refresh cannot move those classes. On a bump, check that they
+    # are still what OPAL's PubSubClient.publish() raises.
+    "fastapi-websocket-pubsub==1.0.1",
+    "fastapi-websocket-rpc==0.1.29",
+    # Transitive via opal-common (gitpython<4,>=3.1.32). The floor clears CVE-2026-78676 (critical
+    # RCE) and ten other advisories fixed by 3.1.58-3.1.59: `uv lock` can never produce a lock
+    # below it. A floor, not an exact pin - no waiver depends on it and nothing here imports it.
+    # Drop it once opal-common itself floors gitpython>=3.1.59. See PER-15358.
+    "GitPython>=3.1.59,<4",
+    # opal-common/opal-client 0.9.9 declare Requires-Python <3.13, so they cannot run on the 3.13
+    # image. Stay on 0.9.6 until an OPAL release lifts that bound.
+    "opal-common==0.9.6",
+    # opal-client caps aiofiles<1; the override is in [tool.uv] below. Changing this pin fails the
+    # image build (check_aiofiles_override.py) until that override is re-evaluated (PER-16234).
+    "opal-client==0.9.6",
+]
+
+[dependency-groups]
+# No ruff here: it runs from the ruff-pre-commit rev in .pre-commit-config.yaml
+# (`prek run ruff-check` / `prek run ruff-format`), so the linter version has one source and
+# Dependabot's pre-commit entry bumps it.
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    # Provides @pytest.mark.timeout, which --strict-markers below would otherwise reject.
+    "pytest-timeout",
+    "aioresponses",
+    # Imported by .github/scripts/check_waiver_parity.py, which horizon/tests/test_ci_scripts.py
+    # loads at collection time, so a missing PyYAML fails the whole pytests job. A test and
+    # CI-tooling dependency only; nothing under horizon/ imports it.
+    "PyYAML",
+    # Here, unlike ruff, because it types third-party imports from the project's .venv; the
+    # `ty-check` hook runs it with `uv run`. Pinned exactly: every ty release adds checks, so a
+    # lock refresh must not turn the required `pre-commit` check red on its own. Dependabot
+    # still proposes each bump, in its own `ty` group (.github/dependabot.yml) so a release
+    # that reports new diagnostics fails only that PR; fix what it reports there.
+    "ty==0.0.84",
+]
+
+[tool.uv]
+# Not an installable package: the image copies horizon/ in as source and installs only the
+# locked dependencies, so there is no build backend and nothing is built.
+package = false
+required-version = ">=0.12.19"
+# opal-client 0.9.6 caps aiofiles<1, which admits only 0.8.0 (Nov 2021). Its tempfile shim
+# raises AttributeError on CPython >= 3.12, so OPAL's offline-mode backup_store() silently stops
+# updating the backup. 24.1.0 is the first release tested on 3.13 (23.2.0, the first with the
+# fix, is yanked). Exit: drop this, check_opal_client_pin() in check_aiofiles_override.py and the
+# note at the opal-client pin once an opal-client admits aiofiles>=24.1.0. PER-16234,
+# permitio/PDP#340.
+override-dependencies = ["aiofiles==24.1.0"]
+
+[tool.pytest.ini_options]
+# horizon is not installed (package = false above) - the tests import it from the repo root,
+# the way the image runs it from /app.
+pythonpath = ["."]
+# A mark no plugin registers does nothing; fail on it instead of warning.
+addopts = "--strict-markers"
+
 [tool.ruff]
 line-length = 120
-src = ["horizon"]
-# Deliberately still py310 even though the image now runs Python 3.13 (see Dockerfile).
-# This is a lint floor, not a runtime constraint - keeping it low only means ruff will not
-# push 3.11+ idioms, which is harmless. Raising it to py313 surfaces 5 findings that are
-# unrelated to the CVE work that prompted the interpreter bump (PER-15358): 3x ASYNC109
-# (rewrite `timeout` parameters as `asyncio.timeout()` context managers, a real behavioural
-# refactor of horizon/facts/update_subscriber.py and horizon/proxy/api.py), plus UP041 and
-# UP043. Raise this and land those separately.
-target-version = "py310"
+# target-version comes from [project] requires-python (3.13), the interpreter the image ships.
+# The CI helper scripts are the exception: the scheduled jobs run them on the runner's own
+# python3 (3.12 on ubuntu-24.04), so ruff must not suggest 3.13-only idioms there.
+per-file-target-version = { ".github/scripts/*.py" = "py312" }
 
 [tool.ruff.lint]
 select = [
@@ -17,24 +126,56 @@ select = [
     "F", # https://docs.astral.sh/ruff/rules/#pyflakes-f
     "N", # https://docs.astral.sh/ruff/rules/#pep8-naming-n
     "I", # https://docs.astral.sh/ruff/rules/#isort-i
+    "A", # https://docs.astral.sh/ruff/rules/#flake8-builtins-a
+    "S", # https://docs.astral.sh/ruff/rules/#flake8-bandit-s
     "BLE", # https://docs.astral.sh/ruff/rules/#flake8-blind-except-ble
     "FBT", # https://docs.astral.sh/ruff/rules/#flake8-boolean-trap-fbt
     "B", # https://docs.astral.sh/ruff/rules/#flake8-bugbear-b
     "C4", # https://docs.astral.sh/ruff/rules/#flake8-comprehensions-c4
+    "DTZ", # https://docs.astral.sh/ruff/rules/#flake8-datetimez-dtz
+    "T10", # https://docs.astral.sh/ruff/rules/#flake8-debugger-t10
+    "EXE", # https://docs.astral.sh/ruff/rules/#flake8-executable-exe
+    "ISC", # https://docs.astral.sh/ruff/rules/#flake8-implicit-str-concat-isc
+    "ICN", # https://docs.astral.sh/ruff/rules/#flake8-import-conventions-icn
+    "LOG", # https://docs.astral.sh/ruff/rules/#flake8-logging-log
+    "G", # https://docs.astral.sh/ruff/rules/#flake8-logging-format-g
     "PIE", # https://docs.astral.sh/ruff/rules/#flake8-pie-pie
     "T20", # https://docs.astral.sh/ruff/rules/#flake8-print-t20
+    "PT", # https://docs.astral.sh/ruff/rules/#flake8-pytest-style-pt
+    "RSE", # https://docs.astral.sh/ruff/rules/#flake8-raise-rse
+    "RET", # https://docs.astral.sh/ruff/rules/#flake8-return-ret
+    "SLOT", # https://docs.astral.sh/ruff/rules/#flake8-slots-slot
     "SIM", # https://docs.astral.sh/ruff/rules/#flake8-simplify-sim
+    "TID", # https://docs.astral.sh/ruff/rules/#flake8-tidy-imports-tid
+    "INT", # https://docs.astral.sh/ruff/rules/#flake8-gettext-int
     "ARG", # https://docs.astral.sh/ruff/rules/#flake8-unused-arguments-arg
     "PTH", # https://docs.astral.sh/ruff/rules/#flake8-use-pathlib-pth
     "ASYNC", # https://docs.astral.sh/ruff/rules/#flake8-async-async
+    "FLY", # https://docs.astral.sh/ruff/rules/#flynt-fly
+    "PGH", # https://docs.astral.sh/ruff/rules/#pygrep-hooks-pgh
+    "PL", # https://docs.astral.sh/ruff/rules/#pylint-pl
+    "TRY", # https://docs.astral.sh/ruff/rules/#tryceratops-try
+    "PERF", # https://docs.astral.sh/ruff/rules/#perflint-perf
+    "FURB", # https://docs.astral.sh/ruff/rules/#refurb-furb
     "UP", # https://docs.astral.sh/ruff/rules/#pyupgrade-up
     "ERA", # https://docs.astral.sh/ruff/rules/#eradicate-era
     "C90", # https://docs.astral.sh/ruff/rules/#mccabe-c90
     "RUF", # https://docs.astral.sh/ruff/rules/#ruff-specific-rules-ruf
     "FAST", # https://docs.astral.sh/ruff/rules/#fastapi-fast
+    "YTT", # https://docs.astral.sh/ruff/rules/#flake8-2020-ytt
 ]
 ignore = [
     "FAST001", # https://docs.astral.sh/ruff/rules/fast-api-redundant-response-model/#fast-api-redundant-response-model-fast001
+    # The `timeout` parameters it flags bound one wait and return False (update_subscriber.py)
+    # or become aiohttp's ClientTimeout (proxy/api.py). A caller-side asyncio.timeout() would
+    # also cancel the publish or the request around them, which is a different contract.
+    "ASYNC109",
+    # Counts keyword-only parameters too. PLR0917 enforces the actual limit: at most five
+    # positional parameters.
+    "PLR0913",
+    # Exception messages here carry the context (what failed, which input, what to do), which
+    # is the point; a subclass per message would not add any.
+    "TRY003",
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -43,18 +184,40 @@ ignore = [
 # when a scan fails. T20 (flake8-print) exists to keep stray debugging prints out of the
 # application under horizon/, which is where it still applies.
 ".github/scripts/*.py" = ["T201"]
+# Tests assert (S101) against literal expected values (PLR2004), hold fixed fake tokens (S105),
+# use non-crypto randomness for load (S311), run the CI scripts as subprocesses (S603), and
+# read tmp files synchronously inside async tests (ASYNC240), where blocking the test's event
+# loop is harmless.
+"horizon/tests/**" = ["S101", "PLR2004", "S105", "S311", "S603", "ASYNC240"]
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"
 
-[tool.mypy]
-# Tracks the interpreter the image actually ships (Dockerfile: python:3.13-alpine3.23).
-python_version = "3.13"
-packages = ["horizon"]
-plugins = ["pydantic.v1.mypy"]
+# ty runs as the `ty-check` hook in .pre-commit-config.yaml, so the required `pre-commit` check
+# fails on any diagnostic: errors, and warnings too (terminal.error-on-warning defaults to true).
+[tool.ty.environment]
+# The interpreter the image ships and uv.lock is resolved for. ty has no per-path version, so the
+# CI helper scripts are checked against it too although the scheduled jobs run them on 3.12.
+python-version = "3.13"
+# "." resolves `horizon` (not installed, see [tool.uv] package = false). horizon/tests has no
+# __init__.py and its modules import each other by basename (from test_enforcer_api import ...),
+# as pytest's prepend import mode allows.
+root = [".", "horizon/tests"]
 
-check_untyped_defs = true
-warn_unused_configs = true
-warn_redundant_casts = true
-warn_unused_ignores = true
-warn_unreachable = true
+[tool.ty.rules]
+# Off by default, and they report nothing here: a name or attribute bound on only some paths, or
+# a `ty: ignore` without a rule, fails instead of slipping in later.
+possibly-unresolved-reference = "error"
+possibly-missing-attribute = "error"
+possibly-missing-import = "error"
+blanket-ignore-comment = "error"
+# A suppression that outlives the error it hid must go.
+unused-ignore-comment = "error"
+
+[[tool.ty.overrides]]
+# The offline-mode checker runs in its own image (test_offline_mode/Dockerfile), which installs
+# the permit SDK; uv.lock does not, and should not, carry it.
+include = ["test_offline_mode/**"]
+
+[tool.ty.overrides.analysis]
+allowed-unresolved-imports = ["permit"]

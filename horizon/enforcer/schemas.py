@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import AnyHttpUrl, BaseModel, Field
@@ -50,7 +50,7 @@ class BulkAuthorizationQuery(BaseSchema):
         return " | ".join([repr(query) for query in self.checks])
 
 
-class UrlTypes(str, Enum):
+class UrlTypes(StrEnum):
     """Enum for URL matching types"""
 
     DEFAULT = "default"
@@ -67,7 +67,7 @@ class UrlAuthorizationQuery(BaseSchema):
     url: AnyHttpUrl
     tenant: str
     context: dict[str, Any] | None = Field(default_factory=dict)
-    sdk: str | None
+    sdk: str | None = None
 
 
 class UserTenantsQuery(BaseSchema):
@@ -148,14 +148,14 @@ AuthorizedUsersDict = dict[str, list[AuthorizedUserAssignment]]
 class AuthorizedUsersResult(BaseSchema):
     resource: str = Field(
         ...,
-        description="The resource that the result is about.Can be either 'resource:*' or 'resource:resource_instance'",
+        description="The resource that the result is about. Can be either 'resource:*' or 'resource:resource_instance'",
     )
     tenant: str = Field(..., description="The tenant that the result is about")
     users: AuthorizedUsersDict = Field(
         ...,
         description="A key value mapping of the users that are "
-        "authorized for the resource."
-        "The key is the user key and the value is a list of assignments allowing the user to perform"
+        "authorized for the resource. "
+        "The key is the user key and the value is a list of assignments allowing the user to perform "
         "the requested action",
     )
 

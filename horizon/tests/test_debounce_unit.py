@@ -36,6 +36,8 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 
 import pytest
 import pytest_asyncio
+from loguru import logger
+
 from horizon import debounce
 from horizon.debounce import (
     DEFAULT_DEBOUNCE_SECONDS,
@@ -45,7 +47,6 @@ from horizon.debounce import (
     clamp_window,
     resolve_window,
 )
-from loguru import logger
 
 # Long enough that a real elapsed-time race can never make a "within the window" case flake;
 # the fake clock means nothing actually waits for it.

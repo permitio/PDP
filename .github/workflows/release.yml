@@ -127,7 +127,7 @@ jobs:
         # Never serve the `main` stage from the GHA cache. Its cache key is the instruction
         # text plus the parent layer, so when the base image digest has NOT moved but
         # Alpine's package index has, a release cut later replays the old
-        # `apk update && apk upgrade` + `pip install` results and re-ships packages
+        # `apk update && apk upgrade` results and re-ships packages
         # upstream has since patched - e.g. libcrypto3 frozen at whatever was current
         # when the layer was first cached, after Alpine has shipped the fix.
         #
@@ -192,10 +192,10 @@ jobs:
   #
   # What this adds over the pre-push gate in tests.yml: that gate scans
   # `permitio/pdp-v2:next` - a DIFFERENT build, `linux/amd64` only. Both builds carry
-  # `no-cache-filters: main`, which deliberately re-resolves `apk upgrade` and
-  # `pip install` against live indexes, so the two can legally resolve different package
-  # sets, and linux/arm64 is scanned by nothing else. This job scans the release bytes
-  # themselves; publish-pdp-release then pushes them with --preserve-digests and checks
+  # `no-cache-filters: main`, which deliberately re-runs `apk upgrade` against the live
+  # Alpine index (Python packages come from uv.lock in both), so the two can legally resolve
+  # different OS package sets, and linux/arm64 is scanned by nothing else. This job scans
+  # the release bytes themselves; publish-pdp-release then pushes them with --preserve-digests and checks
   # the registry holds the same index, so "scanned" and "shipped" are the same image.
   #
   # TWO SCANNERS, as in the PR gate: Trivy and Docker Scout disagree in practice (Trivy

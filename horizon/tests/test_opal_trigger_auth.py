@@ -19,19 +19,20 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from horizon.config import sidecar_config
-from horizon.debounce import DebouncedTrigger
-from horizon.enforcer.api import stats_manager
-from horizon.pdp import PermitPDP, _warn_if_opal_verifier_disabled
 from loguru import logger
 from opal_client.client import OpalClient
 from starlette import status
 
-# Basename import (not horizon.tests.*): CI installs the package non-editably, so the
-# wheel ships no tests/ package; pytest's prepend import mode puts this directory on
-# sys.path and imports test modules by basename. Same convention as
-# test_legacy_update_routes.py.
+# Basename import (not horizon.tests.*): horizon/tests has no __init__.py, so pytest's
+# prepend import mode puts this directory on sys.path and imports test modules by
+# basename. A horizon.tests.test_enforcer_api import would load a second copy of it.
+# Same convention as test_legacy_update_routes.py.
 from test_enforcer_api import MALFORMED_AUTH_HEADERS
+
+from horizon.config import sidecar_config
+from horizon.debounce import DebouncedTrigger
+from horizon.enforcer.api import stats_manager
+from horizon.pdp import PermitPDP, _warn_if_opal_verifier_disabled
 
 VALID_TOKEN = "mock_api_key"
 TRIGGER_ROUTES = ["/policy-updater/trigger", "/data-updater/trigger"]
@@ -178,7 +179,7 @@ def test_warn_if_opal_verifier_disabled_silent_when_enabled(capture_loguru):
     class _Opal:
         verifier = _Verifier()
 
-    _warn_if_opal_verifier_disabled(_Opal())
+    _warn_if_opal_verifier_disabled(_Opal())  # ty: ignore[invalid-argument-type]  # reads only .verifier.enabled
     assert not any("OPAL JWT verifier is DISABLED" in record for record in capture_loguru)
 
 

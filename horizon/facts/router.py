@@ -27,7 +27,7 @@ from horizon.facts.opal_forwarder import (
     create_data_update_entry,
 )
 from horizon.facts.timeout_policy import TimeoutPolicy
-from horizon.facts.update_subscriber import DataUpdateSubscriber
+from horizon.facts.update_subscriber import DataUpdatePublishError, DataUpdateSubscriber
 
 facts_router = APIRouter(dependencies=[Depends(enforce_pdp_token)])
 
@@ -51,7 +51,7 @@ async def create_user(
                 obj_type="users",
                 obj_id=body["id"],
                 obj_key=body["key"],
-                authorization_header=r.headers.get("Authorization"),
+                authorization_header=r.headers["Authorization"],
                 update_id=update_id,
             )
         ],
@@ -78,7 +78,7 @@ async def create_tenant(
                 obj_type="tenants",
                 obj_id=body["id"],
                 obj_key=body["key"],
-                authorization_header=r.headers.get("Authorization"),
+                authorization_header=r.headers["Authorization"],
                 update_id=update_id,
             )
         ],
@@ -88,6 +88,7 @@ async def create_tenant(
 
 @facts_router.put("/users/{user_id}")
 async def sync_user(
+    *,
     request: FastApiRequest,
     client: FactsClientDependency,
     update_subscriber: DataUpdateSubscriberDependency,
@@ -106,7 +107,7 @@ async def sync_user(
                 obj_type="users",
                 obj_id=body["id"],
                 obj_key=body["key"],
-                authorization_header=r.headers.get("Authorization"),
+                authorization_header=r.headers["Authorization"],
                 update_id=update_id,
             )
         ],
@@ -116,6 +117,7 @@ async def sync_user(
 
 @facts_router.patch("/users/{user_id}")
 async def update_user(
+    *,
     request: FastApiRequest,
     client: FactsClientDependency,
     update_subscriber: DataUpdateSubscriberDependency,
@@ -134,7 +136,7 @@ async def update_user(
                 obj_type="users",
                 obj_id=body["id"],
                 obj_key=body["key"],
-                authorization_header=r.headers.get("Authorization"),
+                authorization_header=r.headers["Authorization"],
                 update_id=update_id,
             )
         ],
@@ -143,21 +145,21 @@ async def update_user(
 
 
 def create_role_assignment_data_entries(
-    request: FastApiRequest, body: dict[str, Any], update_id: UUID | None
+    request: FastApiRequest, body: dict[str, Any], update_id: UUID
 ) -> Iterable[DataSourceEntry]:
     if not body.get("resource_instance"):
         yield create_data_source_entry(
             obj_type="role_assignments",
             obj_id=body["user_id"],
             obj_key=f"user:{body['user']}",
-            authorization_header=request.headers.get("Authorization"),
+            authorization_header=request.headers["Authorization"],
             update_id=update_id,
         )
         yield create_data_source_entry(
             obj_type="users",
             obj_id=body["user_id"],
             obj_key=body["user"],
-            authorization_header=request.headers.get("Authorization"),
+            authorization_header=request.headers["Authorization"],
             update_id=update_id,
         )
     else:
@@ -167,13 +169,14 @@ def create_role_assignment_data_entries(
             obj_type="role_assignments",
             obj_id=body["user_id"],
             obj_key=f"user:{body['user']}",
-            authorization_header=request.headers.get("Authorization"),
+            authorization_header=request.headers["Authorization"],
             update_id=update_id,
         )
 
 
 @facts_router.post("/users/{user_id}/roles")
 async def assign_user_role(
+    *,
     request: FastApiRequest,
     client: FactsClientDependency,
     update_subscriber: DataUpdateSubscriberDependency,
@@ -194,6 +197,7 @@ async def assign_user_role(
 
 @facts_router.delete("/users/{user_id}/roles")
 async def unassign_user_role(
+    *,
     request: FastApiRequest,
     client: FactsClientDependency,
     update_subscriber: DataUpdateSubscriberDependency,
@@ -271,7 +275,7 @@ async def create_resource_instance(
                 obj_type="resource_instances",
                 obj_id=body["id"],
                 obj_key=f"{body['resource']}:{body['key']}",
-                authorization_header=r.headers.get("Authorization"),
+                authorization_header=r.headers["Authorization"],
                 update_id=update_id,
             ),
         ],
@@ -281,6 +285,7 @@ async def create_resource_instance(
 
 @facts_router.patch("/resource_instances/{instance_id}")
 async def update_resource_instance(
+    *,
     request: FastApiRequest,
     client: FactsClientDependency,
     update_subscriber: DataUpdateSubscriberDependency,
@@ -299,7 +304,7 @@ async def update_resource_instance(
                 obj_type="resource_instances",
                 obj_id=body["id"],
                 obj_key=f"{body['resource']}:{body['key']}",
-                authorization_header=r.headers.get("Authorization"),
+                authorization_header=r.headers["Authorization"],
                 update_id=update_id,
             ),
         ],
@@ -326,7 +331,7 @@ async def create_relationship_tuple(
                 obj_type="relationships",
                 obj_id=body["object_id"],
                 obj_key=body["object"],
-                authorization_header=r.headers.get("Authorization"),
+                authorization_header=r.headers["Authorization"],
                 update_id=update_id,
             ),
         ],
@@ -335,7 +340,7 @@ async def create_relationship_tuple(
 
 
 def cast_delete_200_to_204(response: Response) -> Response:
-    if response.status_code == 200:
+    if response.status_code == status.HTTP_200_OK:
         return Response(status_code=204)
     return response
 
@@ -348,7 +353,7 @@ async def forward_request_then_wait_for_update(
     *,
     path: str,
     update_id: UUID | None = None,
-    entries_callback: Callable[[FastApiRequest, dict[str, Any], UUID | None], Iterable[DataSourceEntry]],
+    entries_callback: Callable[[FastApiRequest, dict[str, Any], UUID], Iterable[DataSourceEntry]],
     timeout_policy: TimeoutPolicy = TimeoutPolicy.IGNORE,
     query_params: dict[str, Any] | None = None,
 ) -> Response:
@@ -366,21 +371,36 @@ async def forward_request_then_wait_for_update(
         logger.warning(f"Missing required field {e.args[0]} in the response body, skipping wait for update.")
         return client.convert_response(response)
 
-    wait_result = await update_subscriber.publish_and_wait(
-        data_update_entry,
-        timeout=wait_timeout,
-    )
+    try:
+        wait_result = await update_subscriber.publish_and_wait(
+            data_update_entry,
+            timeout=wait_timeout,
+        )
+    except DataUpdatePublishError as e:
+        if timeout_policy == TimeoutPolicy.FAIL:
+            logger.error(
+                f"Data update {_update_id} could not be confirmed as published ({e}); "
+                "failing the request per the timeout policy"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_424_FAILED_DEPENDENCY,
+                detail=f"Update could not be confirmed as published: {e}",
+            ) from e
+        logger.warning(
+            f"Data update {_update_id} could not be confirmed as published ({e}); "
+            "returning the backend response per the timeout policy"
+        )
+        return client.convert_response(response)
     if wait_result:
         return client.convert_response(response)
-    elif timeout_policy == TimeoutPolicy.FAIL:
+    if timeout_policy == TimeoutPolicy.FAIL:
         logger.error("Timeout waiting for update and policy is set to fail")
         raise HTTPException(
             status_code=status.HTTP_424_FAILED_DEPENDENCY,
             detail="Timeout waiting for update to be received",
         )
-    else:
-        logger.warning("Timeout waiting for update and policy is set to ignore")
-        return client.convert_response(response)
+    logger.warning("Timeout waiting for update and policy is set to ignore")
+    return client.convert_response(response)
 
 
 @facts_router.api_route(

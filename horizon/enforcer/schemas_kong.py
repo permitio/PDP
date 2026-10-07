@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from .schemas import BaseSchema
+from horizon.enforcer.schemas import BaseSchema
 
 
 class KongAuthorizationInputRequestHttp(BaseSchema):

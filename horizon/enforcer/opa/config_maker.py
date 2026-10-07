@@ -10,7 +10,8 @@ TEMPLATES_PATH = Path(__file__).parent.parent.parent / "static" / "templates"
 
 
 def get_jinja_environment() -> jinja2.Environment:
-    return jinja2.Environment(loader=jinja2.FileSystemLoader(TEMPLATES_PATH))
+    # Renders OPA's YAML config, not HTML: HTML-escaping would corrupt the values it fills in.
+    return jinja2.Environment(loader=jinja2.FileSystemLoader(TEMPLATES_PATH))  # noqa: S701
 
 
 def persist_to_file(contents: str, path: str) -> str:

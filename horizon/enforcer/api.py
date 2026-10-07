@@ -60,11 +60,13 @@ stats_manager = StatisticsManager(
     failures_threshold_percentage=sidecar_config.OPA_CLIENT_FAILURE_THRESHOLD_PERCENTAGE,
 )
 
+AUTHZ_HEADER_PARTS = 2  # "<scheme> <token>"
+
 
 def extract_pdp_api_key(request: Request) -> str:
     authorization: str = request.headers.get(AUTHZ_HEADER, "")
     parts = authorization.split(" ")
-    if len(parts) != 2:
+    if len(parts) != AUTHZ_HEADER_PARTS:
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED,
             detail=f"bad authz header: {authorization}",
@@ -83,14 +85,46 @@ def transform_headers(request: Request) -> dict:
     }
 
 
+def _opa_result(response: Response) -> dict | None:
+    """The ``result`` object of an OPA response, or None if the body is not a JSON object holding one."""
+    try:
+        body = json.loads(bytes(response.body))
+    # ValueError: not JSON, or not UTF-8. RecursionError: nested deeper than the decoder can follow.
+    except (ValueError, RecursionError):
+        return None
+    result = body.get("result", {}) if isinstance(body, dict) else None
+    return result if isinstance(result, dict) else None
+
+
+def _log_raw_query_result(params: str, query: dict, response: Response) -> None:
+    """Log a decision with the OPA response body as it came, for a result with no decision to show."""
+    try:
+        body = str(response.body, "utf-8")
+    except ValueError:
+        body = None
+    data = {} if body is None else {"response_body": body}
+    logger.info(
+        "is allowed",
+        params=params,
+        query=query,
+        response_status=response.status_code,
+        **data,
+    )
+
+
 def log_query_result(query: BaseSchema, response: Response):
     """
     formats a nice log to default logger with the results of permit.check()
     """
     params = repr(query)
+    result = _opa_result(response)
+    # /user-permissions, /user-tenants and /authorized_users results carry neither "allow" nor
+    # "allowed_tenants". A body that is not JSON is logged with its traceback by the endpoint's fallback.
+    if result is None or (result.get("allow") is None and "allowed_tenants" not in result):
+        _log_raw_query_result(params, query.dict(), response)
+        return
     try:
-        result: dict = json.loads(response.body).get("result", {})
-        allowed: bool | list[dict] = result.get("allow")
+        allowed: bool | list[dict] | None = result.get("allow")
         color = "<red>"
         allow_output = False
         if isinstance(allowed, bool):
@@ -102,76 +136,60 @@ def log_query_result(query: BaseSchema, response: Response):
                 color = "<green>"
 
         if allowed is None:
-            allowed_tenants = result.get("allowed_tenants")
+            allowed_tenants = result["allowed_tenants"]
             allow_output = [f"({a.get('tenant', {}).get('key')}, {a.get('allow', False)})" for a in allowed_tenants]
             if len(allow_output) > 0:
                 color = "<green>"
 
         debug = result.get("debug", {})
 
-        format = color + "is allowed = {allowed} </>"
-        format += " | <cyan>{api_params}</>"
+        template = color + "is allowed = {allowed} </>"
+        template += " | <cyan>{api_params}</>"
         if sidecar_config.DECISION_LOG_DEBUG_INFO:
-            format += " | full_input=<fg #fff980>{input}</> | debug=<fg #f7e0c1>{debug}</>"
+            template += " | full_input=<fg #fff980>{input}</> | debug=<fg #f7e0c1>{debug}</>"
         logger.opt(colors=True).info(
-            format,
+            template,
             allowed=allow_output,
             api_params=params,
             input=query.dict(),
             debug=debug,
         )
-    except Exception:  # noqa: BLE001
-        try:
-            body = str(response.body, "utf-8")
-        except ValueError:
-            body = None
-        data = {} if body is None else {"response_body": body}
-        logger.info(
-            "is allowed",
-            params=params,
-            query=query.dict(),
-            response_status=response.status_code,
-            **data,
-        )
+    except Exception:  # noqa: BLE001 - log-only: the decision is answered even if its log line fails
+        logger.opt(exception=True).warning("Could not format the decision log line; logging the OPA response raw")
+        _log_raw_query_result(params, query.dict(), response)
 
 
-def log_query_result_kong(input: KongAuthorizationInput, response: Response):
+def log_query_result_kong(kong_input: KongAuthorizationInput, response: Response):
     """
     formats a nice log to default logger with the results of permit.check()
     """
-    params = f"({input.consumer.username}, {input.request.http.method}, {input.request.http.path})"
+    username = None if kong_input.consumer is None else kong_input.consumer.username
+    params = f"({username}, {kong_input.request.http.method}, {kong_input.request.http.path})"
+    result = _opa_result(response)
+    if result is None:
+        _log_raw_query_result(params, kong_input.dict(), response)
+        return
     try:
-        result: dict = json.loads(response.body).get("result", {})
         allowed = result.get("allow", False)
         debug = result.get("debug", {})
 
         color = "<green>"
         if not allowed:
             color = "<red>"
-        format = color + "is allowed = {allowed} </>"
-        format += " | <cyan>{api_params}</>"
+        template = color + "is allowed = {allowed} </>"
+        template += " | <cyan>{api_params}</>"
         if sidecar_config.DECISION_LOG_DEBUG_INFO:
-            format += " | full_input=<fg #fff980>{input}</> | debug=<fg #f7e0c1>{debug}</>"
+            template += " | full_input=<fg #fff980>{input}</> | debug=<fg #f7e0c1>{debug}</>"
         logger.opt(colors=True).info(
-            format,
+            template,
             allowed=allowed,
             api_params=params,
-            input=input.dict(),
+            input=kong_input.dict(),
             debug=debug,
         )
-    except Exception:  # noqa: BLE001
-        try:
-            body = str(response.body, "utf-8")
-        except ValueError:
-            body = None
-        data = {} if body is None else {"response_body": body}
-        logger.info(
-            "is allowed",
-            params=params,
-            query=input.dict(),
-            response_status=response.status_code,
-            **data,
-        )
+    except Exception:  # noqa: BLE001 - log-only: the decision is answered even if its log line fails
+        logger.opt(exception=True).warning("Could not format the decision log line; logging the OPA response raw")
+        _log_raw_query_result(params, kong_input.dict(), response)
 
 
 def get_v1_processed_query(result: dict) -> dict | None:
@@ -210,7 +228,7 @@ async def post_to_opa(request: Request, path: str, data: dict | None):
                 url,
                 data=json.dumps(data) if data is not None else None,
                 headers=headers,
-                timeout=sidecar_config.OPA_CLIENT_QUERY_TIMEOUT,
+                timeout=aiohttp.ClientTimeout(total=sidecar_config.OPA_CLIENT_QUERY_TIMEOUT),
                 raise_for_status=True,
             ) as opa_response:
                 stats_manager.report_success()
@@ -274,7 +292,8 @@ def init_enforcer_health_router():
     return router
 
 
-def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noqa: C901
+# Registers every enforcer endpoint as a nested function, so their statements all count here.
+def init_enforcer_api_router(policy_store: BasePolicyStoreClient | None = None):  # noqa: C901, PLR0915
     policy_store = policy_store or DEFAULT_POLICY_STORE_GETTER()
     router = APIRouter()
     if sidecar_config.KONG_INTEGRATION:
@@ -297,7 +316,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
             response_json = json.loads(response.body)
             raw_result = response_json.get("result", {}).get("result", {})
             result = parse_obj_as(AuthorizedUsersResult, raw_result)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001 - fallback no users: OPA output is untrusted and must not 500
             result = AuthorizedUsersResult.empty(query.resource)
             logger.opt(exception=True).warning(
                 "authorized users (fallback response), response: {res}",
@@ -319,12 +338,9 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
     ):
         data = await post_to_opa(request, "mapping_rules", None)
 
-        mapping_rules = []
         data_result = json.loads(data.body).get("result") or {}
         mapping_rules_json = data_result.get("all") or []
-
-        for mapping_rule in mapping_rules_json:
-            mapping_rules.append(parse_obj_as(MappingRuleData, mapping_rule))
+        mapping_rules = [parse_obj_as(MappingRuleData, mapping_rule) for mapping_rule in mapping_rules_json]
         matched_mapping_rule = MappingRulesUtils.extract_mapping_rule_by_request(
             mapping_rules, query.http_method, query.url
         )
@@ -383,7 +399,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
         try:
             raw_result = json.loads(response.body).get("result", {})
             return parse_obj_as(UserPermissionsResult, raw_result.get("permissions", {}))
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001 - fallback no permissions: OPA output is untrusted and must not 500
             logger.opt(exception=True).warning(
                 "is allowed (fallback response)", reason=f"cannot decode opa response: {e}"
             )
@@ -410,9 +426,10 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
             elif isinstance(raw_result, list):
                 tenants = raw_result
             else:
-                raise TypeError(f"Expected raw result to be dict or list, got {type(raw_result)}")
+                # Caught below on purpose: every malformed OPA result gets the same fallback.
+                raise TypeError(f"Expected raw result to be dict or list, got {type(raw_result)}")  # noqa: TRY301
             return parse_obj_as(UserTenantsResult, tenants)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001 - fallback no tenants: OPA output is untrusted and must not 500
             logger.opt(exception=True).warning(
                 "get user tenants (fallback response)",
                 reason=f"cannot decode opa response: {e}",
@@ -437,7 +454,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
             return AllTenantsAuthorizationResult(
                 allowed_tenants=raw_result.get("allowed_tenants", []),
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001 - fallback no tenants: OPA output is untrusted and must not 500
             logger.opt(exception=True).warning(
                 "is allowed (fallback response)", reason=f"cannot decode opa response: {e}"
             )
@@ -462,7 +479,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
             return BulkAuthorizationResult(
                 allow=raw_result.get("allow", []),
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001 - fallback empty bulk: OPA output is untrusted and must not 500
             logger.opt(exception=True).warning(
                 "is allowed (fallback response)", reason=f"cannot decode opa response: {e}"
             )
@@ -501,7 +518,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
                 "query": processed_query,
                 "debug": raw_result.get("debug", {}),
             }
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001 - fallback deny: OPA output is untrusted and must not 500
             logger.opt(exception=True).warning(
                 "is allowed (fallback response)", reason=f"cannot decode opa response: {e}"
             )
@@ -515,10 +532,10 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
     )
     async def is_allowed_nginx(
         request: Request,
-        permit_user_key: Annotated[str | None, Header()] = None,
+        permit_user_key: Annotated[str, Header()],
+        permit_action: Annotated[str, Header()],
+        permit_resource_type: Annotated[str, Header()],
         permit_tenant_id: Annotated[str | None, Header()] = None,
-        permit_action: Annotated[str | None, Header()] = None,
-        permit_resource_type: Annotated[str | None, Header()] = None,
     ):
         query = AuthorizationQuery(
             user=User(key=permit_user_key),
@@ -537,7 +554,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
                 "query": processed_query,
                 "debug": raw_result.get("debug", {}),
             }
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001 - fallback deny: OPA output is untrusted and must not 500
             logger.opt(exception=True).warning(
                 "is allowed (fallback response)", reason=f"cannot decode opa response: {e}"
             )
@@ -613,7 +630,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
             return {
                 "result": raw_result.get("allow", False),
             }
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001 - fallback deny: OPA output is untrusted and must not 500
             logger.opt(exception=True).warning(
                 "is allowed (fallback response)",
                 reason=f"cannot decode opa response: {e}",
@@ -621,62 +638,3 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient = None):  # noq
             return {"allow": False, "result": False}
 
     return router
-
-
-def _extract_regex_attributes(pattern: str, url: str) -> dict:
-    """
-    Extract attributes from a URL using regex pattern matching.
-    Args:
-        pattern: The regex pattern with named/numbered capture groups
-        url: The URL to match against
-    Returns:
-        Dictionary of extracted attributes
-    """
-    try:
-        compiled_pattern = re.compile(pattern)
-        match = compiled_pattern.match(url)
-        if not match:
-            return {}
-
-        # Get named groups first (more specific)
-        attributes = match.groupdict()
-
-        # Only process numbered groups if we have any and didn't get named groups
-        if not attributes and match.groups():
-            # More efficient than using enumerate when we just need numbers
-            attributes = {f"capture_{i + 1}": value for i, value in enumerate(match.groups())}
-
-        return attributes
-    except re.error:
-        logger.warning(f"Invalid regex pattern: {pattern}")
-        return {}
-
-
-def _extract_url_attributes(matched_rule: MappingRuleData, url: str) -> dict:
-    """
-    Extract attributes from a URL based on the mapping rule type.
-    Args:
-        matched_rule: The matched MappingRuleData object
-        url: The URL to extract attributes from
-    Returns:
-        Dictionary of combined path and query parameter attributes
-    """
-    # Early return if no rule matched
-    if not matched_rule:
-        return {}
-
-    # Use dict.update() instead of dict unpacking for better performance
-    attributes = {}
-
-    # Extract path attributes based on rule type
-    if matched_rule.url_type == "regex":
-        attributes.update(_extract_regex_attributes(matched_rule.url, url))
-    else:
-        attributes.update(MappingRulesUtils.extract_attributes_from_url(matched_rule.url, url))
-
-    # Extract query parameters (same for both types)
-    query_params = MappingRulesUtils.extract_attributes_from_query_params(matched_rule.url, url)
-    if query_params:
-        attributes.update(query_params)
-
-    return attributes

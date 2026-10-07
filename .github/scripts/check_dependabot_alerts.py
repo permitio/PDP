@@ -1,41 +1,36 @@
 #!/usr/bin/env python3
-"""Report NEW, UNWAIVED critical/high Dependabot alerts - and nothing else.
+"""Validate the Dependabot alert feed and list its unwaived critical/high alerts.
 
-WHY A SCHEDULED POLL
-GitHub has no `dependabot_alert` workflow trigger, and Dependabot's own PR runs get a
-read-only GITHUB_TOKEN plus an empty Dependabot secret store, so a webhook is not
-reachable from there. The only way to turn an alert into a Slack message is to ask the
-REST API on a schedule, which is what scheduled-security-scan.yml does. This script is
-the half that decides whether the answer is worth anybody's attention, and it never
-shells out to `gh`, so every decision it makes is unit-testable.
+WHERE IT RUNS
+scheduled-security-scan.yml fetches the open alerts with `gh api` and runs this script
+with `--all` in its `dependabot` job: the job log then lists every unwaived
+critical/high alert, and an unreadable feed fails the job. The Slack report is built
+separately by format_security_report.py, which imports this module for the feed reader
+(read_feed, parse_feed, normalize) and the waiver list (waived_cve_ids), so the log and
+the report cannot disagree about which alerts count. The script never shells out to
+`gh`, so every decision it makes is unit-testable.
 
 WHY THE WAIVER FILTER IS THE WHOLE POINT
 At the time of writing, all three open HIGH alerts on this repo - CVE-2026-50271
 (ddtrace), CVE-2026-54283 and CVE-2026-48818 (starlette) - are CVEs already triaged and
 waived in `.trivyignore.yaml` and `.docker/scout/pdp-v2.vex.json`, because opal-common
-0.9.6 caps the dependency that would otherwise fix them. A watcher that alerted on "any
-open critical/high" would post the same three CVEs every morning, and the channel would
-be muted inside a week - at which point the alert that DOES matter arrives in a muted
-channel. So the filter is not a nicety: an alert reaches Slack only if the same waiver
-list the image scanners read does not already answer it.
+0.9.6 caps the dependency that would otherwise fix them. A report that listed "any open
+critical/high" would carry the same three CVEs every run, and the channel would be muted
+inside a week - at which point the alert that DOES matter arrives in a muted channel. So
+the filter is not a nicety: an alert is listed only if the same waiver list the image
+scanners read does not already answer it.
 
 The waiver list is keyed by CVE id. An alert carrying only a GHSA id therefore cannot be
-matched against it, and is REPORTED rather than dropped - being unable to check
-something is not the same as having checked it.
+matched against it, and is LISTED rather than dropped - being unable to check something
+is not the same as having checked it.
 
-WHY A TIME WINDOW
-`--new-since` keeps a recurring cron from re-reporting the same unwaived alert forever.
-The default is 73 hours, one hour more than the 72-hour schedule, so an alert opened
-between two runs cannot fall through the gap. `--all` drops the window for
-`workflow_dispatch` and for the weekly digest, which want the standing backlog rather
-than the delta.
-
-A window is a delta and therefore never the whole answer: the caller also branches on
-`total_unwaived`, so a standing backlog - or an alert that landed during a run GitHub
-dropped - is still reported even once it has aged out of the window.
+THE TIME WINDOW
+Without `--all`, only alerts created in the last `--new-since` hours (default 73) are
+listed, for a by-hand look at what is new. The summary line still counts the whole
+unwaived backlog.
 
 A feed that cannot be read is NOT "nothing new": a missing or malformed alerts file
-exits non-zero with a message naming the file, and writes no counts at all.
+exits non-zero with a message naming the file.
 """
 
 # NOTE: deliberately no `from __future__ import annotations`. It turns every annotation
@@ -50,7 +45,7 @@ import importlib.util
 import json
 import sys
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 # Exit code for "the alert feed itself is unusable", distinct from "no new alerts".
@@ -59,15 +54,9 @@ EXIT_UNREADABLE_FEED = 2
 # Dependabot's severities arrive lower-case in the API payload.
 REPORTABLE_SEVERITIES = frozenset({"critical", "high"})
 
-# One hour of overlap on top of the 72-hour schedule in scheduled-security-scan.yml, which
-# passes the same value explicitly. Keep the two in step: if that cron changes, this
-# default and the `--new-since` there both move with it.
+# The 72-hour schedule of scheduled-security-scan.yml plus an hour of overlap, so a by-hand
+# `--new-since` run covers everything opened since the last scheduled one.
 DEFAULT_WINDOW_HOURS = 73
-
-# Slack renders a wall of text as a wall of text. Past this the message is truncated and
-# the run link carries the rest.
-SLACK_LIMIT = 900
-MAX_SLACK_ALERTS = 8
 
 WAIVER_FILE = ".trivyignore.yaml"
 
@@ -77,8 +66,8 @@ def _load_waiver_parity():
 
     `.github/scripts/` is a directory of standalone CLIs, not a package, so there is
     nothing to import by name. Loading the module by path is still worth it: if this
-    watcher parsed `.trivyignore.yaml` itself, a schema change would make the daily
-    Slack alert and the blocking `waiver-parity` pre-commit hook disagree about which
+    script parsed `.trivyignore.yaml` itself, a schema change would make the scheduled
+    Slack report and the blocking `waiver-parity` pre-commit hook disagree about which
     CVEs are waived - silently, and in the direction that pings the channel.
 
     Returns:
@@ -151,28 +140,6 @@ class Selection:
     waived: list[Alert]
 
 
-def slack_escape(text: str) -> str:
-    """Escape untrusted text for a Slack message body.
-
-    Slack's mrkdwn needs `&`, `<` and `>` escaped - `&` FIRST, or `&lt;` becomes
-    `&amp;lt;` and renders literally. `|` has no entity, because it separates url from
-    label inside `<url|label>`, so it is swapped for U+2502 BOX DRAWINGS LIGHT VERTICAL.
-
-    The same three statements exist in classify_image_cves.py and, in shell, in
-    notify-slack.yml. Hoisting them into a shared module is the right move and is
-    tracked separately; duplicating two statements is cheaper than making this watcher
-    import the Trivy image classifier.
-
-    Args:
-        text: Untrusted text, e.g. a package name or an advisory id.
-
-    Returns:
-        Text that renders as written in Slack.
-    """
-    escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    return escaped.replace("|", "│")
-
-
 def waived_cve_ids(trivyignore: Path | None = None, today: date | None = None) -> set[str]:
     """Read the CVE ids that are CURRENTLY waived for Trivy.
 
@@ -191,7 +158,7 @@ def waived_cve_ids(trivyignore: Path | None = None, today: date | None = None) -
         SystemExit: The waiver file is missing or malformed, as raised by the loader.
     """
     path = trivyignore or waiver_parity.repo_root() / waiver_parity.TRIVYIGNORE
-    today = today or date.today()
+    today = today or datetime.now(UTC).date()
     return {cve for cve, expires in waiver_parity.load_trivyignore(path).items() if expires is None or expires >= today}
 
 
@@ -273,8 +240,8 @@ def _parse_created_at(value: object, number: object) -> datetime:
             f"timestamp. The feed's schema changed; --new-since cannot be applied."
         ) from exc
     if stamp.tzinfo is None:
-        return stamp.replace(tzinfo=timezone.utc)
-    return stamp.astimezone(timezone.utc)
+        return stamp.replace(tzinfo=UTC)
+    return stamp.astimezone(UTC)
 
 
 def _optional_id(value: object) -> str | None:
@@ -337,7 +304,7 @@ def select(
             `--all`) reports the whole unwaived backlog.
 
     Returns:
-        A :class:`Selection`. `reported` is what goes to Slack, `unwaived` is the
+        A :class:`Selection`. `reported` is what gets listed, `unwaived` is the
         standing backlog it was drawn from, `waived` is what the filter suppressed.
     """
     severe = [a for a in alerts if a.state == "open" and a.severity in REPORTABLE_SEVERITIES]
@@ -348,8 +315,8 @@ def select(
             waived.append(alert)
         else:
             unwaived.append(alert)
-    # Critical first, then newest first: the top of a truncated Slack message should
-    # carry the alert most likely to need action today.
+    # Critical first, then newest first: the alert most likely to need action today
+    # heads the list.
     unwaived.sort(key=lambda a: (a.severity != "critical", -a.created_at.timestamp(), a.number))
     if window_hours is None:
         reported = list(unwaived)
@@ -359,26 +326,32 @@ def select(
     return Selection(reported=reported, unwaived=unwaived, waived=waived)
 
 
+def _one_line(text: str) -> str:
+    """Collapse whitespace in feed text, so a value cannot start a new log line.
+
+    The runner reads any log line that starts with `::` as a workflow command; a newline
+    inside a package name must not be able to forge one.
+    """
+    return " ".join(text.split())
+
+
 def _alert_line(alert: Alert) -> str:
-    """Render one reported alert as a Slack line, escaping the untrusted parts."""
-    package = slack_escape(alert.package)
-    advisory = slack_escape(alert.identifier)
-    line = f"#{alert.number} {alert.severity.upper()} {package} {advisory}"
+    """Render one reported alert as a log line."""
+    line = f"#{alert.number} {alert.severity.upper()} {_one_line(alert.package)} {_one_line(alert.identifier)}"
     if alert.cve_id is None:
         # Fail loud: say why the waiver list could not answer this one.
         line += f" (no CVE id - a GHSA id cannot match the CVE-keyed {WAIVER_FILE})"
     return line
 
 
-def slack_summary(selection: Selection, limit: int = SLACK_LIMIT) -> str:
-    """Render the Slack message body for this run.
+def log_summary(selection: Selection) -> str:
+    """Render the job-log summary: the counts, then every reported alert.
 
     Args:
         selection: Output of :func:`select`.
-        limit: Hard cap on the returned length, so one bad day cannot post a novel.
 
     Returns:
-        Plain text, already Slack-escaped, at most `limit` characters.
+        Plain text, one alert per line.
     """
     waived = len(selection.waived)
     if not selection.reported:
@@ -388,26 +361,13 @@ def slack_summary(selection: Selection, limit: int = SLACK_LIMIT) -> str:
             f"{waived} already waived in {WAIVER_FILE}."
         )
     lines = [
-        f"{len(selection.reported)} unwaived CRITICAL/HIGH Dependabot alert(s) need triage "
-        f"({waived} other open alert(s) already waived in {WAIVER_FILE}):"
+        (
+            f"{len(selection.reported)} unwaived CRITICAL/HIGH Dependabot alert(s) need triage "
+            f"({waived} other open alert(s) already waived in {WAIVER_FILE}):"
+        )
     ]
-    lines += [_alert_line(alert) for alert in selection.reported[:MAX_SLACK_ALERTS]]
-    if len(selection.reported) > MAX_SLACK_ALERTS:
-        lines.append(f"+{len(selection.reported) - MAX_SLACK_ALERTS} more")
-    return "\n".join(lines)[:limit]
-
-
-def write_github_output(path: Path, selection: Selection) -> None:
-    """Append the counts the workflow branches on to `$GITHUB_OUTPUT`.
-
-    Args:
-        path: File named by `--github-output`.
-        selection: Output of :func:`select`.
-    """
-    with path.open("a", encoding="utf-8") as fh:
-        fh.write(f"new_count={len(selection.reported)}\n")
-        fh.write(f"total_unwaived={len(selection.unwaived)}\n")
-        fh.write(f"waived_count={len(selection.waived)}\n")
+    lines += [_alert_line(alert) for alert in selection.reported]
+    return "\n".join(lines)
 
 
 def parse_args() -> argparse.Namespace:
@@ -429,12 +389,6 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Ignore --new-since and report the whole unwaived critical/high backlog.",
     )
-    ap.add_argument("--slack-output", type=Path, help="Write the Slack-ready summary here.")
-    ap.add_argument(
-        "--github-output",
-        type=Path,
-        help="Append new_count/total_unwaived/waived_count here ($GITHUB_OUTPUT).",
-    )
     return ap.parse_args()
 
 
@@ -452,19 +406,13 @@ def main() -> int:
     selection = select(
         alerts,
         waived_cve_ids(),
-        now=datetime.now(timezone.utc),
+        now=datetime.now(UTC),
         window_hours=None if args.all else args.new_since,
     )
-    summary = slack_summary(selection)
-    print(summary)
+    print(log_summary(selection))
 
-    if args.slack_output:
-        args.slack_output.write_text(summary, encoding="utf-8")
-    if args.github_output:
-        write_github_output(args.github_output, selection)
-
-    # Exit 0 whatever the counts say: the workflow decides from new_count whether to
-    # post, and a red run every time an alert exists would train everyone to ignore it.
+    # Exit 0 whatever the alerts say: they reach Slack through the report job, and a red
+    # run every time an alert exists would train everyone to ignore it.
     return 0
 
 

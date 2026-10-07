@@ -1,7 +1,9 @@
 import asyncio
 import json
+import math
+import reprlib
 import time
-from base64 import b64decode
+from base64 import urlsafe_b64decode
 from urllib.parse import urljoin
 from uuid import UUID
 
@@ -23,6 +25,7 @@ class RelayAPIError(Exception):
     def __init__(self, service: str, status_code: int, message: str):
         self.service = service
         self.status_code = status_code
+        self.reason = message
         self.message = f"Relay API exception from {service} of {status_code}: {message}"
         super().__init__(self.message)
 
@@ -63,20 +66,44 @@ class PDPPingRequest(BaseModel):
 
 MAX_JWT_EXPIRY_BUFFER_TIME = 60 * 60  # 1 hour, has to be more than the ping interval
 
+# The ping loop logs a RelayAPIError's reason every PING_INTERVAL, so an error body quoted in one is escaped
+# onto a single line and, when long, cut to 200 characters taken from its start and end.
+_error_body_repr = reprlib.Repr(maxstring=200)
 
-def get_jwt_expiry_time(jwt: str) -> int:
-    # We parse it like this to avoid pulling in a full JWT library
-    claims = json.loads(b64decode(jwt.split(".")[1]))
-    return claims["exp"]
+
+def get_jwt_expiry_time(jwt: str) -> float:
+    """The ``exp`` claim of a JWT, read without verifying the token (that avoids a full JWT library).
+
+    JWT segments are base64url with the padding stripped (RFC 7515), so the padding is put back first.
+
+    Raises:
+        ValueError: The token has no payload segment, the payload is not base64url-encoded JSON
+            (binascii.Error, UnicodeDecodeError and JSONDecodeError are all ValueErrors), or it holds
+            no ``exp`` claim that is a finite number.
+    """
+    try:
+        payload = jwt.split(".")[1]
+    except IndexError as e:
+        raise ValueError("the token is not a JWT: it has no payload segment") from e
+    claims = json.loads(urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+    if not isinstance(claims, dict) or "exp" not in claims:
+        raise ValueError("the JWT payload is not a JSON object with an exp claim")
+    expiry = claims["exp"]
+    # JSON true decodes to a bool, which is an int; Python's json also accepts NaN and Infinity.
+    if isinstance(expiry, bool) or not isinstance(expiry, int | float) or not math.isfinite(expiry):
+        raise ValueError(f"the JWT exp claim is not a finite number: {reprlib.repr(expiry)}")
+    return expiry
 
 
 class OpalRelayAPIClient:
     def __init__(self, context: dict[str, str], opal_client: OpalClient):
         self._relay_session: ClientSession | None = None
         self._api_session: ClientSession | None = None
-        self._relay_token: str | None = None
+        self._relay_token_expires_at: float | None = None
         self._available = False
         self._opal_client = opal_client
+        # Types of unexpected ping failures already logged with a traceback since the last good ping.
+        self._traced_ping_failures: set[type[Exception]] = set()
         self._apply_context(context)
 
     @property
@@ -100,9 +127,11 @@ class OpalRelayAPIClient:
         return self._api_session
 
     async def relay_session(self) -> ClientSession:
+        session = self._relay_session
         if (
-            self._relay_token is None
-            or get_jwt_expiry_time(self._relay_token) - time.time() < MAX_JWT_EXPIRY_BUFFER_TIME
+            session is None
+            or self._relay_token_expires_at is None
+            or self._relay_token_expires_at - time.time() < MAX_JWT_EXPIRY_BUFFER_TIME
         ):
             async with self.api_session().post(
                 urljoin(
@@ -118,33 +147,49 @@ class OpalRelayAPIClient:
                     raise RelayAPIError(
                         "relay-jwt-api",
                         response.status,
-                        f"Server responded to token request with a bad status: {text}",
+                        f"Server responded to token request with a bad status: {_error_body_repr.repr(text)}",
                     )
                 try:
                     obj = RelayJWTResponse.parse_obj(await response.json())
-                except TypeError as e:
-                    try:
-                        text = await response.text()
-                    except Exception:  # noqa: BLE001
-                        text = None
-
+                # ValueError covers pydantic's ValidationError and a body that is not JSON or not UTF-8.
+                except (ValueError, aiohttp.ContentTypeError) as e:
+                    # json() above already read the body, so read() only returns it. The body may hold a token
+                    # in a shape the PDP does not expect, so the error describes it rather than quoting it.
+                    body = await response.read()
                     raise RelayAPIError(
                         "relay-jwt-api",
                         response.status,
-                        f"Server responded to token request with an invalid result: {text}",
+                        f"Server responded to token request with an invalid result: {len(body)} bytes of "
+                        f"{response.content_type}",
                     ) from e
-            self._relay_token = obj.token
-            self._relay_session = ClientSession(
-                headers={"Authorization": f"Bearer {self._relay_token}"},
+                # Read on arrival, so a token without a readable expiry is never kept and the next ping asks again.
+                try:
+                    expires_at = get_jwt_expiry_time(obj.token)
+                except ValueError as e:
+                    raise RelayAPIError(
+                        "relay-jwt-api",
+                        response.status,
+                        f"Server responded to token request with an invalid result: a token whose expiry "
+                        f"cannot be read: {e}",
+                    ) from e
+            session = ClientSession(
+                headers={"Authorization": f"Bearer {obj.token}"},
                 trust_env=True,
                 timeout=aiohttp.ClientTimeout(total=sidecar_config.CONTROL_PLANE_TIMEOUT),
             )
-        return self._relay_session
+            replaced = self._relay_session
+            self._relay_session = session
+            self._relay_token_expires_at = expires_at
+            if replaced is not None:
+                # Only the ping loop uses the relay session, one ping at a time, so nothing still holds this one.
+                await replaced.close()
+        return session
 
     async def send_ping(self):
         session = await self.relay_session()
-        # This is ugly but for now this is not exposed publically in OPAL
-        policy_topics = self._opal_client.policy_updater.topics
+        # OPAL has no policy updater when OPAL_POLICY_UPDATER_ENABLED is false; the PDP then listens on no policy topic.
+        policy_updater = self._opal_client.policy_updater
+        policy_topics = [] if policy_updater is None else policy_updater.topics
         data_topics = opal_client_config.DATA_TOPICS
         if opal_client_config.SCOPE_ID != "default":
             data_topics = [f"{opal_client_config.SCOPE_ID}:data:{topic}" for topic in opal_client_config.DATA_TOPICS]
@@ -165,13 +210,13 @@ class OpalRelayAPIClient:
             if response.status != status.HTTP_202_ACCEPTED:
                 try:
                     text = await response.text()
-                except Exception:  # noqa: BLE001
+                except (aiohttp.ClientError, TimeoutError, UnicodeDecodeError):
                     text = None
 
                 raise RelayAPIError(
                     "relay-api",
                     response.status,
-                    f"Server responded to token request with a bad status: {text}",
+                    f"Server responded to the ping with a bad status: {_error_body_repr.repr(text)}",
                 )
         logger.debug("Sent ping.")
 
@@ -181,19 +226,46 @@ class OpalRelayAPIClient:
                 await self.send_ping()
             except RelayAPIError as e:
                 logger.warning(
-                    "Could not report uptime status to server: got status code {} from {}. "
+                    "Could not report uptime status to server: got status code {} from {}: {}. "
                     "This does not affect the PDP's operational state or data updates.",
                     e.status_code,
                     e.service,
+                    e.reason,
                 )
-            except Exception as e:  # noqa: BLE001
+            except (aiohttp.ClientError, TimeoutError) as e:
                 logger.warning(
-                    "Could not report uptime status to server: {}. This does not affect the PDP's operational state "
-                    "or data updates.",
-                    str(e),
+                    "Could not report uptime status to server: {}: {}. This does not affect the PDP's operational "
+                    "state or data updates.",
+                    type(e).__name__,
+                    e,
                 )
+            except Exception as e:  # noqa: BLE001 - keep the ping loop alive: log it, retry next interval
+                self._log_unexpected_ping_failure(e)
+            else:
+                self._traced_ping_failures.clear()
 
             await asyncio.sleep(sidecar_config.PING_INTERVAL)
+
+    def _log_unexpected_ping_failure(self, error: Exception) -> None:
+        """Log a ping failure no handler above expects, with a traceback the first time its type appears.
+
+        Some of these last until a restart, such as a runtime state that does not validate, and the
+        loop retries every PING_INTERVAL, so a traceback each time would flood the log. Later
+        failures of the same type log one line until a ping succeeds.
+        """
+        if type(error) in self._traced_ping_failures:
+            logger.warning(
+                "Could not report uptime status to server: {}: {}. This does not affect the PDP's operational "
+                "state or data updates.",
+                type(error).__name__,
+                error,
+            )
+            return
+        self._traced_ping_failures.add(type(error))
+        logger.opt(exception=error).warning(
+            "Could not report uptime status to server. This does not affect the PDP's operational state or data "
+            "updates. Until a ping succeeds, this error is logged again without its traceback."
+        )
 
     async def start(self):
         self._task = asyncio.create_task(self._run())

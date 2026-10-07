@@ -50,7 +50,7 @@ async def patch_handler(response: Response) -> Response:
     if not status.HTTP_200_OK <= response.status_code < status.HTTP_400_BAD_REQUEST:
         return response
 
-    response_json = json.loads(response.body)
+    response_json = json.loads(bytes(response.body))
 
     if "patch" not in response_json:
         return response
@@ -62,7 +62,7 @@ async def patch_handler(response: Response) -> Response:
 
         patch = parse_obj_as(list[JSONPatchAction], patch_json)
         await store.patch_data("", patch)
-    except Exception as ex:  # noqa: BLE001
+    except Exception as ex:  # noqa: BLE001 - the backend write already succeeded; a failed local patch must not 500
         logger.exception("Failed to update OPAL store with: {err}", err=ex)
 
     del response_json["patch"]
@@ -172,7 +172,7 @@ async def proxy_request_to_cloud_service(
     path: str,
     cloud_service_url: str,
     additional_headers: dict[str, str],
-    timeout: int = sidecar_config.CONTROL_PLANE_TIMEOUT,
+    timeout: float = sidecar_config.CONTROL_PLANE_TIMEOUT,
 ) -> Response:
     auth_header = request.headers.get("Authorization")
     if auth_header is None:
@@ -195,8 +195,7 @@ async def proxy_request_to_cloud_service(
     # override host header (required by k8s ingress)
     try:
         headers["host"] = urlparse(cloud_service_url).netloc
-    except Exception as e:  # noqa: BLE001
-        # fallback
+    except ValueError as e:
         logger.error(f"could not urlparse cloud service url: {cloud_service_url}, exception: {e}")
 
     logger.info(f"Proxying request: {request.method} {path}")

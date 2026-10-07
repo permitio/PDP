@@ -21,20 +21,23 @@ tests in ``test_debounce_unit.py`` cover the same state machine directly, with a
 
 import asyncio
 import time
+from dataclasses import dataclass
 from unittest.mock import AsyncMock
 
 import aiohttp
 import pytest
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
+
+# Basename import (not horizon.tests.*): horizon/tests has no __init__.py, so pytest's prepend
+# import mode puts this directory on sys.path and imports test modules by basename. A
+# horizon.tests.test_enforcer_api import would load a second copy of it. Same rationale as
+# test_legacy_update_routes.py.
+from test_enforcer_api import MockPermitPDP
+
 from horizon import debounce
 from horizon.config import sidecar_config
 from horizon.debounce import DebouncedTrigger
-from httpx import ASGITransport, AsyncClient
-
-# Basename import (not horizon.tests.*): CI installs the package non-editably, so the wheel
-# ships no tests/ package; pytest's prepend import mode puts this directory on sys.path and
-# imports test modules by basename. Same rationale as test_legacy_update_routes.py.
-from test_enforcer_api import MockPermitPDP
 
 WINDOW = 10.0
 # Bounds a hang rather than a real wait: on the happy path these resolve immediately.
@@ -167,7 +170,9 @@ def test_trigger_fires_again_after_window_elapses(pdp: MockPermitPDP, auth: dict
 
     # Rewind the debouncer's last dispatch past the window (no real sleep): the next trigger
     # now sees the window as elapsed and fires.
-    pdp._policy_trigger_debounce._last_dispatched -= WINDOW + 1
+    debouncer = pdp._policy_trigger_debounce
+    assert debouncer._last_dispatched is not None
+    debouncer._last_dispatched -= WINDOW + 1
 
     second = client.post("/policy-updater/trigger", headers=auth, follow_redirects=False)
     assert second.status_code == 200
@@ -238,6 +243,7 @@ async def test_in_flight_guard_beats_an_elapsed_window(pdp: MockPermitPDP, auth:
         first = await client.post("/data-updater/trigger", headers=auth)
         assert first.json() == DISPATCHED
         # ...which we rewind past the window, so from here the window guard would ADMIT.
+        assert debouncer._last_dispatched is not None
         debouncer._last_dispatched -= WINDOW + 1
 
         # 2. A second trigger parks inside the reload. It cannot refresh the timestamp while
@@ -331,7 +337,7 @@ def test_control_plane_failure_502s_and_consumes_the_window(pdp: MockPermitPDP, 
 
 def test_control_plane_timeout_504s(pdp: MockPermitPDP, auth: dict[str, str], monkeypatch):
     monkeypatch.setattr(sidecar_config, "TRIGGER_DEBOUNCE_SECONDS", WINDOW)
-    get_base = AsyncMock(side_effect=asyncio.TimeoutError())
+    get_base = AsyncMock(side_effect=TimeoutError())
     monkeypatch.setattr(pdp._opal.data_updater, "get_base_policy_data", get_base)
     client = TestClient(pdp._app, raise_server_exceptions=False)
 
@@ -358,31 +364,63 @@ def test_an_unexpected_error_is_still_a_500(pdp: MockPermitPDP, auth: dict[str, 
     assert pdp._data_trigger_debounce._last_dispatched is not None
 
 
-# --- case 6: a disabled data updater 503s before the debouncer (window not consumed) -----
+# --- case 6: a disabled updater 503s before the debouncer (window not consumed) ----------
 
 
-def test_disabled_data_updater_503s_before_debouncer(pdp: MockPermitPDP, auth: dict[str, str], monkeypatch):
+@dataclass(frozen=True, kw_only=True)
+class UpdaterRoute:
+    """A trigger route, the OpalClient attribute holding its updater, the updater method a reload
+    awaits and its arguments, and the route's 503 detail while that updater is disabled."""
+
+    path: str
+    updater: str
+    reload: str
+    reload_kwargs: dict
+    disabled_detail: str
+
+
+# OPAL builds no policy updater when OPAL_POLICY_UPDATER_ENABLED is false, and no data updater when
+# OPAL_DATA_UPDATER_ENABLED is.
+UPDATER_ROUTES = [
+    UpdaterRoute(
+        path="/policy-updater/trigger",
+        updater="policy_updater",
+        reload="trigger_update_policy",
+        reload_kwargs={"force_full_update": True},
+        disabled_detail="Policy Updater is currently disabled. Dynamic policy updates are not available.",
+    ),
+    UpdaterRoute(
+        path="/data-updater/trigger",
+        updater="data_updater",
+        reload="get_base_policy_data",
+        reload_kwargs={"data_fetch_reason": "request from sdk"},
+        disabled_detail="Data Updater is currently disabled. Dynamic data updates are not available.",
+    ),
+]
+
+
+@pytest.mark.parametrize("route", UPDATER_ROUTES, ids=lambda route: route.updater)
+def test_disabled_updater_503s_before_debouncer(
+    pdp: MockPermitPDP, auth: dict[str, str], monkeypatch, route: UpdaterRoute
+):
     monkeypatch.setattr(sidecar_config, "TRIGGER_DEBOUNCE_SECONDS", WINDOW)
-    get_base = AsyncMock()
-    original_updater = pdp._opal.data_updater
-    monkeypatch.setattr(original_updater, "get_base_policy_data", get_base)
+    reload = AsyncMock()
+    updater = getattr(pdp._opal, route.updater)
+    monkeypatch.setattr(updater, route.reload, reload)
 
-    # Disable the data updater -> exact OPAL 503 parity, raised BEFORE the debouncer.
-    monkeypatch.setattr(pdp._opal, "data_updater", None)
+    monkeypatch.setattr(pdp._opal, route.updater, None)
     client = TestClient(pdp._app)
-    disabled = client.post("/data-updater/trigger", headers=auth, follow_redirects=False)
+    disabled = client.post(route.path, headers=auth, follow_redirects=False)
     assert disabled.status_code == 503
-    assert disabled.json()["detail"] == "Data Updater is currently disabled. Dynamic data updates are not available."
-    # The 503 must not have consumed the window.
-    assert pdp._data_trigger_debounce._last_dispatched is None
-    get_base.assert_not_awaited()
+    assert disabled.json()["detail"] == route.disabled_detail
+    reload.assert_not_awaited()
 
-    # Re-enable: because the 503 never touched the debouncer, the next trigger fires.
-    monkeypatch.setattr(pdp._opal, "data_updater", original_updater)
-    enabled = client.post("/data-updater/trigger", headers=auth, follow_redirects=False)
+    # Re-enable: because the 503 never touched the debouncer, the next trigger fires, not coalesces.
+    monkeypatch.setattr(pdp._opal, route.updater, updater)
+    enabled = client.post(route.path, headers=auth, follow_redirects=False)
     assert enabled.status_code == 200
     assert enabled.json() == DISPATCHED
-    get_base.assert_awaited_once_with(data_fetch_reason="request from sdk")
+    reload.assert_awaited_once_with(**route.reload_kwargs)
 
 
 # --- case 7: policy and data debouncers are independent; state is per-instance -----------
@@ -463,23 +501,27 @@ def test_openapi_declares_the_trigger_response_shape(pdp: MockPermitPDP):
     assert set(trigger_response["properties"]) == {"status", "triggered"}
     assert trigger_response["properties"]["triggered"]["type"] == "boolean"
 
-    # The data route's documented failure modes are declared too, so a client can tell the
-    # permanent "updater disabled" 503 from the transient, Retry-After-carrying 502/504.
+    # The documented failure modes are declared too, so a client can tell the permanent "updater
+    # disabled" 503 from the data route's transient, Retry-After-carrying 502/504.
+    assert "503" in spec["paths"]["/policy-updater/trigger"]["post"]["responses"]
     assert {"502", "503", "504"} <= set(spec["paths"]["/data-updater/trigger"]["post"]["responses"])
 
     # The legacy aliases stay out of the published contract - they are compatibility shims.
     assert not [path for path in spec["paths"] if "update_policy" in path]
 
 
-def test_disabled_data_updater_503_carries_no_retry_after(pdp: MockPermitPDP, auth: dict[str, str], monkeypatch):
+@pytest.mark.parametrize("route", UPDATER_ROUTES, ids=lambda route: route.updater)
+def test_disabled_updater_503_carries_no_retry_after(
+    pdp: MockPermitPDP, auth: dict[str, str], monkeypatch, route: UpdaterRoute
+):
     """A disabled updater is a configuration state: retrying cannot help, so promise nothing.
 
     This is why the control-plane failures map to 502/504 rather than joining this 503 - a
     client must be able to tell "back off and retry" from "stop, this will never work".
     """
     monkeypatch.setattr(sidecar_config, "TRIGGER_DEBOUNCE_SECONDS", WINDOW)
-    monkeypatch.setattr(pdp._opal, "data_updater", None)
+    monkeypatch.setattr(pdp._opal, route.updater, None)
 
-    response = TestClient(pdp._app).post("/data-updater/trigger", headers=auth, follow_redirects=False)
+    response = TestClient(pdp._app).post(route.path, headers=auth, follow_redirects=False)
     assert response.status_code == 503
     assert "Retry-After" not in response.headers

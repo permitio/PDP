@@ -56,11 +56,13 @@ jobs:
         with:
           path: ~/.cache/prek
           key: prek-0.5.4|${{ env.pythonLocation }}|${{ hashFiles('.pre-commit-config.yaml') }}
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: '0.12.19'
+          enable-cache: false
       - name: Run prek
-        run: |
-          set -euo pipefail
-          python -m pip install --quiet --disable-pip-version-check prek==0.5.4
-          prek run --show-diff-on-failure --color=always --all-files
+        run: uvx --from prek==0.5.4 prek run --show-diff-on-failure --color=always --all-files
   pytests:
     runs-on: ubuntu-24.04
     steps:
@@ -79,13 +81,31 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Run Pytests
+      # No uv cache: this workflow also runs on releases, and a restored cache is not worth a
+      # cache-poisoning surface there. `uv sync --frozen` installs exactly uv.lock.
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: '0.12.19'
+          enable-cache: false
+
+      - name: Install the locked dependencies
+        run: uv sync --frozen
+
+      # uv ignores dependencies' Requires-Python UPPER bounds when it locks (that is how
+      # opal-common 0.9.9, which declares <3.13, got through a uv check once). pip enforces
+      # them: install the exported runtime lock with pip on the image's 3.13, without
+      # touching the environment, so an incompatible package fails here and not at runtime.
+      - name: Check every locked package supports Python 3.13
         run: |
-          python -m pip install --upgrade pip
-          pip install ".[dev]"
-          # Same post-resolve overrides the image installs - see requirements-override.txt.
-          pip install --no-deps --require-hashes -r requirements-override.txt
-          pytest -s --cache-clear horizon/tests/
+          set -euo pipefail
+          uv export --frozen --no-dev --no-emit-project --no-header \
+            --output-file "$RUNNER_TEMP/lock.txt"
+          python -m pip install --dry-run --quiet --disable-pip-version-check \
+            --require-hashes --no-deps --requirement "$RUNNER_TEMP/lock.txt"
+
+      - name: Run Pytests
+        run: uv run --frozen pytest -s --cache-clear horizon/tests/
 
   build-pdp-image:
     runs-on: ubuntu-24.04
@@ -218,9 +238,9 @@ jobs:
           cache-from: type=gha,scope=rust-chef
           # Must match release.yml. Without it the image that pdp-tester exercises and
           # that docker-scout/Trivy gate is built from a possibly-stale cached `main`
-          # stage, while the released image re-resolves `apk upgrade` and `pip install`
-          # - so CI would be validating and scanning a DIFFERENT package set than the one
-          # customers pull. Two ways that bites: a gate that passes on cached packages
+          # stage, while the released image re-runs `apk upgrade` against the live Alpine
+          # index - so CI would be validating and scanning a DIFFERENT package set than the
+          # one customers pull. Two ways that bites: a gate that passes on cached packages
           # while the release ships newer ones, and the reverse, a gate that fails on
           # packages the release would not actually contain.
           #
@@ -286,10 +306,14 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-          # Cache pdp-tester's deps so each run doesn't re-resolve/re-download
-          # from PyPI (faster, and resilient to transient PyPI outages).
-          cache: "pip"
-          cache-dependency-path: pdp-tester/pyproject.toml
+
+      # pdp-tester has no lockfile, so this resolves its pyproject.toml fresh, as pip did.
+      # No uv cache: this workflow also runs on releases.
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: '0.12.19'
+          enable-cache: false
 
       # Docker runtime backend: launch the PDP as a local container via aiodocker
       # (no k3d/Helm/kubectl). This is the runtime the pdp-tester maintainers
@@ -297,7 +321,7 @@ jobs:
       # (its default k3d v5.4.6 has no checksums.txt, so install.sh now 404s).
       - name: Install pdp-tester (docker extra)
         working-directory: ./pdp-tester
-        run: pip install -e ".[docker]"
+        run: uv pip install --system --editable ".[docker]"
 
       - name: Run PDP tester against the local Docker PDP image
         working-directory: ./pdp-tester

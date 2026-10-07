@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# ruff: noqa: T201, N802
+# ruff: noqa: T201
 """
 Test server for watchdog tests.
 This server listens on a configurable port and responds to various commands:
@@ -9,7 +9,8 @@ This server listens on a configurable port and responds to various commands:
 - POST /crash: Terminates the server to simulate a crash
 - POST /unhealthy: Makes /health return a non-200 status code
 - POST /unresponsive: Makes /health halt and not respond
-- POST /ignore_sigterm: Makes the server ignore SIGTERM signals for shutdown testing
+
+Started with --ignore-sigterm, the server ignores SIGTERM, for shutdown-timeout testing.
 """
 
 import argparse
@@ -29,7 +30,6 @@ ignore_sigterm = False
 
 def sigterm_handler(signum, frame):  # noqa: ARG001
     """Custom SIGTERM handler that can be configured to ignore signals."""
-    global ignore_sigterm
     if ignore_sigterm:
         print(f"Ignoring SIGTERM signal (pid: {os.getpid()})")
     else:
@@ -44,7 +44,7 @@ class TestHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        global request_count
+        global request_count  # noqa: PLW0603 - the server's state is module-level, shared by every request
         request_count += 1
 
         if self.path == "/ping":
@@ -81,17 +81,18 @@ class TestHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"Not found")
 
     def do_POST(self):
-        global request_count, is_healthy, is_responsive, ignore_sigterm
+        global request_count, is_healthy, is_responsive  # noqa: PLW0603 - module-level server state
         request_count += 1
 
         if self.path == "/crash":
             self._set_headers()
             self.wfile.write(b"Crashing now...")
             self.wfile.flush()
-            # Force crash the server with SIGTERM
+            # SystemExit escapes serve_forever(), so the process exits with code 12, which the
+            # watchdog tests assert on.
             raise SystemExit(12)
 
-        elif self.path == "/unhealthy":
+        if self.path == "/unhealthy":
             is_healthy = False
             self._set_headers()
             self.wfile.write(b"Health status set to unhealthy")
@@ -108,7 +109,7 @@ class TestHandler(BaseHTTPRequestHandler):
 
 
 def run_server(port, *, ignore_term_signals: bool = False):
-    global ignore_sigterm
+    global ignore_sigterm  # noqa: PLW0603 - read by the module-level SIGTERM handler
 
     # Set up signal handling
     ignore_sigterm = ignore_term_signals

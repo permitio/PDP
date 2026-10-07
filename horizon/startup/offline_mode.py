@@ -51,7 +51,7 @@ class OfflineModeManager:
                 key_derivation_salt=salt,
             ).json(ensure_ascii=False)
             self._backup_path.write_text(content)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001 - best-effort: a failed backup must not fail startup or a request
             logger.exception(f"Failed to backup sidecar config: {e}")
 
     def restore_config(self) -> RemoteConfig | None:

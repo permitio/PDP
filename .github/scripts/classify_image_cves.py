@@ -8,9 +8,9 @@ often an image that has simply not been rebuilt, with every fix already sitting 
 Alpine's repos.
 
 Trivy already carries the signal needed to answer that automatically: a finding with a
-FixedVersion means upstream shipped a patch, so `apk upgrade` / `pip install` in the
-existing Dockerfile would absorb it on the next build. A finding WITHOUT one cannot be
-rebuilt away and needs a pin, a base-image move, a dependency drop, or a waiver.
+FixedVersion means upstream shipped a patch. For an Alpine package, `apk upgrade` in the
+existing Dockerfile absorbs it on the next build. A finding WITHOUT one cannot be rebuilt
+away and needs a pin, a base-image move, a dependency drop, or a waiver.
 
 One wrinkle: "has a fix" is not the same as "a rebuild of THIS repo picks it up". The
 OPA binary at /app/bin/opa is compiled from permit-opa's source, so a CVE in one of its
@@ -21,26 +21,43 @@ absorb. Two more cases a plain rebuild cannot fix, because the Dockerfile pins t
   - The Go *stdlib* comes from the `golang:1.27-bookworm@sha256:...` build stage, which is
     digest-pinned. A rebuild reuses the same toolchain; the fix arrives when Dependabot's
     `docker` PR moves the digest and that PR is merged.
-  - A Python package pinned with `==` in requirements*.txt (e.g. starlette, ddtrace,
-    websockets) stays at that version through `pip install`; the pin has to move.
+  - Python packages are installed from uv.lock exactly, so a rebuild installs whatever
+    main's lock holds - and this script never decides that version is fixed. Trivy's
+    FixedVersion lists only the versions that end each vulnerable range, not the ranges
+    themselves, so a version at or above it can still be vulnerable: a range left open with
+    no fix, or a regression on a later line. A fixed Python package is therefore owner
+    'lock' (Dependabot's `uv` PR, or `uv lock --upgrade-package NAME`), or 'pinned' when
+    pyproject.toml pins it with `==` (e.g. starlette, ddtrace, websockets) and the pin has
+    to move first - never 'rebuild'. The one call it does make compares the lock with the
+    image, not with FixedVersion: when main's lock still holds the very version Trivy
+    flagged, a release reinstalls it, so the finding certainly needs the lock (or the pin)
+    to move. Otherwise the report's Next step names the version main's uv.lock holds, once
+    per package, for a human to judge against each advisory.
 
 Calling any of these "just rebuild" would send someone to cut a release that cannot fix it.
 
 Verdicts:
   CLEAN   - nothing at CRITICAL/HIGH after waivers.
-  REBUILD - findings exist and EVERY one is absorbed by rebuilding this repo's image.
-            Cut a release; no code change needed.
-  SOURCE  - at least one finding needs a change somewhere: no upstream fix exists at all,
-            the fix lives in permit-opa's go.mod, the golang base digest has to move, or
-            an exact pin in requirements*.txt has to move.
+  REBUILD - findings exist and EVERY one has an upstream fix that rebuilding this repo's
+            image from main absorbs, such as an Alpine package through `apk upgrade`. Cut
+            a release; no code change needed.
+  SOURCE  - at least one finding is not known to clear on a rebuild: no upstream fix exists
+            at all, the fix lives in permit-opa's go.mod, the golang base digest has to
+            move, or it is in a Python package, which needs a uv.lock update or an exact pin
+            in pyproject.toml moved unless main's locked version already carries the fix.
 
 SOURCE outranks REBUILD: a report can contain both kinds, and the one that needs a human
 is the one that should set the verdict.
 
+pyproject.toml and uv.lock are read from the checkout this script sits in, whatever the
+working directory - main, on a scheduled run.
+
 A report that cannot be read is NOT clean. `--report` pointing at a missing, empty or
-truncated file means the scan step failed, and the only safe answer is a loud one: the
-script writes `parse_ok=false`, prints a workflow error annotation and exits non-zero.
-Reading a zero-byte file as `{}` once turned a broken scan into a green CLEAN run.
+truncated file, or at JSON not laid out as a Trivy report - no `"SchemaVersion": 2`, which
+Trivy's JSON format always writes, as with `{}` or a SARIF file - means the scan step failed,
+and the only safe answer is a loud one: the script prints a workflow error annotation, writes
+SCAN FAILED to the job summary and exits non-zero. Reading a zero-byte file as `{}` once
+turned a broken scan into a green CLEAN run.
 """
 
 from __future__ import annotations
@@ -49,11 +66,17 @@ import argparse
 import json
 import re
 import sys
+import tomllib
 from collections import Counter
+from collections.abc import Iterator, Mapping, Set
 from pathlib import Path
 
 # Exit code for "the report itself is unusable", distinct from a verdict.
 EXIT_UNREADABLE_REPORT = 2
+
+# The `SchemaVersion` Trivy's JSON format writes (`report.SchemaVersion` in Trivy's pkg/report),
+# and the only layout this script reads.
+TRIVY_SCHEMA_VERSION = 2
 
 
 def parse_args() -> argparse.Namespace:
@@ -61,12 +84,6 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--report", required=True, type=Path, help="Trivy JSON report")
     ap.add_argument("--tag", required=True, help="Image tag that was scanned")
     ap.add_argument("--summary", type=Path, help="Append Markdown here ($GITHUB_STEP_SUMMARY)")
-    ap.add_argument("--github-output", type=Path, help="Write outputs here ($GITHUB_OUTPUT)")
-    ap.add_argument(
-        "--slack-output",
-        type=Path,
-        help="Write a short plain-text summary here, ready to drop into a Slack message",
-    )
     return ap.parse_args()
 
 
@@ -74,41 +91,84 @@ class ReportUnreadableError(Exception):
     """The Trivy report cannot be read, so no verdict can be honestly reported."""
 
 
-_PIN = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[^\]]*\])?\s*==")
+# PEP 508 allows whitespace between the name, the extras and the operator: `foo [x] == 1`.
+_PIN = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[[^\]]*\])?\s*==")
 
 
-def exact_pins(paths: list[Path] | None = None) -> set[str]:
-    """Names of Python packages pinned with `==` in the repo's requirements files.
+def repo_root() -> Path:
+    """Return the repository root, derived from this script's location."""
+    return Path(__file__).resolve().parents[2]
 
-    Names are normalised the PEP 503 way (lower case, runs of `-_.` folded to `-`), which
-    is also how Trivy reports them closely enough to compare.
+
+def exact_pins(pyproject: Path | None = None) -> set[str]:
+    """Names of Python packages pinned with `==` in pyproject.toml.
+
+    Reads `[project].dependencies` and `[tool.uv].override-dependencies` - an override is a pin
+    too. Names are normalised the PEP 503 way (lower case, runs of `-_.` folded to `-`), which is
+    also how Trivy reports them closely enough to compare.
 
     Args:
-        paths: Files to read. Defaults to requirements*.txt in the working directory,
-            which is the repo root in every workflow that runs this script.
+        pyproject: File to read. Defaults to the repository's own pyproject.toml, whatever the
+            working directory.
 
     Returns:
         The set of normalised package names.
     """
-    if paths is None:
-        paths = sorted(Path().glob("requirements*.txt"))
+    path = pyproject or repo_root() / "pyproject.toml"
+    data = tomllib.loads(path.read_text(encoding="utf-8"))
+    requirements = list(data.get("project", {}).get("dependencies", []))
+    requirements += data.get("tool", {}).get("uv", {}).get("override-dependencies", [])
     pins: set[str] = set()
-    for path in paths:
-        for line in path.read_text(encoding="utf-8").splitlines():
-            m = _PIN.match(line)
-            if m:
-                pins.add(_normalise(m.group(1)))
+    for requirement in requirements:
+        m = _PIN.match(requirement)
+        if m:
+            pins.add(_normalise(m.group(1)))
     return pins
+
+
+def locked_versions(lock: Path | None = None) -> dict[str, set[str]]:
+    """The versions uv.lock holds for each package.
+
+    A name maps to a set because uv writes one `[[package]]` entry per version when the
+    resolution forks on environment markers.
+
+    Args:
+        lock: File to read. Defaults to the repository's own uv.lock, whatever the working
+            directory.
+
+    Returns:
+        Locked versions keyed by normalised package name.
+    """
+    path = lock or repo_root() / "uv.lock"
+    data = tomllib.loads(path.read_text(encoding="utf-8"))
+    versions: dict[str, set[str]] = {}
+    for package in data.get("package", []):
+        if "version" in package:
+            versions.setdefault(_normalise(package["name"]), set()).add(package["version"])
+    return versions
 
 
 def _normalise(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
-def classify(finding: dict, pins: set[str] | frozenset[str] = frozenset()) -> str:
+# Every action classify() returns, most work first. The verdict's table sorts each severity's rows
+# by it, and format_security_report.py ranks the owners of an advisory several packages share by it.
+ACTION_ORDER = {"no-fix": 0, "permit-opa": 1, "base-digest": 2, "pinned": 3, "lock": 4, "rebuild": 5}
+
+
+def classify(finding: dict, pins: Set[str] = frozenset()) -> str:
     """Who has to act on this finding.
 
-    Returns one of 'rebuild', 'permit-opa', 'base-digest', 'pinned' or 'no-fix'.
+    A Python package with a fix is 'lock' or 'pinned', never 'rebuild', whatever main's uv.lock
+    holds: see the module docstring for why its version is not compared to Trivy's FixedVersion.
+
+    Args:
+        finding: A row with `pkg`, `fixed` and `type` (Trivy's result type).
+        pins: Normalised names pinned with `==` in pyproject.toml, from :func:`exact_pins`.
+
+    Returns:
+        One of 'rebuild', 'permit-opa', 'base-digest', 'lock', 'pinned' or 'no-fix'.
     """
     if not finding["fixed"]:
         return "no-fix"
@@ -119,9 +179,95 @@ def classify(finding: dict, pins: set[str] | frozenset[str] = frozenset()) -> st
             return "base-digest"
         # Every other Go module linked into /app/bin/opa is a permit-opa dependency.
         return "permit-opa"
-    if finding["type"] == "python-pkg" and _normalise(finding["pkg"]) in pins:
-        return "pinned"
+    if finding["type"] == "python-pkg":
+        return "pinned" if _normalise(finding["pkg"]) in pins else "lock"
     return "rebuild"
+
+
+_RELEASE_ONLY = re.compile(r"^\d+(?:\.\d+)*$")
+
+
+def _same_version(a: str, b: str) -> bool:
+    """Whether two version strings certainly name the same version.
+
+    Equal ignoring case and surrounding space, or plain release numbers whose parts are equal
+    as integers once trailing zero parts are dropped, which is how PEP 440 compares release
+    numbers: `1.0` and `1.0.0`, and also `1.01` and `1.1`. Anything else - a pre-release, a
+    local label, an epoch - has to match exactly, so an unsure answer is "no".
+    """
+    a, b = a.strip().lower(), b.strip().lower()
+    if a == b:
+        return True
+    if not (_RELEASE_ONLY.match(a) and _RELEASE_ONLY.match(b)):
+        return False
+    return _release(a) == _release(b)
+
+
+def _release(version: str) -> list[int]:
+    parts = [int(part) for part in version.split(".")]
+    while len(parts) > 1 and parts[-1] == 0:
+        parts.pop()
+    return parts
+
+
+def lock_still_flagged(pkg: str, action: str, locked: Mapping[str, Set[str]], *, installed: str) -> bool:
+    """Whether main's uv.lock still holds the version Trivy flagged for a 'lock' or 'pinned' finding.
+
+    True when every version main's lock holds for the package is the scanned image's own
+    version: a release reinstalls that very version, so it cannot clear the finding. This
+    compares the image's version with the lock's, never with Trivy's FixedVersion.
+
+    Args:
+        pkg: The package name as Trivy reports it.
+        action: The finding's owner, from :func:`classify`.
+        locked: main's uv.lock, from :func:`locked_versions`.
+        installed: The version Trivy found in the image (its InstalledVersion).
+
+    Returns:
+        False for any other owner and for a package main's uv.lock does not hold.
+    """
+    versions = locked.get(_normalise(pkg), ())
+    if action not in ("lock", "pinned") or not versions:
+        return False
+    return all(_same_version(version, installed) for version in versions)
+
+
+def lock_note(pkg: str, action: str, locked: Mapping[str, Set[str]], *, installed: str) -> str:
+    """What main's uv.lock holds for a 'lock' or 'pinned' finding, and what to do about it.
+
+    When the lock still holds the version Trivy flagged (:func:`lock_still_flagged`), the note
+    says the lock has to move. Otherwise it is context for a human, not a verdict: whether the
+    locked version carries the fix is theirs to judge against the advisory. The note covers
+    every CVE of the package, each with its own fix, so it never speaks of a single fix.
+
+    Args:
+        pkg: The package name as Trivy reports it.
+        action: The finding's owner, from :func:`classify`.
+        locked: main's uv.lock, from :func:`locked_versions`.
+        installed: The version Trivy found in the image (its InstalledVersion).
+
+    Returns:
+        One sentence without a final full stop, or '' for any other owner and for a package
+        main's uv.lock does not hold.
+    """
+    name = _normalise(pkg)
+    versions = sorted(locked.get(name, ()))
+    if action not in ("lock", "pinned") or not versions:
+        return ""
+    # Only `name` and the versions, both read from main's uv.lock, go into the sentence, so it
+    # holds no scanner text.
+    held = f"{name} {', '.join(versions)}"
+    if action == "lock":
+        update = f"run `uv lock --upgrade-package {name}`"
+    else:
+        update = f"raise the `==` pin for {name} in pyproject.toml and run `uv lock`"
+    if lock_still_flagged(pkg, action, locked, installed=installed):
+        return f"main's uv.lock still holds {held}, the version Trivy flagged - {update}, then cut a release"
+    judged = "that version carries" if len(versions) == 1 else "every one of those versions carries"
+    return (
+        f"main's uv.lock has {held} - cutting a release clears each finding whose fix {judged}; "
+        f"for the rest, {update}, then cut a release"
+    )
 
 
 def load_report(report: Path) -> dict:
@@ -163,43 +309,141 @@ def load_report(report: Path) -> dict:
     return data
 
 
-def collect(report: Path, pins: set[str] | None = None) -> list[dict]:
+def _require_trivy_schema(data: dict, report: Path | str) -> None:
+    """Raise :class:`ReportUnreadableError` unless `SchemaVersion` is the one Trivy's JSON format writes."""
+    version = data.get("SchemaVersion")
+    if version is None:
+        raise ReportUnreadableError(
+            f"{report} is not a Trivy JSON report: it has no `SchemaVersion`, which Trivy's JSON format "
+            f"always writes. Check that the Trivy step used `format: json` (not `sarif` or a template) and "
+            f"that nothing rewrote the file."
+        )
+    if version != TRIVY_SCHEMA_VERSION:
+        found = (
+            f"`SchemaVersion` {version}"
+            if isinstance(version, int)
+            else f"a `SchemaVersion` that is a JSON {type(version).__name__}"
+        )
+        raise ReportUnreadableError(
+            f"{report} has {found}, and these scripts read Trivy's schema {TRIVY_SCHEMA_VERSION}. If Trivy "
+            f"changed its JSON layout, update vulnerabilities() in .github/scripts/classify_image_cves.py."
+        )
+
+
+def vulnerabilities(data: dict, report: Path | str) -> Iterator[tuple[dict, dict]]:
+    """Walk `Results[].Vulnerabilities[]`, refusing any other layout.
+
+    Trivy's JSON format always writes `"SchemaVersion": 2`, so a report without it - `{}`, a
+    SARIF file, anything else that merely parses as JSON - is not one, and reading it as an
+    empty report would turn a broken scan into CLEAN. A missing or null `Results` or
+    `Vulnerabilities` is an empty list - Trivy leaves them out when there is nothing to list.
+    Anything else that is not a list of objects means the file is not a Trivy report either.
+
+    The PR and release scan gate (format_scan_report.py) and the scheduled Slack report
+    (format_security_report.py) walk Trivy reports with this too, so all three refuse the
+    same files.
+
+    Args:
+        data: The report, from :func:`load_report`.
+        report: The report's path, or what to call it, named in the error.
+
+    Yields:
+        Each (result, vulnerability) pair, in report order.
+
+    Raises:
+        ReportUnreadableError: The report has no `SchemaVersion` 2, or some level of the
+            layout is not a list of objects.
+    """
+
+    def unreadable(what: str, value: object) -> ReportUnreadableError:
+        return ReportUnreadableError(
+            f"{report} is not laid out as a Trivy JSON report: {what} is a JSON {type(value).__name__}. "
+            f"Check that the Trivy step used `format: json` and that nothing rewrote the file."
+        )
+
+    _require_trivy_schema(data, report)
+    results = data.get("Results")
+    if results is None:
+        return
+    if not isinstance(results, list):
+        raise unreadable("`Results`", results)
+    for result in results:
+        if not isinstance(result, dict):
+            raise unreadable("a `Results` entry", result)
+        vulns = result.get("Vulnerabilities")
+        if vulns is None:
+            continue
+        if not isinstance(vulns, list):
+            raise unreadable("`Vulnerabilities`", vulns)
+        for vuln in vulns:
+            if not isinstance(vuln, dict):
+                raise unreadable("a `Vulnerabilities` entry", vuln)
+            yield result, vuln
+
+
+def collect(
+    report: Path,
+    pins: Set[str] | None = None,
+    locked: Mapping[str, Set[str]] | None = None,
+) -> list[dict]:
     """Flatten Trivy's per-target results, de-duplicating on (package, CVE).
 
     Trivy reports one row per affected package, so a single OpenSSL CVE shows up twice
     (libcrypto3 + libssl3). Keying on the pair keeps both - they are genuinely separate
     packages to upgrade - while dropping the repeats Trivy emits when the same package
     is discovered through more than one target.
+
+    Every field is read as text, so a number or other non-string value in a field cannot crash
+    the triage. A layout that is not Trivy's - no `SchemaVersion` 2, `Results` or
+    `Vulnerabilities` not a list, or an entry in one that is not an object - raises
+    :class:`ReportUnreadableError`, so it is reported as SCAN FAILED rather than as a traceback
+    or a CLEAN verdict.
+
+    Args:
+        report: Trivy JSON report.
+        pins: Exact pins, as :func:`exact_pins` returns. Defaults to the repository's own.
+        locked: Locked versions, as :func:`locked_versions` returns. Defaults to the
+            repository's own uv.lock.
+
+    Returns:
+        One row per (package, CVE), each with its `action`, its `lock_note` and whether
+        main's uv.lock still holds the flagged version (`lock_still_flagged`; see
+        :func:`lock_note` and :func:`lock_still_flagged`), worst severity first.
+
+    Raises:
+        ReportUnreadableError: The report cannot be read, or is not laid out as Trivy's.
     """
     data = load_report(report)
     if pins is None:
         pins = exact_pins()
+    if locked is None:
+        locked = locked_versions()
     findings: dict[tuple[str, str], dict] = {}
-    for result in data.get("Results") or []:
-        for vuln in result.get("Vulnerabilities") or []:
-            pkg = vuln.get("PkgName", "?")
-            cve = vuln.get("VulnerabilityID", "?")
-            findings.setdefault(
-                (pkg, cve),
-                {
-                    "pkg": pkg,
-                    "cve": cve,
-                    "severity": vuln.get("Severity", "UNKNOWN"),
-                    "installed": vuln.get("InstalledVersion") or "?",
-                    "fixed": vuln.get("FixedVersion") or "",
-                    "title": (vuln.get("Title") or "").strip(),
-                    "type": result.get("Type", "?"),
-                },
-            )
+    for result, vuln in vulnerabilities(data, report):
+        pkg = str(vuln.get("PkgName") or "?")
+        cve = str(vuln.get("VulnerabilityID") or "?")
+        findings.setdefault(
+            (pkg, cve),
+            {
+                "pkg": pkg,
+                "cve": cve,
+                "severity": str(vuln.get("Severity") or "UNKNOWN"),
+                "installed": str(vuln.get("InstalledVersion") or "?"),
+                "fixed": str(vuln.get("FixedVersion") or ""),
+                "title": str(vuln.get("Title") or "").strip(),
+                "type": str(result.get("Type") or "?"),
+            },
+        )
     for f in findings.values():
         f["action"] = classify(f, pins)
+        f["lock_note"] = lock_note(f["pkg"], f["action"], locked, installed=f["installed"])
+        f["lock_still_flagged"] = lock_still_flagged(f["pkg"], f["action"], locked, installed=f["installed"])
     order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
-    action_order = {"no-fix": 0, "permit-opa": 1, "base-digest": 2, "pinned": 3, "rebuild": 4}
     return sorted(
         findings.values(),
         key=lambda f: (
             order.get(f["severity"], 9),
-            action_order.get(f["action"], 9),
+            ACTION_ORDER.get(f["action"], 9),
             f["pkg"],
             f["cve"],
         ),
@@ -248,14 +492,21 @@ def _next_steps(by_action: dict[str, list[dict]]) -> list[str]:
     rebuildable = by_action["rebuild"]
     opa = by_action["permit-opa"]
     base = by_action["base-digest"]
+    lock = by_action["lock"]
     pinned = by_action["pinned"]
     nofix = by_action["no-fix"]
     steps: list[str] = []
     if rebuildable:
         steps.append(
             f"- Cut a release to clear {len(rebuildable)} finding(s). `release.yml` passes "
-            "`no-cache-filters: main`, so the build cannot replay stale `apk` / `pip` "
-            "layers from the GHA cache."
+            "`no-cache-filters: main`, so the build cannot replay a stale `apk` layer from "
+            "the GHA cache."
+        )
+    steps += _lock_notes(lock)
+    if unlocked := _without_lock_note(lock):
+        steps.append(
+            f"- Update {unlocked} in uv.lock (merge Dependabot's `uv` PR, or "
+            "`uv lock --upgrade-package NAME`), then cut a release."
         )
     if opa:
         steps.append(
@@ -267,10 +518,11 @@ def _next_steps(by_action: dict[str, list[dict]]) -> list[str]:
             "- Merge the open Dependabot `docker` PR that moves the golang digest "
             "(Dockerfile `opa_build`), then cut a release."
         )
-    if pinned:
+    steps += _lock_notes(pinned)
+    if unlocked := _without_lock_note(pinned):
         steps.append(
-            f"- Raise the `==` pin for {', '.join(sorted({_cell(f['pkg']) for f in pinned}))} "
-            "in requirements*.txt (or waive it with a reachability argument)."
+            f"- Raise the `==` pin for {unlocked} in pyproject.toml and run `uv lock` (or waive it "
+            "with a reachability argument)."
         )
     if nofix:
         steps.append(
@@ -280,25 +532,36 @@ def _next_steps(by_action: dict[str, list[dict]]) -> list[str]:
     return steps
 
 
+def _lock_notes(findings: list[dict]) -> list[str]:
+    """One step per package main's uv.lock holds, naming its locked version."""
+    return [f"- {note}." for note in sorted({f["lock_note"] for f in findings if f["lock_note"]})]
+
+
+def _without_lock_note(findings: list[dict]) -> str:
+    """The packages main's uv.lock does not hold, comma-separated; '' when there are none."""
+    return ", ".join(sorted({_cell(f["pkg"]) for f in findings if not f["lock_note"]}))
+
+
 def render(tag: str, findings: list[dict], verdict: str) -> str:
     if verdict == "CLEAN":
         return f"## `permitio/pdp-v2:{tag}` - CLEAN\n\nNo CRITICAL/HIGH findings after applying `.trivyignore.yaml`.\n"
 
     by_action: dict[str, list[dict]] = {
         a: [f for f in findings if f["action"] == a]
-        for a in ("rebuild", "permit-opa", "base-digest", "pinned", "no-fix")
+        for a in ("rebuild", "permit-opa", "base-digest", "lock", "pinned", "no-fix")
     }
     rebuildable = by_action["rebuild"]
     opa = by_action["permit-opa"]
     base = by_action["base-digest"]
+    lock = by_action["lock"]
     pinned = by_action["pinned"]
     nofix = by_action["no-fix"]
 
     if verdict == "REBUILD":
         headline = (
             "**Every finding is already patched upstream, so this image is stale rather "
-            "than broken.** No source change is needed: cutting a release rebuilds it and "
-            "`apk upgrade` / `pip install` absorb the patches."
+            "than broken.** No source change is needed: cutting a release rebuilds it from main, "
+            "and `apk upgrade` absorbs the patches."
         )
     else:
         parts = []
@@ -321,13 +584,30 @@ def render(tag: str, findings: list[dict], verdict: str) -> str:
                 "digest-pinned golang build stage - merge Dependabot's `docker` digest PR "
                 "for it first, then rebuild"
             )
-        if pinned:
+        held = [f for f in lock + pinned if f["lock_still_flagged"]]
+        lock_open = [f for f in lock if not f["lock_still_flagged"]]
+        pinned_open = [f for f in pinned if not f["lock_still_flagged"]]
+        if held:
             parts.append(
-                f"{len(pinned)} finding(s) are in Python packages pinned with `==` in "
-                "requirements*.txt - `pip install` keeps those versions, so the pin has to "
-                "move"
+                f"{len(held)} finding(s) are in Python packages whose flagged version main's uv.lock "
+                "still holds, so a release reinstalls it - the lock, or the `==` pin in pyproject.toml, "
+                "has to move first"
             )
-        headline = "**A rebuild alone will NOT clear this image.** " + "; ".join(parts) + "."
+        if lock_open:
+            parts.append(
+                f"{len(lock_open)} finding(s) are in Python packages, which a rebuild installs from main's "
+                "uv.lock as it is - unless main's locked version carries the fix, the lock has to be "
+                "updated (Next step names each locked version)"
+            )
+        if pinned_open:
+            parts.append(
+                f"{len(pinned_open)} finding(s) are in Python packages pinned with `==` in "
+                "pyproject.toml - unless main's pinned version carries the fix, the pin has to "
+                "move, then the lock"
+            )
+        # Any other Python finding may already be fixed in main's uv.lock; these certainly are not.
+        certainly = "will NOT" if nofix or opa or base or held else "might not"
+        headline = f"**A rebuild alone {certainly} clear this image.** " + "; ".join(parts) + "."
 
     lines = [
         f"## `permitio/pdp-v2:{tag}` - {verdict}",
@@ -338,7 +618,8 @@ def render(tag: str, findings: list[dict], verdict: str) -> str:
         f"- Cleared by rebuilding this repo: **{len(rebuildable)}**",
         f"- Need a permit-opa `go.mod` bump: **{len(opa)}**",
         f"- Need the golang base digest to move: **{len(base)}**",
-        f"- Need an exact pin in requirements*.txt moved: **{len(pinned)}**",
+        f"- Need a uv.lock update, unless main's lock already has the fix: **{len(lock)}**",
+        f"- Need an exact pin in pyproject.toml moved, unless main's pin has the fix: **{len(pinned)}**",
         f"- No upstream fix available: **{len(nofix)}**",
         "",
         "| Severity | Package | Installed | CVE | Fixed in | Owner |",
@@ -348,7 +629,8 @@ def render(tag: str, findings: list[dict], verdict: str) -> str:
         "rebuild": "rebuild (this repo)",
         "permit-opa": "**permit-opa go.mod**",
         "base-digest": "**golang base digest**",
-        "pinned": "**requirements pin**",
+        "lock": "**uv.lock**",
+        "pinned": "**pyproject.toml pin**",
         "no-fix": "**no fix - needs a decision**",
     }
     for f in findings:
@@ -365,71 +647,12 @@ def render(tag: str, findings: list[dict], verdict: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-def slack_escape(text: str) -> str:
-    """Escape text for a Slack message body.
-
-    Slack's mrkdwn needs `&`, `<` and `>` escaped - `&` FIRST, or `&lt;` becomes
-    `&amp;lt;` and renders literally. `|` has no entity at all, because it separates
-    url from label inside `<url|label>`, so it is swapped for U+2502 BOX DRAWINGS
-    LIGHT VERTICAL instead.
-
-    Args:
-        text: Untrusted text, e.g. a CVE title or a package name.
-
-    Returns:
-        Text that renders as written in Slack.
-    """
-    escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    return escaped.replace("|", "│")
-
-
-def slack_summary(tag: str, findings: list[dict], verdict: str, limit: int = 600) -> str:
-    """Render the one-shot Slack line for this tag.
-
-    Args:
-        tag: Image tag that was scanned.
-        findings: Rows from :func:`collect`.
-        verdict: CLEAN, REBUILD or SOURCE.
-        limit: Hard cap on the returned length, so the message stays readable.
-
-    Returns:
-        Plain text, already Slack-escaped, at most `limit` characters.
-    """
-    # Only the untrusted parts are escaped: escaping the assembled line would turn the
-    # `->` separator into `-&gt;`.
-    image = slack_escape(f"permitio/pdp-v2:{tag}")
-    if verdict == "CLEAN":
-        return f"{image} -> CLEAN (no CRITICAL/HIGH findings after waivers)"
-    head = f"{image} -> {verdict} ({len(findings)} findings: {severity_breakdown(findings)})"
-    top = ", ".join(f"{slack_escape(f['cve'])} in {slack_escape(f['pkg'])}" for f in findings[:5])
-    if len(findings) > 5:
-        top += f", +{len(findings) - 5} more"
-    return f"{head}\nTop: {top}"[:limit]
-
-
-def write_outputs(args: argparse.Namespace, verdict: str, findings: list[dict]) -> None:
-    """Write the step outputs every consumer of this script reads.
-
-    `verdict` and `findings` are consumed by scheduled-security-scan.yml; renaming either
-    breaks the scheduled scan. `critical`, `high` and `parse_ok` are additive.
-    """
-    if not args.github_output:
-        return
-    counts = severity_counts(findings)
-    with args.github_output.open("a", encoding="utf-8") as fh:
-        fh.write(f"verdict={verdict}\n")
-        fh.write(f"findings={len(findings)}\n")
-        fh.write(f"critical={counts['CRITICAL']}\n")
-        fh.write(f"high={counts['HIGH']}\n")
-        fh.write(f"parse_ok={'false' if verdict == 'ERROR' else 'true'}\n")
-
-
 def fail_unreadable(args: argparse.Namespace, reason: str) -> int:
     """Report an unusable report as a failure, never as CLEAN.
 
-    Every artifact this script produces still gets written - a workflow annotation, the
-    job summary and the Slack line - so the failure is visible everywhere a verdict
-    would have been, and the exit code turns the job red.
+    Everything this script produces still gets written - a workflow annotation and the job
+    summary - so the failure is visible everywhere a verdict would have been, and the exit
+    code turns the job red.
 
     Args:
         args: Parsed CLI arguments.
@@ -449,9 +672,6 @@ def fail_unreadable(args: argparse.Namespace, reason: str) -> int:
     if args.summary:
         with args.summary.open("a", encoding="utf-8") as fh:
             fh.write(body + "\n")
-    if args.slack_output:
-        args.slack_output.write_text(slack_escape(message), encoding="utf-8")
-    write_outputs(args, "ERROR", [])
     return EXIT_UNREADABLE_REPORT
 
 
@@ -475,13 +695,10 @@ def main() -> int:
     if args.summary:
         with args.summary.open("a", encoding="utf-8") as fh:
             fh.write(body + "\n")
-    if args.slack_output:
-        args.slack_output.write_text(slack_summary(args.tag, findings, verdict), encoding="utf-8")
-    write_outputs(args, verdict, findings)
 
-    # Exit 0 for every verdict the report supports: the workflow decides pass/fail from
-    # the verdict output so that the SARIF upload and artifact steps still run. An
-    # unreadable report is the one exception - it is not a verdict.
+    # Exit 0 for every verdict the report supports: the scheduled scan reports findings
+    # through its `report` job and never fails a job over them. An unreadable report is the
+    # one exception - it is not a verdict.
     return 0
 
 

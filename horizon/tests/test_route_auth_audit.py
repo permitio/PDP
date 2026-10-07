@@ -25,12 +25,13 @@ import pytest
 from fastapi import APIRouter, Depends, FastAPI
 from fastapi.dependencies.utils import get_flat_dependant
 from fastapi.routing import APIRoute
+from opal_client.client import OpalClient
+from starlette.routing import Route
+
 from horizon.authentication import PUBLIC_ROUTE_PATHS, enforce_pdp_token
 from horizon.config import sidecar_config
 from horizon.pdp import OPAL_TRIGGER_ROUTE_PATHS, PermitPDP, _remove_opal_trigger_routes
 from horizon.system.consts import GUNICORN_EXIT_APP
-from opal_client.client import OpalClient
-from starlette.routing import Route
 
 # Dependency callables that count as authenticating a route. Matched by name so detection
 # survives an OPAL path rename; kept deliberately small so an *unrecognised* auth mechanism
@@ -124,7 +125,7 @@ def test_opal_trigger_route_is_pdp_gated(path: str):
     # opal_client.data.api), so "gated" cannot be satisfied by an OPAL route that merely
     # happens to carry a dependency.
     assert route.endpoint.__module__ == "horizon.pdp", (
-        f"{path} is served by {route.endpoint.__module__}.{route.endpoint.__name__}, not horizon.pdp"
+        f"{path} is served by {route.endpoint.__module__}.{route.endpoint.__name__}, not horizon.pdp"  # ty: ignore[unresolved-attribute]  # endpoints are functions
     )
     assert "enforce_pdp_token" in _route_auth_gates(route)
 
@@ -207,7 +208,7 @@ def test_router_level_dependencies_surface_in_flat_dependant():
     """Empirical FastAPI contract the whole audit rests on (>=0.124.0; proven on 0.125.0).
 
     The floor is real, not decorative: ``get_flat_dependant`` only began propagating
-    sub-dependants into ``flat_dependant.dependencies`` in 0.124.0, so requirements.txt pins
+    sub-dependants into ``flat_dependant.dependencies`` in 0.124.0, so pyproject.toml pins
     ``fastapi>=0.124.0`` and this test is what that pin protects.
 
     The audit detects gates by walking ``get_flat_dependant(route.dependant)``. That only

@@ -17,15 +17,16 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 try:
     import yaml
 except ModuleNotFoundError as exc:  # pragma: no cover - environment problem, not logic
     raise SystemExit(
-        "check_waiver_parity.py needs PyYAML to read .trivyignore.yaml. Install it with "
-        "`pip install pyyaml` (CI installs it via the pre-commit hook's additional_dependencies)."
+        "check_waiver_parity.py needs PyYAML to read .trivyignore.yaml. Run it in the project "
+        "environment, `uv run python .github/scripts/check_waiver_parity.py` (PyYAML is in the "
+        "dev group), or through prek, which installs the hook's additional_dependencies."
     ) from exc
 
 TRIVYIGNORE = Path(".trivyignore.yaml")
@@ -113,17 +114,16 @@ def load_vex(path: Path) -> set[str]:
 
 def parity_errors(waivers: dict[str, date | None], vex_ids: set[str]) -> list[str]:
     """Name every id that only one of the two waiver files knows about."""
-    errors = []
-    for cve in sorted(vex_ids - set(waivers)):
-        errors.append(
-            f"{cve} is waived in {VEX} but missing from {TRIVYIGNORE}. Add it under "
-            f"`vulnerabilities:` with a short `statement:` and an `expired_at:`."
-        )
-    for cve in sorted(set(waivers) - vex_ids):
-        errors.append(
-            f"{cve} is waived in {TRIVYIGNORE} but missing from {VEX}. Add a matching "
-            f"statement with its `status`, `justification` and `impact_statement`."
-        )
+    errors = [
+        f"{cve} is waived in {VEX} but missing from {TRIVYIGNORE}. Add it under "
+        f"`vulnerabilities:` with a short `statement:` and an `expired_at:`."
+        for cve in sorted(vex_ids - set(waivers))
+    ]
+    errors += [
+        f"{cve} is waived in {TRIVYIGNORE} but missing from {VEX}. Add a matching "
+        f"statement with its `status`, `justification` and `impact_statement`."
+        for cve in sorted(set(waivers) - vex_ids)
+    ]
     return errors
 
 
@@ -173,7 +173,7 @@ def main() -> int:
     root = args.root or repo_root()
     waivers = load_trivyignore(root / TRIVYIGNORE)
     vex_ids = load_vex(root / VEX)
-    today = args.today or date.today()
+    today = args.today or datetime.now(UTC).date()
 
     errors = parity_errors(waivers, vex_ids) + expiry_errors(waivers, today)
     if errors:

@@ -4,7 +4,7 @@ from loguru import logger
 
 
 class StatisticsManager:
-    def __init__(self, interval_seconds: int = 60, failures_threshold_percentage: float = 0.1):
+    def __init__(self, interval_seconds: float = 60, failures_threshold_percentage: float = 0.1):
         self._requests = 0
         self._failures = 0
         self._messages: asyncio.Queue[bool] = asyncio.Queue()

@@ -1,3 +1,4 @@
+from http import HTTPStatus
 from typing import Any
 
 import requests
@@ -25,8 +26,8 @@ class BlockingRequest:
         """
         response = requests.get(url, headers=self._headers(), params=params, timeout=self._timeout)
 
-        if response.status_code == 401:
-            raise InvalidPDPTokenError()
+        if response.status_code == HTTPStatus.UNAUTHORIZED:
+            raise InvalidPDPTokenError(f"GET {url} returned HTTP 401 Unauthorized: the control plane rejected the key.")
 
         return response.json()
 
@@ -36,7 +37,9 @@ class BlockingRequest:
         """
         response = requests.post(url, json=payload, headers=self._headers(), params=params, timeout=self._timeout)
 
-        if response.status_code == 401:
-            raise InvalidPDPTokenError()
+        if response.status_code == HTTPStatus.UNAUTHORIZED:
+            raise InvalidPDPTokenError(
+                f"POST {url} returned HTTP 401 Unauthorized: the control plane rejected the key."
+            )
 
         return response.json()

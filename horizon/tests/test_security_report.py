@@ -2,6 +2,10 @@
 
 import importlib.util
 import json
+import shutil
+import subprocess
+import sys
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
@@ -11,7 +15,8 @@ SCRIPT = Path(__file__).resolve().parents[2] / ".github" / "scripts" / "format_s
 
 def _load():
     spec = importlib.util.spec_from_file_location("ci_scripts_format_security_report", SCRIPT)
-    assert spec is not None and spec.loader is not None, f"cannot load {SCRIPT}"
+    assert spec is not None, f"cannot load {SCRIPT}"
+    assert spec.loader is not None, f"cannot load {SCRIPT}"
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -21,14 +26,16 @@ report = _load()
 
 
 def _trivy(*vulns, result_type="alpine"):
-    return {"Results": [{"Target": "img", "Type": result_type, "Vulnerabilities": list(vulns)}]}
+    return {"SchemaVersion": 2, "Results": [{"Target": "img", "Type": result_type, "Vulnerabilities": list(vulns)}]}
 
 
-def _vuln(cve, severity="HIGH", pkg="libssl3", fixed="3.5.8-r0", title="OpenSSL issue", score=7.5):
+def _vuln(
+    cve, severity="HIGH", *, pkg="libssl3", installed="3.5.7-r0", fixed="3.5.8-r0", title="OpenSSL issue", score=7.5
+):
     return {
         "VulnerabilityID": cve,
         "PkgName": pkg,
-        "InstalledVersion": "3.5.7-r0",
+        "InstalledVersion": installed,
         "FixedVersion": fixed,
         "Severity": severity,
         "SeveritySource": "nvd",
@@ -67,7 +74,7 @@ def _sarif(*results):
     }
 
 
-def _alert(number, cve, severity="high", ghsa=None, package="starlette", summary="Starlette bug"):
+def _alert(number, cve, severity="high", *, ghsa=None, package="starlette", summary="Starlette bug"):
     return {
         "number": number,
         "state": "open",
@@ -92,7 +99,7 @@ def _cargo(*vulns, warnings=None):
     return {"vulnerabilities": {"count": len(vulns), "list": list(vulns)}, "warnings": warnings or {}}
 
 
-def _crate(rustsec, cvss=None, name="rmcp", version="0.12.0", aliases=(), patched=(">=1.4.0",)):
+def _crate(rustsec, cvss=None, *, name="rmcp", version="0.12.0", aliases=(), patched=(">=1.4.0",)):
     return {
         "advisory": {"id": rustsec, "title": f"{name} advisory", "cvss": cvss, "aliases": list(aliases)},
         "package": {"name": name, "version": version},
@@ -150,7 +157,8 @@ def test_same_cve_from_every_source_is_one_line_naming_all_sources(run):
     listed = [line for line in message.splitlines() if cve in line and line.startswith("• *high")]
     assert len(listed) == 1
     assert "Trivy latest, Trivy 0.9.16, Docker Scout latest, Dependabot" in listed[0]
-    assert "libssl3@3.5.7-r0" in listed[0] and "libcrypto3@3.5.7-r0" in listed[0]
+    assert "libssl3@3.5.7-r0" in listed[0]
+    assert "libcrypto3@3.5.7-r0" in listed[0]
     assert headline == "1 high/critical vulnerability found"
     assert outputs == {"notify": "true", "status": "warn", "severe": "1", "unscored": "0"}
 
@@ -182,7 +190,40 @@ def test_missing_report_is_incomplete_never_clean(run):
     assert "*Trivy* (`pdp-v2:0.9.16`): :warning: did not complete" in message
     assert str(Path("/")) + "private" not in message
     assert headline == "security scan incomplete"
-    assert outputs["status"] == "fail" and outputs["notify"] == "true"
+    assert outputs["status"] == "fail"
+    assert outputs["notify"] == "true"
+
+
+@pytest.mark.parametrize(
+    ("payload", "why"),
+    [
+        pytest.param({}, "trivy-latest.json is not a Trivy JSON report: it has no `SchemaVersion`", id="empty-object"),
+        pytest.param(
+            {"version": "2.1.0", "runs": [{"tool": {"driver": {"name": "Trivy"}}, "results": []}]},
+            "trivy-latest.json is not a Trivy JSON report: it has no `SchemaVersion`",
+            id="sarif",
+        ),
+        pytest.param(
+            {"SchemaVersion": 2, "Results": ["img"]},
+            "trivy-latest.json is not laid out as a Trivy JSON report: a `Results` entry is a JSON str",
+            id="result-not-an-object",
+        ),
+        pytest.param(
+            {"SchemaVersion": 2, "Results": [{"Type": "alpine", "Vulnerabilities": [_vuln("CVE-2026-0013"), "x"]}]},
+            "trivy-latest.json is not laid out as a Trivy JSON report: a `Vulnerabilities` entry is a JSON str",
+            id="one-vulnerability-not-an-object",
+        ),
+    ],
+)
+def test_a_trivy_report_the_classifier_refuses_is_incomplete_never_clean(run, payload, why):
+    message, headline, outputs = run(trivy={"latest": payload}, scout=_sarif(), alerts=[])
+    assert message.startswith(":warning: *permitio/PDP: security scan incomplete*")
+    [trivy] = [line for line in message.splitlines() if line.startswith("• *Trivy*")]
+    assert trivy.startswith(f"• *Trivy* (`pdp-v2:latest`): :warning: did not complete: {why}")
+    # The classifier refuses the whole report, so no row of it is reported either.
+    assert "CVE-2026-0013" not in message
+    assert headline == "security scan incomplete"
+    assert outputs == {"notify": "true", "status": "fail", "severe": "0", "unscored": "0"}
 
 
 def test_unparseable_sarif_and_feed_are_incomplete(run):
@@ -205,7 +246,8 @@ def test_cargo_finding_is_scored_from_its_vector_and_linked_to_rustsec(run):
     line = next(line for line in message.splitlines() if "RUSTSEC-2026-0189" in line)
     assert line.startswith("• *high 7.5*")
     assert "<https://rustsec.org/advisories/RUSTSEC-2026-0189|RUSTSEC-2026-0189>" in line
-    assert "fix: &gt;=1.4.0" in line and "_(cargo audit)_" in line
+    assert "fix: &gt;=1.4.0" in line
+    assert "_(cargo audit)_" in line
     assert outputs["severe"] == "1"
 
 
@@ -276,13 +318,214 @@ def test_medium_findings_are_counted_but_not_alerted(run):
         ("libssl3", "alpine", "a release rebuild picks it up"),
         ("golang.org/x/net", "gobinary", "bump it in permit-opa"),
         ("stdlib", "gobinary", "needs the golang base-image digest bump"),
-        ("starlette", "python-pkg", "bump the exact pin in requirements.txt"),
+        ("starlette", "python-pkg", "bump the exact pin in pyproject.toml"),
+        ("httpx", "python-pkg", "update it in uv.lock"),
     ],
 )
-def test_trivy_remediation_names_who_acts(run, pkg, result_type, hint):
+def test_trivy_remediation_names_who_acts(run, monkeypatch, pkg, result_type, hint):
+    monkeypatch.setattr(report.classifier, "locked_versions", dict)
     vuln = _vuln("CVE-2026-0007", pkg=pkg)
     message, _, _ = run(trivy={"latest": _trivy(vuln, result_type=result_type)}, scout=_sarif(), alerts=[])
     assert f"fix: 3.5.8-r0, {hint}" in message
+    assert "main's uv.lock has" not in message
+
+
+def _in_mains_lock(pkg: str) -> str:
+    [version] = report.classifier.locked_versions()[pkg]
+    return version
+
+
+HTTPX = _in_mains_lock("httpx")
+UPGRADE_HTTPX = "run `uv lock --upgrade-package httpx`"
+HTTPX_MAYBE = (
+    f"main's uv.lock has httpx {HTTPX} - cutting a release clears each finding whose fix that version carries; "
+    f"for the rest, {UPGRADE_HTTPX}, then cut a release"
+)
+HTTPX_HELD = (
+    f"main's uv.lock still holds httpx {HTTPX}, the version Trivy flagged - {UPGRADE_HTTPX}, then cut a release"
+)
+
+
+@pytest.mark.parametrize(
+    ("installed", "fixed", "note"),
+    [
+        pytest.param(HTTPX, "99.0.0", HTTPX_HELD, id="lock-holds-the-image-version"),
+        pytest.param("0.0.1", "99.0.0", HTTPX_MAYBE, id="lock-below-the-fix"),
+        pytest.param("0.0.1", HTTPX, HTTPX_MAYBE, id="lock-at-the-fix"),
+        pytest.param("0.0.1", "0.0.2", HTTPX_MAYBE, id="lock-above-the-fix"),
+    ],
+)
+def test_a_python_finding_names_mains_locked_version_and_is_never_a_rebuild(run, installed, fixed, note):
+    vuln = _vuln("CVE-2026-0010", pkg="httpx", installed=installed, fixed=fixed)
+    message, _, _ = run(trivy={"latest": _trivy(vuln, result_type="python-pkg")}, scout=_sarif(), alerts=[])
+    line = next(line for line in message.splitlines() if "CVE-2026-0010" in line)
+    assert f"fix: {fixed}, {note}" in line
+    assert "a release rebuild picks it up" not in line
+
+
+@pytest.mark.parametrize(
+    ("installed", "held"),
+    [
+        pytest.param("0.49.0", False, id="pin-moved"),
+        pytest.param(_in_mains_lock("starlette"), True, id="pin-holds-the-image-version"),
+    ],
+)
+def test_a_pinned_python_finding_names_mains_pinned_version(run, installed, held):
+    vuln = _vuln("CVE-2026-0011", pkg="starlette", installed=installed, fixed="0.49.1")
+    message, _, _ = run(trivy={"latest": _trivy(vuln, result_type="python-pkg")}, scout=_sarif(), alerts=[])
+    line = next(line for line in message.splitlines() if "CVE-2026-0011" in line)
+    starlette = _in_mains_lock("starlette")
+    if held:
+        assert f"fix: 0.49.1, main's uv.lock still holds starlette {starlette}, the version Trivy flagged - " in line
+    else:
+        assert f"fix: 0.49.1, main's uv.lock has starlette {starlette} - cutting a release clears each " in line
+    assert "raise the `==` pin for starlette in pyproject.toml and run `uv lock`, then cut a release" in line
+
+
+@pytest.mark.parametrize(
+    "tags",
+    [
+        pytest.param(("0.9.14", "latest"), id="older-tag-first"),
+        pytest.param(("latest", "0.9.14"), id="latest-first"),
+    ],
+)
+def test_a_tag_still_on_mains_locked_version_settles_the_merged_line(run, tags):
+    # The same CVE on two tags is one line. latest holds the version main's lock still has, so
+    # a release cannot clear it, whichever tag the line was started from.
+    installed = {"0.9.14": "0.0.1", "latest": HTTPX}
+    vulns = {tag: _vuln("CVE-2026-0012", pkg="httpx", installed=installed[tag], fixed="99.0.0") for tag in tags}
+    trivy = {tag: _trivy(vuln, result_type="python-pkg") for tag, vuln in vulns.items()}
+    message, _, _ = run(trivy=trivy, scout=_sarif(), alerts=[])
+    [line] = [line for line in message.splitlines() if "CVE-2026-0012" in line]
+    assert f"fix: 99.0.0, {HTTPX_HELD} " in line
+    assert "cutting a release clears" not in line
+    assert f"httpx@0.0.1, httpx@{HTTPX}" in line or f"httpx@{HTTPX}, httpx@0.0.1" in line
+
+
+MIXED_CVE = "CVE-2026-0014"
+ALPINE_RESULT = {"Target": "img", "Type": "alpine", "Vulnerabilities": [_vuln(MIXED_CVE, pkg="libexpat")]}
+PYTHON_RESULT = {"Target": "Python", "Type": "python-pkg", "Vulnerabilities": [_vuln(MIXED_CVE, pkg="httpx")]}
+ALPINE_TAG = {"SchemaVersion": 2, "Results": [ALPINE_RESULT]}
+PYTHON_TAG = {"SchemaVersion": 2, "Results": [PYTHON_RESULT]}
+
+
+@pytest.mark.parametrize(
+    "trivy",
+    [
+        pytest.param({"latest": ALPINE_TAG, "0.9.16": PYTHON_TAG}, id="alpine-tag-first"),
+        pytest.param({"0.9.16": PYTHON_TAG, "latest": ALPINE_TAG}, id="python-tag-first"),
+        pytest.param({"latest": {"SchemaVersion": 2, "Results": [ALPINE_RESULT, PYTHON_RESULT]}}, id="one-report"),
+    ],
+)
+def test_a_cve_in_an_alpine_and_a_python_package_keeps_the_python_remediation(run, monkeypatch, trivy):
+    # One CVE id, two owners: a release rebuild clears the Alpine package, never the Python one.
+    monkeypatch.setattr(report.classifier, "locked_versions", dict)
+    message, _, _ = run(trivy=trivy, scout=_sarif(), alerts=[])
+    [line] = [line for line in message.splitlines() if MIXED_CVE in line]
+    assert "fix: 3.5.8-r0, update it in uv.lock" in line
+    assert "a release rebuild picks it up" not in line
+    assert "libexpat@3.5.7-r0" in line
+    assert "httpx@3.5.7-r0" in line
+
+
+# One advisory, a release rebuild for the Alpine package Trivy flags, and another source on a package
+# no classifier owns: the line takes that source's remediation, never the rebuild hint.
+@pytest.mark.parametrize(
+    "other",
+    [
+        pytest.param({"alerts": [_alert(9, MIXED_CVE, package="cryptography")]}, id="dependabot"),
+        pytest.param({"cargo": _cargo(_crate("RUSTSEC-2026-0014", aliases=(MIXED_CVE,)))}, id="cargo-audit"),
+        pytest.param(
+            {"scout": _sarif({"id": MIXED_CVE, "purl": "pkg:pypi/cryptography@46.0.0", "fixed": "46.0.1"})},
+            id="scout-python-package",
+        ),
+    ],
+)
+def test_a_release_rebuild_never_speaks_for_a_package_another_source_reports(run, other):
+    inputs = {"scout": _sarif(), "alerts": [], **other}
+    message, _, _ = run(trivy={"latest": _trivy(_vuln(MIXED_CVE, pkg="libexpat"))}, **inputs)
+    [line] = [line for line in message.splitlines() if MIXED_CVE in line or "RUSTSEC-2026-0014" in line]
+    assert "a release rebuild picks it up" not in line
+    assert "libexpat@3.5.7-r0" in line
+
+
+def test_scout_agreeing_on_an_alpine_package_keeps_the_rebuild_hint(run):
+    scout = _sarif({"id": MIXED_CVE, "purl": "pkg:apk/alpine/libexpat@3.5.7-r0?os_name=alpine", "fixed": "3.5.8-r0"})
+    message, _, _ = run(trivy={"latest": _trivy(_vuln(MIXED_CVE, pkg="libexpat"))}, scout=scout, alerts=[])
+    [line] = [line for line in message.splitlines() if MIXED_CVE in line]
+    assert "fix: 3.5.8-r0, a release rebuild picks it up" in line
+    assert "Trivy latest, Docker Scout latest" in line
+
+
+# Owners of one advisory, most work first: (classifier action, lock still holds the flagged version).
+# "" is a finding no classifier owns: a Dependabot alert, a cargo audit advisory, or a Docker Scout
+# finding outside an Alpine package.
+OWNERS_BY_WORK = [
+    ("no-fix", False),
+    ("permit-opa", False),
+    ("base-digest", False),
+    ("lock", True),
+    ("pinned", False),
+    ("lock", False),
+    ("", False),
+    ("rebuild", False),
+]
+
+
+def _owned(owner: tuple[str, bool]):
+    action, held = owner
+    return report.Finding(
+        id="CVE-2026-0015",
+        severity="high",
+        score=7.5,
+        title="",
+        url="",
+        remediation=f"remediation of {action or 'another scanner'}{' (held)' if held else ''}",
+        packages=[f"{action or 'other'}-pkg"],
+        sources=[f"source of {action or 'another scanner'}"],
+        action=action,
+        lock_still_flagged=held,
+    )
+
+
+def _owner_id(owner: tuple[str, bool]) -> str:
+    action, held = owner
+    return f"{action or 'other'}{'-held' if held else ''}"
+
+
+def _merge_one(findings: list):
+    """merge() over one source per finding, all for the same advisory."""
+    [merged] = report.merge([report.Source(name=f"source {n}", scope="", findings=[f]) for n, f in enumerate(findings)])
+    return merged
+
+
+@pytest.mark.parametrize("first_is_more_work", [True, False], ids=["more-work-first", "more-work-second"])
+@pytest.mark.parametrize(
+    ("more", "less"),
+    [
+        pytest.param(more, less, id=f"{_owner_id(more)}-over-{_owner_id(less)}")
+        for more, less in pairwise(OWNERS_BY_WORK)
+    ],
+)
+def test_merge_keeps_the_remediation_of_the_owner_with_the_most_work(more, less, first_is_more_work):
+    findings = [_owned(more), _owned(less)]
+    if not first_is_more_work:
+        findings.reverse()
+    merged = _merge_one(findings)
+    assert merged.remediation == _owned(more).remediation
+    assert merged.packages == [f.packages[0] for f in findings]
+
+
+def test_merge_ranks_each_finding_against_the_owner_it_kept():
+    # The held lock replaces the plain one; the pinned package after it needs less work than that.
+    merged = _merge_one([_owned(("lock", False)), _owned(("lock", True)), _owned(("pinned", False))])
+    assert merged.remediation == _owned(("lock", True)).remediation
+
+
+def test_merge_keeps_the_first_remediation_among_owners_with_equal_work():
+    first, second = _owned(("rebuild", False)), _owned(("rebuild", False))
+    first.remediation, second.remediation = "fix: 3.5.8-r0, first", "fix: 3.5.9-r0, second"
+    assert _merge_one([first, second]).remediation == "fix: 3.5.8-r0, first"
 
 
 def test_no_fix_is_said_out_loud(run):
@@ -295,7 +538,8 @@ def test_untrusted_text_cannot_ping_link_or_break_formatting(run):
     hostile["PrimaryURL"] = "javascript:alert(1)"
     message, _, _ = run(trivy={"latest": _trivy(hostile)}, scout=_sarif(), alerts=[])
     line = next(line for line in message.splitlines() if "CVE-2026-0009" in line)
-    assert "<!channel>" not in line and "&lt;!channel&gt;" in line
+    assert "<!channel>" not in line
+    assert "&lt;!channel&gt;" in line
     assert "<https://evil.example" not in line
     assert "javascript:" not in line
     assert "pkg'x" in line
@@ -334,3 +578,19 @@ def test_bad_trivy_argument_is_a_usage_error():
     with pytest.raises(SystemExit) as exc:
         report.parse_args(["--repo", "r", "--run-url", "u", "--out", "o", "--trivy", "no-equals-sign"])
     assert exc.value.code == 2
+
+
+def test_a_missing_sibling_script_is_named_not_a_traceback(tmp_path):
+    shutil.copy(SCRIPT, tmp_path)
+
+    result = subprocess.run(
+        [sys.executable, str(tmp_path / SCRIPT.name), "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+
+    assert result.returncode == 1
+    assert f"{tmp_path / 'format_scan_report.py'} is missing; format_security_report.py needs it." in result.stderr
+    assert "Traceback" not in result.stderr

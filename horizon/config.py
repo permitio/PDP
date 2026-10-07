@@ -1,4 +1,7 @@
-from typing import Any
+import json
+import re
+from enum import StrEnum
+from typing import Any, ClassVar
 
 from opal_common.confi import Confi, confi
 from opal_common.schemas.data import CallbackEntry
@@ -11,15 +14,52 @@ from horizon.debounce import DEFAULT_DEBOUNCE_SECONDS
 
 MOCK_API_KEY = "MUST BE DEFINED"
 
+IGNORED_CALLBACK_URLS_SETTING = "PDP_IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS"
+_SHOWN_VALUE_MAX_CHARS = 200
 
-# scopes enum
-class ApiKeyLevel(str):
+
+def _invalid_ignored_callback_urls(raw: Any, reason: str) -> ValueError:
+    """Build the startup error for a malformed ignored-callback-URLs setting.
+
+    It names the problem, shows the value, and lists every accepted form, so the operator can fix
+    the configuration from the error alone.
+    """
+    shown = raw if isinstance(raw, str) else json.dumps(raw, default=str)
+    if len(shown) > _SHOWN_VALUE_MAX_CHARS:
+        shown = shown[:_SHOWN_VALUE_MAX_CHARS] + "..."
+    return ValueError(
+        f"{IGNORED_CALLBACK_URLS_SETTING} is invalid: {reason}.\n"
+        f"  Got: {shown}\n"
+        "  Set it to one of:\n"
+        '    - a JSON list of double-quoted URLs: ["http://localhost:8181/v1/data/permit/rebac/cache_rebuild"]\n'
+        "    - URLs separated by commas or spaces: http://host-a/callback, http://host-b/callback\n"
+        "    - an empty value, to keep every default data-update callback\n"
+        "  Each URL must equal a registered data-update callback URL exactly."
+    )
+
+
+def _json_syntax_reason(raw: str, error: json.JSONDecodeError) -> str:
+    """Explain why JSON-shaped text did not parse, naming the usual mistakes."""
+    reason = f"it starts like JSON but is not valid JSON ({error.msg} at character {error.pos})"
+    if "'" in raw and '"' not in raw:
+        return f"{reason}: JSON needs double quotes around each URL; single quotes (a Python-style list) are not JSON"
+    if re.search(r",\s*[\]}]", raw):
+        return f"{reason}: remove the trailing comma before the closing bracket"
+    if re.search(r"\[\s*[^\s\"\[\]{}]", raw):
+        return f"{reason}: put each URL in double quotes"
+    return reason
+
+
+class ApiKeyLevel(StrEnum):
     ORGANIZATION = "organization"
     PROJECT = "project"
     ENVIRONMENT = "environment"
 
 
 class SidecarConfig(Confi):
+    # Declared, not assigned: __new__ below sets it on first construction (hasattr is False until then).
+    instance: ClassVar["SidecarConfig"]
+
     def __new__(cls, *, prefix=None, is_model=True):  # noqa: ARG004
         """creates a singleton object, if it is not created,
         or else returns the previous singleton object"""
@@ -83,23 +123,33 @@ class SidecarConfig(Confi):
     ORG_API_KEY = confi.str(
         "ORG_API_KEY",
         None,
-        description="set this to your organization's API key if you prefer to use the organization level API key. "
-        "By default, the PDP will use the project level API key",
+        description="set this to your organization's API key if you prefer to use the organization level API key; "
+        "it needs PDP_ACTIVE_PROJECT and PDP_ACTIVE_ENV. Ignored when PDP_API_KEY or PDP_PROJECT_API_KEY is set",
     )
 
     # access token to your project
     PROJECT_API_KEY = confi.str(
         "PROJECT_API_KEY",
         None,
-        description="set this to your project's API key if you prefer to use the project level API key. "
-        "By default, the PDP will use the default project API key",
+        description="set this to your project's API key if you prefer to use the project level API key; "
+        "it needs PDP_ACTIVE_ENV, and the project comes from the key's own scope. Ignored when PDP_API_KEY is set",
     )
 
-    # chosen project id/key to use for the PDP
-    ACTIVE_PROJECT = confi.str("ACTIVE_PROJECT", None, description="the project id/key to use for the PDP")
+    # chosen project id/key, used with an organization API key
+    ACTIVE_PROJECT = confi.str(
+        "ACTIVE_PROJECT",
+        None,
+        description="the project id/key to use with PDP_ORG_API_KEY; ignored with PDP_PROJECT_API_KEY, "
+        "whose scope names the project, and with PDP_API_KEY, which is already an environment's key",
+    )
 
     # chosen environment id/key to use for the PDP
-    ACTIVE_ENV = confi.str("ACTIVE_ENV", None, description="the environment id/key to use for the PDP")
+    ACTIVE_ENV = confi.str(
+        "ACTIVE_ENV",
+        None,
+        description="the environment id/key to use with PDP_ORG_API_KEY or PDP_PROJECT_API_KEY; "
+        "ignored with PDP_API_KEY, which is already an environment's key",
+    )
 
     # access token to perform system control operations
     CONTAINER_CONTROL_KEY = confi.str("CONTAINER_CONTROL_KEY", MOCK_API_KEY)
@@ -233,10 +283,9 @@ class SidecarConfig(Confi):
     def parse_plugins(value: Any) -> dict[str, dict[str, int | bool | str]]:
         if isinstance(value, str):
             return parse_raw_as(dict[str, dict[str, int | bool | str]], value)
-        else:
-            return parse_obj_as(dict[str, dict[str, int | bool | str]], value)
+        return parse_obj_as(dict[str, dict[str, int | bool | str]], value)
 
-    OPA_PLUGINS: dict[str, dict[str, int | bool | str]] = confi.str(
+    OPA_PLUGINS: dict[str, dict[str, int | bool | str]] = confi.str(  # ty: ignore[invalid-assignment]  # cast= sets the type
         "OPA_PLUGINS",
         {},
         description="List of plugins to be loaded into OPA, "
@@ -319,20 +368,62 @@ class SidecarConfig(Confi):
     def parse_callbacks(value: Any) -> list[CallbackEntry]:
         if isinstance(value, str):
             return parse_raw_as(list[CallbackEntry], value)
-        else:
-            return parse_obj_as(list[CallbackEntry], value)
+        return parse_obj_as(list[CallbackEntry], value)
 
-    DATA_UPDATE_CALLBACKS: list[CallbackEntry] = confi.str(
+    DATA_UPDATE_CALLBACKS: list[CallbackEntry] = confi.str(  # ty: ignore[invalid-assignment]  # cast= sets the type
         "DATA_UPDATE_CALLBACKS",
         [],
         description="List of callbacks to be triggered when data is updated",
         cast=parse_callbacks,
         cast_from_json=parse_callbacks,
     )
-    IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS: list[str] = confi.str(
+
+    @staticmethod
+    def parse_url_list(value: Any) -> list[str]:
+        """Read the callback URLs to ignore, from the environment or a control-plane override.
+
+        The Dockerfile sets a JSON list. Plain text is read as URLs separated by commas or
+        whitespace, because the setting used to be a raw string and plain text worked then: an
+        empty value is how a deployment clears the Dockerfile default and keeps every default
+        callback, and a single URL was matched as well. ``None`` from the control plane is no URL.
+
+        Quotes around a plain-text URL are dropped (``"http://host/path"`` reads as the URL), since
+        a quoted URL could never equal a registered callback URL.
+
+        Raises:
+            ValueError: The value is JSON-shaped (it starts with ``[`` or ``{``) but is not a list
+                of URL strings, or the control plane sent something other than a list. The
+                message says what is wrong, shows the value and lists the accepted forms.
+        """
+        if value is None:
+            return []
+        parsed = value
+        if isinstance(value, str):
+            if not value.lstrip().startswith(("[", "{")):
+                return [url.strip("\"'") for url in value.replace(",", " ").split() if url.strip("\"'")]
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError as e:
+                raise _invalid_ignored_callback_urls(value, _json_syntax_reason(value, e)) from e
+        if not isinstance(parsed, list):
+            kind = "a JSON object" if isinstance(parsed, dict) else f"a {type(parsed).__name__}"
+            raise _invalid_ignored_callback_urls(value, f"it is {kind}, not a list of URLs")
+        for index, item in enumerate(parsed):
+            if not isinstance(item, str):
+                raise _invalid_ignored_callback_urls(
+                    value, f"item {index} is {json.dumps(item, default=str)}, which is not a URL in double quotes"
+                )
+        return [url.strip() for url in parsed if url.strip()]
+
+    IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS: list[str] = confi.str(  # ty: ignore[invalid-assignment]  # cast= sets the type
         "IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS",
         [],
-        description="List of callbacks urls to be ignored even if they are registered in the control plane",
+        description=(
+            "Callback URLs to drop from the defaults, even if the control plane registers them: a JSON list, "
+            "or URLs separated by commas. Each URL must equal a registered callback URL exactly. Empty drops none."
+        ),
+        cast=parse_url_list,
+        cast_from_json=parse_url_list,
     )
 
     # non configurable values -------------------------------------------------
@@ -342,13 +433,13 @@ class SidecarConfig(Confi):
         {
             "name": "Authorization API",
             "description": "Authorization queries to OPA. These queries are answered locally by OPA "
-            + "and do not require the cloud service. Latency should be very low (< 20ms per query)",
+            "and do not require the cloud service. Latency should be very low (< 20ms per query)",
         },
         {
             "name": "Local Queries",
             "description": "These queries are done locally against the sidecar and do not "
-            + "involve a network round-trip to Permit.io cloud API. Therefore they are safe "
-            + "to use with reasonable performance (i.e: with negligible latency) in the context of a user request.",
+            "involve a network round-trip to Permit.io cloud API. Therefore they are safe "
+            "to use with reasonable performance (i.e: with negligible latency) in the context of a user request.",
         },
         {
             "name": "Policy Updater",

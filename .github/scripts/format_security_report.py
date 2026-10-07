@@ -25,7 +25,7 @@ import argparse
 import importlib.util
 import re
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parent
@@ -39,24 +39,30 @@ WAIVER_FILE = ".trivyignore.yaml"
 _HTTPS_URL = re.compile(r"^https://[^\s<>|]+$")
 _WHITESPACE = re.compile(r"\s+")
 _SCOUT_FIELD = re.compile(r"^\s*([A-Za-z][A-Za-z ]*?)\s*:(.*)$")
-_PURL = re.compile(r"^pkg:[^/]+/(?P<name>[^@?#]+)(?:@(?P<version>[^?#]+))?")
+_PURL = re.compile(r"^pkg:(?P<type>[^/]+)/(?P<name>[^@?#]+)(?:@(?P<version>[^?#]+))?")
 _MARKDOWN_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 
 # What has to happen for a Trivy finding to go away, keyed by classify_image_cves.classify().
+# A 'lock' or 'pinned' finding whose package main's uv.lock holds gets
+# classify_image_cves.lock_note() instead, which names main's locked version.
 _ACTION_HINT = {
     "rebuild": "a release rebuild picks it up",
     "permit-opa": "bump it in permit-opa",
     "base-digest": "needs the golang base-image digest bump",
-    "pinned": "bump the exact pin in requirements.txt",
+    "lock": "update it in uv.lock",
+    "pinned": "bump the exact pin in pyproject.toml",
 }
 
 
 def _sibling(name: str):
     """Load another script from .github/scripts by path; the directory is not a package."""
     path = SCRIPTS / f"{name}.py"
+    # spec_from_file_location returns a spec for any .py path, so it cannot tell that one is missing.
+    if not path.is_file():
+        raise SystemExit(f"{path} is missing; format_security_report.py needs it.")
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
-        raise SystemExit(f"{path} is missing or cannot be loaded; format_security_report.py needs it.")
+        raise SystemExit(f"{path} cannot be loaded as a module; format_security_report.py needs it.")
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
@@ -82,6 +88,12 @@ class Finding:
     packages: list[str] = field(default_factory=list)
     sources: list[str] = field(default_factory=list)
     aliases: set[str] = field(default_factory=set)
+    # Who has to act (classify_image_cves.classify): set on a Trivy finding and on a Docker Scout
+    # one in an Alpine package, '' on any other.
+    action: str = ""
+    # A Trivy finding whose image holds the version main's uv.lock still has: its remediation
+    # says a release cannot clear it (classify_image_cves.lock_still_flagged).
+    lock_still_flagged: bool = False
 
 
 @dataclass
@@ -159,40 +171,50 @@ def _trivy_score(vuln: dict) -> float | None:
     return None
 
 
-def trivy_source(tag: str, report: Path, pins: set[str]) -> Source:
-    """Findings from one Trivy JSON report on `permitio/pdp-v2:<tag>`."""
+def trivy_source(tag: str, report: Path, pins: set[str], locked: dict[str, set[str]]) -> Source:
+    """Findings from one Trivy JSON report on `permitio/pdp-v2:<tag>`.
+
+    The report is walked with classify_image_cves.vulnerabilities(), so a layout the classifier
+    refuses - no `SchemaVersion` 2, or an entry that is not an object - makes the source
+    incomplete rather than a clean one. Skipping what does not fit would report a broken scan
+    as "no high/critical vulnerabilities found" and keep Slack quiet.
+    """
     source = Source(name="Trivy", scope=f"pdp-v2:{tag}")
     data, error = scan_report.read_json(report)
     if data is None:
         source.complete, source.note = False, _unreadable(report, error)
         return source
+    try:
+        rows = list(classifier.vulnerabilities(data, report))
+    except classifier.ReportUnreadableError as exc:
+        source.complete, source.note = False, _unreadable(report, str(exc))
+        return source
     seen: set[tuple[str, str]] = set()
-    for result in data.get("Results") or []:
-        if not isinstance(result, dict):
+    for result, vuln in rows:
+        pkg = str(vuln.get("PkgName") or "?")
+        cve = str(vuln.get("VulnerabilityID") or "?")
+        if (pkg, cve) in seen:
             continue
-        for vuln in result.get("Vulnerabilities") or []:
-            if not isinstance(vuln, dict):
-                continue
-            pkg = str(vuln.get("PkgName") or "?")
-            cve = str(vuln.get("VulnerabilityID") or "?")
-            if (pkg, cve) in seen:
-                continue
-            seen.add((pkg, cve))
-            fixed = str(vuln.get("FixedVersion") or "")
-            action = classifier.classify({"pkg": pkg, "fixed": fixed, "type": result.get("Type") or "?"}, pins)
-            score = _trivy_score(vuln)
-            source.findings.append(
-                Finding(
-                    id=cve,
-                    severity=normalise_severity(vuln.get("Severity"), score),
-                    score=score,
-                    title=str(vuln.get("Title") or ""),
-                    url=str(vuln.get("PrimaryURL") or ""),
-                    remediation=_remediation(fixed, _ACTION_HINT.get(action, "")),
-                    packages=[f"{pkg}@{vuln.get('InstalledVersion') or '?'}"],
-                    sources=[f"Trivy {tag}"],
-                )
+        seen.add((pkg, cve))
+        fixed = str(vuln.get("FixedVersion") or "")
+        installed = str(vuln.get("InstalledVersion") or "?")
+        action = classifier.classify({"pkg": pkg, "fixed": fixed, "type": str(result.get("Type") or "?")}, pins)
+        hint = classifier.lock_note(pkg, action, locked, installed=installed) or _ACTION_HINT.get(action, "")
+        score = _trivy_score(vuln)
+        source.findings.append(
+            Finding(
+                id=cve,
+                severity=normalise_severity(vuln.get("Severity"), score),
+                score=score,
+                title=str(vuln.get("Title") or ""),
+                url=str(vuln.get("PrimaryURL") or ""),
+                remediation=_remediation(fixed, hint),
+                packages=[f"{pkg}@{installed}"],
+                sources=[f"Trivy {tag}"],
+                action=action,
+                lock_still_flagged=classifier.lock_still_flagged(pkg, action, locked, installed=installed),
             )
+        )
     return source
 
 
@@ -207,6 +229,19 @@ def _scout_fields(message: str) -> dict[str, str]:
         if match:
             fields[match.group(1).strip().lower()] = match.group(2).strip()
     return fields
+
+
+def _scout_action(purl: str, fixed: str) -> str:
+    """The classifier's action for a Scout finding in an Alpine package, '' for any other.
+
+    An Alpine package is classified as Trivy's are, so Scout agreeing with Trivy on one keeps
+    Trivy's "a release rebuild picks it up". Any other package is left unclassified, which
+    :func:`_work_rank` puts ahead of a rebuild.
+    """
+    match = _PURL.match(purl)
+    if match is None or match.group("type") != "apk":
+        return ""
+    return classifier.classify({"pkg": match.group("name"), "fixed": fixed, "type": "alpine"})
 
 
 def _purl_display(purl: str) -> str:
@@ -228,8 +263,11 @@ def _scout_title(rule: dict) -> str:
 
 
 def _unreadable(path: Path, reason: str) -> str:
-    """read_json's reason without the absolute path, which only adds noise in Slack."""
-    return reason.replace(f"`{path}`", path.name)
+    """Why a report is unusable, naming the file without its path, which only adds noise in Slack.
+
+    read_json's reasons quote the path in backticks; the classifier's name it bare.
+    """
+    return reason.replace(f"`{path}`", path.name).replace(str(path), path.name)
 
 
 def scout_source(tag: str, sarif: Path) -> Source:
@@ -252,6 +290,8 @@ def scout_source(tag: str, sarif: Path) -> Source:
             fields = _scout_fields((result.get("message") or {}).get("text") or "")
             score = _float(fields.get("cvss score")) or _float((rule.get("properties") or {}).get("security-severity"))
             fixed = fields.get("fixed version", "")
+            fixed = "" if fixed.lower() in ("", "not fixed") else fixed
+            purl = fields.get("package", "")
             source.findings.append(
                 Finding(
                     id=advisory,
@@ -259,9 +299,10 @@ def scout_source(tag: str, sarif: Path) -> Source:
                     score=score,
                     title=_scout_title(rule),
                     url=str(rule.get("helpUri") or ""),
-                    remediation=_remediation("" if fixed.lower() in ("", "not fixed") else fixed),
-                    packages=[_purl_display(fields.get("package", ""))],
+                    remediation=_remediation(fixed),
+                    packages=[_purl_display(purl)],
                     sources=[f"Docker Scout {tag}"],
+                    action=_scout_action(purl, fixed),
                 )
             )
     return source
@@ -362,18 +403,48 @@ def cargo_source(report: Path | None) -> tuple[Source, int]:
 # --- Merge and render ----------------------------------------------------------------
 
 
+def _work_rank(finding: Finding) -> tuple[int, int]:
+    """How much work a finding's owner needs before the advisory goes away; lower is more.
+
+    classify_image_cves.ACTION_ORDER, with two additions. A 'lock' or 'pinned' finding whose
+    flagged version main's uv.lock still holds comes right after 'base-digest', ahead of every
+    other 'pinned' or 'lock' one: a release certainly cannot clear it, while the others may
+    already be fixed in main's lock. The classifier's verdict headline lists them in that order
+    too. A finding no classifier owns - a Dependabot alert, a cargo audit advisory, a Scout
+    finding outside an Alpine package - comes right before 'rebuild': nothing says a release
+    clears it, so a rebuild hint must not speak for its package.
+    """
+    if finding.lock_still_flagged:
+        return classifier.ACTION_ORDER["pinned"], 0
+    if not finding.action:
+        return classifier.ACTION_ORDER["rebuild"], 0
+    return classifier.ACTION_ORDER[finding.action], 1
+
+
 def merge(sources: list[Source]) -> list[Finding]:
-    """One finding per advisory across every source, keeping the worst severity seen."""
+    """One finding per advisory across every source, keeping the worst severity seen.
+
+    The remediation is that of the owner with the most work left (:func:`_work_rank`), the
+    first one seen among equals. One advisory can hit packages with different owners - an
+    Alpine package a release rebuild clears and a Python package it cannot, whether Trivy or
+    Dependabot reports that one - and the line must not tell a reader that a release clears
+    it. Likewise a Trivy tag whose image main's uv.lock still matches outranks another tag's
+    "cutting a release clears each finding whose fix that version carries", which would leave
+    the call open.
+    """
     by_id: dict[str, Finding] = {}
     merged: list[Finding] = []
     for finding in (f for s in sources for f in s.findings):
         keys = {finding.id, *finding.aliases} - {"", "?"}
         existing = next((by_id[k] for k in keys if k in by_id), None)
         if existing is None:
-            existing = Finding(**{**finding.__dict__, "packages": [], "sources": [], "aliases": set()})
+            existing = replace(finding, packages=[], sources=[], aliases=set())
             merged.append(existing)
         elif SEVERITY_ORDER[finding.severity] < SEVERITY_ORDER[existing.severity]:
             existing.severity, existing.score = finding.severity, finding.score
+        if _work_rank(finding) < _work_rank(existing):
+            existing.remediation, existing.action = finding.remediation, finding.action
+            existing.lock_still_flagged = finding.lock_still_flagged
         existing.title = existing.title or finding.title
         existing.aliases |= keys
         existing.packages += [p for p in finding.packages if p not in existing.packages]
@@ -500,7 +571,8 @@ class Report:
 
 def build(args: argparse.Namespace) -> Report:
     pins = classifier.exact_pins()
-    sources = [trivy_source(tag, path, pins) for tag, path in args.trivy]
+    locked = classifier.locked_versions()
+    sources = [trivy_source(tag, path, pins, locked) for tag, path in args.trivy]
     if not sources:
         sources.append(Source(name="Trivy", scope="published tags", complete=False, note="no tag was scanned"))
     if args.scout:

@@ -1,10 +1,10 @@
-import asyncio
 import logging
 import math
 import os
 import sys
 from pathlib import Path
 from typing import ClassVar, Literal
+from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 import aiohttp
@@ -31,7 +31,7 @@ from pydantic import BaseModel, Field
 from scalar_fastapi import get_scalar_api_reference
 
 from horizon.authentication import enforce_pdp_token
-from horizon.config import MOCK_API_KEY, sidecar_config
+from horizon.config import IGNORED_CALLBACK_URLS_SETTING, MOCK_API_KEY, sidecar_config
 from horizon.connectivity.api import init_connectivity_router
 from horizon.debounce import MAX_DEBOUNCE_SECONDS, DebouncedTrigger, clamp_window, resolve_window
 from horizon.enforcer.api import init_enforcer_api_router, init_enforcer_health_router, stats_manager
@@ -52,6 +52,10 @@ from horizon.system.consts import GUNICORN_EXIT_APP
 
 OPA_LOGGER_MODULE = "opal_client.opa.logger"
 
+# The range nice(2) accepts on Linux.
+MIN_NICENESS = -20
+MAX_NICENESS = 19
+
 
 def set_process_niceness(target_nice: int) -> None:
     """
@@ -62,8 +66,8 @@ def set_process_niceness(target_nice: int) -> None:
     Setting a lower niceness value (increasing priority) may require CAP_SYS_NICE
     capabilities and could fail if the process lacks sufficient privileges.
     """
-    if target_nice < -20 or target_nice > 19:
-        raise ValueError(f"Target niceness must be between -20 and 19, got {target_nice}")
+    if not MIN_NICENESS <= target_nice <= MAX_NICENESS:
+        raise ValueError(f"Target niceness must be between {MIN_NICENESS} and {MAX_NICENESS}, got {target_nice}")
 
     try:
         current_niceness = os.nice(0)  # Read current niceness without changing it
@@ -71,17 +75,69 @@ def set_process_niceness(target_nice: int) -> None:
         if delta != 0:
             os.nice(delta)  # Apply the change
             new_niceness = os.nice(0)  # Read the new niceness to confirm
-            logging.info(
-                "Changed the process niceness by %d from %d to %d (target was %d).",
+            logger.info(
+                "Changed the process niceness by {} from {} to {} (target was {}).",
                 delta,
                 current_niceness,
                 new_niceness,
                 target_nice,
             )
         else:
-            logging.debug("Process niceness is already %d, which matches the target; no change made.", current_niceness)
+            logger.debug("Process niceness is already {}, which matches the target; no change made.", current_niceness)
     except OSError as exc:
-        logging.warning("Failed to change process niceness to %d: %s", target_nice, exc)
+        logger.warning("Failed to change process niceness to {}: {}", target_nice, exc)
+
+
+def _comparable_url(url: str) -> tuple[str, str, str]:
+    """The parts of a URL an operator usually means, ignoring case, query string and trailing slash."""
+    parts = urlsplit(url.strip().lower())
+    return parts.scheme, parts.netloc, parts.path.rstrip("/")
+
+
+def _similar_callback_urls(url: str, registered_urls: list[str]) -> list[str]:
+    """Registered callback URLs that differ from ``url`` only in ways an operator would not mean.
+
+    Equal once case, query string and trailing slash are dropped, or one contains the other (the
+    old substring match accepted those).
+    """
+    wanted = _comparable_url(url)
+    similar = {
+        registered
+        for registered in registered_urls
+        if _comparable_url(registered) == wanted or url in registered or registered in url
+    }
+    return sorted(similar)
+
+
+def _report_unmatched_ignored_callback_urls(ignored_urls: list[str], registered_urls: list[str]) -> None:
+    """Log each ignored URL that matched no registered callback, with a fix when one is likely.
+
+    Matching is exact, so a near miss (trailing slash, query string, a shortened URL) leaves the
+    callback in place. A near miss is logged as a warning naming the URL to use; a URL with nothing
+    similar registered is only logged at info, since the shipped default names a callback that a
+    control plane does not always register.
+    """
+    for url in ignored_urls:
+        if url in registered_urls:
+            continue
+        similar = _similar_callback_urls(url, registered_urls)
+        if similar:
+            logger.warning(
+                "{setting} lists {url!r}, but no registered data-update callback has exactly that URL, so "
+                "that callback is still called. Did you mean {similar}? Set the exact URL: scheme, host, port, "
+                "path, query string and trailing slash must all match.",
+                setting=IGNORED_CALLBACK_URLS_SETTING,
+                url=url,
+                similar=" or ".join(repr(candidate) for candidate in similar),
+            )
+        else:
+            logger.info(
+                "{setting} lists {url!r}, which matches no registered data-update callback; nothing was "
+                "dropped for it. Registered callbacks: {registered}",
+                setting=IGNORED_CALLBACK_URLS_SETTING,
+                url=url,
+                registered=registered_urls,
+            )
 
 
 def apply_config(overrides_dict: dict, config_object: Confi):
@@ -97,8 +153,11 @@ def apply_config(overrides_dict: dict, config_object: Confi):
                     key,
                     config_object.entries[key].cast_from_json(value),
                 )
-            except Exception:  # noqa BLE001
-                logger.opt(exception=True).warning(f"Unable to set config key {prefixed_key} from overrides:")
+            except Exception:  # noqa: BLE001 - a bad control-plane override is logged; the other keys still apply
+                logger.opt(exception=True).warning(
+                    f"Unable to set config key {prefixed_key} from the control-plane overrides; "
+                    "keeping its current value:"
+                )
                 continue
             logger.info(f"Overriden config key: {prefixed_key}")
             continue
@@ -272,7 +331,7 @@ class PermitPDP:
         self._configure_cloud_logging(remote_config.context)
 
         self._opal_relay = OpalRelayAPIClient(remote_config.context, self._opal)
-        self._opal.data_updater.callbacks_reporter.set_user_data_handler(
+        self._opal.data_updater.callbacks_reporter.set_user_data_handler(  # ty: ignore[unresolved-attribute]  # no data updater: startup fails here
             PersistentStateHandler.get_instance().reporter_user_data_handler
         )
 
@@ -284,7 +343,7 @@ class PermitPDP:
 
         self._app: FastAPI = app
 
-        @app.on_event("startup")
+        @app.on_event("startup")  # ty: ignore[deprecated]  # OPAL builds this app with on_event handlers
         async def _initialize_opal_relay():
             await self._opal_relay.initialize()
 
@@ -318,7 +377,8 @@ class PermitPDP:
         """
         patch fastapi to enable tracing and monitoring
         """
-        from ddtrace import config, patch
+        # Imported only when monitoring is on: importing ddtrace has side effects of its own.
+        from ddtrace import config, patch  # noqa: PLC0415
 
         # Datadog APM
         patch(fastapi=True)
@@ -375,7 +435,7 @@ class PermitPDP:
         if sidecar_config.OPA_BEARER_TOKEN_REQUIRED:
             # overrides OPAL client config so that OPAL passes the bearer token in requests
             opal_client_config.POLICY_STORE_AUTH_TOKEN = get_env_api_key()
-            opal_client_config.POLICY_STORE_AUTH_TYPE = PolicyStoreAuth.TOKEN
+            opal_client_config.POLICY_STORE_AUTH_TYPE = PolicyStoreAuth.TOKEN  # ty: ignore[invalid-assignment]  # confi.enum() is typed as returning the class
 
             # append the bearer token authz policy to inline OPA config
             auth_policy_file_path = get_opa_authz_policy_file_path(sidecar_config)
@@ -414,7 +474,7 @@ class PermitPDP:
         configure opal to use offline mode when enabled
         """
         opal_client_config.OFFLINE_MODE_ENABLED = sidecar_config.ENABLE_OFFLINE_MODE
-        opal_client_config.STORE_BACKUP_PATH = (
+        opal_client_config.STORE_BACKUP_PATH = str(
             Path(sidecar_config.OFFLINE_MODE_BACKUP_DIR) / sidecar_config.OFFLINE_MODE_POLICY_BACKUP_FILENAME
         )
 
@@ -471,8 +531,8 @@ class PermitPDP:
         """
 
         # Init api routers with required dependencies
-        app.on_event("startup")(stats_manager.run)
-        app.on_event("shutdown")(stats_manager.stop_tasks)
+        app.on_event("startup")(stats_manager.run)  # ty: ignore[deprecated]  # OPAL builds this app with on_event handlers
+        app.on_event("shutdown")(stats_manager.stop_tasks)  # ty: ignore[deprecated]  # OPAL builds this app with on_event handlers
 
         enforcer_health_router = init_enforcer_health_router()
         enforcer_router = init_enforcer_api_router(policy_store=self._opal.policy_store)
@@ -568,8 +628,8 @@ class PermitPDP:
 
         # A trailing reload is a background task, so it has to be cancelled on the way down or
         # it outlives the event loop as a "Task was destroyed but it is pending" warning.
-        app.on_event("shutdown")(self._policy_trigger_debounce.aclose)
-        app.on_event("shutdown")(self._data_trigger_debounce.aclose)
+        app.on_event("shutdown")(self._policy_trigger_debounce.aclose)  # ty: ignore[deprecated]  # OPAL builds this app with on_event handlers
+        app.on_event("shutdown")(self._data_trigger_debounce.aclose)  # ty: ignore[deprecated]  # as above
 
         # Log the EFFECTIVE window, not the configured one: the value is remote-config
         # overridable, so a fat-fingered override should be visible at startup rather than
@@ -638,6 +698,7 @@ class PermitPDP:
             "/policy-updater/trigger",
             status_code=status.HTTP_200_OK,
             response_model=TriggerResponse,
+            responses={503: {"description": "The policy updater is disabled on this PDP"}},
             tags=["Policy Updater"],
             dependencies=[Depends(enforce_pdp_token)],
             summary="Trigger a full policy reload",
@@ -652,13 +713,16 @@ class PermitPDP:
                 "call, within `PDP_TRIGGER_DEBOUNCE_SECONDS` (default 10s). Retrying sooner is "
                 "coalesced again and only adds load to the control plane.\n\n"
                 "This is a best-effort refresh, not a read-your-writes barrier: 200 means the "
-                "reload was dispatched, not that the new policy has been loaded."
+                "reload was dispatched, not that the new policy has been loaded.\n\n"
+                "Returns 503 if the policy updater is disabled on this PDP - a configuration "
+                "state, so retrying will not help."
             ),
         )
         async def trigger_policy_update() -> TriggerResponse:
             # The reload is dispatched, not awaited to completion: the underlying OPAL call only
             # enqueues onto the policy updater's queue. That was already true of the handler this
-            # replaces, so a 200 means the same thing it always did.
+            # replaces, so a 200 means the same thing it always did. A disabled policy updater
+            # returns 503, checked BEFORE the debouncer so a 503 never consumes the window.
             logger.info("triggered policy update from api")
             return TriggerResponse(triggered=await self._debounced_policy_reload())
 
@@ -706,13 +770,21 @@ class PermitPDP:
         """Dispatch a full policy reload through the shared policy debouncer.
 
         Backs both /policy-updater/trigger and the /update_policy legacy alias so they coalesce
-        against each other. No None-guard: the PDP never disables the policy updater.
+        against each other. Raises 503 when the policy updater is disabled (OPAL builds none when
+        OPAL_POLICY_UPDATER_ENABLED is false), checked BEFORE the debouncer so a 503 never consumes
+        the window.
 
         Returns True if this call dispatched a reload, False if it was coalesced.
         """
+        policy_updater = self._opal.policy_updater
+        if policy_updater is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Policy Updater is currently disabled. Dynamic policy updates are not available.",
+            )
 
         async def _run() -> None:
-            await self._opal.policy_updater.trigger_update_policy(force_full_update=True)
+            await policy_updater.trigger_update_policy(force_full_update=True)
 
         return await self._policy_trigger_debounce.trigger(
             run=_run, window_seconds=sidecar_config.TRIGGER_DEBOUNCE_SECONDS
@@ -742,7 +814,7 @@ class PermitPDP:
             return await self._data_trigger_debounce.trigger(
                 run=_run, window_seconds=sidecar_config.TRIGGER_DEBOUNCE_SECONDS
             )
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             raise self._control_plane_unreachable(status.HTTP_504_GATEWAY_TIMEOUT, "timed out", exc) from exc
         except aiohttp.ClientError as exc:
             raise self._control_plane_unreachable(status.HTTP_502_BAD_GATEWAY, "failed", exc) from exc
@@ -786,7 +858,7 @@ class PermitPDP:
             raise SystemExit(GUNICORN_EXIT_APP)
 
     def _inject_extra_callbacks(self) -> None:
-        register = self._opal._callbacks_register  # type: ignore
+        register = self._opal._callbacks_register
         default_config = HttpFetcherConfig(
             method=HttpMethods.POST,
             headers={"content-type": "application/json"},
@@ -804,11 +876,14 @@ class PermitPDP:
             register.put(entry.url, entry.config, entry.key)
 
     def _remove_ignored_default_callbacks_urls(self) -> None:
-        register = self._opal._callbacks_register  # type: ignore
-        if not sidecar_config.IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS:
+        ignored_urls = sidecar_config.IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS
+        if not ignored_urls:
             return
-        # we convert the generator to a list because we are modifying the register while iterating over it
-        for callback in list(register.all()):
-            if callback.url in sidecar_config.IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS:
+        register = self._opal._callbacks_register
+        # a list, because the loop removes entries from the register it would otherwise iterate
+        callbacks = list(register.all())
+        for callback in callbacks:
+            if callback.url in ignored_urls:
                 logger.info(f"Removing callback '{callback.url}' from the register")
-                register.remove(callback.key)
+                register.remove(callback.key)  # ty: ignore[invalid-argument-type]  # all() builds each entry from its key
+        _report_unmatched_ignored_callback_urls(ignored_urls, [callback.url for callback in callbacks])

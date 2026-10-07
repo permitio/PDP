@@ -21,9 +21,9 @@ _data_update_subscriber: DataUpdateSubscriber | None = None
 def get_data_update_subscriber(
     opal_client: OpalClientDependency,
 ) -> DataUpdateSubscriber:
-    global _data_update_subscriber
+    global _data_update_subscriber  # noqa: PLW0603 - built on first use, then shared by every request
     if _data_update_subscriber is None:
-        _data_update_subscriber = DataUpdateSubscriber(opal_client.data_updater)
+        _data_update_subscriber = DataUpdateSubscriber(opal_client.data_updater)  # ty: ignore[invalid-argument-type]  # a PDP without one fails at startup
 
     return _data_update_subscriber
 
@@ -45,8 +45,7 @@ def get_wait_timeout(request: Request) -> float | None:
         ) from e
     if wait_timeout < 0:
         return None
-    else:
-        return wait_timeout
+    return wait_timeout
 
 
 WaitTimeoutDependency = Annotated[float | None, Depends(get_wait_timeout)]
