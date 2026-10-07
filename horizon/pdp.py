@@ -299,9 +299,7 @@ class PermitPDP:
 
         self._log_environment(remote_config.context)
 
-        if sidecar_config.OPA_BEARER_TOKEN_REQUIRED or sidecar_config.OPA_DECISION_LOG_ENABLED:
-            # we need to pass to OPAL a custom inline OPA config to enable these features
-            self._configure_inline_opa_config()
+        self._configure_inline_opa_config()
 
         self._configure_opal_data_updater()
         self._configure_opal_offline_mode()
@@ -419,15 +417,39 @@ class PermitPDP:
             catch=True,  # if sink throws exceptions, swallow them as not critical
         )
 
-    def _configure_inline_opa_config(self):
+    @staticmethod
+    def _configure_inline_opa_config():
+        """Pass OPAL the inline OPA config that decision logs, plugins and bearer auth need.
+
+        OPA reads decision log (upload or console) and plugin settings only from its config file,
+        so the file is written whenever any of them is on. A different ``config_file`` already in
+        the inline config is replaced, with a warning. With none of them on and no bearer token
+        required, the inline config is left as it is.
+        """
+        config_file_needed = (
+            sidecar_config.OPA_DECISION_LOG_ENABLED
+            or sidecar_config.OPA_DECISION_LOG_CONSOLE
+            or bool(sidecar_config.OPA_PLUGINS)
+        )
+        if not (config_file_needed or sidecar_config.OPA_BEARER_TOKEN_REQUIRED):
+            return
+
         # Start from the existing config
         inline_opa_config = opal_client_config.INLINE_OPA_CONFIG.dict()
 
         logger.debug(f"existing OPAL_INLINE_OPA_CONFIG={inline_opa_config}")
 
-        if sidecar_config.OPA_DECISION_LOG_ENABLED:
-            # decision logs needs to be configured via the config file
+        if config_file_needed:
             config_file_path = get_opa_config_file_path(sidecar_config)
+
+            existing_config_file = inline_opa_config.get("config_file")
+            if existing_config_file and Path(existing_config_file).expanduser() != Path(config_file_path):
+                logger.warning(
+                    "OPAL_INLINE_OPA_CONFIG sets config_file={existing}; OPA uses the PDP's config file "
+                    "{path} instead, which holds its decision log and plugin settings.",
+                    existing=existing_config_file,
+                    path=config_file_path,
+                )
 
             # append the config file to inline OPA config
             inline_opa_config.update({"config_file": config_file_path})
