@@ -746,8 +746,11 @@ impl log::Log for TestLogger {
 pub struct LogCapture;
 
 impl LogCapture {
+    /// Starts collecting at every level, whatever level the logger was installed with. That level
+    /// still filters what env_logger prints, so other tests' output does not change.
     pub fn start() -> Self {
         TestFixture::setup_logger(LevelFilter::Debug);
+        log::set_max_level(LevelFilter::Trace);
         CAPTURED_LOG_LINES.set(Some(Vec::new()));
         Self
     }
@@ -761,5 +764,24 @@ impl LogCapture {
 impl Drop for LogCapture {
     fn drop(&mut self) {
         CAPTURED_LOG_LINES.set(None);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Another test may have installed the logger first with a higher level, as the health
+    /// handler tests do with `Info`; a capture still sees every level.
+    #[test]
+    fn test_log_capture_sees_every_level_whatever_logger_came_first() {
+        TestFixture::setup_logger(LevelFilter::Info);
+        log::set_max_level(LevelFilter::Info);
+
+        let logs = LogCapture::start();
+        log::debug!("debug line");
+        log::trace!("trace line");
+
+        assert_eq!(logs.lines(), ["DEBUG debug line", "TRACE trace line"]);
     }
 }
