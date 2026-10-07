@@ -414,7 +414,11 @@ def _post_allowed_url(monkeypatch, url: str, mapping_rules: list[dict]) -> tuple
     return response, checks
 
 
-@pytest.mark.parametrize("query_string", ["?id=7", "?id=7&id=7"], ids=["single", "repeated-same-value"])
+@pytest.mark.parametrize(
+    "query_string",
+    ["?id=7", "?id=7&id=7", "?z=1?id=5&id=7"],
+    ids=["single", "repeated-same-value", "question-mark-in-another-value"],
+)
 def test_allowed_url_checks_the_value_of_the_query_parameter_the_rule_reads(monkeypatch, query_string: str):
     response, checks = _post_allowed_url(monkeypatch, DOCUMENTS_URL + query_string, [DOC_ID_RULE])
 

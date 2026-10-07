@@ -213,6 +213,19 @@ def test_query_attributes_come_from_the_parameters_value(rule_url: str, request_
     assert MappingRulesUtils.extract_attributes_from_query_params(rule_url, request_url) == expected
 
 
+@pytest.mark.parametrize(
+    ("request_query", "expected"),
+    [("?z=1?id=5&id=7", {"doc_id": "7"}), ("?id=1?id=2", {"doc_id": "1?id=2"})],
+    ids=["question-mark-in-another-value", "question-mark-in-the-value"],
+)
+def test_query_attributes_come_from_the_query_the_rule_matched(request_query: str, expected: dict):
+    """Everything after the first "?" is the query, both for matching a rule and for reading its attributes."""
+    rule_url = BASE + "?id={doc_id}"
+
+    assert _matches(rule_url, BASE + request_query)
+    assert MappingRulesUtils.extract_attributes_from_query_params(rule_url, BASE + request_query) == expected
+
+
 @pytest.mark.parametrize("request_query", ["?id=7&id=8", "?id=8&id=7", "?id=7&id="])
 def test_query_attributes_raise_for_a_parameter_with_conflicting_values(request_query: str):
     with pytest.raises(ConflictingQueryParameterError) as raised:

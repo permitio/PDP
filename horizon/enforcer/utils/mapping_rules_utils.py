@@ -103,8 +103,8 @@ class MappingRulesUtils:
         """
         if "?" not in rule_url or "?" not in request_url:
             return {}
-        rule_query_params = QueryParams(rule_url.split("?")[1])
-        request_query_params = QueryParams(request_url.split("?")[1])
+        rule_query_params = QueryParams(rule_url.split("?", 1)[1])
+        request_query_params = QueryParams(request_url.split("?", 1)[1])
         attributes = {}
         for key in rule_query_params:
             if rule_query_params[key].startswith("{") and rule_query_params[key].endswith("}"):
