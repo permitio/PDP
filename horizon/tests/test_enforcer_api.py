@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 import aiohttp
+import httpx
 import pytest
 from aioresponses import aioresponses
 from fastapi import FastAPI, Response
@@ -364,6 +365,65 @@ def test_nginx_allowed_without_a_required_header_is_422_and_never_asks_opa(monke
         assert not m.requests
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
     assert [error["loc"] for error in response.json()["detail"]] == [["header", missing]]
+
+
+DOCUMENTS_URL = "https://api.example.com/documents"
+DOC_ID_RULE = {"url": DOCUMENTS_URL + "?id={doc_id}", "http_method": "get", "action": "read", "resource": "document"}
+DOC_7_RULE_OVER_CATCH_ALL = [
+    {"url": DOCUMENTS_URL + "?id=7", "http_method": "get", "action": "edit", "resource": "document", "priority": 10},
+    {"url": DOCUMENTS_URL, "http_method": "get", "action": "read", "resource": "document", "priority": 1},
+]
+
+
+def _post_allowed_url(monkeypatch, url: str, mapping_rules: list[dict]) -> tuple[httpx.Response, list[dict]]:
+    """POST /allowed_url for ``url`` with OPA holding ``mapping_rules`` and allowing every check.
+
+    Returns the response and the input of each check the PDP asked OPA to decide.
+    """
+    monkeypatch.setattr(stats_manager, "_messages", asyncio.Queue())
+    opa_data_url = f"{opal_client_config.POLICY_STORE_URL}/v1/data"
+    query = UrlAuthorizationQuery(user=User(key="user1"), http_method="GET", url=url, tenant="default")
+    with aioresponses() as m:
+        m.post(f"{opa_data_url}/mapping_rules", payload={"result": {"all": mapping_rules}})
+        m.post(f"{opa_data_url}/permit/root", payload={"result": {"allow": True}}, repeat=True)
+        response = TestClient(sidecar._app).post(
+            "/allowed_url", headers={"authorization": f"Bearer {sidecar_config.API_KEY}"}, json=query.dict()
+        )
+    checks = [
+        json.loads(call.kwargs["data"])["input"]
+        for (_, requested_url), calls in m.requests.items()
+        if requested_url.path.endswith("/permit/root")
+        for call in calls
+    ]
+    return response, checks
+
+
+@pytest.mark.parametrize("query_string", ["?id=7", "?id=7&id=7"], ids=["single", "repeated-same-value"])
+def test_allowed_url_checks_the_value_of_the_query_parameter_the_rule_reads(monkeypatch, query_string: str):
+    response, checks = _post_allowed_url(monkeypatch, DOCUMENTS_URL + query_string, [DOC_ID_RULE])
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["allow"] is True
+    (check,) = checks
+    assert check["resource"]["attributes"] == {"doc_id": "7"}
+
+
+@pytest.mark.parametrize("query_string", ["?id=7&id=8", "?id=8&id=7"], ids=["rule-value-first", "rule-value-last"])
+@pytest.mark.parametrize(
+    "mapping_rules", [[DOC_ID_RULE], DOC_7_RULE_OVER_CATCH_ALL], ids=["attribute-rule", "literal-rule-over-catch-all"]
+)
+def test_allowed_url_with_conflicting_values_for_a_rule_query_parameter_is_not_allowed(
+    monkeypatch, query_string: str, mapping_rules: list[dict]
+):
+    """The app behind the URL may read either value, so no single check covers the request."""
+    response, checks = _post_allowed_url(monkeypatch, DOCUMENTS_URL + query_string, mapping_rules)
+
+    assert response.status_code == status.HTTP_200_OK
+    body = response.json()
+    assert body["allow"] is False
+    assert body["result"] is False
+    assert body["debug"] == {"reason": "Query parameter 'id' has more than one distinct value in the requested URL"}
+    assert checks == []
 
 
 ALLOWED_ENDPOINTS = [

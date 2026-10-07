@@ -9,6 +9,18 @@ from starlette.datastructures import QueryParams
 from horizon.enforcer.schemas import MappingRuleData, UrlTypes
 
 
+class ConflictingQueryParameterError(ValueError):
+    """A query parameter a mapping rule reads has more than one distinct value in the requested URL.
+
+    Which value the protected app reads for such a parameter is up to the app, so the PDP cannot
+    tell which rule applies or which attribute value to check.
+    """
+
+    def __init__(self, key: str):
+        super().__init__(f"Query parameter '{key}' has more than one distinct value in the requested URL")
+        self.key = key
+
+
 class MappingRulesUtils:
     @staticmethod
     def _compare_httpurls(mapping_rule_url: str, request_url: str) -> bool:
@@ -40,20 +52,32 @@ class MappingRulesUtils:
 
     @staticmethod
     def _compare_query_params(mapping_rule_query_string: str, request_url_query_string: str) -> bool:
+        """Whether the request's query satisfies every parameter of the mapping rule's query.
+
+        A parameter repeated with one value counts as given once.
+
+        Raises:
+            ConflictingQueryParameterError: the request could satisfy the rule, but a parameter the
+                rule reads has more than one distinct value, so whether it does depends on the value read.
+        """
         mapping_rule_query_params = QueryParams(mapping_rule_query_string)
         request_query_params = QueryParams(request_url_query_string)
+        conflicting_key = None
 
         for key in mapping_rule_query_params:
-            if key not in request_query_params:
+            request_values = set(request_query_params.getlist(key))
+            if not request_values:
                 return False
 
-            if mapping_rule_query_params[key].startswith("{") and mapping_rule_query_params[key].endswith("}"):
-                # if the value is an attribute
-                # we just need to make sure the attribute is in the request query params
-                continue
-            if mapping_rule_query_params[key] != request_query_params[key]:
-                # if the value is not an attribute, verify that the values are the same
+            rule_value = mapping_rule_query_params[key]
+            is_attribute = rule_value.startswith("{") and rule_value.endswith("}")
+            if not is_attribute and rule_value not in request_values:
                 return False
+            if len(request_values) > 1:
+                conflicting_key = key
+
+        if conflicting_key is not None:
+            raise ConflictingQueryParameterError(conflicting_key)
         return True
 
     @staticmethod
@@ -70,6 +94,13 @@ class MappingRulesUtils:
 
     @staticmethod
     def extract_attributes_from_query_params(rule_url: str, request_url: str) -> dict:
+        """The attributes a mapping rule's query reads from the request URL, e.g. ``{"id": "7"}`` for
+        a rule with ``?id={id}`` and a request with ``?id=7``.
+
+        Raises:
+            ConflictingQueryParameterError: a parameter the rule reads an attribute from has more than
+                one distinct value in the request URL.
+        """
         if "?" not in rule_url or "?" not in request_url:
             return {}
         rule_query_params = QueryParams(rule_url.split("?")[1])
@@ -77,6 +108,8 @@ class MappingRulesUtils:
         attributes = {}
         for key in rule_query_params:
             if rule_query_params[key].startswith("{") and rule_query_params[key].endswith("}"):
+                if len(set(request_query_params.getlist(key))) > 1:
+                    raise ConflictingQueryParameterError(key)
                 attributes[rule_query_params[key][1:-1]] = request_query_params[key]
         return attributes
 
@@ -105,6 +138,13 @@ class MappingRulesUtils:
         http_method: str,
         url: AnyHttpUrl,
     ) -> MappingRuleData | None:
+        """The highest-priority mapping rule for the request's method and URL, or None if none matches.
+
+        Raises:
+            ConflictingQueryParameterError: a rule for the method and path could match, but a query
+                parameter it reads has more than one distinct value. The request then gets no rule at
+                all, rather than a lower-priority one that skips the parameter.
+        """
         matched_mapping_rules = []
         http_method = http_method.lower()  # Convert once instead of in each iteration
 
