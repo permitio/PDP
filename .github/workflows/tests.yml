@@ -104,6 +104,14 @@ jobs:
           python -m pip install --dry-run --quiet --disable-pip-version-check \
             --require-hashes --no-deps --requirement "$RUNNER_TEMP/lock.txt"
 
+      # For horizon/tests/test_helm_chart.py, which renders and lints charts/pdp. Pinned so a
+      # Helm release cannot change the result on its own; the tests fail, not skip, when CI is set
+      # and helm is missing.
+      - name: Install Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.3.0
+
       - name: Run Pytests
         run: uv run --frozen pytest -s --cache-clear horizon/tests/
 
@@ -163,7 +171,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           repository: permitio/permit-opa
-          ref: ff2356d560e3c7152bcb6c6ab8ebd5d4eb691306  # permit-opa 0.0.23 (#52; go 1.26, x/crypto v0.57.0)
+          ref: 2f411da9b486226a0bfe4c1e39344eaa885553a1  # permit-opa main (permitio/permit-opa#53-#57) + ReBAC derivation fixes (PER-16921); re-pin to the merge commit
           path: './permit-opa'
           token: ${{ steps.permit-opa-token.outputs.token }}
           # Nothing after the clone needs the token; don't leave it in .git/config.
@@ -263,6 +271,15 @@ jobs:
   pdp-tester:
     runs-on: ubuntu-24.04
     needs: build-pdp-image
+    # One run at a time across the repository - PRs, pushes and releases, which reach this
+    # job through release.yml - because every run writes to the same staging environment and
+    # overlapping runs failed each other's sync cases (PER-16929). `queue: max` lets up to 100
+    # runs wait their turn. The default queue holds one, and a newer run cancels the one already
+    # waiting, which would leave another PR with a cancelled required check. GitHub rejects
+    # `queue: max` together with cancel-in-progress, so a running test always finishes.
+    concurrency:
+      group: pdp-tester-staging
+      queue: max
     # Cap the run so a hung tester fails fast instead of holding the runner
     # until GitHub's 360-minute default. The old k3d path was bounded by
     # `kubectl wait --timeout=600s`; the tester's own max_running_time only
@@ -447,7 +464,7 @@ jobs:
           username: ${{ vars.DOCKERHUB_ORGANIZATION }}
 
       - name: Docker Scout CVE report (all severities)
-        uses: docker/scout-action@7c6b6c3f7844478ace1ffd4e7aef649053d1f87d # v1.24.0
+        uses: docker/scout-action@221e7f4860634eeb1579e3bd7ca232e577bd1864 # v1.25.0
         with:
           command: cves
           image: local://permitio/pdp-v2:next
@@ -473,7 +490,7 @@ jobs:
 
       - name: Docker Scout CVE gate (high and critical)
         id: scout-gate
-        uses: docker/scout-action@7c6b6c3f7844478ace1ffd4e7aef649053d1f87d # v1.24.0
+        uses: docker/scout-action@221e7f4860634eeb1579e3bd7ca232e577bd1864 # v1.25.0
         with:
           command: cves
           image: local://permitio/pdp-v2:next

@@ -1,23 +1,34 @@
 # actionlint configuration.
 #
-# One suppression, and it is a gap in the linter rather than in the workflow.
+# Two suppressions, and both are gaps in the linter rather than in the workflows.
 #
-# `vulnerability-alerts: read` is the ONLY GITHUB_TOKEN permission that grants
+# 1. `vulnerability-alerts: read` is the ONLY GITHUB_TOKEN permission that grants
 # GET /repos/{owner}/{repo}/dependabot/alerts. GitHub documents it under the
 # `permissions` key in the workflow syntax reference ("For Dependabot alerts, use the
 # vulnerability-alerts permission"), but actionlint 1.7.12 still validates permission
 # scopes against a hard-coded list that predates it, so it reports the real, working key
 # as `unknown permission scope`.
 #
-# Removal gate: drop this block once actionlint's `AllPermissionScopes` includes
+# Removal gate: drop this entry once actionlint's `AllPermissionScopes` includes
 # `vulnerability-alerts` — check with
 #   actionlint .github/workflows/scheduled-security-scan.yml
-# after an actionlint upgrade. If it passes, delete this file.
+# after an actionlint upgrade.
 #
 # Deliberately scoped to the one file and the one message. A blanket `permissions` ignore
 # would also hide a genuinely misspelled scope, which fails OPEN: an unrecognised scope is
 # not granted, the API call 403s, and the watcher reports zero alerts.
+#
+# 2. `concurrency.queue` (GitHub changelog, 2026-05-07) is what keeps pdp-tester runs waiting
+# instead of cancelling each other in tests.yml. actionlint 1.7.12 only knows `group` and
+# `cancel-in-progress` (rhysd/actionlint#657), so it reports the documented key as a syntax
+# error. Scoped to that file and that message, so a misspelled concurrency key still fails.
+#
+# Removal gate: drop this entry once `actionlint .github/workflows/tests.yml` passes without
+# it after an actionlint upgrade. With both entries gone, delete this file.
 paths:
   .github/workflows/scheduled-security-scan.yml:
     ignore:
       - 'unknown permission scope "vulnerability-alerts"'
+  .github/workflows/tests.yml:
+    ignore:
+      - 'unexpected key "queue" for "concurrency" section'

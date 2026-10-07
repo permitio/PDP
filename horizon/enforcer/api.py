@@ -42,7 +42,7 @@ from horizon.enforcer.schemas_kong import (
     KongWrappedAuthorizationQuery,
 )
 from horizon.enforcer.schemas_v1 import AuthorizationQueryV1
-from horizon.enforcer.utils.mapping_rules_utils import MappingRulesUtils
+from horizon.enforcer.utils.mapping_rules_utils import ConflictingQueryParameterError, MappingRulesUtils
 from horizon.enforcer.utils.statistics_utils import StatisticsManager
 from horizon.state import PersistentStateHandler
 
@@ -67,14 +67,17 @@ def extract_pdp_api_key(request: Request) -> str:
     authorization: str = request.headers.get(AUTHZ_HEADER, "")
     parts = authorization.split(" ")
     if len(parts) != AUTHZ_HEADER_PARTS:
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED,
-            detail=f"bad authz header: {authorization}",
-        )
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="bad authz header")
     schema, token = parts
     if schema.strip().lower() != "bearer":
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid PDP token")
     return token
+
+
+def _url_not_allowed(query: UrlAuthorizationQuery, error: ConflictingQueryParameterError) -> dict:
+    """The /allowed_url answer for a URL whose mapping rule cannot be applied unambiguously."""
+    logger.debug("allowed_url: {reason}; not allowed", reason=str(error), url=query.url)
+    return {"allow": False, "result": False, "query": query.dict(), "debug": {"reason": str(error)}}
 
 
 def transform_headers(request: Request) -> dict:
@@ -341,9 +344,12 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient | None = None):
         data_result = json.loads(data.body).get("result") or {}
         mapping_rules_json = data_result.get("all") or []
         mapping_rules = [parse_obj_as(MappingRuleData, mapping_rule) for mapping_rule in mapping_rules_json]
-        matched_mapping_rule = MappingRulesUtils.extract_mapping_rule_by_request(
-            mapping_rules, query.http_method, query.url
-        )
+        try:
+            matched_mapping_rule = MappingRulesUtils.extract_mapping_rule_by_request(
+                mapping_rules, query.http_method, query.url
+            )
+        except ConflictingQueryParameterError as e:
+            return _url_not_allowed(query, e)
         if matched_mapping_rule is None:
             return {
                 "allow": False,
@@ -365,9 +371,12 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient | None = None):
             path_attributes = MappingRulesUtils.extract_attributes_from_url(matched_mapping_rule.url, query.url)
 
         # Query params handling remains the same for both types
-        query_params_attributes = MappingRulesUtils.extract_attributes_from_query_params(
-            matched_mapping_rule.url, query.url
-        )
+        try:
+            query_params_attributes = MappingRulesUtils.extract_attributes_from_query_params(
+                matched_mapping_rule.url, query.url
+            )
+        except ConflictingQueryParameterError as e:
+            return _url_not_allowed(query, e)
         attributes = {**path_attributes, **query_params_attributes}
         allowed_query = AuthorizationQuery(
             user=query.user,

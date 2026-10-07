@@ -245,13 +245,15 @@ class SidecarConfig(Confi):
     OPA_DECISION_LOG_ENABLED = confi.bool(
         "OPA_DECISION_LOG_ENABLED",
         True,
-        description="if true, OPA decision logs will be uploaded to the Permit.io cloud console",
+        description="if true, OPA decision logs will be uploaded to the Permit.io cloud console. "
+        "The control plane also sends this setting; a value set in the PDP's environment takes "
+        "precedence over it",
     )
     OPA_DECISION_LOG_CONSOLE = confi.bool(
         "OPA_DECISION_LOG_CONSOLE",
         False,
-        description="if true, OPA decision logs will also be printed to console "
-        "(only relevant if `OPA_DECISION_LOG_ENABLED` is true)",
+        description="if true, OPA decision logs will be printed to console, "
+        "whether or not `OPA_DECISION_LOG_ENABLED` uploads them",
     )
     OPA_DECISION_LOG_INGRESS_ROUTE = confi.str(
         "OPA_DECISION_LOG_INGRESS_ROUTE",

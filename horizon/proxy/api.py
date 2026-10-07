@@ -182,7 +182,7 @@ async def proxy_request_to_cloud_service(
             headers={"WWW-Authenticate": "Bearer"},
         )
     path = f"{cloud_service_url}/{path}"
-    params = dict(request.query_params) or {}
+    params = request.query_params.multi_items()
 
     original_headers = {k.lower(): v for k, v in iter(dict(request.headers).items())}
     headers = additional_headers

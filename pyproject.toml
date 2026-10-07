@@ -1,5 +1,8 @@
 [project]
-name = "horizon"
+# The distribution name; the import package is still `horizon` (horizon/). Not "horizon": GitHub's
+# dependency graph matched that name to an unrelated PyPI project and raised its alerts here
+# (PER-16930). Nothing reads this name: the image and CI export the lock with --no-emit-project.
+name = "permit-pdp"
 version = "0.2.0"
 description = "The Python side of the Permit.io PDP: OPAL client, policy-store sync and the PDP API."
 # uv.lock is resolved for the interpreter the image ships (Dockerfile: python:3.13-alpine3.23)
@@ -81,8 +84,8 @@ dev = [
     "pytest-timeout",
     "aioresponses",
     # Imported by .github/scripts/check_waiver_parity.py, which horizon/tests/test_ci_scripts.py
-    # loads at collection time, so a missing PyYAML fails the whole pytests job. A test and
-    # CI-tooling dependency only; nothing under horizon/ imports it.
+    # loads at collection time, and by horizon/tests/test_helm_chart.py, so a missing PyYAML fails
+    # the whole pytests job. A test and CI-tooling dependency only; no runtime code imports it.
     "PyYAML",
     # Here, unlike ruff, because it types third-party imports from the project's .venv; the
     # `ty-check` hook runs it with `uv run`. Pinned exactly: every ty release adds checks, so a

@@ -219,6 +219,40 @@ def test_facts_write_with_an_invalid_wait_header_is_400_before_forwarding(facts,
     facts.subscriber.publish_and_wait.assert_not_awaited()
 
 
+def test_facts_read_forwards_every_value_of_a_repeated_query_parameter(facts):
+    """GET /facts/role_assignments?user=a&user=b lists both users' assignments: permitio/PDP#299."""
+    response = facts.client.get("/facts/role_assignments?user=u2&tenant=t1&user=u1&role=r1&role=r2", headers=AUTH)
+
+    assert response.status_code == status.HTTP_200_OK
+    (backend_call,) = facts.backend_calls
+    assert backend_call.url.path == "/v2/facts/proj/env/role_assignments"
+    params = backend_call.url.params
+    assert sorted(params.keys()) == ["role", "tenant", "user"]
+    assert params.get_list("user") == ["u2", "u1"]
+    assert params.get_list("tenant") == ["t1"]
+    assert params.get_list("role") == ["r1", "r2"]
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [("DELETE", "/facts/role_assignments"), ("DELETE", "/facts/users/user-1/roles")],
+    ids=["role-assignments", "user-roles"],
+)
+def test_facts_unassign_sends_return_deleted_true_whatever_the_caller_sent(facts, method, path):
+    facts.client.request(
+        method,
+        f"{path}?return_deleted=false&tenant=t1&tenant=t2&return_deleted=0",
+        headers=AUTH,
+        json={"user": "user-1", "role": "viewer", "tenant": "t1"},
+    )
+
+    (backend_call,) = facts.backend_calls
+    params = backend_call.url.params
+    assert sorted(params.keys()) == ["return_deleted", "tenant"]
+    assert params.get_list("return_deleted") == ["true"]
+    assert params.get_list("tenant") == ["t1", "t2"]
+
+
 @pytest.fixture
 def logged_warnings() -> Iterator[list["Record"]]:
     """Every loguru record at WARNING or above emitted during the test."""
