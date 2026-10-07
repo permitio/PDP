@@ -10,6 +10,10 @@ pdp:
     # Example - enable Envoy gRPC ext_authz on port 9191 (requires PDP >= 0.9.10):
     # - name: PDP_OPA_PLUGINS
     #   value: '{"permit_graph":{},"envoy_ext_authz_grpc":{"addr":":9191","path":"permit/root"}}'
+  # The PDP's API key. By default the chart stores ApiKey in a Secret it creates
+  # (permitio-pdp-secret) and passes it to the PDP as PDP_API_KEY. existingApiKeySecret and
+  # userProvidedSecret below change that. Set at most one of them: with both set, the chart
+  # fails to render.
   ApiKey: "<your PDP API Key>"
 
   # Use an existing secret for the API key instead of creating one
@@ -17,6 +21,16 @@ pdp:
   # existingApiKeySecret:
   #   name: "my-existing-secret"
   #   key: "api-key"
+
+  # Set to true when something other than the chart supplies PDP_API_KEY, for example a
+  # mutating webhook such as bank-vaults. The chart then creates no Secret, sets no PDP_API_KEY
+  # and ignores ApiKey. Set PDP_API_KEY in pdpEnvs above, or have the webhook add it to the pod.
+  # pdpEnvs values are stored in the Deployment as plain text, so put a reference there that
+  # the webhook resolves when the container starts (for example a bank-vaults `vault:` path),
+  # and keep a literal key in ApiKey or existingApiKeySecret. Must be a boolean: a quoted
+  # "false" fails the render. Without PDP_API_KEY the PDP does not start: its health checks
+  # fail and Kubernetes keeps restarting the container.
+  userProvidedSecret: false
   port: 7766
   # Example - expose Envoy gRPC ext_authz port (requires PDP_OPA_PLUGINS env var above):
   #   additionalPorts:
