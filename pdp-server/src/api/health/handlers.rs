@@ -358,9 +358,10 @@ mod test {
             let mut fixture = TestFixture::with_config(config, opa_mock, horizon_mock).await;
             fixture.state.watchdog = Some(Arc::clone(&watchdog));
             fixture.app = crate::create_app(fixture.state.clone()).await;
-            let (opa_status, opa_error) = match api_key {
-                ApiKeySource::Env(_) => ("ok", serde_json::Value::Null),
-                ApiKeySource::Horizon => ("error", serde_json::json!(NO_KEY_YET)),
+            // A label, not the source's Debug output, which carries the key
+            let (label, opa_status, opa_error) = match api_key {
+                ApiKeySource::Env(_) => ("env key", "ok", serde_json::Value::Null),
+                ApiKeySource::Horizon => ("horizon key", "error", serde_json::json!(NO_KEY_YET)),
             };
 
             for route in ["/health", "/healthy", "/ready"] {
@@ -369,14 +370,14 @@ mod test {
                 response.assert_status(StatusCode::SERVICE_UNAVAILABLE);
                 let json = response.json();
                 let horizon = &json["components"]["horizon"];
-                assert_eq!(horizon["status"], "error", "{route} {api_key:?}");
+                assert_eq!(horizon["status"], "error", "{route} {label}");
                 assert_eq!(
                     horizon["details"]["watchdog"]["status"], "error",
-                    "{route} {api_key:?}"
+                    "{route} {label}"
                 );
                 let opa = &json["components"]["opa"];
-                assert_eq!(opa["status"], opa_status, "{route} {api_key:?}");
-                assert_eq!(opa["error"], opa_error, "{route} {api_key:?}");
+                assert_eq!(opa["status"], opa_status, "{route} {label}");
+                assert_eq!(opa["error"], opa_error, "{route} {label}");
             }
         }
     }
