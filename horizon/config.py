@@ -117,6 +117,7 @@ class SidecarConfig(Confi):
         "API_KEY",
         MOCK_API_KEY,
         description="set this to your environment's API key if you prefer to use the environment level API key.",
+        sensitive=True,
     )
 
     # access token to your organization
@@ -125,6 +126,7 @@ class SidecarConfig(Confi):
         None,
         description="set this to your organization's API key if you prefer to use the organization level API key; "
         "it needs PDP_ACTIVE_PROJECT and PDP_ACTIVE_ENV. Ignored when PDP_API_KEY or PDP_PROJECT_API_KEY is set",
+        sensitive=True,
     )
 
     # access token to your project
@@ -133,6 +135,7 @@ class SidecarConfig(Confi):
         None,
         description="set this to your project's API key if you prefer to use the project level API key; "
         "it needs PDP_ACTIVE_ENV, and the project comes from the key's own scope. Ignored when PDP_API_KEY is set",
+        sensitive=True,
     )
 
     # chosen project id/key, used with an organization API key
@@ -160,7 +163,7 @@ class SidecarConfig(Confi):
     )
 
     # access token to perform system control operations
-    CONTAINER_CONTROL_KEY = confi.str("CONTAINER_CONTROL_KEY", MOCK_API_KEY)
+    CONTAINER_CONTROL_KEY = confi.str("CONTAINER_CONTROL_KEY", MOCK_API_KEY, sensitive=True)
 
     # if enabled, will output to log more data for each "is allowed" decision
     DECISION_LOG_DEBUG_INFO = confi.bool("DECISION_LOG_DEBUG_INFO", True)
@@ -210,7 +213,7 @@ class SidecarConfig(Confi):
     # centralized logging
     CENTRAL_LOG_DRAIN_URL = confi.str("CENTRAL_LOG_DRAIN_URL", "https://listener.logz.io:8071")
     CENTRAL_LOG_DRAIN_TIMEOUT = confi.int("CENTRAL_LOG_DRAIN_TIMEOUT", 5)
-    CENTRAL_LOG_TOKEN = confi.str("CENTRAL_LOG_TOKEN", None)
+    CENTRAL_LOG_TOKEN = confi.str("CENTRAL_LOG_TOKEN", None, sensitive=True)
     CENTRAL_LOG_ENABLED = confi.bool("CENTRAL_LOG_ENABLED", False)
 
     PING_INTERVAL = confi.int(
@@ -304,6 +307,8 @@ class SidecarConfig(Confi):
         "if it is not registered, OPA will fail to start",
         cast=parse_plugins,
         cast_from_json=parse_plugins,
+        # a plugin's config can hold its own credentials
+        sensitive=True,
     )
 
     # allow access to metrics endpoint without auth
@@ -386,6 +391,8 @@ class SidecarConfig(Confi):
         description="List of callbacks to be triggered when data is updated",
         cast=parse_callbacks,
         cast_from_json=parse_callbacks,
+        # each callback's config can carry an Authorization header
+        sensitive=True,
     )
 
     @staticmethod
