@@ -1,6 +1,7 @@
 use serde::{de::DeserializeOwned, Serialize};
 use thiserror::Error;
 
+pub(crate) mod breaker_log;
 pub(crate) mod circuit_breaker;
 #[cfg(test)]
 pub(crate) mod fake_redis;

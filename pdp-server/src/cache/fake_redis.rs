@@ -25,6 +25,8 @@ pub(crate) enum Mode {
     Paused,
     /// Closes every connection, like a stopped server.
     Stopped,
+    /// Answers `PING` and reads but rejects every write, like a server out of memory.
+    RejectingWrites,
 }
 
 struct Shared {
@@ -146,7 +148,7 @@ async fn serve_connection(stream: TcpStream, shared: Arc<Shared>) {
         if running == Mode::Stopped {
             return;
         }
-        let reply = shared.execute(&command);
+        let reply = shared.execute(&command, running);
         if write.write_all(&reply).await.is_err() {
             return;
         }
@@ -193,10 +195,14 @@ impl Shared {
         self.received.send_modify(|received| received.push(name));
     }
 
-    fn execute(&self, command: &[Vec<u8>]) -> Vec<u8> {
+    fn execute(&self, command: &[Vec<u8>], mode: Mode) -> Vec<u8> {
         let name = command_name(command);
         let args = command.get(1..).unwrap_or_default();
         let mut store = self.store.lock().unwrap_or_else(PoisonError::into_inner);
+        let is_write = name == "SET" || name == "SETEX";
+        if is_write && mode == Mode::RejectingWrites {
+            return b"-OOM command not allowed when used memory > 'maxmemory'.\r\n".to_vec();
+        }
         match (name.as_str(), args) {
             ("PING", _) => b"+PONG\r\n".to_vec(),
             ("CLIENT", _) => b"+OK\r\n".to_vec(),

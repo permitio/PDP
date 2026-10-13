@@ -1,7 +1,7 @@
 use super::circuit_breaker::{Admission, BreakerState, CircuitBreaker, Cooldowns};
 use super::{CacheBackend, CacheError};
 use async_trait::async_trait;
-use redis::{aio::ConnectionManager, AsyncCommands, Client, Pipeline, RedisResult};
+use redis::{aio::ConnectionManager, AsyncCommands, Client, Pipeline, RedisError, RedisResult};
 use serde::{de::DeserializeOwned, Serialize};
 use std::future::Future;
 use std::sync::Arc;
@@ -123,13 +123,16 @@ impl RedisCache {
         &self,
         command: impl Future<Output = RedisResult<T>>,
     ) -> Result<T, CacheError> {
-        let error = match timeout(OPERATION_TIMEOUT, command).await {
+        let (kind, message) = match timeout(OPERATION_TIMEOUT, command).await {
             Ok(Ok(value)) => return Ok(value),
-            Ok(Err(err)) => err.to_string(),
-            Err(_) => format!("no reply within {OPERATION_TIMEOUT:?}"),
+            Ok(Err(err)) => (error_kind(&err), err.to_string()),
+            Err(_) => (
+                TIMEOUT.to_string(),
+                format!("no reply within {OPERATION_TIMEOUT:?}"),
+            ),
         };
-        self.breaker.record_failure(Instant::now(), &error);
-        Err(CacheError::Redis(error))
+        self.breaker.record_failure(Instant::now(), &kind);
+        Err(CacheError::Redis(message))
     }
 
     fn spawn_probe(&self) {
@@ -137,13 +140,12 @@ impl RedisCache {
         tokio::spawn(async move {
             let mut conn = cache.conn_manager.clone();
             let ping = conn.ping::<String>();
-            match timeout(OPERATION_TIMEOUT, ping).await {
-                Ok(Ok(_)) => cache.breaker.record_probe_success(),
-                Ok(Err(err)) => cache.breaker.record_probe_failure(Instant::now(), &err),
-                Err(_) => {
-                    let error = format!("no reply within {OPERATION_TIMEOUT:?}");
-                    cache.breaker.record_probe_failure(Instant::now(), &error);
-                }
+            let outcome = timeout(OPERATION_TIMEOUT, ping).await;
+            let now = Instant::now();
+            match outcome {
+                Ok(Ok(_)) => cache.breaker.record_probe_success(now),
+                Ok(Err(err)) => cache.breaker.record_probe_failure(now, &error_kind(&err)),
+                Err(_) => cache.breaker.record_probe_failure(now, TIMEOUT),
             }
         });
     }
@@ -162,6 +164,43 @@ impl RedisCache {
         });
         Ok(())
     }
+}
+
+/// The error kind the breaker logs for a command that got no reply in time.
+const TIMEOUT: &str = "timeout";
+
+/// Names a Redis error by kind, for the breaker's log: the code of a server error reply, such
+/// as `OOM` or `READONLY`, or else the client's category for the error. Never the message,
+/// which for some server errors quotes the command's arguments, cache keys among them.
+fn error_kind(err: &RedisError) -> String {
+    if err.is_timeout() {
+        return TIMEOUT.to_string();
+    }
+    if err.is_connection_refusal() {
+        return "connection refused".to_string();
+    }
+    if err.is_connection_dropped() {
+        return "connection dropped".to_string();
+    }
+    if let Some(code) = server_error_code(err) {
+        return code;
+    }
+    err.category().to_string()
+}
+
+/// The code of the first server error reply in `err`, such as `OOM`. A pipeline's error
+/// carries the replies of every command that failed.
+fn server_error_code(err: &RedisError) -> Option<String> {
+    let replies = err.clone().into_server_errors()?;
+    let (_, reply) = replies.first()?;
+    let code = reply.code();
+    // A code is one short upper-case word. Anything else is not one, so it is not logged.
+    let is_code = !code.is_empty()
+        && code.len() <= 32
+        && code
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_');
+    is_code.then(|| code.to_string())
 }
 
 fn decode<T: DeserializeOwned>(value: &str) -> Result<T, CacheError> {
@@ -471,6 +510,80 @@ mod tests {
             "{waited:?}"
         );
         assert_eq!(cache.breaker_state().name(), "open");
+    }
+
+    #[test]
+    fn test_error_kind_names_the_kind_never_the_message() {
+        use std::io;
+
+        let detail = "command not allowed for opa:allowed:0123".to_string();
+        let server = redis::make_extension_error("OOM".to_string(), Some(detail));
+        assert_eq!(error_kind(&server), "OOM");
+
+        let not_a_code = redis::make_extension_error("opa:allowed:0123".to_string(), None);
+        assert_eq!(error_kind(&not_a_code), "extension error");
+
+        let io_error = |kind| RedisError::from(io::Error::new(kind, "10.0.0.1:6379 opa:allowed"));
+        assert_eq!(error_kind(&io_error(io::ErrorKind::TimedOut)), "timeout");
+        assert_eq!(
+            error_kind(&io_error(io::ErrorKind::ConnectionRefused)),
+            "connection refused"
+        );
+        assert_eq!(
+            error_kind(&io_error(io::ErrorKind::BrokenPipe)),
+            "connection dropped"
+        );
+        assert_eq!(error_kind(&io_error(io::ErrorKind::Other)), "I/O error");
+    }
+
+    /// Redis answers PING and reads but rejects writes, as one out of memory does. Each write
+    /// opens the breaker and each probe closes it, and /health always shows the current state.
+    /// All five cycles fit in one minute, so the breaker logs one line, naming only the kind.
+    #[tokio::test]
+    async fn test_rejected_writes_cycle_the_breaker_and_log_one_line() {
+        use crate::cache::Cache;
+        use crate::test_utils::LogCapture;
+        use serde_json::json;
+
+        let redis = FakeRedis::start().await;
+        let cache = RedisCache::new(&redis.url(), 60).await.unwrap();
+        let health = Cache::Redis(cache.clone());
+        redis.set_mode(Mode::RejectingWrites);
+        let logs = LogCapture::start();
+
+        for cycle in 1..=5 {
+            cache.set("opa:allowed:0123", &data("a")).await.unwrap();
+            wait_for_breaker(&cache, |state| state.name() == "open").await;
+            assert_eq!(
+                health.health_details(),
+                Some(json!({"circuit_breaker": "open"}))
+            );
+            cache.probe_until_closed().await;
+            assert_eq!(
+                health.health_details(),
+                Some(json!({"circuit_breaker": "closed"}))
+            );
+            assert_eq!(redis.command_count("SETEX"), cycle);
+        }
+
+        let mut breaker_lines = Vec::new();
+        for line in logs.lines() {
+            if line.to_lowercase().contains("circuit breaker") {
+                breaker_lines.push(line);
+            }
+        }
+        assert_eq!(breaker_lines.len(), 1, "{breaker_lines:?}");
+        assert!(breaker_lines[0].contains("(OOM)"), "{breaker_lines:?}");
+        for line in logs.lines() {
+            assert!(
+                !line.contains("maxmemory"),
+                "an error message was logged: {line}"
+            );
+            assert!(
+                !line.contains("opa:allowed"),
+                "a cache key was logged: {line}"
+            );
+        }
     }
 
     #[tokio::test]

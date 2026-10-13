@@ -698,11 +698,18 @@ mod tests {
             opa_bulk_calls(&fixture.opa_mock.received_requests().await.unwrap());
         assert_eq!(opa_bulk_calls_after, opa_bulk_calls_before);
 
-        // Cache keys derive from request data, so no log line may carry one.
+        // The outage and the recovery took under a minute, so the breaker logged one line: the
+        // opening. Its later changes wait for the next minute's summary.
         let lines = logs.lines();
-        assert!(lines
-            .iter()
-            .any(|line| line.contains("Circuit breaker closed")));
+        let mut breaker_lines = Vec::new();
+        for line in &lines {
+            if line.to_lowercase().contains("circuit breaker") {
+                breaker_lines.push(line);
+            }
+        }
+        assert_eq!(breaker_lines.len(), 1, "{breaker_lines:?}");
+
+        // Cache keys derive from request data, so no log line may carry one.
         for line in lines {
             assert!(
                 !line.contains("opa:allowed:"),
