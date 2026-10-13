@@ -385,6 +385,9 @@ def test_nginx_allowed_without_a_required_header_is_422_and_never_asks_opa(monke
 
 DOCUMENTS_URL = "https://api.example.com/documents"
 DOC_ID_RULE = {"url": DOCUMENTS_URL + "?id={doc_id}", "http_method": "get", "action": "read", "resource": "document"}
+CONFLICTING_QUERY_PARAMETER_REASON = (
+    "A query parameter the mapping rule reads has more than one distinct value in the requested URL"
+)
 DOC_7_RULE_OVER_CATCH_ALL = [
     {"url": DOCUMENTS_URL + "?id=7", "http_method": "get", "action": "edit", "resource": "document", "priority": 10},
     {"url": DOCUMENTS_URL, "http_method": "get", "action": "read", "resource": "document", "priority": 1},
@@ -442,7 +445,7 @@ def test_allowed_url_with_conflicting_values_for_a_rule_query_parameter_is_not_a
     body = response.json()
     assert body["allow"] is False
     assert body["result"] is False
-    assert body["debug"] == {"reason": "Query parameter 'id' has more than one distinct value in the requested URL"}
+    assert body["debug"] == {"reason": CONFLICTING_QUERY_PARAMETER_REASON}
     assert checks == []
 
 
@@ -492,7 +495,7 @@ def test_allowed_url_with_conflicting_values_for_a_regex_rule_is_not_allowed(mon
     assert response.status_code == status.HTTP_200_OK
     body = response.json()
     assert body["allow"] is False
-    assert body["debug"] == {"reason": "Query parameter 'id' has more than one distinct value in the requested URL"}
+    assert body["debug"] == {"reason": CONFLICTING_QUERY_PARAMETER_REASON}
     assert checks == []
 
 

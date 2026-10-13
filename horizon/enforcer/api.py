@@ -75,9 +75,13 @@ def extract_pdp_api_key(request: Request) -> str:
 
 
 def _url_not_allowed(query: UrlAuthorizationQuery, error: ConflictingQueryParameterError) -> dict:
-    """The /allowed_url answer for a URL whose mapping rule cannot be applied unambiguously."""
+    """The /allowed_url answer for a URL whose mapping rule cannot be applied unambiguously.
+
+    The response carries a fixed reason; the parameter name goes only to the debug log.
+    """
     logger.debug("allowed_url: {reason}; not allowed", reason=str(error), url=query.url)
-    return {"allow": False, "result": False, "query": query.dict(), "debug": {"reason": str(error)}}
+    reason = "A query parameter the mapping rule reads has more than one distinct value in the requested URL"
+    return {"allow": False, "result": False, "query": query.dict(), "debug": {"reason": reason}}
 
 
 def transform_headers(request: Request) -> dict:
