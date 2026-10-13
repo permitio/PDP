@@ -30,6 +30,7 @@ from opal_common.logging_utils.formatter import Formatter
 from pydantic import BaseModel, Field
 from scalar_fastapi import get_scalar_api_reference
 
+from horizon import aiohttp_redaction
 from horizon.authentication import enforce_pdp_token
 from horizon.config import IGNORED_CALLBACK_URLS_SETTING, MOCK_API_KEY, sidecar_config
 from horizon.connectivity.api import init_connectivity_router
@@ -49,6 +50,11 @@ from horizon.startup.remote_config import get_remote_config
 from horizon.state import PersistentStateHandler
 from horizon.system.api import init_system_api_router
 from horizon.system.consts import GUNICORN_EXIT_APP
+
+# opal-client logs and stores repr() of the aiohttp errors it hits, and those reprs include the
+# request headers and any proxy credentials. Mask them before OpalClient can make a request: see
+# horizon/aiohttp_redaction.py.
+aiohttp_redaction.install()
 
 OPA_LOGGER_MODULE = "opal_client.opa.logger"
 
