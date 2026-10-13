@@ -5,8 +5,8 @@ was a substring test, so a callback whose URL merely appears inside the JSON tex
 Plain text that worked as a raw string still works: an empty value, a bare URL, URLs separated by
 commas or spaces.
 
-One exception: while PDP_OPA_PLUGINS does not load permit_graph, the ReBAC cache_rebuild callback
-is kept, because nothing else fills OPA's ReBAC cache then (PER-17242).
+One exception: while PDP_OPA_PLUGINS leaves permit_graph off (not listed, or `enabled` false), the
+ReBAC cache_rebuild callback is kept, because nothing else fills OPA's ReBAC cache then (PER-17242).
 """
 
 import json
@@ -232,20 +232,38 @@ def test_an_unrelated_url_is_only_noted_at_info(monkeypatch, logged):
     assert CACHE_REBUILD in info[0]
 
 
+def _graph_enabled(value: str) -> str:
+    return json.dumps({"permit_graph": {"enabled": value}})
+
+
 @pytest.mark.parametrize(
-    ("plugins", "cache_rebuild_kept"),
+    ("plugins_json", "cache_rebuild_kept"),
     [
-        pytest.param({}, True, id="no-plugins"),
-        pytest.param(ENVOY, True, id="envoy-only"),
-        pytest.param(GRAPH, False, id="graph"),
-        pytest.param(GRAPH | ENVOY, False, id="graph-and-envoy"),
+        pytest.param("{}", True, id="no-plugins"),
+        pytest.param(json.dumps(ENVOY), True, id="envoy-only"),
+        pytest.param(json.dumps(GRAPH), False, id="graph"),
+        pytest.param(json.dumps(GRAPH | ENVOY), False, id="graph-and-envoy"),
+        # permit-opa reads `enabled` as a bool that defaults to true. OPA reads the value horizon
+        # writes, unquoted, as YAML 1.1, so these strings turn the plugin off too (checked against
+        # the image's OPA binary).
+        pytest.param('{"permit_graph": {"enabled": false}}', True, id="enabled-false"),
+        pytest.param(_graph_enabled("false"), True, id="enabled-string-false"),
+        pytest.param(_graph_enabled("no"), True, id="enabled-no"),
+        pytest.param(_graph_enabled("off"), True, id="enabled-off"),
+        pytest.param(_graph_enabled("n"), True, id="enabled-n"),
+        pytest.param('{"permit_graph": {"enabled": true}}', False, id="enabled-true"),
+        pytest.param(_graph_enabled("true"), False, id="enabled-string-true"),
+        pytest.param(_graph_enabled("yes"), False, id="enabled-yes"),
     ],
 )
-def test_the_rebac_cache_rebuild_callback_is_dropped_only_while_permit_graph_is_loaded(
-    monkeypatch, logged, plugins: dict[str, dict], *, cache_rebuild_kept: bool
+def test_the_rebac_cache_rebuild_callback_is_dropped_only_while_permit_graph_runs(
+    monkeypatch, logged, plugins_json: str, *, cache_rebuild_kept: bool
 ):
     remaining = _remove_ignored(
-        monkeypatch, [CACHE_REBUILD, OTHER_IGNORED], [CACHE_REBUILD, OTHER_IGNORED, NOT_IGNORED], plugins=plugins
+        monkeypatch,
+        [CACHE_REBUILD, OTHER_IGNORED],
+        [CACHE_REBUILD, OTHER_IGNORED, NOT_IGNORED],
+        plugins=SidecarConfig.parse_plugins(plugins_json),
     )
 
     # The other ignored URL goes either way: the exception covers only the ReBAC cache rebuild.
@@ -259,7 +277,7 @@ def test_keeping_the_rebac_cache_rebuild_callback_is_logged_once_at_info_with_th
     kept = [line for line in logged if KEPT_MESSAGE in line]
     assert len(kept) == 1
     assert kept[0].startswith("INFO|")
-    assert "permit_graph is not in PDP_OPA_PLUGINS" in kept[0]
+    assert "PDP_OPA_PLUGINS leaves permit_graph off" in kept[0]
     assert "every ReBAC check is denied" in kept[0]
     assert not [line for line in logged if line.startswith("WARNING|")]
 
