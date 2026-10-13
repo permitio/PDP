@@ -1,4 +1,4 @@
-use crate::api::authzen::common::{PageRequest, PageResponse};
+use crate::api::authzen::common::{tenant_filter, PageRequest, PageResponse};
 use crate::api::authzen::errors::AuthZenError;
 use crate::api::authzen::schema::{AuthZenAction, AuthZenResource, AuthZenSubject};
 use crate::opa_client::user_permissions::{query_user_permissions, UserPermissionsQuery};
@@ -18,7 +18,8 @@ use utoipa::ToSchema;
 pub struct ActionSearchRequest {
     /// Subject making the request
     pub subject: AuthZenSubject,
-    /// Resource being accessed
+    /// Resource being accessed. `properties.tenant`, when set, must be a string and limits
+    /// the search to that tenant.
     pub resource: AuthZenResource,
     /// Context for the evaluation
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -42,30 +43,19 @@ pub struct ActionSearchResponse {
     pub context: Option<HashMap<String, serde_json::Value>>,
 }
 
-// Direct conversion from ActionSearchRequest to UserPermissionsQuery
-impl From<ActionSearchRequest> for UserPermissionsQuery {
-    fn from(req: ActionSearchRequest) -> Self {
-        // Convert AuthZenSubject to User using the common Into implementation
-        let user = req.subject.into();
-        let tenant = req
-            .resource
-            .properties
-            .unwrap_or_default()
-            .get("tenant")
-            .map(|v| v.to_string());
+impl TryFrom<ActionSearchRequest> for UserPermissionsQuery {
+    type Error = AuthZenError;
 
-        let resources = req.resource.id.map(|id| vec![id]);
-
-        // Create the query with SDK field included for AuthZen compatibility
-        let context = req.context.unwrap_or_default();
-        UserPermissionsQuery {
-            user,
-            tenants: tenant.map(|v| vec![v]),
-            // No need to create a resource string - the user_permissions API expects resources as array of strings
-            resources,
-            resource_types: Some(vec![req.resource.r#type.clone()]),
-            context: Some(context),
-        }
+    fn try_from(req: ActionSearchRequest) -> Result<Self, Self::Error> {
+        let tenants = tenant_filter(&req.resource)?;
+        Ok(UserPermissionsQuery {
+            user: req.subject.into(),
+            tenants,
+            // user_permissions takes resources as bare instance keys.
+            resources: req.resource.id.map(|id| vec![id]),
+            resource_types: Some(vec![req.resource.r#type]),
+            context: Some(req.context.unwrap_or_default()),
+        })
     }
 }
 
@@ -91,7 +81,10 @@ pub async fn search_action_handler(
     Json(request): Json<ActionSearchRequest>,
 ) -> Response {
     let resource_type = request.resource.r#type.clone();
-    let user_permissions_query: UserPermissionsQuery = request.into();
+    let user_permissions_query = match UserPermissionsQuery::try_from(request) {
+        Ok(query) => query,
+        Err(authzen_error) => return authzen_error.into_response(),
+    };
 
     // Query user permissions using the existing client
     let permissions_map = match query_user_permissions(&state, &user_permissions_query).await {
@@ -148,6 +141,7 @@ mod tests {
     use super::*;
     use crate::test_utils::TestFixture;
     use serde_json::json;
+    use wiremock::{matchers, Mock, ResponseTemplate};
 
     #[tokio::test]
     async fn test_action_search_with_permissions() {
@@ -503,5 +497,60 @@ mod tests {
         .await;
 
         assert_eq!(search_file_a1_actions(&fixture).await, vec!["read"]);
+    }
+
+    #[tokio::test]
+    async fn test_action_search_filters_by_the_tenant_property() {
+        let fixture = TestFixture::new().await;
+        // Answers like the policy: entries for the tenant filter ["t1"], none for any other.
+        Mock::given(matchers::method("POST"))
+            .and(matchers::path("/v1/data/permit/user_permissions"))
+            .and(matchers::body_partial_json(
+                json!({"input": {"tenants": ["t1"]}}),
+            ))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(file_a1_permissions_response(&["file:read", "file:delete"])),
+            )
+            .with_priority(1)
+            .mount(&fixture.opa_mock)
+            .await;
+        mock_user_permissions(&fixture, json!({"result": {"permissions": {}}}), 0).await;
+        let request = json!({
+            "subject": {"type": "user", "id": "frank"},
+            "resource": {"type": "file", "id": "a1", "properties": {"tenant": "t1"}}
+        });
+
+        let response = fixture.post("/access/v1/search/action", &request).await;
+
+        response.assert_ok();
+        let search_response: ActionSearchResponse = response.json_as();
+        let mut names = Vec::new();
+        for action in search_response.results {
+            names.push(action.name);
+        }
+        assert_eq!(names, vec!["delete", "read"]);
+    }
+
+    #[tokio::test]
+    async fn test_action_search_rejects_a_tenant_that_is_not_a_string() {
+        let fixture = TestFixture::new().await;
+        mock_user_permissions(&fixture, json!({"result": {"permissions": {}}}), 0).await;
+
+        for tenant in [json!(7), json!(null), json!(["t1"]), json!({"key": "t1"})] {
+            let request = json!({
+                "subject": {"type": "user", "id": "frank"},
+                "resource": {"type": "file", "id": "a1", "properties": {"tenant": tenant}}
+            });
+
+            let response = fixture.post("/access/v1/search/action", &request).await;
+
+            response.assert_status(http::StatusCode::BAD_REQUEST);
+            assert_eq!(
+                response.text(),
+                "resource.properties.tenant must be a string",
+                "tenant {tenant}"
+            );
+        }
     }
 }

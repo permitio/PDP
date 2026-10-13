@@ -1,4 +1,4 @@
-use crate::api::authzen::common::{PageRequest, PageResponse};
+use crate::api::authzen::common::{tenant_filter, PageRequest, PageResponse};
 use crate::api::authzen::errors::AuthZenError;
 use crate::api::authzen::schema::{AuthZenAction, AuthZenResource, AuthZenSubject};
 use crate::opa_client::user_permissions::{query_user_permissions, UserPermissionsQuery};
@@ -20,7 +20,8 @@ pub struct ResourceSearchRequest {
     pub subject: AuthZenSubject,
     /// Action being performed
     pub action: AuthZenAction,
-    /// Resource type to filter by
+    /// Resource type to filter by. `properties.tenant`, when set, must be a string and limits
+    /// the search to that tenant.
     pub resource: AuthZenResource,
     /// Context for the evaluation
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -44,18 +45,18 @@ pub struct ResourceSearchResponse {
     pub context: Option<HashMap<String, serde_json::Value>>,
 }
 
-// Convert AuthZen request to UserPermissionsQuery
-impl From<ResourceSearchRequest> for UserPermissionsQuery {
-    fn from(req: ResourceSearchRequest) -> Self {
-        let mut properties = req.resource.properties.unwrap_or_default();
-        let tenant = properties.remove("tenant").map(|v| v.to_string());
-        UserPermissionsQuery {
+impl TryFrom<ResourceSearchRequest> for UserPermissionsQuery {
+    type Error = AuthZenError;
+
+    fn try_from(req: ResourceSearchRequest) -> Result<Self, Self::Error> {
+        let tenants = tenant_filter(&req.resource)?;
+        Ok(UserPermissionsQuery {
             user: req.subject.into(),
-            tenants: tenant.map(|v| vec![v]),
+            tenants,
             resources: None,
-            resource_types: Some(vec![req.resource.r#type.clone()]),
+            resource_types: Some(vec![req.resource.r#type]),
             context: req.context,
-        }
+        })
     }
 }
 
@@ -81,7 +82,10 @@ pub async fn search_resource_handler(
     Json(request): Json<ResourceSearchRequest>,
 ) -> Response {
     let action = request.action.name.clone();
-    let query: UserPermissionsQuery = request.into();
+    let query = match UserPermissionsQuery::try_from(request) {
+        Ok(query) => query,
+        Err(authzen_error) => return authzen_error.into_response(),
+    };
 
     // Query OPA using the existing function
     let permissions = match query_user_permissions(&state, &query).await {
@@ -144,6 +148,7 @@ mod tests {
     use super::*;
     use crate::test_utils::TestFixture;
     use serde_json::json;
+    use wiremock::{matchers, Mock, ResponseTemplate};
 
     #[tokio::test]
     async fn test_resource_search_with_permissions() {
@@ -697,5 +702,80 @@ mod tests {
             search_file_ids(&fixture, "delete").await,
             Vec::<String>::new()
         );
+    }
+
+    /// Mounts a mock OPA `user_permissions` that answers like the policy: `response` when the
+    /// input's tenant filter is `[tenant]`, and no entries for any other tenant filter.
+    async fn mock_user_permissions_in_tenant(
+        fixture: &TestFixture,
+        tenant: &str,
+        response: serde_json::Value,
+    ) {
+        Mock::given(matchers::method("POST"))
+            .and(matchers::path("/v1/data/permit/user_permissions"))
+            .and(matchers::body_partial_json(
+                json!({"input": {"tenants": [tenant]}}),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(response))
+            .with_priority(1)
+            .mount(&fixture.opa_mock)
+            .await;
+        Mock::given(matchers::method("POST"))
+            .and(matchers::path("/v1/data/permit/user_permissions"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({"result": {"permissions": {}}})),
+            )
+            .mount(&fixture.opa_mock)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn test_resource_search_filters_by_the_tenant_property() {
+        let fixture = TestFixture::new().await;
+        mock_user_permissions_in_tenant(&fixture, "tenant1", frank_file_permissions_response())
+            .await;
+        let request = json!({
+            "subject": {"type": "user", "id": "frank"},
+            "action": {"name": "delete"},
+            "resource": {"type": "file", "properties": {"tenant": "tenant1"}}
+        });
+
+        let response = fixture.post("/access/v1/search/resource", &request).await;
+
+        response.assert_ok();
+        let search_response: ResourceSearchResponse = response.json_as();
+        let mut ids = Vec::new();
+        for resource in search_response.results {
+            ids.push(resource.id.unwrap_or_default());
+        }
+        assert_eq!(ids, vec!["a2"]);
+    }
+
+    #[tokio::test]
+    async fn test_resource_search_rejects_a_tenant_that_is_not_a_string() {
+        let fixture = TestFixture::new().await;
+        mock_user_permissions(&fixture, json!({"result": {"permissions": {}}}), 0).await;
+
+        for tenant in [
+            json!(7),
+            json!(null),
+            json!(["tenant1"]),
+            json!({"key": "tenant1"}),
+        ] {
+            let request = json!({
+                "subject": {"type": "user", "id": "frank"},
+                "action": {"name": "read"},
+                "resource": {"type": "file", "properties": {"tenant": tenant}}
+            });
+
+            let response = fixture.post("/access/v1/search/resource", &request).await;
+
+            response.assert_status(http::StatusCode::BAD_REQUEST);
+            assert_eq!(
+                response.text(),
+                "resource.properties.tenant must be a string",
+                "tenant {tenant}"
+            );
+        }
     }
 }
