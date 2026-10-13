@@ -762,7 +762,7 @@ wheels = [
 
 [[package]]
 name = "opal-client"
-version = "0.9.6"
+version = "0.9.10rc1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -786,14 +786,14 @@ dependencies = [
     { name = "uvicorn", extra = ["standard"] },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/33/47/5f352fe7a1d289f68148ef7f33a047c94e60a13f2b85383150f8e02c4693/opal_client-0.9.6.tar.gz", hash = "sha256:99f49d9d8a81c524b8dfa9f40737ba3f5160ce6922f4a181302feb8486af56de", size = 75158, upload-time = "2026-05-13T07:18:45.362Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/46/b4/a567f348cacb1b338c100c60f108f66a54ff22e0c316db8155b20c55a6f1/opal_client-0.9.10rc1.tar.gz", hash = "sha256:40008fe900a9a06b0de4c26161fa9af656dd6bd1a42d0b31ff63986c0509c01d", size = 84993, upload-time = "2026-10-13T19:51:35.852Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/bf/f6/2443ac4b0901bfad25e77dbcd6823a8286241915f1288c56eddee1dfe44b/opal_client-0.9.6-py3-none-any.whl", hash = "sha256:bfdbde482620730f0fb609d928e7d1879aca48558b25f392adabe7134d2523b8", size = 88287, upload-time = "2026-05-13T07:18:44.115Z" },
+    { url = "https://files.pythonhosted.org/packages/16/2e/83afa7582e92e77b792cc48ff1b03c6cea9c478ff3b1d064ac97c920d2f8/opal_client-0.9.10rc1-py3-none-any.whl", hash = "sha256:d44c343c176b078e0af32f688e50aa2822e5b27c84432b47b1a55ccf031606c0", size = 99998, upload-time = "2026-10-13T19:51:34.653Z" },
 ]
 
 [[package]]
 name = "opal-common"
-version = "0.9.6"
+version = "0.9.10rc1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -824,9 +824,9 @@ dependencies = [
     { name = "uvicorn", extra = ["standard"] },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/46/a3/51af5a3761f01fa117176636c62f3f6f3e0379dcffd9397749d33c1a4d82/opal_common-0.9.6.tar.gz", hash = "sha256:b79a520e217edc833678d37e827bab3f696fd32368c51e34fd67ed441583c8ee", size = 90782, upload-time = "2026-05-13T07:18:40.941Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/53/6b/69331b127108f6650456d00f9c5a4509cd33f24956c4ea61b23654b0679e/opal_common-0.9.10rc1.tar.gz", hash = "sha256:c9a536b51448cea912a0e0f80feeb32a59ecf4e24befbf1fe7b49accc2bebbf6", size = 114351, upload-time = "2026-10-13T19:51:31.19Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a9/70/d705e91abd844f6b1c02d40aa7a60cf2b7cbb8ae1b6cc06a977e672e13b8/opal_common-0.9.6-py3-none-any.whl", hash = "sha256:a471ec6103cf14e39566e1ad58382492b7f5e035783fdda83990441dc3ebad94", size = 113955, upload-time = "2026-05-13T07:18:39.601Z" },
+    { url = "https://files.pythonhosted.org/packages/22/c6/ac2d709ad7081eae1a7e64834a04a62fd34516b95258ea64dae3a6019c52/opal_common-0.9.10rc1-py3-none-any.whl", hash = "sha256:b91e2fdc81a971801b75d92f673b08184ecc104199110e14f4c857d2e3ae1890", size = 143154, upload-time = "2026-10-13T19:51:29.118Z" },
 ]
 
 [[package]]
@@ -923,8 +923,8 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27.0,<1" },
     { name = "jinja2", specifier = ">=3.1.2,<4" },
     { name = "logzio-python-handler" },
-    { name = "opal-client", specifier = "==0.9.6" },
-    { name = "opal-common", specifier = "==0.9.6" },
+    { name = "opal-client", specifier = "==0.9.10rc1" },
+    { name = "opal-common", specifier = "==0.9.10rc1" },
     { name = "protobuf", specifier = ">=7.36.2" },
     { name = "pydantic", extras = ["email"], specifier = ">=1.9.1,<2" },
     { name = "requests", specifier = ">=2.32.4,<3" },

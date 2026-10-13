@@ -348,7 +348,7 @@ COPY kong_routes.json /config/kong_routes.json
 # resolves: a dependency only changes when uv.lock does.
 #
 # check_aiofiles_override.py is bind-mounted, so it never ships, and runs last: it fails the
-# build if opal-client leaves 0.9.6 or the real backup_store() stops working here.
+# build if opal-client leaves 0.9.10rc1 or the real backup_store() stops working here.
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
     --mount=type=bind,source=pyproject.toml,target=/tmp/project/pyproject.toml \
