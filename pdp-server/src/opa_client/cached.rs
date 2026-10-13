@@ -104,21 +104,24 @@ async fn handle_cache_set_many<T: serde::Serialize + Send + Sync>(
     }
 }
 
-/// The first 16 lowercase hex characters of a digest: the hash part of every cache key.
-fn hex_prefix(digest: &[u8]) -> String {
-    let mut hex = String::with_capacity(16);
-    for byte in digest.iter().take(8) {
+/// A digest as lowercase hex.
+fn to_hex(digest: &[u8]) -> String {
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for byte in digest {
         hex.push_str(&format!("{byte:02x}"));
     }
     hex
 }
 
-/// Hashes a query into a cache key under `opa:{kind}:`.
+/// Hashes a query into a cache key: `opa:{kind}:` and the query's full SHA-256 in hex.
 ///
 /// Equal queries must get equal keys, so the hash input is a canonical serialization: the
 /// query goes through `serde_json::Value` and every object's keys are sorted, at every depth.
 /// Serializing the query directly would follow the iteration order of its `HashMap` fields
 /// (`context`, `attributes`), which differs between two maps holding the same entries.
+///
+/// The whole digest is kept: two queries whose keys collided would share one cached
+/// authorization decision.
 fn cache_key<Q: Serialize>(kind: &str, query: &Q) -> Result<String, String> {
     let mut canonical = serde_json::to_value(query)
         .map_err(|e| format!("Failed to serialize the {kind} query for its cache key: {e}"))?;
@@ -126,7 +129,7 @@ fn cache_key<Q: Serialize>(kind: &str, query: &Q) -> Result<String, String> {
     // turn `Value` objects back into insertion-ordered maps.
     canonical.sort_all_objects();
     let digest = Sha256::digest(canonical.to_string().as_bytes());
-    Ok(format!("opa:{kind}:{}", hex_prefix(digest.as_slice())))
+    Ok(format!("opa:{kind}:{}", to_hex(digest.as_slice())))
 }
 
 /// Generate a cache key for allowed queries
@@ -298,10 +301,56 @@ mod tests {
     use std::collections::HashMap;
 
     #[test]
-    fn test_hex_prefix_is_the_first_16_hex_chars() {
-        // SHA-256("abc") starts ba7816bf8f01cfea.
+    fn test_to_hex_renders_the_whole_digest() {
         let digest = Sha256::digest(b"abc");
-        assert_eq!(hex_prefix(digest.as_slice()), "ba7816bf8f01cfea");
+        assert_eq!(
+            to_hex(digest.as_slice()),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    /// The key format, pinned: a change here moves every cache entry, so it must be deliberate.
+    #[test]
+    fn test_cache_key_is_the_prefix_and_the_full_sha256() {
+        let allowed: AllowedQuery = serde_json::from_str(
+            r#"{"user":{"key":"u1"},"action":"read","resource":{"type":"doc"}}"#,
+        )
+        .unwrap();
+        // SHA-256 of the canonical JSON {"action":"read","resource":{"type":"doc"},"user":{"key":"u1"}}
+        assert_eq!(
+            generate_allowed_cache_key(&allowed).unwrap(),
+            "opa:allowed:746b996a447e8d4502333e78274ded3cf8632983a2149ee0975d0bfce848650a"
+        );
+
+        let user_permissions: UserPermissionsQuery =
+            serde_json::from_str(r#"{"user":{"key":"u1"}}"#).unwrap();
+        let authorized_users: AuthorizedUsersQuery =
+            serde_json::from_str(r#"{"action":"read","resource":{"type":"doc"}}"#).unwrap();
+        let keys = [
+            (
+                "opa:allowed:",
+                generate_allowed_cache_key(&allowed).unwrap(),
+            ),
+            (
+                "opa:user_permissions:",
+                generate_user_permissions_cache_key(&user_permissions).unwrap(),
+            ),
+            (
+                "opa:authorized_users:",
+                generate_authorized_users_cache_key(&authorized_users).unwrap(),
+            ),
+        ];
+        for (prefix, key) in keys {
+            let Some(hash) = key.strip_prefix(prefix) else {
+                panic!("{key} is not under {prefix}");
+            };
+            assert_eq!(hash.len(), 64, "{key}");
+            assert!(
+                hash.bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+                "{key}"
+            );
+        }
     }
 
     /// Every ordering of `items`.
