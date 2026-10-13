@@ -347,8 +347,12 @@ COPY kong_routes.json /config/kong_routes.json
 # cannot write to site-packages, so without it every start would recompile. Nothing here
 # resolves: a dependency only changes when uv.lock does.
 #
-# check_aiofiles_override.py is bind-mounted, so it never ships, and runs last: it fails the
-# build if opal-client leaves 0.9.10rc1 or the real backup_store() stops working here.
+# check_aiofiles_override.py is bind-mounted, so it never ships, and runs after the install: it
+# fails the build if opal-client leaves 0.9.10rc1 or the real backup_store() stops working here.
+#
+# uv leaves an empty /tmp/uv-<hash>.lock (its lock on the environment it installs into) that
+# would otherwise ship. The last step fails the build if this layer leaves anything in /tmp
+# besides its own bind mounts.
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
     --mount=type=bind,source=pyproject.toml,target=/tmp/project/pyproject.toml \
@@ -359,11 +363,13 @@ RUN --mount=type=cache,target=/root/.cache/uv \
         --output-file /tmp/requirements.lock && \
     uv pip install --system --require-hashes --no-deps --compile-bytecode \
         --requirements /tmp/requirements.lock && \
-    rm /tmp/requirements.lock && \
+    rm /tmp/requirements.lock && rm -f /tmp/uv-*.lock && \
     python -m pip uninstall -y pip setuptools wheel && \
     rm -r "$(python3 -c 'import sysconfig; print(sysconfig.get_paths()["stdlib"])')/ensurepip" && \
     apk del .build-deps && \
-    python /tmp/check_aiofiles_override.py
+    python /tmp/check_aiofiles_override.py && \
+    left="$(find /tmp -mindepth 1 -maxdepth 1 ! -name project ! -name check_aiofiles_override.py)" && \
+    { [ -z "$left" ] || { echo "the dependency layer left files in /tmp: $left" >&2; exit 1; }; }
 
 USER permit
 
