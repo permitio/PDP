@@ -26,6 +26,11 @@ mod output;
 mod service;
 mod stats;
 
+/// Compiles and runs the README's examples as doctests, so they keep matching the API.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;
+
 // Re-export health checkers and service watchdog
 pub use health::{HealthCheck, HttpHealthChecker};
 pub use output::{ChildOutputHandler, ChildStream, MAX_LINE_BYTES, TRUNCATION_MARKER};
