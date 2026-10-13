@@ -31,7 +31,8 @@ pub struct ActionSearchRequest {
 /// AuthZen Action Search Response - contains list of actions the subject can perform on the resource
 #[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
 pub struct ActionSearchResponse {
-    /// Actions the subject can perform, sorted by name, comparing strings by code point
+    /// Actions the subject can perform on the resource, by name (`read`, not `document:read`),
+    /// sorted by name, comparing strings by code point
     pub results: Vec<AuthZenAction>,
     /// Pagination information
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -89,7 +90,7 @@ pub async fn search_action_handler(
     State(state): State<AppState>,
     Json(request): Json<ActionSearchRequest>,
 ) -> Response {
-    // Convert directly to UserPermissionsQuery
+    let resource_type = request.resource.r#type.clone();
     let user_permissions_query: UserPermissionsQuery = request.into();
 
     // Query user permissions using the existing client
@@ -101,19 +102,27 @@ pub async fn search_action_handler(
             return authzen_error.into_response();
         }
     };
-    // Extract permissions and roles from all results
-    let mut all_permissions = Vec::new();
-
+    // OPA lists permissions as `<resource type>:<action>`. The results are the actions on the
+    // requested resource type.
+    let mut action_names = Vec::new();
     for result in permissions_map.values() {
-        all_permissions.extend(result.permissions.clone());
+        for permission in &result.permissions {
+            let Some((permission_type, action_name)) = permission.split_once(':') else {
+                log::warn!(
+                    "Ignoring permission {permission:?} from OPA user_permissions: \
+                     expected <resource type>:<action>"
+                );
+                continue;
+            };
+            if permission_type == resource_type {
+                action_names.push(action_name.to_string());
+            }
+        }
     }
+    action_names.sort();
+    action_names.dedup();
 
-    // Remove duplicates
-    all_permissions.sort();
-    all_permissions.dedup();
-
-    // Convert directly to AuthZen response format
-    let results = all_permissions
+    let results = action_names
         .into_iter()
         .map(|name| AuthZenAction {
             name,
@@ -154,7 +163,7 @@ mod tests {
                             "document:doc1": {
                                 "tenant": null,
                                 "resource": null,
-                                "permissions": ["can_read", "can_edit"],
+                                "permissions": ["document:can_read", "document:can_edit"],
                                 "roles": ["editor"]
                             }
                         }
@@ -268,7 +277,7 @@ mod tests {
                             "document:doc1": {
                                 "tenant": null,
                                 "resource": null,
-                                "permissions": ["can_read"],
+                                "permissions": ["document:can_read"],
                                 "roles": ["viewer"]
                             }
                         }
@@ -324,19 +333,19 @@ mod tests {
             "result": {
                 "permissions": {
                     "document:doc1": {
-                        "permissions": ["can_write", "can_read", "can_delete"],
+                        "permissions": ["document:can_write", "document:can_read", "document:can_delete"],
                         "roles": ["editor"]
                     },
                     "document:doc2": {
-                        "permissions": ["can_read", "can_archive", "Can_admin"],
+                        "permissions": ["document:can_read", "document:can_archive", "document:Can_admin"],
                         "roles": ["admin"]
                     },
                     "document:doc3": {
-                        "permissions": ["can_share", "can_write", "can_comment"],
+                        "permissions": ["document:can_share", "document:can_write", "document:can_comment"],
                         "roles": ["editor"]
                     },
                     "document:doc4": {
-                        "permissions": ["can_read", "can_export", "can_print"],
+                        "permissions": ["document:can_read", "document:can_export", "document:can_print"],
                         "roles": ["viewer"]
                     }
                 }
@@ -434,5 +443,65 @@ mod tests {
         let body = response.json();
         assert_eq!(body["page"], json!({"next_token": ""}));
         assert_eq!(body["results"].as_array().map(Vec::len), Some(9));
+    }
+
+    /// One `user_permissions` entry for `file:a1`, in the shape OPA returns.
+    fn file_a1_permissions_response(permissions: &[&str]) -> serde_json::Value {
+        json!({
+            "result": {
+                "permissions": {
+                    "file:a1": {
+                        "permissions": permissions,
+                        "resource": {"attributes": {}, "key": "a1", "type": "file"},
+                        "roles": ["owner"],
+                        "tenant": {"attributes": {}, "key": "t1", "type": "__tenant"}
+                    }
+                }
+            }
+        })
+    }
+
+    async fn search_file_a1_actions(fixture: &TestFixture) -> Vec<String> {
+        let request = json!({
+            "subject": {"type": "user", "id": "frank"},
+            "resource": {"type": "file", "id": "a1"}
+        });
+        let response = fixture.post("/access/v1/search/action", &request).await;
+        response.assert_ok();
+        let search_response: ActionSearchResponse = response.json_as();
+        let mut names = Vec::new();
+        for action in search_response.results {
+            names.push(action.name);
+        }
+        names
+    }
+
+    #[tokio::test]
+    async fn test_action_search_returns_action_names_not_permission_keys() {
+        let fixture = TestFixture::new().await;
+        mock_user_permissions(
+            &fixture,
+            file_a1_permissions_response(&["file:read", "file:delete"]),
+            1,
+        )
+        .await;
+
+        assert_eq!(
+            search_file_a1_actions(&fixture).await,
+            vec!["delete", "read"]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_action_search_skips_permissions_on_other_types_and_without_a_type() {
+        let fixture = TestFixture::new().await;
+        mock_user_permissions(
+            &fixture,
+            file_a1_permissions_response(&["file:read", "folder:delete", "share"]),
+            1,
+        )
+        .await;
+
+        assert_eq!(search_file_a1_actions(&fixture).await, vec!["read"]);
     }
 }
