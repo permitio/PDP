@@ -33,8 +33,8 @@ pub struct ResourceSearchRequest {
 /// AuthZen Resource Search Response - contains list of resources a subject can access
 #[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
 pub struct ResourceSearchResponse {
-    /// Resources the subject can access, one per type and id, sorted by type, then id,
-    /// comparing strings by code point
+    /// Resources on which the subject can perform the action, one per type and id, sorted by
+    /// type, then id, comparing strings by code point
     pub results: Vec<AuthZenResource>,
     /// Pagination information
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -80,7 +80,7 @@ pub async fn search_resource_handler(
     State(state): State<AppState>,
     Json(request): Json<ResourceSearchRequest>,
 ) -> Response {
-    // Convert AuthZen request to UserPermissionsQuery
+    let action = request.action.name.clone();
     let query: UserPermissionsQuery = request.into();
 
     // Query OPA using the existing function
@@ -104,6 +104,11 @@ pub async fn search_resource_handler(
         let Some(resource_details) = perm.resource else {
             continue;
         };
+        // OPA lists the permissions on a resource as `<resource type>:<action>`.
+        let required_permission = format!("{}:{action}", resource_details.r#type);
+        if !perm.permissions.contains(&required_permission) {
+            continue;
+        }
         let resource_key = (
             resource_details.r#type.clone(),
             resource_details.key.clone(),
@@ -163,7 +168,7 @@ mod tests {
         let mock_response = json!({
             "result": {
                 "permissions": {
-                    "resource1": {
+                    "document:doc1": {
                         "tenant": {
                             "key": "tenant1",
                             "attributes": {}
@@ -175,10 +180,10 @@ mod tests {
                                 "title": "Important Document"
                             }
                         },
-                        "permissions": ["can_read", "can_edit"],
+                        "permissions": ["document:can_read", "document:can_edit"],
                         "roles": ["editor"]
                     },
-                    "resource2": {
+                    "document:doc2": {
                         "tenant": {
                             "key": "tenant1",
                             "attributes": {}
@@ -190,7 +195,7 @@ mod tests {
                                 "title": "Another Document"
                             }
                         },
-                        "permissions": ["can_read"],
+                        "permissions": ["document:can_read"],
                         "roles": ["viewer"]
                     }
                 }
@@ -332,7 +337,7 @@ mod tests {
         let mock_response = json!({
             "result": {
                 "permissions": {
-                    "resource1": {
+                    "document:doc1": {
                         "tenant": {
                             "key": "tenant1",
                             "attributes": {}
@@ -344,7 +349,7 @@ mod tests {
                                 "title": "Important Document"
                             }
                         },
-                        "permissions": ["can_read"],
+                        "permissions": ["document:can_read"],
                         "roles": ["viewer"]
                     }
                 }
@@ -412,7 +417,7 @@ mod tests {
         let mock_response = json!({
             "result": {
                 "permissions": {
-                    "resource1": {
+                    "document:doc1": {
                         "tenant": {
                             "key": "tenant1",
                             "attributes": {}
@@ -424,7 +429,7 @@ mod tests {
                                 "title": "Important Document"
                             }
                         },
-                        "permissions": ["can_read", "can_edit"],
+                        "permissions": ["document:can_read", "document:can_edit"],
                         "roles": ["editor"]
                     }
                 }
@@ -460,22 +465,35 @@ mod tests {
         assert!(search_response.page.is_some());
     }
 
+    /// One `user_permissions` entry for a resource instance, in the shape OPA returns.
+    fn instance_entry(
+        resource_type: &str,
+        resource_key: &str,
+        attributes: serde_json::Value,
+        permissions: &[&str],
+    ) -> serde_json::Value {
+        json!({
+            "permissions": permissions,
+            "resource": {"attributes": attributes, "key": resource_key, "type": resource_type},
+            "roles": ["viewer"],
+            "tenant": {"attributes": {}, "key": "tenant1", "type": "__tenant"}
+        })
+    }
+
+    /// An instance entry that grants `can_read` on the resource.
     fn permission_entry(
         resource_type: &str,
         resource_key: &str,
         attributes: serde_json::Value,
     ) -> serde_json::Value {
-        json!({
-            "tenant": {"key": "tenant1", "attributes": {}},
-            "resource": {"key": resource_key, "type": resource_type, "attributes": attributes},
-            "permissions": ["can_read"],
-            "roles": ["viewer"]
-        })
+        let can_read = format!("{resource_type}:can_read");
+        instance_entry(resource_type, resource_key, attributes, &[&can_read])
     }
 
     /// A `user_permissions` OPA result whose entries are in no particular order. Ids such as
     /// `doc-10` and `Doc-9` sort by code point, not by number or case. `document:shared`
-    /// appears under three OPA keys with different attributes, and one entry has no resource.
+    /// appears under three OPA keys with different attributes. The tenant-level entry has no
+    /// resource and grants an action other than `can_read`.
     fn unordered_permissions_response() -> serde_json::Value {
         json!({
             "result": {
@@ -491,10 +509,9 @@ mod tests {
                     "shared-copy-a": permission_entry("document", "shared", json!({"copy": "a"})),
                     "document:doc-11": permission_entry("document", "doc-11", json!({})),
                     "__tenant:tenant1": {
-                        "tenant": {"key": "tenant1", "attributes": {}},
-                        "resource": null,
-                        "permissions": ["can_read"],
-                        "roles": ["viewer"]
+                        "permissions": ["document:can_share"],
+                        "roles": ["sharer"],
+                        "tenant": {"attributes": {}, "key": "tenant1", "type": "__tenant"}
                     }
                 }
             }
@@ -617,5 +634,68 @@ mod tests {
         let body = response.json();
         assert_eq!(body["page"], json!({"next_token": ""}));
         assert_eq!(body["results"].as_array().map(Vec::len), Some(8));
+    }
+
+    /// `user_permissions` as OPA returns it for frank with `resource_types: ["file"]`: a reader
+    /// on a1 and b1, an owner of a2, and an auditor on c1, whose only action starts with `read`.
+    fn frank_file_permissions_response() -> serde_json::Value {
+        json!({
+            "result": {
+                "permissions": {
+                    "file:a1": instance_entry("file", "a1", json!({}), &["file:read"]),
+                    "file:a2": instance_entry("file", "a2", json!({}), &["file:read", "file:delete"]),
+                    "file:b1": instance_entry("file", "b1", json!({}), &["file:read"]),
+                    "file:c1": instance_entry("file", "c1", json!({}), &["file:read_all"])
+                }
+            }
+        })
+    }
+
+    async fn search_file_ids(fixture: &TestFixture, action: &str) -> Vec<String> {
+        let request = json!({
+            "subject": {"type": "user", "id": "frank"},
+            "action": {"name": action},
+            "resource": {"type": "file"}
+        });
+        let response = fixture.post("/access/v1/search/resource", &request).await;
+        response.assert_ok();
+        let search_response: ResourceSearchResponse = response.json_as();
+        let mut ids = Vec::new();
+        for resource in search_response.results {
+            ids.push(resource.id.unwrap_or_default());
+        }
+        ids
+    }
+
+    #[tokio::test]
+    async fn test_resource_search_returns_only_resources_that_allow_the_action() {
+        let fixture = TestFixture::new().await;
+        mock_user_permissions(&fixture, frank_file_permissions_response(), 2).await;
+
+        assert_eq!(search_file_ids(&fixture, "delete").await, vec!["a2"]);
+        assert_eq!(
+            search_file_ids(&fixture, "read").await,
+            vec!["a1", "a2", "b1"]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resource_search_returns_nothing_when_no_resource_allows_the_action() {
+        let fixture = TestFixture::new().await;
+        let reader_only = json!({
+            "result": {
+                "permissions": {
+                    "file:a1": instance_entry("file", "a1", json!({}), &["file:read"]),
+                    "file:a2": instance_entry("file", "a2", json!({}), &["file:read"]),
+                    "file:b1": instance_entry("file", "b1", json!({}), &["file:read"])
+                }
+            }
+        });
+        mock_user_permissions(&fixture, reader_only, 1).await;
+
+        assert_eq!(
+            search_file_ids(&fixture, "delete").await,
+            Vec::<String>::new()
+        );
     }
 }
