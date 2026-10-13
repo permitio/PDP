@@ -1,10 +1,12 @@
-//! The restart backoff, driven through real child processes.
+//! The restart backoff, and how the service watchdog reports health, driven through real child
+//! processes.
 //!
 //! The `CommandWatchdog` tests run on tokio's paused clock. Nothing waits on a timer while a child
 //! runs, so the clock stands still until the watchdog sleeps out a backoff and then jumps to the
-//! end of it: the times between starts are exact. The `ServiceWatchdog` tests use the real clock
-//! instead, because their health checks wait on timers while a child runs, and a paused clock
-//! would race through them.
+//! end of it: the times between starts are exact. The `ServiceWatchdog` backoff tests use the
+//! real clock instead, because their health checks wait on timers while a child starts or exits,
+//! and a paused clock would race through them. The health reporting tests keep their child up, so
+//! they too run on the paused clock, one health check per interval.
 //!
 //! Unix-only: every child runs through a POSIX shell.
 #![cfg(unix)]
@@ -331,6 +333,7 @@ fn service_options(base: Duration, max: Duration, threshold: u32) -> ServiceWatc
     ServiceWatchdogOptions {
         health_check_interval: 10 * MILLISECOND,
         health_check_failure_threshold: threshold,
+        health_check_unhealthy_threshold: 1,
         initial_startup_delay: Duration::ZERO,
         command_options: backoff_options(base, max),
     }
@@ -531,5 +534,214 @@ async fn failed_health_checks_do_not_restart_a_service_that_is_not_running() {
     assert!(
         failures == starts || failures + 1 == starts,
         "{failures} failures in a row after {starts} starts"
+    );
+}
+
+/// What one scripted health check does.
+#[derive(Debug, Clone, Copy)]
+enum Check {
+    Pass,
+    Fail,
+    /// Answers too late: times out after a second, as an HTTP check does under load
+    Slow,
+}
+
+/// Health checks that follow a script, one step per check; the last step repeats.
+#[derive(Debug)]
+struct Scripted {
+    steps: Vec<Check>,
+    calls: AtomicUsize,
+}
+
+impl Scripted {
+    fn new(steps: &[Check]) -> Self {
+        Self {
+            steps: steps.to_vec(),
+            calls: AtomicUsize::new(0),
+        }
+    }
+}
+
+#[async_trait]
+impl HealthCheck for Scripted {
+    async fn check_health(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let call = self.calls.fetch_add(1, Ordering::SeqCst);
+        match self.steps[call.min(self.steps.len() - 1)] {
+            Check::Pass => Ok(()),
+            Check::Fail => Err("the script fails this check".into()),
+            Check::Slow => {
+                tokio::time::timeout(SECOND, tokio::time::sleep(10 * SECOND)).await?;
+                Ok(())
+            }
+        }
+    }
+}
+
+/// Health checks that pass for run `run` alone.
+#[derive(Debug)]
+struct PassesOnlyRun {
+    runs: Arc<Runs>,
+    run: usize,
+}
+
+#[async_trait]
+impl HealthCheck for PassesOnlyRun {
+    async fn check_health(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let latest = self.runs.latest();
+        if latest == self.run {
+            Ok(())
+        } else {
+            Err(format!("run {latest} is still starting").into())
+        }
+    }
+}
+
+const INTERVAL: Duration = Duration::from_secs(10);
+
+/// A health check every 10 s. Three failures in a row report the service unhealthy; five restart
+/// it.
+fn hysteresis_options() -> ServiceWatchdogOptions {
+    ServiceWatchdogOptions {
+        health_check_interval: INTERVAL,
+        health_check_failure_threshold: 5,
+        health_check_unhealthy_threshold: 3,
+        initial_startup_delay: Duration::ZERO,
+        command_options: backoff_options(SECOND, 8 * SECOND),
+    }
+}
+
+/// Waits on the paused clock until health check `check`, counted from `start`, has run.
+async fn after_check(start: Instant, check: u32) {
+    tokio::time::sleep_until(start + INTERVAL * check + INTERVAL / 2).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn one_slow_health_check_does_not_report_the_service_unhealthy() {
+    let runs = Runs::new();
+    runs.keep_up(1);
+    let start = Instant::now();
+    let watchdog = ServiceWatchdog::start_with_opt(
+        runs.command(),
+        Scripted::new(&[Check::Pass, Check::Slow, Check::Pass]),
+        hysteresis_options(),
+    );
+
+    after_check(start, 1).await;
+    assert!(watchdog.is_healthy());
+    after_check(start, 2).await;
+    assert_eq!(watchdog.failed_health_checks(), 1);
+    assert!(
+        watchdog.is_healthy(),
+        "one slow check reported the service unhealthy"
+    );
+    after_check(start, 3).await;
+    assert!(watchdog.is_healthy());
+}
+
+#[tokio::test(start_paused = true)]
+async fn three_failed_checks_in_a_row_report_it_unhealthy_and_one_pass_healthy_again() {
+    let runs = Runs::new();
+    runs.keep_up(1);
+    let start = Instant::now();
+    let watchdog = ServiceWatchdog::start_with_opt(
+        runs.command(),
+        Scripted::new(&[
+            Check::Pass,
+            Check::Fail,
+            Check::Fail,
+            Check::Fail,
+            Check::Pass,
+        ]),
+        hysteresis_options(),
+    );
+
+    after_check(start, 3).await;
+    assert!(watchdog.is_healthy(), "two failures in a row");
+    after_check(start, 4).await;
+    assert!(!watchdog.is_healthy(), "three failures in a row");
+    // Reported unhealthy, but short of the five failures that restart it
+    assert_eq!(watchdog.consecutive_failures(), 0);
+    assert_eq!(watchdog.start_counter(), 1);
+    after_check(start, 5).await;
+    assert!(watchdog.is_healthy(), "one passing check");
+}
+
+#[tokio::test(start_paused = true)]
+async fn failed_checks_that_are_not_in_a_row_do_not_add_up() {
+    let runs = Runs::new();
+    runs.keep_up(1);
+    let start = Instant::now();
+    let watchdog = ServiceWatchdog::start_with_opt(
+        runs.command(),
+        Scripted::new(&[
+            Check::Pass,
+            Check::Fail,
+            Check::Fail,
+            Check::Pass,
+            Check::Fail,
+            Check::Fail,
+            Check::Pass,
+        ]),
+        hysteresis_options(),
+    );
+
+    for check in 1..=7 {
+        after_check(start, check).await;
+        assert!(watchdog.is_healthy(), "after check {check}");
+    }
+    assert_eq!(watchdog.failed_health_checks(), 4);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_service_that_stops_running_is_unhealthy_at_once() {
+    let runs = Runs::new();
+    runs.keep_up(1);
+    let mut opt = hysteresis_options();
+    // Run 2 would start an hour after run 1
+    opt.command_options = backoff_options(3600 * SECOND, 3600 * SECOND);
+    let start = Instant::now();
+    let watchdog =
+        ServiceWatchdog::start_with_opt(runs.command(), Scripted::new(&[Check::Pass]), opt);
+    after_check(start, 1).await;
+    assert!(watchdog.is_healthy());
+
+    runs.stop(1);
+    // Takes in the exit without letting the clock reach another check
+    spin_until(|| watchdog.consecutive_failures() == 1).await;
+    tokio::time::sleep(INTERVAL).await;
+
+    assert!(
+        !watchdog.is_healthy(),
+        "one check after the service stopped, it still passed for healthy"
+    );
+    assert_eq!(watchdog.start_counter(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_new_run_is_unhealthy_until_it_passes_a_check() {
+    let runs = Arc::new(Runs::new());
+    runs.keep_up(1);
+    runs.keep_up(2);
+    let health = PassesOnlyRun {
+        runs: Arc::clone(&runs),
+        run: 1,
+    };
+    let start = Instant::now();
+    let watchdog = ServiceWatchdog::start_with_opt(runs.command(), health, hysteresis_options());
+    // The first check must not come before run 1 has started
+    spin_until(|| runs.latest() == 1).await;
+    after_check(start, 1).await;
+    assert!(watchdog.is_healthy());
+
+    // Run 1 has run longer than its 1 s restart interval, so run 2 starts as soon as it exits
+    runs.stop(1);
+    spin_until(|| runs.latest() == 2).await;
+    tokio::time::sleep(INTERVAL).await;
+
+    // Run 2 failed one check: short of three, but it never passed one
+    assert_eq!(watchdog.failed_health_checks(), 1);
+    assert!(
+        !watchdog.is_healthy(),
+        "run 2 took over run 1's healthy state"
     );
 }

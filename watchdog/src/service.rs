@@ -17,6 +17,11 @@ pub struct ServiceWatchdogOptions {
     pub health_check_interval: Duration,
     /// How many consecutive health check failures before restarting
     pub health_check_failure_threshold: u32,
+    /// How many consecutive health check failures before the service is reported unhealthy.
+    /// One passing check reports it healthy again. A service that is not running, or a new run
+    /// that has not passed a check yet, is reported unhealthy at once. 0 and 1 both report the
+    /// first failure (default: 1)
+    pub health_check_unhealthy_threshold: u32,
     /// How long to wait before starting health checks after a restart
     pub initial_startup_delay: Duration,
     /// Options for the command watchdog
@@ -28,6 +33,7 @@ impl Default for ServiceWatchdogOptions {
         Self {
             health_check_interval: Duration::from_secs(10),
             health_check_failure_threshold: 3,
+            health_check_unhealthy_threshold: 1,
             initial_startup_delay: Duration::from_secs(5),
             command_options: CommandWatchdogOptions::default(),
         }
@@ -131,12 +137,14 @@ impl ServiceWatchdog {
                         break;
                     }
                     _ = check_interval.tick() => {
-                        // A restart can fall between two checks; a new run starts afresh either way
+                        // A restart can fall between two checks. A new run starts afresh either
+                        // way, and is unhealthy until it passes a check.
                         let run = command_watchdog.start_counter();
                         if run != checked_run {
                             checked_run = run;
                             consecutive_failures = 0;
                             healthy_since = None;
+                            broadcast_health(&health_status, false);
                         }
                         if !command_watchdog.is_running() {
                             // The command watchdog is between runs and starts the next one at
@@ -188,11 +196,22 @@ impl ServiceWatchdog {
                             }
                             Err(e) => {
                                 // Health check failed
-                                broadcast_health(&health_status, false);
                                 healthy_since = None;
 
                                 stats.increment_failed_health_checks();
                                 consecutive_failures += 1;
+
+                                // One slow or failed check under load is not an outage
+                                if consecutive_failures >= opt.health_check_unhealthy_threshold {
+                                    let was_healthy = health_status.send_replace(false);
+                                    if was_healthy {
+                                        warn!(
+                                            "Service '{}' failed {} health checks in a row; \
+                                             reporting it unhealthy",
+                                            command_watchdog.program_name, consecutive_failures
+                                        );
+                                    }
+                                }
 
                                 log!(
                                     if consecutive_failures < opt.health_check_failure_threshold / 2 {
@@ -263,7 +282,8 @@ impl ServiceWatchdog {
         .await
     }
 
-    /// Check if the service is currently healthy
+    /// Whether the service is reported healthy: after a passing check, until it fails
+    /// `health_check_unhealthy_threshold` checks in a row, stops running, or is restarted
     pub fn is_healthy(&self) -> bool {
         *self.health_receiver.borrow()
     }

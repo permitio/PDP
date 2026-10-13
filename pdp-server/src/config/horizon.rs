@@ -31,6 +31,12 @@ pub struct HorizonConfig {
     #[config(env = "PDP_HORIZON_HEALTH_CHECK_FAILURE_THRESHOLD", default = 12)]
     pub health_check_failure_threshold: u32,
 
+    /// Number of consecutive health check failures before the PDP's health routes report the
+    /// horizon watchdog unhealthy; one passing check reports it healthy again. A horizon that is
+    /// not running is reported unhealthy at once (default: 3)
+    #[config(env = "PDP_HORIZON_HEALTH_CHECK_UNHEALTHY_THRESHOLD", default = 3)]
+    pub health_check_unhealthy_threshold: u32,
+
     /// Initial delay before starting health checks in seconds (default: 5)
     #[config(env = "PDP_HORIZON_STARTUP_DELAY", default = 5)]
     pub startup_delay: u64,

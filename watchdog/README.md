@@ -107,6 +107,7 @@ async fn main() {
     let opt = ServiceWatchdogOptions {
         health_check_interval: Duration::from_secs(10),
         health_check_failure_threshold: 3,
+        health_check_unhealthy_threshold: 2,
         initial_startup_delay: Duration::from_secs(5),
         command_options: CommandWatchdogOptions {
             restart_interval: Duration::from_secs(1),
@@ -213,6 +214,7 @@ not ask to restart a process the backoff is already restarting.
 
 - `health_check_interval`: How often to check service health (default: 10s)
 - `health_check_failure_threshold`: How many consecutive health check failures before restarting (default: 3)
+- `health_check_unhealthy_threshold`: How many consecutive health check failures before `is_healthy()` reports the service unhealthy; one passing check reports it healthy again (default: 1). A service that is not running, or a new run that has not passed a check yet, is reported unhealthy at once
 - `initial_startup_delay`: How long to wait before the first health check, and again after a restart for failed health checks (default: 5s)
 - `command_options`: The `CommandWatchdogOptions` for the service's process (default: their defaults)
 
@@ -226,7 +228,7 @@ Both watchdogs report:
 
 The `ServiceWatchdog` also reports:
 
-- `is_healthy()`: Whether the latest health check passed; false while the process is not running
+- `is_healthy()`: Whether the service is reported healthy (see `health_check_unhealthy_threshold`); false while the process is not running
 - `health_checks()` and `failed_health_checks()`: How many health checks it has run, and how many of them failed
 - `command_watchdog()`: The `CommandWatchdog` that runs the service's process
 

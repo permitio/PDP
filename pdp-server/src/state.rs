@@ -121,6 +121,7 @@ fn horizon_watchdog_options(config: &PDPConfig) -> ServiceWatchdogOptions {
     ServiceWatchdogOptions {
         health_check_interval: Duration::from_secs(config.horizon.health_check_interval),
         health_check_failure_threshold: config.horizon.health_check_failure_threshold,
+        health_check_unhealthy_threshold: config.horizon.health_check_unhealthy_threshold,
         initial_startup_delay: Duration::from_secs(config.horizon.startup_delay),
         command_options: CommandWatchdogOptions {
             restart_interval: Duration::from_secs(config.horizon.restart_interval),
@@ -214,6 +215,7 @@ mod tests {
                 health_check_timeout: 1,
                 health_check_interval: 5,
                 health_check_failure_threshold: 12,
+                health_check_unhealthy_threshold: 3,
                 startup_delay: 5,
                 restart_interval: 1,
                 max_restart_interval: 60,
@@ -299,6 +301,18 @@ mod tests {
 
         assert_eq!(options.restart_interval, Duration::from_secs(2));
         assert_eq!(options.max_restart_interval, Duration::from_secs(120));
+    }
+
+    #[test]
+    fn test_horizon_health_hysteresis_as_configured() {
+        let mut config = create_test_config();
+        config.horizon.health_check_failure_threshold = 12;
+        config.horizon.health_check_unhealthy_threshold = 4;
+
+        let options = horizon_watchdog_options(&config);
+
+        assert_eq!(options.health_check_unhealthy_threshold, 4);
+        assert_eq!(options.health_check_failure_threshold, 12);
     }
 
     /// What the command does with PDP_API_KEY_HANDOFF_FILE: `Inherit` leaves the child whatever

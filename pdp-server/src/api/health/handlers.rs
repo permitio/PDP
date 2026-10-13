@@ -333,6 +333,10 @@ mod test {
         config.horizon.health_check_timeout = 1;
         config.horizon.restart_interval = 1;
         config.horizon.max_restart_interval = 60;
+        // The defaults: the threshold for reporting failed checks does not delay reporting a
+        // horizon that is not running
+        config.horizon.health_check_failure_threshold = 12;
+        config.horizon.health_check_unhealthy_threshold = 3;
         let watchdog = Arc::new(AppState::setup_horizon_watchdog(&config, None).await);
         let deadline = Instant::now() + Duration::from_secs(10);
         while watchdog.consecutive_failures() < 2 {

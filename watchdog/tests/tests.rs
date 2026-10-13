@@ -277,6 +277,7 @@ async fn test_service_watchdog_recover() {
         health_check_failure_threshold: 2,
         initial_startup_delay: Duration::from_millis(250),
         command_options: quick_restarts(),
+        ..Default::default()
     };
     let watchdog = ServiceWatchdog::start_with_opt(
         test_server.get_command(),
@@ -327,6 +328,7 @@ async fn test_service_watchdog_recover_unresponsive() {
         health_check_failure_threshold: 2,
         initial_startup_delay: Duration::from_millis(50),
         command_options: quick_restarts(),
+        ..Default::default()
     };
     let watchdog = ServiceWatchdog::start_with_opt(
         test_server.get_command(),
@@ -381,6 +383,7 @@ async fn test_service_watchdog_consecutive_failures() {
         health_check_failure_threshold: 3, // Require 3 consecutive failures
         initial_startup_delay: Duration::from_millis(100),
         command_options: quick_restarts(),
+        ..Default::default()
     };
 
     let watchdog = ServiceWatchdog::start_with_opt(
