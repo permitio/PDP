@@ -12,7 +12,7 @@ ARG OPA_BUILD=permit
 # Keep this stage free of COPY/ADD. CI caches every layer of it (tests.yml, "Cache
 # the rust_chef stage") in a cache that every ref, forks included, can restore, so
 # nothing from the build context may enter it.
-FROM --platform=$BUILDPLATFORM rust:1.98-alpine@sha256:7cc1c22d77d9432f7fe012a70e6d3e555af54c2a6832700ed7d553f1769ae89f AS rust_chef
+FROM --platform=$BUILDPLATFORM rust:1.99-alpine@sha256:0cce0a5e0e8ba67b455257a3a02a1d99005f382748789d6464460028810f1627 AS rust_chef
 WORKDIR /app
 ENV PKGCONFIG_SYSROOTDIR=/
 RUN apk add --no-cache musl-dev openssl-dev zig pkgconf perl make
