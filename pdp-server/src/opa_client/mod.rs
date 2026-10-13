@@ -168,7 +168,7 @@ mod test {
             send_request_to_opa(&fixture.state, "/v1/data/permit/root", &json!({})).await;
 
         let Err(err @ ForwardingError::NoApiKey) = result else {
-            panic!("expected NoApiKey, got {result:?}");
+            panic!("expected ForwardingError::NoApiKey");
         };
         let api_error = ApiError::from(err);
         assert_eq!(api_error.status_code, StatusCode::SERVICE_UNAVAILABLE);

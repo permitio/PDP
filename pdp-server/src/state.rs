@@ -327,7 +327,7 @@ mod tests {
 
         assert!(api_key.get().is_none());
         let handoff_file = handoff_file.expect("a handoff file without a key in PDP_API_KEY");
-        assert!(handoff_file.is_absolute(), "{handoff_file:?}");
+        assert!(handoff_file.is_absolute());
         let command = horizon_command(&config, Some(&handoff_file));
         assert_eq!(
             handoff_file_env(&command),
