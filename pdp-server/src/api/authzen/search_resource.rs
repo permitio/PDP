@@ -10,7 +10,7 @@ use axum::{
 };
 use http::StatusCode;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use utoipa::ToSchema;
 
 /// AuthZen Resource Search Request - to find resources a subject can access
@@ -33,7 +33,8 @@ pub struct ResourceSearchRequest {
 /// AuthZen Resource Search Response - contains list of resources a subject can access
 #[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
 pub struct ResourceSearchResponse {
-    /// List of resources the subject can access
+    /// Resources the subject can access, one per type and id, sorted by type, then id,
+    /// comparing strings by code point
     pub results: Vec<AuthZenResource>,
     /// Pagination information
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -92,28 +93,33 @@ pub async fn search_resource_handler(
         }
     };
 
-    // Extract unique resources from permissions
-    let mut unique_resources = HashMap::new();
+    // `permissions` is a HashMap, so it iterates in a different order on every call. Reading it
+    // in OPA key order means that when several entries describe the same resource, the same
+    // one (the first by OPA key) supplies the properties every time.
+    let permissions: BTreeMap<_, _> = permissions.into_iter().collect();
 
-    // Process each permission and extract the resources
-    for (_, perm) in permissions {
-        if let Some(resource_details) = perm.resource {
-            let resource = AuthZenResource {
-                r#type: resource_details.r#type.clone(),
-                id: Some(resource_details.key.clone()),
+    // Keyed by (type, id): one result per resource, sorted by type, then id.
+    let mut unique_resources = BTreeMap::new();
+    for perm in permissions.into_values() {
+        let Some(resource_details) = perm.resource else {
+            continue;
+        };
+        let resource_key = (
+            resource_details.r#type.clone(),
+            resource_details.key.clone(),
+        );
+        unique_resources
+            .entry(resource_key)
+            .or_insert_with(|| AuthZenResource {
+                r#type: resource_details.r#type,
+                id: Some(resource_details.key),
                 properties: if resource_details.attributes.is_empty() {
                     None
                 } else {
                     Some(resource_details.attributes)
                 },
-            };
-
-            // Use the resource ID as key to ensure uniqueness
-            unique_resources.insert(resource.id.clone(), resource);
-        }
+            });
     }
-
-    // Convert the unique resources HashMap to a Vec
     let results = unique_resources.into_values().collect();
 
     // Create the response
@@ -452,5 +458,149 @@ mod tests {
 
         // Verify page is present
         assert!(search_response.page.is_some());
+    }
+
+    fn permission_entry(
+        resource_type: &str,
+        resource_key: &str,
+        attributes: serde_json::Value,
+    ) -> serde_json::Value {
+        json!({
+            "tenant": {"key": "tenant1", "attributes": {}},
+            "resource": {"key": resource_key, "type": resource_type, "attributes": attributes},
+            "permissions": ["can_read"],
+            "roles": ["viewer"]
+        })
+    }
+
+    /// A `user_permissions` OPA result whose entries are in no particular order. Ids such as
+    /// `doc-10` and `Doc-9` sort by code point, not by number or case. `document:shared`
+    /// appears under three OPA keys with different attributes, and one entry has no resource.
+    fn unordered_permissions_response() -> serde_json::Value {
+        json!({
+            "result": {
+                "permissions": {
+                    "document:doc-2": permission_entry("document", "doc-2", json!({})),
+                    "folder:doc-1": permission_entry("folder", "doc-1", json!({})),
+                    "document:doc-10": permission_entry("document", "doc-10", json!({})),
+                    "shared-copy-b": permission_entry("document", "shared", json!({"copy": "b"})),
+                    "document:Doc-9": permission_entry("document", "Doc-9", json!({})),
+                    "document:doc-1": permission_entry("document", "doc-1", json!({})),
+                    "shared-copy-c": permission_entry("document", "shared", json!({"copy": "c"})),
+                    "document:doc-3": permission_entry("document", "doc-3", json!({})),
+                    "shared-copy-a": permission_entry("document", "shared", json!({"copy": "a"})),
+                    "document:doc-11": permission_entry("document", "doc-11", json!({})),
+                    "__tenant:tenant1": {
+                        "tenant": {"key": "tenant1", "attributes": {}},
+                        "resource": null,
+                        "permissions": ["can_read"],
+                        "roles": ["viewer"]
+                    }
+                }
+            }
+        })
+    }
+
+    async fn mock_user_permissions(
+        fixture: &TestFixture,
+        response: serde_json::Value,
+        expected_calls: u64,
+    ) {
+        fixture
+            .add_opa_mock(
+                http::Method::POST,
+                "/v1/data/permit/user_permissions",
+                response,
+                http::StatusCode::OK,
+                expected_calls,
+            )
+            .await;
+    }
+
+    fn resource_search_request() -> serde_json::Value {
+        json!({
+            "subject": {"type": "user", "id": "alice@example.com"},
+            "action": {"name": "can_read"},
+            "resource": {"type": "document"}
+        })
+    }
+
+    #[tokio::test]
+    async fn test_resource_search_sorts_results_by_type_then_id() {
+        let fixture = TestFixture::new().await;
+        mock_user_permissions(&fixture, unordered_permissions_response(), 1).await;
+
+        let response = fixture
+            .post("/access/v1/search/resource", &resource_search_request())
+            .await;
+
+        response.assert_ok();
+        let search_response: ResourceSearchResponse = response.json_as();
+        let mut results = Vec::new();
+        for resource in &search_response.results {
+            results.push((resource.r#type.as_str(), resource.id.as_deref()));
+        }
+        assert_eq!(
+            results,
+            vec![
+                ("document", Some("Doc-9")),
+                ("document", Some("doc-1")),
+                ("document", Some("doc-10")),
+                ("document", Some("doc-11")),
+                ("document", Some("doc-2")),
+                ("document", Some("doc-3")),
+                ("document", Some("shared")),
+                ("folder", Some("doc-1")),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resource_search_returns_one_result_per_resource() {
+        let fixture = TestFixture::new().await;
+        mock_user_permissions(&fixture, unordered_permissions_response(), 1).await;
+
+        let response = fixture
+            .post("/access/v1/search/resource", &resource_search_request())
+            .await;
+
+        response.assert_ok();
+        let search_response: ResourceSearchResponse = response.json_as();
+        let mut shared = Vec::new();
+        for resource in &search_response.results {
+            if resource.id.as_deref() == Some("shared") {
+                shared.push(resource);
+            }
+        }
+        assert_eq!(shared.len(), 1, "expected one `shared` result: {shared:?}");
+        let expected_properties = HashMap::from([("copy".to_string(), json!("a"))]);
+        assert_eq!(
+            shared[0].properties.as_ref(),
+            Some(&expected_properties),
+            "the entry whose OPA key sorts first supplies the properties"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resource_search_repeated_calls_return_identical_bodies() {
+        const CALLS: u64 = 10;
+        let fixture = TestFixture::new().await;
+        mock_user_permissions(&fixture, unordered_permissions_response(), CALLS).await;
+
+        let first = fixture
+            .post("/access/v1/search/resource", &resource_search_request())
+            .await;
+        first.assert_ok();
+        for call in 2..=CALLS {
+            let response = fixture
+                .post("/access/v1/search/resource", &resource_search_request())
+                .await;
+            response.assert_ok();
+            assert_eq!(
+                response.text(),
+                first.text(),
+                "call {call} returned a different body than call 1"
+            );
+        }
     }
 }

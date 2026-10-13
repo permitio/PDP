@@ -31,7 +31,7 @@ pub struct ActionSearchRequest {
 /// AuthZen Action Search Response - contains list of actions the subject can perform on the resource
 #[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
 pub struct ActionSearchResponse {
-    /// List of actions the subject can perform
+    /// Actions the subject can perform, sorted by name, comparing strings by code point
     pub results: Vec<AuthZenAction>,
     /// Pagination information
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -315,5 +315,109 @@ mod tests {
 
         // Verify page is present
         assert!(search_response.page.is_some());
+    }
+
+    /// A `user_permissions` OPA result with overlapping permission lists in no particular
+    /// order. `Can_admin` shows that names compare by code point.
+    fn overlapping_permissions_response() -> serde_json::Value {
+        json!({
+            "result": {
+                "permissions": {
+                    "document:doc1": {
+                        "permissions": ["can_write", "can_read", "can_delete"],
+                        "roles": ["editor"]
+                    },
+                    "document:doc2": {
+                        "permissions": ["can_read", "can_archive", "Can_admin"],
+                        "roles": ["admin"]
+                    },
+                    "document:doc3": {
+                        "permissions": ["can_share", "can_write", "can_comment"],
+                        "roles": ["editor"]
+                    },
+                    "document:doc4": {
+                        "permissions": ["can_read", "can_export", "can_print"],
+                        "roles": ["viewer"]
+                    }
+                }
+            }
+        })
+    }
+
+    async fn mock_user_permissions(
+        fixture: &TestFixture,
+        response: serde_json::Value,
+        expected_calls: u64,
+    ) {
+        fixture
+            .add_opa_mock(
+                http::Method::POST,
+                "/v1/data/permit/user_permissions",
+                response,
+                http::StatusCode::OK,
+                expected_calls,
+            )
+            .await;
+    }
+
+    fn action_search_request() -> serde_json::Value {
+        json!({
+            "subject": {"type": "user", "id": "alice@example.com"},
+            "resource": {"type": "document", "id": "doc1"}
+        })
+    }
+
+    #[tokio::test]
+    async fn test_action_search_sorts_and_deduplicates_results_by_name() {
+        let fixture = TestFixture::new().await;
+        mock_user_permissions(&fixture, overlapping_permissions_response(), 1).await;
+
+        let response = fixture
+            .post("/access/v1/search/action", &action_search_request())
+            .await;
+
+        response.assert_ok();
+        let search_response: ActionSearchResponse = response.json_as();
+        let mut names = Vec::new();
+        for action in &search_response.results {
+            names.push(action.name.as_str());
+        }
+        assert_eq!(
+            names,
+            vec![
+                "Can_admin",
+                "can_archive",
+                "can_comment",
+                "can_delete",
+                "can_export",
+                "can_print",
+                "can_read",
+                "can_share",
+                "can_write",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_action_search_repeated_calls_return_identical_bodies() {
+        const CALLS: u64 = 10;
+        let fixture = TestFixture::new().await;
+        mock_user_permissions(&fixture, overlapping_permissions_response(), CALLS).await;
+
+        let first = fixture
+            .post("/access/v1/search/action", &action_search_request())
+            .await;
+        first.assert_ok();
+        for call in 2..=CALLS {
+            let response = fixture
+                .post("/access/v1/search/action", &action_search_request())
+                .await;
+            response.assert_ok();
+            assert_eq!(
+                response.text(),
+                first.text(),
+                "call {call} returned a different body than call 1"
+            );
+        }
     }
 }
