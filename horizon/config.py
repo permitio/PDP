@@ -5,7 +5,7 @@ from typing import Any, ClassVar
 
 from opal_common.confi import Confi, confi
 from opal_common.schemas.data import CallbackEntry
-from pydantic import parse_obj_as, parse_raw_as
+from pydantic import StrictBool, parse_obj_as, parse_raw_as
 
 # One-way import edge, config -> debounce: the default lives beside the clamp that falls back
 # to it, so a value this module declares and a value the debouncer substitutes can never drift.
@@ -16,6 +16,11 @@ MOCK_API_KEY = "MUST BE DEFINED"
 
 IGNORED_CALLBACK_URLS_SETTING = "PDP_IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS"
 _SHOWN_VALUE_MAX_CHARS = 200
+
+# Each plugin's settings, by plugin name. StrictBool comes first because pydantic 1.x tries a
+# Union's types in order and int accepts a JSON bool: `"enabled": false` became 0, written to the
+# OPA config as `enabled: 0`, and OPA refused to start ("failed to unmarshal plugin config").
+OpaPlugins = dict[str, dict[str, StrictBool | int | str]]
 
 
 def _invalid_ignored_callback_urls(raw: Any, reason: str) -> ValueError:
@@ -290,18 +295,21 @@ class SidecarConfig(Confi):
     )
 
     @staticmethod
-    def parse_plugins(value: Any) -> dict[str, dict[str, int | bool | str]]:
+    def parse_plugins(value: Any) -> OpaPlugins:
         if isinstance(value, str):
-            return parse_raw_as(dict[str, dict[str, int | bool | str]], value)
-        return parse_obj_as(dict[str, dict[str, int | bool | str]], value)
+            return parse_raw_as(OpaPlugins, value)
+        return parse_obj_as(OpaPlugins, value)
 
-    OPA_PLUGINS: dict[str, dict[str, int | bool | str]] = confi.str(  # ty: ignore[invalid-assignment]  # cast= sets the type
+    OPA_PLUGINS: OpaPlugins = confi.str(  # ty: ignore[invalid-assignment]  # cast= sets the type
         "OPA_PLUGINS",
         {},
         description="List of plugins to be loaded into OPA, "
         "the key is the plugin name, the value is the plugin config. "
         "notice that the plugin MUST be registered in OPA for it to work, "
-        "if it is not registered, OPA will fail to start",
+        "if it is not registered, OPA will fail to start. "
+        "Without permit_graph, or with its enabled set to false, the PDP keeps the ReBAC cache_rebuild "
+        "data-update callback even if IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS lists it, since that "
+        "callback then fills OPA's ReBAC cache",
         cast=parse_plugins,
         cast_from_json=parse_plugins,
     )
@@ -430,7 +438,8 @@ class SidecarConfig(Confi):
         [],
         description=(
             "Callback URLs to drop from the defaults, even if the control plane registers them: a JSON list, "
-            "or URLs separated by commas. Each URL must equal a registered callback URL exactly. Empty drops none."
+            "or URLs separated by commas. Each URL must equal a registered callback URL exactly. Empty drops none. "
+            "The ReBAC cache_rebuild callback is kept while OPA_PLUGINS leaves permit_graph off."
         ),
         cast=parse_url_list,
         cast_from_json=parse_url_list,

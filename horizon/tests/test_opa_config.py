@@ -3,9 +3,16 @@
 OPA reads decision log and plugin settings only from its config file. The file used to be written
 only with decision logs on, so a PDP with them off never loaded its plugins (permit_graph among
 them) and its ReBAC user permissions came back empty.
+
+A JSON boolean in PDP_OPA_PLUGINS used to be read as an int (false as 0), and OPA refused to start
+on `enabled: 0` with "config error: failed to unmarshal plugin config".
 """
 
 import itertools
+import json
+import os
+import subprocess
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,11 +24,12 @@ from loguru import logger
 from opal_client.config import EngineLogFormat, opal_client_config, opal_common_config
 from opal_client.engine.options import OpaServerOptions
 
-from horizon.config import sidecar_config
+from horizon.config import SidecarConfig, sidecar_config
 from horizon.enforcer.opa import config_maker
 from horizon.enforcer.opa.config_maker import get_opa_config_file_path
-from horizon.pdp import OPA_LOGGER_MODULE, PermitPDP
+from horizon.pdp import OPA_LOGGER_MODULE, PermitPDP, apply_config
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
 API_KEY = "test-pdp-api-key"
 BACKEND_TIER = "https://logs.example.test"
 PLUGINS: dict[str, dict[str, int | bool | str]] = {
@@ -218,3 +226,55 @@ def test_the_pdp_config_file_already_in_the_inline_config_is_kept_without_a_warn
 
     assert configured.config_file == str(opa_files.config)
     assert logged_warnings == []
+
+
+PLUGIN_SETTINGS_JSON = [
+    pytest.param('{"permit_graph": {"enabled": false}}', id="false"),
+    pytest.param('{"permit_graph": {"enabled": true}}', id="true"),
+    pytest.param('{"permit_graph": {"enabled": "false"}}', id="string-false"),
+    pytest.param('{"permit_graph": {}}', id="no-settings"),
+    pytest.param(
+        '{"envoy_ext_authz_grpc": {"addr": ":9191", "path": "permit/root", "dry-run": true, '
+        '"grpc-max-recv-msg-size": 4194304}}',
+        id="envoy",
+    ),
+]
+
+
+@pytest.mark.parametrize("plugins_json", PLUGIN_SETTINGS_JSON)
+def test_plugin_settings_from_the_environment_keep_their_json_types(plugins_json: str):
+    # A new interpreter, because the config singleton reads the environment once, at import.
+    code = "import json; from horizon.config import sidecar_config; print(json.dumps(sidecar_config.OPA_PLUGINS))"
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=REPO_ROOT,
+        env={**os.environ, "PDP_OPA_PLUGINS": plugins_json},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+
+    assert result.returncode == 0, result.stderr
+    # Compared as JSON text, where false and 0 differ (in Python, 0 == False).
+    assert result.stdout.strip() == json.dumps(json.loads(plugins_json))
+
+
+@pytest.mark.parametrize("plugins_json", PLUGIN_SETTINGS_JSON)
+def test_plugin_settings_from_the_control_plane_keep_their_json_types(monkeypatch, plugins_json: str):
+    monkeypatch.setattr(sidecar_config, "OPA_PLUGINS", {})
+
+    apply_config({"OPA_PLUGINS": json.loads(plugins_json)}, sidecar_config)
+
+    assert json.dumps(sidecar_config.OPA_PLUGINS) == json.dumps(json.loads(plugins_json))
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_a_plugin_boolean_is_written_as_a_yaml_boolean(monkeypatch, opa_files, *, enabled: bool):
+    plugins = SidecarConfig.parse_plugins(json.dumps({"permit_graph": {"enabled": enabled}}))
+    _configure(monkeypatch, OpaSettings(decision_logs=False, plugins=plugins, bearer_required=False))
+
+    get_opa_config_file_path(sidecar_config)
+
+    written = yaml.safe_load(opa_files.config.read_text())
+    assert written["plugins"]["permit_graph"]["enabled"] is enabled
