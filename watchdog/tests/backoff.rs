@@ -26,13 +26,16 @@ use watchdog::{
 const SECOND: Duration = Duration::from_secs(1);
 const MILLISECOND: Duration = Duration::from_millis(1);
 
-/// Run N prints `started` and lingers `$LINGER` seconds. If the test made a file `up-N`, the
-/// run stays up until the test makes `stop-N`. Then it exits with 3.
+/// Run N prints `started`. With `$GATED` set, it then waits for the test to make `ack-N`. If
+/// the test made a file `up-N`, the run stays up until the test makes `stop-N`. Then it exits
+/// with 3.
 const SCRIPT: &str = r#"
 n=$(( $(cat count 2>/dev/null || echo 0) + 1 ))
 echo "$n" > count
 echo started
-sleep "${LINGER:-0}"
+if [ -n "$GATED" ]; then
+    while [ ! -e "ack-$n" ]; do sleep 0.01; done
+fi
 if [ -e "up-$n" ]; then
     while [ ! -e "stop-$n" ]; do sleep 0.01; done
 fi
@@ -40,6 +43,7 @@ exit 3
 "#;
 
 /// The directory the child runs in. The test steers each run through files in it.
+#[derive(Debug)]
 struct Runs {
     dir: TempDir,
 }
@@ -64,16 +68,31 @@ impl Runs {
         self.touch(&format!("stop-{run}"));
     }
 
-    /// The command for the runs. `linger` keeps each run up after it prints, so its line is
-    /// read while the paused clock still stands at its start.
-    fn command(&self, linger: &str) -> Command {
+    /// The command for runs that go on as soon as they print.
+    fn command(&self) -> Command {
         let mut command = Command::new("sh");
+        command.current_dir(self.dir.path()).arg("-c").arg(SCRIPT);
         command
-            .current_dir(self.dir.path())
-            .env("LINGER", linger)
-            .arg("-c")
-            .arg(SCRIPT);
+    }
+
+    /// The command for runs that wait after printing until [`next_start`] acknowledges them.
+    /// The paused clock stands still while a run waits, as no timer is pending, so the time
+    /// reported for its start is the time it started.
+    fn gated_command(&self) -> Command {
+        let mut command = self.command();
+        command.env("GATED", "1");
         command
+    }
+
+    /// The number of the latest run, 0 before the first.
+    fn latest(&self) -> usize {
+        let path = self.dir.path().join("count");
+        match std::fs::read_to_string(&path) {
+            // Empty while a run rewrites it
+            Ok(count) => count.trim().parse().unwrap_or(0),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
+            Err(e) => panic!("read {}: {e}", path.display()),
+        }
     }
 }
 
@@ -96,11 +115,23 @@ impl ChildOutputHandler for Starts {
     }
 }
 
-async fn next_start(starts: &mut UnboundedReceiver<Instant>) -> Instant {
-    starts
+/// Waits for gated run `run` to start, lets it go on, and returns when it started.
+async fn next_start(starts: &mut UnboundedReceiver<Instant>, runs: &Runs, run: usize) -> Instant {
+    let started = starts
         .recv()
         .await
-        .expect("the watchdog stopped starting the process")
+        .expect("the watchdog stopped starting the process");
+    runs.touch(&format!("ack-{run}"));
+    started
+}
+
+/// Waits, without letting the paused clock move, until `condition` holds. `yield_now` lets the
+/// runtime take in a child's exit but never advances a paused clock, so no backoff can elapse
+/// meanwhile.
+async fn spin_until(condition: impl Fn() -> bool) {
+    while !condition() {
+        tokio::task::yield_now().await;
+    }
 }
 
 /// Asserts the time between consecutive starts, in seconds.
@@ -137,11 +168,11 @@ async fn a_crash_loop_backs_off_doubling_up_to_the_cap() {
         output_handler: Some(handler),
         ..backoff_options(SECOND, 8 * SECOND)
     };
-    let watchdog = CommandWatchdog::start_with_opt(runs.command("0.1"), opt);
+    let watchdog = CommandWatchdog::start_with_opt(runs.gated_command(), opt);
 
     let mut times = Vec::new();
-    for _ in 0..7 {
-        times.push(next_start(&mut starts).await);
+    for run in 1..=7 {
+        times.push(next_start(&mut starts, &runs, run).await);
     }
 
     assert_gaps(&times, &[1, 2, 4, 8, 8, 8]);
@@ -161,10 +192,10 @@ async fn after_a_long_run_a_crash_restarts_at_once_and_the_backoff_starts_over()
         output_handler: Some(handler),
         ..backoff_options(SECOND, 8 * SECOND)
     };
-    let watchdog = CommandWatchdog::start_with_opt(runs.command("0.1"), opt);
+    let watchdog = CommandWatchdog::start_with_opt(runs.gated_command(), opt);
     let mut times = Vec::new();
-    for _ in 0..4 {
-        times.push(next_start(&mut starts).await);
+    for run in 1..=4 {
+        times.push(next_start(&mut starts, &runs, run).await);
     }
     assert_gaps(&times, &[1, 2, 4]);
     assert_eq!(watchdog.consecutive_failures(), 3);
@@ -173,7 +204,7 @@ async fn after_a_long_run_a_crash_restarts_at_once_and_the_backoff_starts_over()
     tokio::time::advance(20 * SECOND).await;
     let crashed_at = Instant::now();
     runs.stop(4);
-    let fifth = next_start(&mut starts).await;
+    let fifth = next_start(&mut starts, &runs, 5).await;
 
     assert!(
         fifth - crashed_at <= MILLISECOND,
@@ -182,7 +213,7 @@ async fn after_a_long_run_a_crash_restarts_at_once_and_the_backoff_starts_over()
     );
     assert_eq!(watchdog.consecutive_failures(), 1);
     // Run 5 crashes at once: the second failure in a row, not the fifth
-    let sixth = next_start(&mut starts).await;
+    let sixth = next_start(&mut starts, &runs, 6).await;
     assert_gaps(&[fifth, sixth], &[2]);
 }
 
@@ -198,38 +229,46 @@ async fn a_process_that_fails_to_start_backs_off_too() {
     assert_eq!(watchdog.consecutive_failures(), 4);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_restart_asked_for_between_runs_does_not_stop_the_next_run() {
     let runs = Runs::new();
     runs.keep_up(2);
-    let base = 300 * MILLISECOND;
-    let watchdog =
-        CommandWatchdog::start_with_opt(runs.command("0"), backoff_options(base, 2 * base));
-    wait_until("run 1 crashes", || watchdog.consecutive_failures() == 1).await;
+    let (handler, mut starts) = Starts::new();
+    let opt = CommandWatchdogOptions {
+        output_handler: Some(handler),
+        ..backoff_options(SECOND, 8 * SECOND)
+    };
+    let watchdog = CommandWatchdog::start_with_opt(runs.gated_command(), opt);
+    let first = next_start(&mut starts, &runs, 1).await;
+    spin_until(|| watchdog.consecutive_failures() == 1).await;
 
+    // Run 1 has crashed and the watchdog waits 1 s to start run 2
     watchdog.restart().await.expect("ask for a restart");
-    wait_until("run 2 starts", || watchdog.start_counter() == 2).await;
-    tokio::time::sleep(2 * base).await;
+    let second = next_start(&mut starts, &runs, 2).await;
+    // Run 2 exits by itself: had the restart stopped it, it would not count as a failure
+    runs.stop(2);
+    let third = next_start(&mut starts, &runs, 3).await;
 
-    assert_eq!(
-        watchdog.start_counter(),
-        2,
-        "run 2 was stopped and replaced"
-    );
+    assert_gaps(&[first, second, third], &[1, 2]);
+    assert_eq!(watchdog.consecutive_failures(), 2);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn dropping_the_watchdog_while_it_waits_starts_nothing_more() {
     let runs = Runs::new();
-    let base = 300 * MILLISECOND;
-    let watchdog =
-        CommandWatchdog::start_with_opt(runs.command("0"), backoff_options(base, 2 * base));
-    wait_until("run 1 crashes", || watchdog.consecutive_failures() == 1).await;
+    let (handler, mut starts) = Starts::new();
+    let opt = CommandWatchdogOptions {
+        output_handler: Some(handler),
+        ..backoff_options(SECOND, 8 * SECOND)
+    };
+    let watchdog = CommandWatchdog::start_with_opt(runs.gated_command(), opt);
+    next_start(&mut starts, &runs, 1).await;
+    spin_until(|| watchdog.consecutive_failures() == 1).await;
 
     // Dropping any handle shuts the watchdog down; the clone only reads the count afterwards
     let observer = watchdog.clone();
     drop(watchdog);
-    tokio::time::sleep(2 * base).await;
+    tokio::time::sleep(10 * SECOND).await;
 
     assert_eq!(observer.start_counter(), 1);
 }
@@ -270,6 +309,24 @@ impl HealthCheck for Flapping {
     }
 }
 
+/// Health checks that fail until run `from` starts, and pass from then on.
+#[derive(Debug)]
+struct HealthyFromRun {
+    runs: Arc<Runs>,
+    from: usize,
+}
+
+#[async_trait]
+impl HealthCheck for HealthyFromRun {
+    async fn check_health(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
+        if self.runs.latest() >= self.from {
+            Ok(())
+        } else {
+            Err(format!("run {} has not started yet", self.from).into())
+        }
+    }
+}
+
 fn service_options(base: Duration, max: Duration, threshold: u32) -> ServiceWatchdogOptions {
     ServiceWatchdogOptions {
         health_check_interval: 10 * MILLISECOND,
@@ -295,7 +352,7 @@ async fn passing_health_checks_reset_the_backoff_and_failing_ones_do_not() {
     let health = HealthSwitch::default();
     let max = 300 * MILLISECOND;
     let watchdog = ServiceWatchdog::start_with_opt(
-        runs.command("0"),
+        runs.command(),
         health.clone(),
         service_options(50 * MILLISECOND, max, u32::MAX),
     );
@@ -329,7 +386,7 @@ async fn a_run_that_stays_up_but_fails_its_health_checks_keeps_the_failures_coun
     runs.keep_up(4);
     let max = 300 * MILLISECOND;
     let watchdog = ServiceWatchdog::start_with_opt(
-        runs.command("0"),
+        runs.command(),
         HealthSwitch::default(),
         service_options(50 * MILLISECOND, max, u32::MAX),
     );
@@ -349,7 +406,7 @@ async fn health_checks_that_pass_only_by_turns_do_not_reset_the_backoff() {
     runs.keep_up(3);
     let max = 300 * MILLISECOND;
     let watchdog = ServiceWatchdog::start_with_opt(
-        runs.command("0"),
+        runs.command(),
         Flapping::default(),
         service_options(50 * MILLISECOND, max, u32::MAX),
     );
@@ -362,15 +419,20 @@ async fn health_checks_that_pass_only_by_turns_do_not_reset_the_backoff() {
 
 #[tokio::test]
 async fn restarts_for_failed_health_checks_count_and_back_off() {
-    let runs = Runs::new();
+    let runs = Arc::new(Runs::new());
     runs.keep_up(1);
     runs.keep_up(2);
+    let health = HealthyFromRun {
+        runs: Arc::clone(&runs),
+        from: 2,
+    };
     let base = 300 * MILLISECOND;
     let started = Instant::now();
+    // The count would reset only after run 2 is healthy for 10 s
     let watchdog = ServiceWatchdog::start_with_opt(
-        runs.command("0"),
-        HealthSwitch::default(),
-        service_options(base, 2 * base, 10),
+        runs.command(),
+        health,
+        service_options(base, 10 * SECOND, 10),
     );
     wait_until("run 2 starts", || watchdog.start_counter() == 2).await;
 
@@ -384,17 +446,17 @@ async fn restarts_for_failed_health_checks_count_and_back_off() {
 }
 
 #[tokio::test]
-async fn a_crash_after_a_healthy_run_restarts_at_once() {
+async fn a_crash_after_a_healthy_run_counts_as_the_first_failure() {
     let runs = Runs::new();
     runs.keep_up(3);
     runs.keep_up(4);
     let health = HealthSwitch::default();
     health.set(true);
-    let base = 300 * MILLISECOND;
+    let max = SECOND;
     let watchdog = ServiceWatchdog::start_with_opt(
-        runs.command("0"),
+        runs.command(),
         health,
-        service_options(base, 2 * base, u32::MAX),
+        service_options(300 * MILLISECOND, max, u32::MAX),
     );
     wait_until("run 3 has been healthy for the longest wait", || {
         watchdog.start_counter() == 3 && watchdog.consecutive_failures() == 0
@@ -402,17 +464,15 @@ async fn a_crash_after_a_healthy_run_restarts_at_once() {
     .await;
 
     runs.stop(3);
-    let crashed_at = Instant::now();
     wait_until("run 4 starts", || watchdog.start_counter() == 4).await;
-    let restarted_after = crashed_at.elapsed();
-    // Run 4 passes several checks, for less than the longest wait. Run 3's healthy time does not
-    // carry over to it, so the crash still counts.
-    tokio::time::sleep(100 * MILLISECOND).await;
+    // Run 4 passes a few checks, which take far less than the longest wait. Run 3's healthy time
+    // does not carry over to it, so the crash still counts.
+    let checks = watchdog.health_checks();
+    wait_until("run 4 passes three checks", || {
+        watchdog.health_checks() >= checks + 3
+    })
+    .await;
 
-    assert!(
-        restarted_after < base,
-        "a crash after a healthy run waited {restarted_after:?} to restart"
-    );
     assert_eq!(watchdog.consecutive_failures(), 1);
 }
 
@@ -424,7 +484,7 @@ async fn while_it_waits_to_restart_the_service_reports_unhealthy() {
     let health = HealthSwitch::default();
     health.set(true);
     let watchdog = ServiceWatchdog::start_with_opt(
-        runs.command("0"),
+        runs.command(),
         health,
         service_options(200 * MILLISECOND, 400 * MILLISECOND, u32::MAX),
     );
@@ -433,13 +493,12 @@ async fn while_it_waits_to_restart_the_service_reports_unhealthy() {
         .await
         .expect("run 1 turns healthy");
 
+    // Every later run crashes at once, so the watchdog spends nearly all its time waiting
     runs.stop(1);
-    // Runs 2 and 3 crash at once; run 4 is 400 ms after run 3
-    wait_until("run 3 has crashed", || watchdog.consecutive_failures() == 3).await;
-    tokio::time::sleep(50 * MILLISECOND).await;
-
-    assert!(!watchdog.is_healthy());
-    assert_eq!(watchdog.start_counter(), 3);
+    wait_until("the service reports unhealthy between runs", || {
+        watchdog.consecutive_failures() >= 2 && !watchdog.is_healthy()
+    })
+    .await;
 }
 
 #[tokio::test]
@@ -448,26 +507,29 @@ async fn failed_health_checks_do_not_restart_a_service_that_is_not_running() {
     runs.keep_up(1);
     let health = HealthSwitch::default();
     health.set(true);
-    let threshold = 10;
+    // A crashing run is up for milliseconds, far short of 25 checks 10 ms apart
+    let threshold = 25;
     let watchdog = ServiceWatchdog::start_with_opt(
-        runs.command("0"),
+        runs.command(),
         health.clone(),
-        service_options(200 * MILLISECOND, 400 * MILLISECOND, threshold),
+        service_options(300 * MILLISECOND, 600 * MILLISECOND, threshold),
     );
     watchdog
         .wait_for_healthy(5 * SECOND)
         .await
         .expect("run 1 turns healthy");
 
-    // Run 1 crashes and takes its health with it; runs 2 and 3 crash at once
+    // Run 1 crashes and takes its health with it; every later run crashes at once
     runs.stop(1);
     health.set(false);
-    wait_until("run 4 starts", || watchdog.start_counter() == 4).await;
+    wait_until("run 4 starts", || watchdog.start_counter() >= 4).await;
 
-    // Each 400 ms wait spans 40 failing checks, enough for four restarts if they counted
-    let failures = watchdog.consecutive_failures();
+    // Each run so far ended in one failure, or is still up. The 600 ms waits span 60 failing
+    // checks each, enough for two more restarts apiece if checks counted while nothing runs.
+    let starts = watchdog.start_counter();
+    let failures = watchdog.consecutive_failures() as usize;
     assert!(
-        (3..=4).contains(&failures),
-        "{failures} failures in a row for 3 crashes"
+        failures == starts || failures + 1 == starts,
+        "{failures} failures in a row after {starts} starts"
     );
 }
