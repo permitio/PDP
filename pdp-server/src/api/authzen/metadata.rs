@@ -118,10 +118,7 @@ mod tests {
         let request = HttpRequest::builder()
             .uri(uri)
             .method("GET")
-            .header(
-                "Authorization",
-                format!("Bearer {}", fixture.config.api_key),
-            )
+            .header("Authorization", fixture.auth_header())
             .header("Content-Type", "application/json")
             .body(Body::empty())
             .expect("Failed to build request");

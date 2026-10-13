@@ -100,8 +100,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # audit, not a gate. The gates are the Docker Scout and Trivy scans in tests.yml and
 # release.yml, and scheduled-security-scan.yml re-scans published tags (PER-15358).
 #
-# The floor is go1.26.6, the first 1.26 release with the crypto/tls fix for
-# GO-2026-6090, and the RUN below fails the build on anything older (e.g. a stale local
+# The floor is go1.27.2, the first 1.27 release with the standard-library fixes for
+# CVE-2026-56857, CVE-2026-78663 and the other stdlib CVEs Docker Scout reported against
+# 1.27.1, and the RUN below fails the build on anything older (e.g. a stale local
 # image). It prints the version it accepted, but it is a GATE, not a record: a local
 # build can serve it from cache until the pinned digest moves. (CI exports no
 # opa_build layers, so there it re-runs every build.) The compile RUN
@@ -121,11 +122,11 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # an ARG, splitting the FROM across lines or renaming the stage turns permit-opa's CI
 # red with "cannot compare go.mod's directive" - which is a fail-closed by design, but
 # it will look like an unrelated repo breaking for no reason.
-FROM --platform=$BUILDPLATFORM golang:1.27-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195 AS opa_build
+FROM --platform=$BUILDPLATFORM golang:1.27-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61 AS opa_build
 ENV GOTOOLCHAIN=local
 RUN v=$(go env GOVERSION) && \
-    [ "$(printf '%s\n' go1.26.6 "$v" | sort -V | head -n1)" = go1.26.6 ] || \
-    { echo "opa_build: $v is below the go1.26.6 floor (GO-2026-6090)"; exit 1; } && \
+    [ "$(printf '%s\n' go1.27.2 "$v" | sort -V | head -n1)" = go1.27.2 ] || \
+    { echo "opa_build: $v is below the go1.27.2 floor (CVE-2026-56857, CVE-2026-78663 and others fixed in 1.27.2)"; exit 1; } && \
     echo "opa_build: building with $v"
 
 COPY custom* /custom

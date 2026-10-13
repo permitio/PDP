@@ -21,7 +21,7 @@ from opal_client.config import (
     opal_common_config,
 )
 from opal_client.engine.options import OpaServerOptions
-from opal_common.confi import Confi
+from opal_common.confi import Confi, UndefinedValueError, cast_boolean
 from opal_common.fetcher.providers.http_fetch_provider import (
     HttpFetcherConfig,
     HttpMethods,
@@ -31,7 +31,7 @@ from pydantic import BaseModel, Field
 from scalar_fastapi import get_scalar_api_reference
 
 from horizon.authentication import enforce_pdp_token
-from horizon.config import IGNORED_CALLBACK_URLS_SETTING, MOCK_API_KEY, sidecar_config
+from horizon.config import IGNORED_CALLBACK_URLS_SETTING, sidecar_config
 from horizon.connectivity.api import init_connectivity_router
 from horizon.debounce import MAX_DEBOUNCE_SECONDS, DebouncedTrigger, clamp_window, resolve_window
 from horizon.enforcer.api import init_enforcer_api_router, init_enforcer_health_router, stats_manager
@@ -43,7 +43,7 @@ from horizon.facts.router import facts_router
 from horizon.local.api import init_local_cache_api_router
 from horizon.opal_relay_api import OpalRelayAPIClient
 from horizon.proxy.api import router as proxy_router
-from horizon.startup.api_keys import get_env_api_key
+from horizon.startup.api_keys import get_env_api_key, hand_off_env_api_key
 from horizon.startup.exceptions import InvalidPDPTokenError
 from horizon.startup.remote_config import get_remote_config
 from horizon.state import PersistentStateHandler
@@ -164,6 +164,54 @@ def apply_config(overrides_dict: dict, config_object: Confi):
         logger.warning(f"Ignored non-existing config key: {prefixed_key}")
 
 
+DECISION_LOG_ENABLED_KEY = "OPA_DECISION_LOG_ENABLED"
+
+
+def apply_pdp_overrides(overrides_dict: dict) -> None:
+    """Apply the control plane's PDP config overrides to ``sidecar_config``.
+
+    The control plane sends the same ``OPA_DECISION_LOG_ENABLED`` to every PDP. When
+    ``PDP_OPA_DECISION_LOG_ENABLED`` is set to a boolean in this PDP's environment, the local
+    value is kept and that one override is skipped. An empty or non-boolean value is logged as a
+    warning and the control plane's value is used. Which of the two values is used is logged.
+
+    Args:
+        overrides_dict: the ``pdp`` section of the remote config.
+    """
+    overrides = dict(overrides_dict)
+    if DECISION_LOG_ENABLED_KEY in overrides:
+        env_name = sidecar_config._prefix_key(DECISION_LOG_ENABLED_KEY)
+        remote_value = overrides[DECISION_LOG_ENABLED_KEY]
+        local_text = os.environ.get(env_name)
+        if local_text is None:
+            logger.info(
+                "{env_name} is not set for this PDP; using the control plane's value ({remote}).",
+                env_name=env_name,
+                remote=remote_value,
+            )
+        else:
+            try:
+                local_value = cast_boolean(local_text)
+            except UndefinedValueError:
+                logger.warning(
+                    "{env_name} is set to {local!r}, which is not true, false, 1 or 0; "
+                    "using the control plane's value ({remote}).",
+                    env_name=env_name,
+                    local=local_text,
+                    remote=remote_value,
+                )
+            else:
+                del overrides[DECISION_LOG_ENABLED_KEY]
+                logger.info(
+                    "{env_name} is set for this PDP ({local}); "
+                    "using it instead of the control plane's value ({remote}).",
+                    env_name=env_name,
+                    local=local_value,
+                    remote=remote_value,
+                )
+    apply_config(overrides, sidecar_config)
+
+
 # Declared as a ``response_model`` (rather than left as a bare dict) because the trigger routes'
 # customer-facing OpenAPI description tells integrators to branch on ``triggered``: without one,
 # FastAPI publishes an empty 200 schema, so the prose would reference a field the machine-readable
@@ -279,6 +327,9 @@ class PermitPDP:
 
     def __init__(self):
         self._setup_temp_logger()
+        # The front server cannot serve until it has this key: hand it off before the remote config
+        # fetch and before OPA and OPAL start.
+        hand_off_env_api_key()
         PersistentStateHandler.initialize(get_env_api_key())
         # fetch and apply config override from cloud control plane
         try:
@@ -295,13 +346,11 @@ class PermitPDP:
 
         apply_config(remote_config.opal_common or {}, opal_common_config)
         apply_config(remote_config.opal_client or {}, opal_client_config)
-        apply_config(remote_config.pdp or {}, sidecar_config)
+        apply_pdp_overrides(remote_config.pdp or {})
 
         self._log_environment(remote_config.context)
 
-        if sidecar_config.OPA_BEARER_TOKEN_REQUIRED or sidecar_config.OPA_DECISION_LOG_ENABLED:
-            # we need to pass to OPAL a custom inline OPA config to enable these features
-            self._configure_inline_opa_config()
+        self._configure_inline_opa_config()
 
         self._configure_opal_data_updater()
         self._configure_opal_offline_mode()
@@ -331,9 +380,7 @@ class PermitPDP:
         self._configure_cloud_logging(remote_config.context)
 
         self._opal_relay = OpalRelayAPIClient(remote_config.context, self._opal)
-        self._opal.data_updater.callbacks_reporter.set_user_data_handler(  # ty: ignore[unresolved-attribute]  # no data updater: startup fails here
-            PersistentStateHandler.get_instance().reporter_user_data_handler
-        )
+        self._configure_data_update_reports()
 
         # use opal client app and add sidecar routes on top
         app: FastAPI = self._opal.app
@@ -419,15 +466,39 @@ class PermitPDP:
             catch=True,  # if sink throws exceptions, swallow them as not critical
         )
 
-    def _configure_inline_opa_config(self):
+    @staticmethod
+    def _configure_inline_opa_config():
+        """Pass OPAL the inline OPA config that decision logs, plugins and bearer auth need.
+
+        OPA reads decision log (upload or console) and plugin settings only from its config file,
+        so the file is written whenever any of them is on. A different ``config_file`` already in
+        the inline config is replaced, with a warning. With none of them on and no bearer token
+        required, the inline config is left as it is.
+        """
+        config_file_needed = (
+            sidecar_config.OPA_DECISION_LOG_ENABLED
+            or sidecar_config.OPA_DECISION_LOG_CONSOLE
+            or bool(sidecar_config.OPA_PLUGINS)
+        )
+        if not (config_file_needed or sidecar_config.OPA_BEARER_TOKEN_REQUIRED):
+            return
+
         # Start from the existing config
         inline_opa_config = opal_client_config.INLINE_OPA_CONFIG.dict()
 
         logger.debug(f"existing OPAL_INLINE_OPA_CONFIG={inline_opa_config}")
 
-        if sidecar_config.OPA_DECISION_LOG_ENABLED:
-            # decision logs needs to be configured via the config file
+        if config_file_needed:
             config_file_path = get_opa_config_file_path(sidecar_config)
+
+            existing_config_file = inline_opa_config.get("config_file")
+            if existing_config_file and Path(existing_config_file).expanduser() != Path(config_file_path):
+                logger.warning(
+                    "OPAL_INLINE_OPA_CONFIG sets config_file={existing}; OPA uses the PDP's config file "
+                    "{path} instead, which holds its decision log and plugin settings.",
+                    existing=existing_config_file,
+                    path=config_file_path,
+                )
 
             # append the config file to inline OPA config
             inline_opa_config.update({"config_file": config_file_path})
@@ -467,6 +538,20 @@ class PermitPDP:
             wait_strategy="random_exponential",
             attempts=14,
             wait_time=1,
+        )
+
+    def _configure_data_update_reports(self) -> None:
+        """Add the PDP's state to OPAL's data update reports, or say that OPAL's data updater is disabled."""
+        data_updater = self._opal.data_updater
+        if data_updater is None:
+            logger.warning(
+                "OPAL's data updater is disabled (OPAL_DATA_UPDATER_ENABLED=false), so dynamic data updates are "
+                "off: facts writes are forwarded to the control plane without waiting for them to apply on this "
+                "PDP, and /data-updater/trigger and /update_policy_data answer 503."
+            )
+            return
+        data_updater.callbacks_reporter.set_user_data_handler(
+            PersistentStateHandler.get_instance().reporter_user_data_handler
         )
 
     def _configure_opal_offline_mode(self):
@@ -851,11 +936,6 @@ class PermitPDP:
     @property
     def app(self):
         return self._app
-
-    def _verify_config(self):
-        if get_env_api_key() == MOCK_API_KEY:
-            logger.critical("No API key specified. Please specify one with the PDP_API_KEY environment variable.")
-            raise SystemExit(GUNICORN_EXIT_APP)
 
     def _inject_extra_callbacks(self) -> None:
         register = self._opal._callbacks_register

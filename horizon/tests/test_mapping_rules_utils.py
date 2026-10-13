@@ -4,7 +4,7 @@ import pytest
 from pydantic import AnyHttpUrl, parse_obj_as
 
 from horizon.enforcer.schemas import MappingRuleData, UrlTypes
-from horizon.enforcer.utils.mapping_rules_utils import MappingRulesUtils
+from horizon.enforcer.utils.mapping_rules_utils import ConflictingQueryParameterError, MappingRulesUtils
 
 BASE = "https://api.example.com/documents"
 
@@ -66,3 +66,246 @@ def test_a_request_matches_a_rule_whose_query_it_satisfies(rule_query: str, requ
 )
 def test_a_request_does_not_match_a_rule_whose_query_it_lacks(rule_query: str, request_query: str):
     assert not _matches(BASE + rule_query, BASE + request_query)
+
+
+@pytest.mark.parametrize(
+    ("rule_query", "request_query"),
+    [
+        ("?id=1", "?id=1&id=1"),
+        ("?id=1", "?id=%31&id=1"),
+        ("?id={id}", "?id=7&id=7"),
+        ("?id=1", "?id=1&page=2&page=3"),
+        ("", "?id=1&id=2"),
+    ],
+    ids=[
+        "literal-repeated-same-value",
+        "literal-same-value-once-decoded",
+        "attribute-repeated-same-value",
+        "repeated-param-the-rule-does-not-read",
+        "rule-reads-no-query",
+    ],
+)
+def test_a_query_parameter_repeated_with_one_value_matches_as_if_given_once(rule_query: str, request_query: str):
+    assert _matches(BASE + rule_query, BASE + request_query)
+
+
+@pytest.mark.parametrize(
+    ("rule_query", "request_query"),
+    [
+        ("?id=1", "?id=2&id=1"),
+        ("?id=1", "?id=1&id=2"),
+        ("?id=1", "?id=1&id="),
+        ("?id={id}", "?id=1&id=2"),
+        ("?team=a&id=1", "?team=a&id=1&id=2"),
+    ],
+    ids=["last-value-is-the-rules", "first-value-is-the-rules", "other-value-blank", "attribute", "with-other-params"],
+)
+def test_a_rule_reading_a_query_parameter_with_conflicting_values_raises(rule_query: str, request_query: str):
+    """The answer is the same whichever order the values come in: the app behind the URL may read
+    either one, so neither reading decides whether the rule applies."""
+    with pytest.raises(ConflictingQueryParameterError) as raised:
+        _matches(BASE + rule_query, BASE + request_query)
+    assert raised.value.key == "id"
+
+
+@pytest.mark.parametrize(
+    ("rule_query", "request_query"),
+    [
+        ("?id=3", "?id=1&id=2"),
+        ("?team=a&id=1", "?team=b&id=1&id=2"),
+        ("?team=a&id={id}", "?id=1&id=2"),
+    ],
+    ids=["no-value-is-the-rules", "another-param-differs", "another-param-missing"],
+)
+def test_a_rule_no_value_could_satisfy_does_not_match_even_with_conflicting_values(rule_query: str, request_query: str):
+    assert not _matches(BASE + rule_query, BASE + request_query)
+
+
+def _rule(url: str, priority: int | None = None) -> MappingRuleData:
+    return MappingRuleData(url=url, http_method="get", resource="document", action="read", priority=priority)
+
+
+@pytest.mark.parametrize("request_query", ["?admin=true&admin=false", "?admin=false&admin=true"])
+def test_conflicting_values_do_not_fall_through_to_a_rule_that_ignores_the_parameter(request_query: str):
+    """Skipping only the rule on ?admin=true would hand the request to the catch-all rule, whatever
+    value the app goes on to read."""
+    rules = [_rule(BASE + "?admin=true", priority=10), _rule(BASE, priority=1)]
+    url = parse_obj_as(AnyHttpUrl, BASE + request_query)
+
+    with pytest.raises(ConflictingQueryParameterError):
+        MappingRulesUtils.extract_mapping_rule_by_request(rules, "GET", url)
+
+
+TAG_X_RULE = _rule(BASE + "?tag=x")
+ID_RULE = _rule(BASE + "?id={id}")
+TAGGED_REQUEST = BASE + "?id=1&tag=x&tag=y"
+
+
+@pytest.mark.parametrize(
+    ("rules", "expected_rule"),
+    [
+        ([_rule(ID_RULE.url, priority=10), _rule(TAG_X_RULE.url, priority=1)], 0),
+        ([_rule(TAG_X_RULE.url, priority=1), _rule(ID_RULE.url, priority=10)], 1),
+        ([ID_RULE, TAG_X_RULE], 0),
+    ],
+    ids=[
+        "clean-rule-ranks-higher-listed-first",
+        "clean-rule-ranks-higher-listed-last",
+        "equal-priority-clean-listed-first",
+    ],
+)
+def test_a_rule_without_conflicts_that_comes_first_decides_whatever_value_a_lower_rule_reads(
+    rules: list[MappingRuleData], expected_rule: int
+):
+    """tag=x&tag=y could select the tag rule, but the id rule comes first under either reading."""
+    url = parse_obj_as(AnyHttpUrl, TAGGED_REQUEST)
+
+    assert MappingRulesUtils.extract_mapping_rule_by_request(rules, "GET", url) is rules[expected_rule]
+
+
+@pytest.mark.parametrize(
+    "rules",
+    [
+        [_rule(TAG_X_RULE.url, priority=10), _rule(ID_RULE.url, priority=1)],
+        [_rule(ID_RULE.url, priority=1), _rule(TAG_X_RULE.url, priority=10)],
+        [TAG_X_RULE, ID_RULE],
+    ],
+    ids=["conflicting-rule-ranks-higher-listed-first", "conflicting-rule-ranks-higher-listed-last", "equal-priority"],
+)
+def test_a_rule_with_conflicting_values_that_comes_first_raises_over_a_rule_without_conflicts(
+    rules: list[MappingRuleData],
+):
+    """Read as tag=x the tag rule wins, read as tag=y the id rule does: the reading decides."""
+    url = parse_obj_as(AnyHttpUrl, TAGGED_REQUEST)
+
+    with pytest.raises(ConflictingQueryParameterError) as raised:
+        MappingRulesUtils.extract_mapping_rule_by_request(rules, "GET", url)
+    assert raised.value.key == "tag"
+
+
+def test_conflicting_values_matter_only_for_rules_on_the_requested_path():
+    rules = [_rule("https://api.example.com/other?id=1"), _rule(BASE)]
+    url = parse_obj_as(AnyHttpUrl, BASE + "?id=1&id=2")
+
+    assert MappingRulesUtils.extract_mapping_rule_by_request(rules, "GET", url) is rules[1]
+
+
+REGEX_BASE = r"^https://api\.example\.com/documents"
+
+
+@pytest.mark.parametrize(
+    ("rule_regex", "request_query", "key"),
+    [
+        (REGEX_BASE + r"\?id=1", "?id=1&id=2", "id"),
+        (REGEX_BASE + r"\?id=1", "?id=2&id=1", "id"),
+        (REGEX_BASE + r"\?id=(?P<id>\d+)", "?id=1&id=2", "id"),
+        (REGEX_BASE + r".*[?&]admin=true", "?admin=false&admin=true", "admin"),
+        (REGEX_BASE + r".*[?&]admin=true", "?admin=true&page=1&admin=false", "admin"),
+        (REGEX_BASE + r".*[?&]id=(?P<id>\d+)", "?tag=a&tag=b&id=1&id=2", "tag"),
+    ],
+    ids=[
+        "literal-value-first",
+        "literal-value-last",
+        "named-group",
+        "anywhere-value-last",
+        "anywhere-value-first",
+        "names-the-first-repeated-param",
+    ],
+)
+def test_a_regex_rule_whose_answer_depends_on_the_value_read_raises(rule_regex: str, request_query: str, key: str):
+    """A pattern is matched against the raw URL, so the PDP cannot tell which parameters it reads. It
+    tries the readings of an app taking the first and one taking the last value of each repeated
+    parameter, and a difference in the match or in a named group is a conflict."""
+    with pytest.raises(ConflictingQueryParameterError) as raised:
+        _matches(rule_regex, BASE + request_query, UrlTypes.REGEX)
+    assert raised.value.key == key
+
+
+@pytest.mark.parametrize(
+    ("rule_regex", "request_query", "expected"),
+    [
+        (REGEX_BASE, "?tag=a&tag=b", True),
+        (REGEX_BASE + r"\?id=1", "?id=1&id=1", True),
+        (REGEX_BASE + r"\?id=(?P<id>\d+)", "?id=1&tag=a&tag=b", True),
+        (REGEX_BASE + r"\?id=1", "?id=1&id=2&id=1", True),
+        (REGEX_BASE + "$", "?tag=a&tag=b", False),
+        (r"^https://api\.example\.com/other", "?id=1&id=2", False),
+    ],
+    ids=[
+        "catch-all",
+        "repeated-same-value",
+        "repeated-param-the-pattern-does-not-read",
+        "first-and-last-values-agree",
+        "pattern-ends-before-the-query",
+        "another-path",
+    ],
+)
+def test_a_regex_rule_whose_answer_is_the_same_for_every_value_read_matches_as_before(
+    rule_regex: str, request_query: str, *, expected: bool
+):
+    assert _matches(rule_regex, BASE + request_query, UrlTypes.REGEX) is expected
+
+
+@pytest.mark.parametrize(("regex_priority", "conflict"), [(1, False), (20, True)], ids=["ranks-lower", "ranks-higher"])
+def test_a_regex_rule_with_conflicting_values_matters_only_when_it_comes_first(regex_priority: int, *, conflict: bool):
+    rules = [
+        MappingRuleData(
+            url=REGEX_BASE + r".*[?&]tag=x",
+            http_method="get",
+            resource="document",
+            action="tag",
+            url_type=UrlTypes.REGEX,
+            priority=regex_priority,
+        ),
+        _rule(ID_RULE.url, priority=10),
+    ]
+    url = parse_obj_as(AnyHttpUrl, TAGGED_REQUEST)
+
+    if conflict:
+        with pytest.raises(ConflictingQueryParameterError):
+            MappingRulesUtils.extract_mapping_rule_by_request(rules, "GET", url)
+    else:
+        assert MappingRulesUtils.extract_mapping_rule_by_request(rules, "GET", url) is rules[1]
+
+
+@pytest.mark.parametrize(
+    ("rule_url", "request_url", "expected"),
+    [
+        (BASE + "?id={doc_id}", BASE + "?id=7", {"doc_id": "7"}),
+        (BASE + "?id={doc_id}", BASE + "?id=7&id=7", {"doc_id": "7"}),
+        (BASE + "?id={doc_id}", BASE + "?id=7&page=1&page=2", {"doc_id": "7"}),
+        (BASE + "?id=7", BASE + "?id=7&id=8", {}),
+        (BASE, BASE + "?id=7&id=8", {}),
+        (BASE + "?id={doc_id}", BASE, {}),
+    ],
+    ids=[
+        "single",
+        "repeated-same-value",
+        "repeated-param-the-rule-does-not-read",
+        "rule-reads-no-attribute",
+        "rule-without-query",
+        "request-without-query",
+    ],
+)
+def test_query_attributes_come_from_the_parameters_value(rule_url: str, request_url: str, expected: dict):
+    assert MappingRulesUtils.extract_attributes_from_query_params(rule_url, request_url) == expected
+
+
+@pytest.mark.parametrize(
+    ("request_query", "expected"),
+    [("?z=1?id=5&id=7", {"doc_id": "7"}), ("?id=1?id=2", {"doc_id": "1?id=2"})],
+    ids=["question-mark-in-another-value", "question-mark-in-the-value"],
+)
+def test_query_attributes_come_from_the_query_the_rule_matched(request_query: str, expected: dict):
+    """Everything after the first "?" is the query, both for matching a rule and for reading its attributes."""
+    rule_url = BASE + "?id={doc_id}"
+
+    assert _matches(rule_url, BASE + request_query)
+    assert MappingRulesUtils.extract_attributes_from_query_params(rule_url, BASE + request_query) == expected
+
+
+@pytest.mark.parametrize("request_query", ["?id=7&id=8", "?id=8&id=7", "?id=7&id="])
+def test_query_attributes_raise_for_a_parameter_with_conflicting_values(request_query: str):
+    with pytest.raises(ConflictingQueryParameterError) as raised:
+        MappingRulesUtils.extract_attributes_from_query_params(BASE + "?id={doc_id}", BASE + request_query)
+    assert raised.value.key == "id"

@@ -345,10 +345,33 @@ def cast_delete_200_to_204(response: Response) -> Response:
     return response
 
 
+async def forward_request_without_local_update(
+    client: FactsClient,
+    request: FastApiRequest,
+    *,
+    path: str,
+    query_params: dict[str, Any] | None = None,
+) -> Response:
+    """Forward a facts write from a PDP whose OPAL data updater is disabled, and return the backend's response.
+
+    Such a PDP applies no data updates, so it has none to publish or wait for, and X-Wait-timeout and
+    X-Timeout-Policy do not apply. The write goes out without the consistent-update header: that
+    header tells the control plane this PDP publishes the change itself, so the control plane sends
+    no data update for it to any PDP in the environment.
+    """
+    if "X-Wait-timeout" in request.headers:
+        logger.debug(
+            "Ignoring X-Wait-timeout: OPAL's data updater is disabled, so this PDP does not apply facts "
+            "updates and has none to wait for"
+        )
+    response = await client.send_forward_request(request, path, query_params=query_params)
+    return client.convert_response(response)
+
+
 async def forward_request_then_wait_for_update(
     client: FactsClient,
     request: FastApiRequest,
-    update_subscriber: DataUpdateSubscriber,
+    update_subscriber: DataUpdateSubscriber | None,
     wait_timeout: float | None,
     *,
     path: str,
@@ -357,6 +380,9 @@ async def forward_request_then_wait_for_update(
     timeout_policy: TimeoutPolicy = TimeoutPolicy.IGNORE,
     query_params: dict[str, Any] | None = None,
 ) -> Response:
+    if update_subscriber is None:
+        return await forward_request_without_local_update(client, request, path=path, query_params=query_params)
+
     _update_id = update_id or uuid4()
     response = await client.send_forward_request(request, path, query_params=query_params, is_consistent_update=True)
     body = client.extract_body(response)

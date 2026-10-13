@@ -48,6 +48,9 @@ class FactsClient:
         Build an HTTPX request from a FastAPI request to forward to the facts service.
         :param request: FastAPI request
         :param path: Backend facts service path to forward to
+        :param query_params: query parameters to set on the forwarded request. Each replaces every value
+            the request has for the same key; every other request query parameter is forwarded with all
+            of its values, in order.
         :param is_consistent_update: if True, marks the request as a consistent update so the
             backend skips the control-plane delta update (the PDP handles propagation locally).
         :return: HTTPX request
@@ -67,11 +70,15 @@ class FactsClient:
             )
 
         full_path = urljoin(f"/v2/facts/{project_id}/{environment_id}/", path.removeprefix("/"))
-        _query_params = {**request.query_params, **(query_params or {})}
+        overrides = query_params or {}
+        forward_params: list[tuple[str, Any]] = [
+            (key, value) for key, value in request.query_params.multi_items() if key not in overrides
+        ]
+        forward_params.extend(overrides.items())
         return self.client.build_request(
             method=request.method,
             url=full_path,
-            params=_query_params,
+            params=forward_params,
             headers=forward_headers,
             content=request.stream(),
         )

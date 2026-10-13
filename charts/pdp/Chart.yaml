@@ -1,7 +1,7 @@
 apiVersion: v2
 name: pdp
 description: An official Helm chart for Permit.io PDP (Policy Decision Point) with OpenShift support and configurable ports
-version: 0.0.6
+version: 0.0.7
 keywords:
   - policy
   - authorization

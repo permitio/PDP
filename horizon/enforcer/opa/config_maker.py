@@ -31,23 +31,31 @@ def get_opa_config_file_path(
 
     puts the rendered contents in a file and returns the path to that file.
 
-    NOTE: Not all features of the config are implemented - only decision logs for now.
+    NOTE: Not all features of the config are implemented - only decision logs (upload and
+    console) and plugins. The permit_io service and the API key OPA sends to it are written only
+    when decision logs are enabled: uploading them is the service's only use. Console decision
+    logs do not depend on the upload.
     """
     env = get_jinja_environment()
     target_path = sidecar_config.OPA_CONFIG_FILE_PATH
+    decision_logs_enabled = sidecar_config.OPA_DECISION_LOG_ENABLED
     decision_logs_backend_tier = (
         sidecar_config.OPA_DECISION_LOG_INGRESS_BACKEND_TIER_URL or sidecar_config.CONTROL_PLANE
     )
     logger.info(
-        "Uploading decision logs to backend tier: {tier}",
-        tier=decision_logs_backend_tier,
+        "Writing the OPA config file: decision log upload {upload}; console decision logs {console}; "
+        "plugins: {plugins}",
+        upload=f"to {decision_logs_backend_tier}" if decision_logs_enabled else "disabled",
+        console="enabled" if sidecar_config.OPA_DECISION_LOG_CONSOLE else "disabled",
+        plugins=", ".join(sidecar_config.OPA_PLUGINS) or "none",
     )
 
     try:
         template = env.get_template(template_path)
         contents = template.render(
+            decision_logs_enabled=decision_logs_enabled,
             cloud_service_url=decision_logs_backend_tier,
-            bearer_token=get_env_api_key(),
+            bearer_token=get_env_api_key() if decision_logs_enabled else None,
             log_ingress_endpoint=sidecar_config.OPA_DECISION_LOG_INGRESS_ROUTE,
             min_delay_seconds=sidecar_config.OPA_DECISION_LOG_MIN_DELAY,
             max_delay_seconds=sidecar_config.OPA_DECISION_LOG_MAX_DELAY,

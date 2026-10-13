@@ -151,6 +151,14 @@ class SidecarConfig(Confi):
         "ignored with PDP_API_KEY, which is already an environment's key",
     )
 
+    # where to hand the environment API key to the PDP front server
+    API_KEY_HANDOFF_FILE = confi.str(
+        "API_KEY_HANDOFF_FILE",
+        None,
+        description="set internally by the PDP front server; do not set it yourself. When set, the PDP writes "
+        "the environment API key it derived (from PDP_PROJECT_API_KEY or PDP_ORG_API_KEY) to this file at startup",
+    )
+
     # access token to perform system control operations
     CONTAINER_CONTROL_KEY = confi.str("CONTAINER_CONTROL_KEY", MOCK_API_KEY)
 
@@ -245,13 +253,15 @@ class SidecarConfig(Confi):
     OPA_DECISION_LOG_ENABLED = confi.bool(
         "OPA_DECISION_LOG_ENABLED",
         True,
-        description="if true, OPA decision logs will be uploaded to the Permit.io cloud console",
+        description="if true, OPA decision logs will be uploaded to the Permit.io cloud console. "
+        "The control plane also sends this setting; a value set in the PDP's environment takes "
+        "precedence over it",
     )
     OPA_DECISION_LOG_CONSOLE = confi.bool(
         "OPA_DECISION_LOG_CONSOLE",
         False,
-        description="if true, OPA decision logs will also be printed to console "
-        "(only relevant if `OPA_DECISION_LOG_ENABLED` is true)",
+        description="if true, OPA decision logs will be printed to console, "
+        "whether or not `OPA_DECISION_LOG_ENABLED` uploads them",
     )
     OPA_DECISION_LOG_INGRESS_ROUTE = confi.str(
         "OPA_DECISION_LOG_INGRESS_ROUTE",

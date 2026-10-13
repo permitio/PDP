@@ -1,12 +1,26 @@
 # TODO: change to use re2 in the future, currently not supported in alpine due to c++ library issues
 # import re2 as re  # use re2 instead of re for regex matching because it's simiplier and safer for user inputted regexes  # noqa: ERA001,E501
 import re
+from urllib.parse import parse_qsl
 
 from loguru import logger
 from pydantic import AnyHttpUrl
 from starlette.datastructures import QueryParams
 
 from horizon.enforcer.schemas import MappingRuleData, UrlTypes
+
+
+class ConflictingQueryParameterError(ValueError):
+    """A query parameter a mapping rule reads has more than one distinct value in the requested URL.
+
+    Which value the protected app reads for such a parameter is up to the app, so the PDP cannot
+    tell which rule applies or which attribute value to check. For a regex rule, the parameter is one
+    whose value can change whether the rule matches or what its named groups capture.
+    """
+
+    def __init__(self, key: str):
+        super().__init__(f"Query parameter '{key}' has more than one distinct value in the requested URL")
+        self.key = key
 
 
 class MappingRulesUtils:
@@ -40,20 +54,32 @@ class MappingRulesUtils:
 
     @staticmethod
     def _compare_query_params(mapping_rule_query_string: str, request_url_query_string: str) -> bool:
+        """Whether the request's query satisfies every parameter of the mapping rule's query.
+
+        A parameter repeated with one value counts as given once.
+
+        Raises:
+            ConflictingQueryParameterError: the request could satisfy the rule, but a parameter the
+                rule reads has more than one distinct value, so whether it does depends on the value read.
+        """
         mapping_rule_query_params = QueryParams(mapping_rule_query_string)
         request_query_params = QueryParams(request_url_query_string)
+        conflicting_key = None
 
         for key in mapping_rule_query_params:
-            if key not in request_query_params:
+            request_values = set(request_query_params.getlist(key))
+            if not request_values:
                 return False
 
-            if mapping_rule_query_params[key].startswith("{") and mapping_rule_query_params[key].endswith("}"):
-                # if the value is an attribute
-                # we just need to make sure the attribute is in the request query params
-                continue
-            if mapping_rule_query_params[key] != request_query_params[key]:
-                # if the value is not an attribute, verify that the values are the same
+            rule_value = mapping_rule_query_params[key]
+            is_attribute = rule_value.startswith("{") and rule_value.endswith("}")
+            if not is_attribute and rule_value not in request_values:
                 return False
+            if len(request_values) > 1:
+                conflicting_key = key
+
+        if conflicting_key is not None:
+            raise ConflictingQueryParameterError(conflicting_key)
         return True
 
     @staticmethod
@@ -70,20 +96,37 @@ class MappingRulesUtils:
 
     @staticmethod
     def extract_attributes_from_query_params(rule_url: str, request_url: str) -> dict:
+        """The attributes a mapping rule's query reads from the request URL, e.g. ``{"id": "7"}`` for
+        a rule with ``?id={id}`` and a request with ``?id=7``.
+
+        Raises:
+            ConflictingQueryParameterError: a parameter the rule reads an attribute from has more than
+                one distinct value in the request URL.
+        """
         if "?" not in rule_url or "?" not in request_url:
             return {}
-        rule_query_params = QueryParams(rule_url.split("?")[1])
-        request_query_params = QueryParams(request_url.split("?")[1])
+        rule_query_params = QueryParams(rule_url.split("?", 1)[1])
+        request_query_params = QueryParams(request_url.split("?", 1)[1])
         attributes = {}
         for key in rule_query_params:
             if rule_query_params[key].startswith("{") and rule_query_params[key].endswith("}"):
+                if len(set(request_query_params.getlist(key))) > 1:
+                    raise ConflictingQueryParameterError(key)
                 attributes[rule_query_params[key][1:-1]] = request_query_params[key]
         return attributes
 
     @classmethod
     def _compare_urls(cls, mapping_rule_url: str, request_url: str, *, is_regex: bool = False) -> bool:
-        """
-        Compare a mapping rule URL against a request URL.
+        """Whether the request URL matches the mapping rule URL.
+
+        A regex rule is matched against the raw URL, so which query parameters it reads is unknown. When
+        a parameter has more than one distinct value, the rule is also matched against the URL as an app
+        reading the first value and as one reading the last value of each such parameter.
+
+        Raises:
+            ConflictingQueryParameterError: the rule could match, but whether it does, or what it reads,
+                depends on which value of a repeated query parameter is read. For a regex rule the error
+                names the first parameter with more than one distinct value.
         """
         # If the mapping rule is a regex pattern
         if is_regex:
@@ -92,11 +135,56 @@ class MappingRulesUtils:
             except re.error as e:
                 logger.warning("regex pattern compilation failed", pattern=mapping_rule_url, error=str(e))
                 return False
-            match_result = bool(pattern.match(request_url))
-            logger.debug("regex url comparison", pattern=mapping_rule_url, url=request_url, matched=match_result)
-            return match_result
+            groups = cls._regex_match_groups(pattern, request_url)
+            logger.debug("regex url comparison", pattern=mapping_rule_url, url=request_url, matched=groups is not None)
+            readings = cls._first_and_last_value_readings(request_url)
+            if readings is not None:
+                key, reading_urls = readings
+                if any(cls._regex_match_groups(pattern, reading_url) != groups for reading_url in reading_urls):
+                    raise ConflictingQueryParameterError(key)
+            return groups is not None
 
         return cls._compare_httpurls(mapping_rule_url, request_url)
+
+    @staticmethod
+    def _regex_match_groups(pattern: re.Pattern[str], url: str) -> dict[str, str | None] | None:
+        """The named groups of the pattern's match at the start of the URL, or None if it does not match."""
+        match = pattern.match(url)
+        return match.groupdict() if match else None
+
+    @staticmethod
+    def _first_and_last_value_readings(request_url: str) -> tuple[str, tuple[str, str]] | None:
+        """The request URL as an app reading the first, and as one reading the last, value of each query
+        parameter that has more than one distinct value.
+
+        Each reading drops the occurrences of such a parameter that carry another value and keeps the
+        rest of the URL as it was, so a pattern sees the same characters as in the original.
+
+        Returns:
+            The first parameter with more than one distinct value and the two readings, or None if no
+            parameter has more than one distinct value.
+        """
+        path, separator, query = request_url.partition("?")
+        if not separator:
+            return None
+        segments = [(segment, parse_qsl(segment, keep_blank_values=True)) for segment in query.split("&")]
+        values_by_key: dict[str, list[str]] = {}
+        for _, pairs in segments:
+            for key, value in pairs:
+                values_by_key.setdefault(key, []).append(value)
+        kept_values = {key: (values[0], values[-1]) for key, values in values_by_key.items() if len(set(values)) > 1}
+        if not kept_values:
+            return None
+
+        def reading(position: int) -> str:
+            kept_segments = [
+                segment
+                for segment, pairs in segments
+                if all(key not in kept_values or value == kept_values[key][position] for key, value in pairs)
+            ]
+            return f"{path}?{'&'.join(kept_segments)}"
+
+        return next(iter(kept_values)), (reading(0), reading(1))
 
     @classmethod
     def extract_mapping_rule_by_request(
@@ -105,7 +193,18 @@ class MappingRulesUtils:
         http_method: str,
         url: AnyHttpUrl,
     ) -> MappingRuleData | None:
-        matched_mapping_rules = []
+        """The highest-priority mapping rule for the request's method and URL, or None if none matches.
+
+        Rules of equal priority keep their order in ``mapping_rules``.
+
+        Raises:
+            ConflictingQueryParameterError: the rule that would come first could match, but a query
+                parameter it reads has more than one distinct value. The request then gets no rule at
+                all, rather than a lower-priority one that skips the parameter. A conflict in a rule
+                that a matching rule outranks does not matter: that rule comes first whatever value
+                is read.
+        """
+        candidates: list[tuple[MappingRuleData, ConflictingQueryParameterError | None]] = []
         http_method = http_method.lower()  # Convert once instead of in each iteration
 
         for mapping_rule in mapping_rules:
@@ -126,14 +225,19 @@ class MappingRulesUtils:
                 # if the method is not the same, we don't need to check the url
                 continue
 
-            if not cls._compare_urls(mapping_rule.url, url, is_regex=is_regex):
-                continue
+            try:
+                if not cls._compare_urls(mapping_rule.url, url, is_regex=is_regex):
+                    continue
+            except ConflictingQueryParameterError as conflict:
+                candidates.append((mapping_rule, conflict))
+            else:
+                candidates.append((mapping_rule, None))
 
-            matched_mapping_rules.append(mapping_rule)
-
-        # most priority first
-        matched_mapping_rules.sort(key=lambda rule: rule.priority or 0, reverse=True)
-        if len(matched_mapping_rules) > 0:
-            return matched_mapping_rules[0]
-
-        return None
+        if not candidates:
+            return None
+        # most priority first; the sort is stable, so equal priorities keep the rules' order
+        candidates.sort(key=lambda candidate: candidate[0].priority or 0, reverse=True)
+        first_rule, conflict = candidates[0]
+        if conflict is not None:
+            raise conflict
+        return first_rule

@@ -1,5 +1,5 @@
 from collections.abc import Iterator
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -14,13 +14,13 @@ if TYPE_CHECKING:
     from loguru import Record
 
 
-def _make_request(headers: dict[str, str] | None = None) -> FastApiRequest:
+def _make_request(headers: dict[str, str] | None = None, query_string: bytes = b"") -> FastApiRequest:
     scope = {
         "type": "http",
         "method": "POST",
         "path": "/facts/users",
         "raw_path": b"/facts/users",
-        "query_string": b"",
+        "query_string": query_string,
         "headers": [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()],
     }
 
@@ -88,6 +88,80 @@ async def test_send_forward_request_propagates_consistent_update_kwarg():
         assert mock_send.call_args is not None
         sent_request = mock_send.call_args.args[0]
         assert sent_request.headers.get("X-Permit-Consistent-Update") == "true"
+
+
+@pytest.fixture
+def facts_environment() -> Iterator[None]:
+    """The remote config and API key build_forward_request reads, as the PDP has them once started."""
+    remote_config = MagicMock()
+    remote_config.context = {"project_id": "proj1", "env_id": "env1"}
+    with (
+        patch("horizon.facts.client.get_remote_config", return_value=remote_config),
+        patch("horizon.facts.client.get_env_api_key", return_value="test_api_key"),
+    ):
+        yield
+
+
+def _values_by_key(items: list[tuple[str, str]]) -> dict[str, list[str]]:
+    values: dict[str, list[str]] = {}
+    for key, value in items:
+        values.setdefault(key, []).append(value)
+    return values
+
+
+async def _forwarded_query(query_string: bytes, query_params: dict[str, Any] | None = None) -> dict[str, list[str]]:
+    """Each query parameter of the request the PDP forwards for one with ``query_string``, with its decoded
+    values in order."""
+    request = _make_request(query_string=query_string)
+    forward_request = await FactsClient().build_forward_request(request, "/role_assignments", query_params=query_params)
+    return _values_by_key(forward_request.url.params.multi_items())
+
+
+@pytest.mark.usefixtures("facts_environment")
+@pytest.mark.parametrize(
+    "query_string",
+    [
+        b"",
+        b"user=u1",
+        b"user=u1&user=u2",
+        b"user=u2&role=r1&user=u1&tenant=t1&role=r2&search=b&tenant=t2&search=a",
+        b"user=u1&user=u1",
+        b"search=a%20b&search=c%26d&search=e%3Df&search=&search=%C3%A9",
+    ],
+    ids=["none", "single", "repeated", "interleaved-unsorted", "repeated-same-value", "encoded-values"],
+)
+@pytest.mark.asyncio
+async def test_build_forward_request_forwards_every_query_parameter_value_in_order(query_string: bytes):
+    incoming = _make_request(query_string=query_string).query_params.multi_items()
+
+    assert await _forwarded_query(query_string) == _values_by_key(incoming)
+
+
+@pytest.mark.usefixtures("facts_environment")
+@pytest.mark.asyncio
+async def test_build_forward_request_keeps_each_repeated_value_and_its_order():
+    """The generic test above compares against the request's own parsing; pin the decoded values once."""
+    forwarded = await _forwarded_query(b"user=u2&role=r1&user=u1&search=c%26d&search=&search=%C3%A9")
+
+    assert forwarded == {"user": ["u2", "u1"], "role": ["r1"], "search": ["c&d", "", "\u00e9"]}
+
+
+@pytest.mark.usefixtures("facts_environment")
+@pytest.mark.parametrize(
+    ("query_string", "expected"),
+    [
+        (b"", {"return_deleted": ["true"]}),
+        (b"user=u1&user=u2", {"user": ["u1", "u2"], "return_deleted": ["true"]}),
+        (b"return_deleted=false&user=u1&return_deleted=0&user=u2", {"user": ["u1", "u2"], "return_deleted": ["true"]}),
+    ],
+    ids=["no-request-params", "request-without-the-key", "request-sets-the-key-twice"],
+)
+@pytest.mark.asyncio
+async def test_build_forward_request_query_params_replace_every_request_value_for_their_key(
+    query_string: bytes, expected: dict[str, list[str]]
+):
+    """The router's return_deleted=True must win over whatever the caller sent for return_deleted."""
+    assert await _forwarded_query(query_string, query_params={"return_deleted": True}) == expected
 
 
 @pytest.fixture

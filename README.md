@@ -55,6 +55,9 @@ PDP_CONTROL_PLANE=https://api.permit.io PDP_API_KEY=<YOUR_API_KEY> uv run uvicor
 ```
 
 ## Building a Custom PDP Docker image
+The build compiles Permit's OPA build from the private `permitio/permit-opa` repository, which
+`build_opal_bundle.sh` clones over SSH into `../permit-opa`.
+
 For ARM architecture:
 ```
 VERSION=<TAG> make build-arm64
@@ -63,6 +66,16 @@ For AMD64 architecture:
 ```
 VERSION=<TAG> make build-amd64
 ```
+
+### Building without access to permit-opa
+`PDP_VANILLA=true` builds the image with upstream OPA instead (`OPA_BUILD=vanilla`), for
+development without access to `permitio/permit-opa`. It works with every build target:
+```
+PDP_VANILLA=true VERSION=<TAG> make build
+```
+Permit-generated policies call builtins that exist only in Permit's OPA build, so an image built
+this way cannot evaluate them. To evaluate Permit policies, use the published `permitio/pdp-v2`
+image.
 
 ### Running the image in development mode
 ```

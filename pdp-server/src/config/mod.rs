@@ -1,3 +1,4 @@
+use crate::api_key::ApiKeySource;
 pub(crate) use crate::config::cache::{CacheConfig, CacheStore};
 use crate::config::horizon::HorizonConfig;
 use crate::config::opa::OpaConfig;
@@ -11,9 +12,10 @@ pub mod trino_authz;
 /// Main configuration structure for the PDP server
 #[derive(Debug, Config, Clone, Default)]
 pub struct PDPConfig {
-    /// API Key for authentication - mandatory for all API calls
+    /// API Key for authentication - mandatory for all API calls. Unset, empty or the image's
+    /// placeholder means the PDP takes the key horizon derives in project and org key modes.
     #[config(env = "PDP_API_KEY", default = "")]
-    pub api_key: String,
+    pub api_key: ApiKeySource,
 
     /// Debug mode (injects debug attributes to OPA requests)
     #[config(env = "PDP_DEBUG")]
@@ -77,7 +79,7 @@ impl PDPConfig {
         let mut config = Self::builder().env().load().unwrap_or_else(|_| {
             // Create a minimal config if loading fails
             Self {
-                api_key: "test_api_key".to_string(),
+                api_key: ApiKeySource::from_env_value("test_api_key").unwrap(),
                 debug: Some(true),
                 host: "0.0.0.0".to_string(),
                 port: 0,
@@ -121,8 +123,8 @@ impl PDPConfig {
             }
         });
 
-        if config.api_key.is_empty() {
-            config.api_key = "default-test-api-key".to_string();
+        if config.api_key == ApiKeySource::Horizon {
+            config.api_key = ApiKeySource::from_env_value("default-test-api-key").unwrap();
         }
 
         // Override with mock server addresses
@@ -141,6 +143,10 @@ mod tests {
         net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
         sync::Mutex,
     };
+
+    fn env_key(value: &str) -> ApiKeySource {
+        ApiKeySource::Env(crate::api_key::ApiKey::new(value).unwrap())
+    }
 
     // This mutex ensures tests don't interfere with each other's environment variables
     static ENV_MUTEX: Mutex<()> = Mutex::new(());
@@ -220,7 +226,7 @@ mod tests {
                 assert_eq!(config.cache.memory.capacity, 128);
                 assert_eq!(config.cache.redis.url, "");
                 assert!(!config.allow_unauthenticated_trino);
-                assert_eq!(config.api_key, "test-api-key");
+                assert_eq!(config.api_key, env_key("test-api-key"));
             },
         );
     }
@@ -301,7 +307,7 @@ mod tests {
                 let config = PDPConfig::new().unwrap();
 
                 // Test top level config
-                assert_eq!(config.api_key, "env-test-api-key");
+                assert_eq!(config.api_key, env_key("env-test-api-key"));
                 assert_eq!(config.host, "::1");
                 assert_eq!(config.port, 7777);
                 assert_eq!(config.debug, Some(true));
@@ -373,6 +379,32 @@ mod tests {
     }
 
     #[test]
+    fn test_api_key_without_a_key_means_horizon_hands_it_over() {
+        for env in [
+            vec![],
+            vec![("PDP_API_KEY", "")],
+            vec![("PDP_API_KEY", "MUST BE DEFINED")],
+        ] {
+            with_env_vars(&env, || {
+                let config = PDPConfig::new().unwrap();
+                assert_eq!(config.api_key, ApiKeySource::Horizon, "{env:?}");
+            });
+        }
+    }
+
+    #[test]
+    fn test_api_key_unfit_for_a_header_is_a_configuration_error() {
+        with_env_vars(&[("PDP_API_KEY", "permit_key\u{7f}")], || {
+            let error = PDPConfig::new().unwrap_err();
+            assert!(
+                error.contains("cannot be sent in an HTTP header"),
+                "{error}"
+            );
+            assert!(!error.contains("permit_key"), "{error}");
+        });
+    }
+
+    #[test]
     fn test_confique_template_generation() {
         // Test that we can generate configuration templates
         // This is a new feature we get from confique
@@ -413,7 +445,7 @@ mod tests {
                     .load()
                     .expect("Failed to load config");
 
-                assert_eq!(config.api_key, "builder-test-key");
+                assert_eq!(config.api_key, env_key("builder-test-key"));
                 assert_eq!(config.host, "0.0.0.0");
                 assert_eq!(config.port, 8080);
                 assert_eq!(config.cache.ttl, 3600); // Default value

@@ -1,3 +1,4 @@
+{{- include "pdp.validateApiKeySource" . }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -50,11 +51,13 @@ spec:
               containerPort: {{ .targetPort }}
             {{- end }}
           env:
+            {{- if not .Values.pdp.userProvidedSecret }}
             - name: PDP_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ include "pdp.secretName" . }}
                   key: {{ include "pdp.secretKey" . }}
+            {{- end }}
             {{- if .Values.pdp.pdpEnvs }}
             {{- range .Values.pdp.pdpEnvs }}
             - name: {{ .name }}
@@ -154,4 +157,16 @@ spec:
           emptyDir: {}
         - name: opa-volume
           emptyDir: {}
+      {{- end }}
+      {{- with .Values.pdp.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.pdp.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.pdp.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
       {{- end }}

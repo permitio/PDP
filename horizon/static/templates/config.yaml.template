@@ -1,22 +1,26 @@
+{% if decision_logs_enabled %}
 services:
   permit_io:
     url: {{ cloud_service_url }}
-    {% if bearer_token is defined %}
     credentials:
       bearer:
         token: "{{ bearer_token }}"
-    {% endif %}
+{% endif %}
 
+{% if decision_logs_enabled or log_to_console %}
 decision_logs:
   {% if log_to_console %}
   console: true
   {% endif %}
+  {% if decision_logs_enabled %}
   service: permit_io
   resource: {{ log_ingress_endpoint }}
   reporting:
     min_delay_seconds: {{ min_delay_seconds }}
     max_delay_seconds: {{ max_delay_seconds }}
     upload_size_limit_bytes: {{ upload_size_limit_bytes }}
+  {% endif %}
+{% endif %}
 
 {% if plugins %}
 plugins:

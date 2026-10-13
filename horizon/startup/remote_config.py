@@ -108,7 +108,7 @@ class RemoteConfigFetcher:
                 config_context = sidecar_config.dict(include={"context"}).get("context", {})
                 logger.info(f"Received remote config with the following context: {config_context}")
             except ValidationError as exc:
-                logger.error("Got invalid config contents: {exc}", exc=exc, response=response)
+                logger.error("Got invalid config contents: {exc}", exc=exc)
                 raise
         except requests.RequestException as exc:
             logger.error("Got exception: {exc}", exc=exc)
