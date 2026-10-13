@@ -127,6 +127,7 @@ pub async fn search_resource_handler(
     // OPA lists permissions as `<resource type>:<action>`. A tenant-level role lists its
     // permissions on every resource type in the tenant.
     let tenant_required_permission = format!("{resource_type}:{action}");
+    let mut unparsable_entries = 0_usize;
     for (opa_key, perm) in permissions {
         // OPA applies the tenant filter to role grants, not to ABAC grants.
         if let Some(tenant) = &tenant {
@@ -157,10 +158,7 @@ pub async fn search_resource_handler(
             ),
             None => {
                 let Some((entry_type, entry_key)) = opa_key.split_once(':') else {
-                    log::warn!(
-                        "Ignoring user_permissions entry {opa_key:?} from OPA: it has no \
-                         resource and its key is not <resource type>:<resource key>"
-                    );
+                    unparsable_entries += 1;
                     continue;
                 };
                 (
@@ -182,15 +180,24 @@ pub async fn search_resource_handler(
                 properties: non_empty(attributes),
             });
     }
+    // Counted rather than listed: values from OPA's response are not written to the log.
+    if unparsable_entries > 0 {
+        log::warn!(
+            "Ignoring {unparsable_entries} user_permissions entr(ies) from OPA that have no \
+             resource and a key that is not <resource type>:<resource key>"
+        );
+    }
 
     if !granting_tenants.is_empty() {
         let instances =
             match query_resource_instances(&state, &resource_type, &granting_tenants).await {
                 Ok(instances) => instances,
                 Err(err) => {
+                    // AuthZenError::from logs the error itself.
                     log::error!(
-                        "Failed to list {resource_type} instances in tenants {granting_tenants:?} \
-                         for an AuthZen resource search: {err:?}"
+                        "Failed to list {resource_type} instances in {} tenant(s) for an \
+                         AuthZen resource search",
+                        granting_tenants.len()
                     );
                     return AuthZenError::from(err).into_response();
                 }

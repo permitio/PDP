@@ -66,9 +66,9 @@ async fn resource_tenant(
     query_resource_instance_tenant(state, &resource.r#type, resource_key)
         .await
         .map_err(|err| {
+            // AuthZenError::from logs the error itself.
             log::error!(
-                "Failed to look up the tenant of {}:{resource_key} for an AuthZen action \
-                 search: {err:?}",
+                "Failed to look up the tenant of {}:{resource_key} for an AuthZen action search",
                 resource.r#type
             );
             AuthZenError::from(err)
@@ -133,6 +133,7 @@ pub async fn search_action_handler(
     // OPA lists permissions as `<resource type>:<action>`. The results are the actions on the
     // requested resource type.
     let mut action_names = Vec::new();
+    let mut untyped_permissions = 0_usize;
     for result in permissions_map.values() {
         // OPA applies the tenant filter to role grants, not to ABAC grants.
         if let Some(tenant) = &tenant {
@@ -146,16 +147,20 @@ pub async fn search_action_handler(
         }
         for permission in &result.permissions {
             let Some((permission_type, action_name)) = permission.split_once(':') else {
-                log::warn!(
-                    "Ignoring permission {permission:?} from OPA user_permissions: \
-                     expected <resource type>:<action>"
-                );
+                untyped_permissions += 1;
                 continue;
             };
             if permission_type == resource_type {
                 action_names.push(action_name.to_string());
             }
         }
+    }
+    // Counted rather than listed: values from OPA's response are not written to the log.
+    if untyped_permissions > 0 {
+        log::warn!(
+            "Ignoring {untyped_permissions} permission(s) from OPA user_permissions that are \
+             not <resource type>:<action>"
+        );
     }
     action_names.sort();
     action_names.dedup();
