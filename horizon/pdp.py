@@ -52,6 +52,12 @@ from horizon.system.consts import GUNICORN_EXIT_APP
 
 OPA_LOGGER_MODULE = "opal_client.opa.logger"
 
+# The control plane registers this default data-update callback. Calling it has OPA rebuild the
+# ReBAC cache that the permit_rebac builtins read. The permit_graph OPA plugin keeps that cache
+# current by itself; without the plugin, this callback is the only thing that fills it.
+REBAC_CACHE_REBUILD_CALLBACK_URL = "http://localhost:8181/v1/data/permit/rebac/cache_rebuild"
+PERMIT_GRAPH_PLUGIN = "permit_graph"
+
 # The range nice(2) accepts on Linux.
 MIN_NICENESS = -20
 MAX_NICENESS = 19
@@ -956,14 +962,31 @@ class PermitPDP:
             register.put(entry.url, entry.config, entry.key)
 
     def _remove_ignored_default_callbacks_urls(self) -> None:
+        """Drop the registered data-update callbacks whose URL is in IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS.
+
+        The ReBAC cache rebuild callback is kept while OPA_PLUGINS does not load permit_graph:
+        without that plugin nothing else fills OPA's ReBAC cache, and every ReBAC check is denied.
+        """
         ignored_urls = sidecar_config.IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS
         if not ignored_urls:
             return
         register = self._opal._callbacks_register
         # a list, because the loop removes entries from the register it would otherwise iterate
         callbacks = list(register.all())
-        for callback in callbacks:
-            if callback.url in ignored_urls:
-                logger.info(f"Removing callback '{callback.url}' from the register")
-                register.remove(callback.key)  # ty: ignore[invalid-argument-type]  # all() builds each entry from its key
+        dropped = [callback for callback in callbacks if callback.url in ignored_urls]
+        if PERMIT_GRAPH_PLUGIN not in sidecar_config.OPA_PLUGINS and any(
+            callback.url == REBAC_CACHE_REBUILD_CALLBACK_URL for callback in dropped
+        ):
+            logger.info(
+                "Keeping the data-update callback {url!r} although {setting} lists it: {plugin} is not in "
+                "PDP_OPA_PLUGINS, so this callback is what fills OPA's ReBAC cache, and without it every "
+                "ReBAC check is denied.",
+                url=REBAC_CACHE_REBUILD_CALLBACK_URL,
+                setting=IGNORED_CALLBACK_URLS_SETTING,
+                plugin=PERMIT_GRAPH_PLUGIN,
+            )
+            dropped = [callback for callback in dropped if callback.url != REBAC_CACHE_REBUILD_CALLBACK_URL]
+        for callback in dropped:
+            logger.info(f"Removing callback '{callback.url}' from the register")
+            register.remove(callback.key)  # ty: ignore[invalid-argument-type]  # all() builds each entry from its key
         _report_unmatched_ignored_callback_urls(ignored_urls, [callback.url for callback in callbacks])

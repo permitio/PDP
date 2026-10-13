@@ -301,7 +301,9 @@ class SidecarConfig(Confi):
         description="List of plugins to be loaded into OPA, "
         "the key is the plugin name, the value is the plugin config. "
         "notice that the plugin MUST be registered in OPA for it to work, "
-        "if it is not registered, OPA will fail to start",
+        "if it is not registered, OPA will fail to start. "
+        "Without permit_graph, the PDP keeps the ReBAC cache_rebuild data-update callback even if "
+        "IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS lists it, since that callback then fills OPA's ReBAC cache",
         cast=parse_plugins,
         cast_from_json=parse_plugins,
     )
@@ -430,7 +432,8 @@ class SidecarConfig(Confi):
         [],
         description=(
             "Callback URLs to drop from the defaults, even if the control plane registers them: a JSON list, "
-            "or URLs separated by commas. Each URL must equal a registered callback URL exactly. Empty drops none."
+            "or URLs separated by commas. Each URL must equal a registered callback URL exactly. Empty drops none. "
+            "The ReBAC cache_rebuild callback is kept while OPA_PLUGINS does not load permit_graph."
         ),
         cast=parse_url_list,
         cast_from_json=parse_url_list,

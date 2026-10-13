@@ -4,6 +4,9 @@ The PDP drops a default data-update callback whose URL is IN this setting. Read 
 was a substring test, so a callback whose URL merely appears inside the JSON text was dropped too.
 Plain text that worked as a raw string still works: an empty value, a bare URL, URLs separated by
 commas or spaces.
+
+One exception: while PDP_OPA_PLUGINS does not load permit_graph, the ReBAC cache_rebuild callback
+is kept, because nothing else fills OPA's ReBAC cache then (PER-17242).
 """
 
 import json
@@ -24,6 +27,11 @@ from horizon.pdp import PermitPDP, apply_config
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SETTING = "IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS"
 CACHE_REBUILD = "http://localhost:8181/v1/data/permit/rebac/cache_rebuild"
+OTHER_IGNORED = "http://localhost:8181/v1/data/other/callback"
+NOT_IGNORED = "http://opal/data/callback_report"
+GRAPH = {"permit_graph": {}}
+ENVOY = {"envoy_ext_authz_grpc": {"addr": ":9191", "path": "permit/root"}}
+KEPT_MESSAGE = f"Keeping the data-update callback {CACHE_REBUILD!r} although PDP_{SETTING} lists it"
 
 
 def _shipped_value() -> str:
@@ -169,9 +177,15 @@ def test_a_malformed_control_plane_override_keeps_the_current_value_and_says_why
     assert f"PDP_{SETTING} from the control-plane overrides; keeping its current value" in warning
 
 
-def _remove_ignored(monkeypatch, ignored: list[str], registered: list[str]) -> list[str]:
-    """Run the PDP's removal step over a real callbacks register; return the URLs left."""
+def _remove_ignored(
+    monkeypatch, ignored: list[str], registered: list[str], *, plugins: dict[str, dict] = GRAPH
+) -> list[str]:
+    """Run the PDP's removal step over a real callbacks register; return the URLs left.
+
+    ``plugins`` is PDP_OPA_PLUGINS; the default is the permit image's.
+    """
     monkeypatch.setattr(sidecar_config, SETTING, ignored)
+    monkeypatch.setattr(sidecar_config, "OPA_PLUGINS", plugins)
     register = CallbacksRegister()
     for url in registered:
         register.put(url)
@@ -216,3 +230,42 @@ def test_an_unrelated_url_is_only_noted_at_info(monkeypatch, logged):
     assert len(info) == 1
     assert info[0].startswith("INFO|")
     assert CACHE_REBUILD in info[0]
+
+
+@pytest.mark.parametrize(
+    ("plugins", "cache_rebuild_kept"),
+    [
+        pytest.param({}, True, id="no-plugins"),
+        pytest.param(ENVOY, True, id="envoy-only"),
+        pytest.param(GRAPH, False, id="graph"),
+        pytest.param(GRAPH | ENVOY, False, id="graph-and-envoy"),
+    ],
+)
+def test_the_rebac_cache_rebuild_callback_is_dropped_only_while_permit_graph_is_loaded(
+    monkeypatch, logged, plugins: dict[str, dict], *, cache_rebuild_kept: bool
+):
+    remaining = _remove_ignored(
+        monkeypatch, [CACHE_REBUILD, OTHER_IGNORED], [CACHE_REBUILD, OTHER_IGNORED, NOT_IGNORED], plugins=plugins
+    )
+
+    # The other ignored URL goes either way: the exception covers only the ReBAC cache rebuild.
+    assert remaining == sorted([NOT_IGNORED, *([CACHE_REBUILD] if cache_rebuild_kept else [])])
+    assert len([line for line in logged if KEPT_MESSAGE in line]) == (1 if cache_rebuild_kept else 0)
+
+
+def test_keeping_the_rebac_cache_rebuild_callback_is_logged_once_at_info_with_the_reason(monkeypatch, logged):
+    _remove_ignored(monkeypatch, [CACHE_REBUILD], [CACHE_REBUILD], plugins={})
+
+    kept = [line for line in logged if KEPT_MESSAGE in line]
+    assert len(kept) == 1
+    assert kept[0].startswith("INFO|")
+    assert "permit_graph is not in PDP_OPA_PLUGINS" in kept[0]
+    assert "every ReBAC check is denied" in kept[0]
+    assert not [line for line in logged if line.startswith("WARNING|")]
+
+
+def test_nothing_is_logged_as_kept_when_the_rebac_callback_is_not_ignored(monkeypatch, logged):
+    remaining = _remove_ignored(monkeypatch, [OTHER_IGNORED], [CACHE_REBUILD, OTHER_IGNORED], plugins={})
+
+    assert remaining == [CACHE_REBUILD]
+    assert not [line for line in logged if KEPT_MESSAGE in line]
