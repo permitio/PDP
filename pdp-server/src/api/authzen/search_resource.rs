@@ -1,4 +1,4 @@
-use crate::api::authzen::common::{tenant_filter, PageRequest, PageResponse};
+use crate::api::authzen::common::{tenant_property, PageRequest, PageResponse, TENANT_TYPE};
 use crate::api::authzen::errors::AuthZenError;
 use crate::api::authzen::schema::{AuthZenAction, AuthZenResource, AuthZenSubject};
 use crate::opa_client::resource_instances::query_resource_instances;
@@ -51,20 +51,15 @@ pub struct ResourceSearchResponse {
     pub context: Option<HashMap<String, serde_json::Value>>,
 }
 
-/// The resource type of tenant-level roles in OPA's user_permissions. Their entries are keyed
-/// `__tenant:<tenant key>` and have no `resource`.
-const TENANT_TYPE: &str = "__tenant";
-
 impl TryFrom<ResourceSearchRequest> for UserPermissionsQuery {
     type Error = AuthZenError;
 
     fn try_from(req: ResourceSearchRequest) -> Result<Self, Self::Error> {
-        let tenants = tenant_filter(&req.resource)?;
+        let tenant = tenant_property(&req.resource)?;
         Ok(UserPermissionsQuery {
             user: req.subject.into(),
-            tenants,
+            tenants: tenant.map(|tenant| vec![tenant]),
             resources: None,
-            // OPA returns tenant-level roles only when `__tenant` is one of the types.
             resource_types: Some(vec![req.resource.r#type, TENANT_TYPE.to_string()]),
             context: req.context,
         })
