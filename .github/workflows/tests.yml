@@ -171,7 +171,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           repository: permitio/permit-opa
-          ref: 2f411da9b486226a0bfe4c1e39344eaa885553a1  # permit-opa main (permitio/permit-opa#53-#57) + ReBAC derivation fixes (PER-16921); re-pin to the merge commit
+          ref: 43d076d5f0f18e2da76e43ecb4c50d984f1efb6c  # permit-opa main (permitio/permit-opa#53-#57, #62) + ReBAC derivation fixes (PER-16921); re-pin to the merge commit
           path: './permit-opa'
           token: ${{ steps.permit-opa-token.outputs.token }}
           # Nothing after the clone needs the token; don't leave it in .git/config.
