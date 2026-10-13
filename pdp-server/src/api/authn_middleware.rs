@@ -7,7 +7,7 @@ use axum::{
     middleware::Next,
     response::Response,
 };
-use log::warn;
+use log::{debug, warn};
 use subtle::ConstantTimeEq;
 
 pub(super) async fn authentication_middleware(
@@ -56,8 +56,9 @@ pub(super) async fn authentication_middleware(
         }
     };
 
+    // Debug, not warn: one line per request would flood the log, and the handoff warns already
     let Some(expected) = state.api_key.get() else {
-        warn!("Rejecting a request: the PDP has no API key yet");
+        debug!("Rejecting a request: the PDP has no API key yet");
         return Response::builder()
             .status(StatusCode::SERVICE_UNAVAILABLE)
             .body(NO_KEY_YET.into())
@@ -248,13 +249,16 @@ mod tests {
                 let (status, body) = send_request(&app, Some(header)).await;
 
                 assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{header:?}");
-                assert_eq!(body, "The PDP has no API key yet; it is still starting.");
+                assert_eq!(
+                    body,
+                    "The PDP has no API key yet: it is still starting, or it could not get one. \
+                     See the PDP logs."
+                );
                 let lines = logs.lines();
-                assert!(
-                    lines
-                        .iter()
-                        .any(|line| line.starts_with("WARN") && line.contains("no API key yet")),
-                    "{lines:?}"
+                assert_eq!(
+                    lines,
+                    ["DEBUG Rejecting a request: the PDP has no API key yet"],
+                    "one debug line per request; the handoff does the warning"
                 );
                 assert!(
                     lines.iter().all(|line| !line.contains("test_api_key")),

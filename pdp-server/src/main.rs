@@ -40,9 +40,13 @@ async fn main() {
         }
     };
     // Initialize application state
-    let state: AppState = AppState::with_existing_cache(&config, cache)
-        .await
-        .expect("Failed to initialize application state");
+    let state = match AppState::with_existing_cache(&config, cache).await {
+        Ok(state) => state,
+        Err(e) => {
+            error!("Failed to initialize application state: {e}");
+            std::process::exit(1);
+        }
+    };
 
     // Create application & Initialize PDPEngine
     let app = create_app(state).await;

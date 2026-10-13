@@ -569,8 +569,6 @@ mod tests {
 
         let response = fixture.send(request).await;
 
-        // Forward request
-        // let response = fixture.send(req).await;
         response.assert_status(StatusCode::OK);
         assert_eq!(response.json(), "Empty body received");
 

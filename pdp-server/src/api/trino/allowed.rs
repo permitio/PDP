@@ -53,6 +53,7 @@ pub(super) async fn allowed_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api_key::ApiKeySource;
     use crate::test_utils::TestFixture;
     use http::{Method, StatusCode};
     use serde_json::json;
@@ -493,6 +494,43 @@ mod tests {
 
         // Should get a 422 Unprocessable Entity for invalid request
         response.assert_status(StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    /// Unauthenticated Trino routes skip the API key check, so they are reachable before the PDP
+    /// has a key. They deny without asking OPA.
+    #[tokio::test]
+    async fn test_trino_allowed_denies_before_the_pdp_has_a_key() {
+        let fixture = TestFixture::with_config_modifier(|config| {
+            config.api_key = ApiKeySource::Horizon;
+            config.allow_unauthenticated_trino = true;
+        })
+        .await;
+        let test_request = json!({
+            "input": {
+                "context": {
+                    "identity": {"user": "test-user", "groups": []},
+                    "softwareStack": {"trinoVersion": "434"}
+                },
+                "action": {
+                    "operation": "SelectFromColumns",
+                    "resource": {
+                        "table": {
+                            "catalogName": "example_catalog",
+                            "schemaName": "example_schema",
+                            "tableName": "example_table",
+                            "columns": ["column1"]
+                        }
+                    }
+                }
+            }
+        });
+
+        let response = fixture.post("/trino/allowed", &test_request).await;
+
+        response.assert_ok();
+        assert_eq!(response.json(), json!({"result": false}));
+        let opa_requests = fixture.opa_mock.received_requests().await.unwrap();
+        assert!(opa_requests.is_empty(), "{opa_requests:?}");
     }
 
     #[tokio::test]

@@ -12,8 +12,11 @@ pub mod handoff;
 /// `MOCK_API_KEY`). It is never a key.
 pub const PLACEHOLDER: &str = "MUST BE DEFINED";
 
-/// The body of the 503 the PDP answers with while it has no key to check or send.
-pub const NO_KEY_YET: &str = "The PDP has no API key yet; it is still starting.";
+/// The body of the 503 the PDP answers with while it has no key to check or send. Horizon may
+/// still be deriving the key, or may never get one (a wrong project or org key, say), so it points
+/// at the logs, where the handoff's warning says which.
+pub const NO_KEY_YET: &str = "The PDP has no API key yet: it is still starting, or it could not \
+                              get one. See the PDP logs.";
 
 /// A key the PDP accepts from callers and presents to OPA and horizon.
 ///

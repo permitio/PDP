@@ -2,13 +2,14 @@
 //!
 //! Without a key in `PDP_API_KEY`, horizon derives the environment's key from the control plane.
 //! The PDP names a file in a directory only its user can enter, horizon writes the key there on
-//! every start, and the PDP reads it back every second.
+//! every start, and the PDP takes it within a second and removes the file.
 
 use crate::api_key::{ApiKey, CurrentApiKey, InvalidApiKey};
 use log::{debug, info, warn};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use tempfile::TempDir;
 use thiserror::Error;
 use tokio::time::{Instant, MissedTickBehavior};
 
@@ -16,10 +17,12 @@ use tokio::time::{Instant, MissedTickBehavior};
 pub const FILE_ENV: &str = "PDP_API_KEY_HANDOFF_FILE";
 
 const FILE_NAME: &str = "api-key";
+/// Where the PDP moves the file before reading it.
+const TAKEN_FILE_NAME: &str = "api-key.taken";
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
 const WARN_AFTER: Duration = Duration::from_secs(60);
 
-/// Why the handoff file gave no key.
+/// Why a look at the handoff file gave no key.
 #[derive(Debug, Error)]
 enum NoKey {
     #[error("cannot read the file: {0}")]
@@ -28,20 +31,23 @@ enum NoKey {
     Invalid(#[from] InvalidApiKey),
 }
 
+impl NoKey {
+    /// Whether horizon has written no file since the PDP last took one.
+    fn is_missing_file(&self) -> bool {
+        match self {
+            Self::Unreadable(err) => err.kind() == io::ErrorKind::NotFound,
+            Self::Invalid(_) => false,
+        }
+    }
+}
+
 /// Creates the directory horizon writes the key into and starts taking the key from there.
 /// Returns the absolute path of the file horizon writes.
 ///
 /// The task that reads the file owns the directory. It runs until the runtime shuts down, which
 /// drops the directory and removes it.
 pub fn start(current: CurrentApiKey) -> io::Result<PathBuf> {
-    let mut builder = tempfile::Builder::new();
-    builder.prefix("pdp-api-key-");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        builder.permissions(std::fs::Permissions::from_mode(0o700));
-    }
-    let dir = builder.tempdir()?;
+    let dir = private_dir_in(&std::env::temp_dir())?;
     let file = std::path::absolute(dir.path().join(FILE_NAME))?;
 
     let watched = file.clone();
@@ -53,7 +59,29 @@ pub fn start(current: CurrentApiKey) -> io::Result<PathBuf> {
     Ok(file)
 }
 
-/// Reads the handoff file every `poll_interval`, forever.
+/// Creates a directory in `parent` that only this user can enter.
+fn private_dir_in(parent: &Path) -> io::Result<TempDir> {
+    let mut builder = tempfile::Builder::new();
+    builder.prefix("pdp-api-key-");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        builder.permissions(std::fs::Permissions::from_mode(0o700));
+    }
+    builder.tempdir_in(parent).map_err(|err| {
+        io::Error::new(
+            err.kind(),
+            format!(
+                "Cannot create a directory in {} for horizon to hand over the API key it \
+                 derives: {err}. Without PDP_API_KEY the PDP needs a writable temporary \
+                 directory; point TMPDIR at one",
+                parent.display()
+            ),
+        )
+    })
+}
+
+/// Takes the key from the handoff file every `poll_interval`, forever.
 async fn watch(
     path: &Path,
     current: &CurrentApiKey,
@@ -62,18 +90,36 @@ async fn watch(
 ) {
     let started = Instant::now();
     let mut next_warning = started + warn_after;
+    let mut removal_failed = false;
     let mut ticks = tokio::time::interval(poll_interval);
     ticks.set_missed_tick_behavior(MissedTickBehavior::Delay);
     loop {
         ticks.tick().await;
-        let Err(reason) = check(path, current).await else {
+        let Err(reason) = take(path, current, &mut removal_failed) else {
             continue;
         };
-        debug!("No API key from horizon in {}: {reason}", path.display());
-        if current.get().is_none() && Instant::now() >= next_warning {
+        let has_key = current.get().is_some();
+        // Horizon writes the file once per start, so once the PDP has a key, no file is the norm
+        if has_key && reason.is_missing_file() {
+            continue;
+        }
+        match reason {
+            NoKey::Unreadable(_) => {
+                debug!("No API key from horizon in {}: {reason}", path.display());
+            }
+            NoKey::Invalid(_) => {
+                warn!(
+                    "Ignoring what horizon handed over in {}: {reason}",
+                    path.display()
+                );
+            }
+        }
+        if !has_key && Instant::now() >= next_warning {
             warn!(
-                "Horizon has not handed over an API key in the {}s since startup ({reason}); \
-                 requests that need the key get 503 until it does",
+                "Horizon has not handed over an API key in the {}s since startup ({reason}), so \
+                 requests that need one get 503. Without PDP_API_KEY, horizon derives the key \
+                 from PDP_PROJECT_API_KEY or PDP_ORG_API_KEY: horizon's log says why it has not, \
+                 and those variables may be wrong",
                 started.elapsed().as_secs()
             );
             next_warning += warn_after;
@@ -81,10 +127,26 @@ async fn watch(
     }
 }
 
-/// Makes the key in the handoff file the current key, if the file holds one.
-async fn check(path: &Path, current: &CurrentApiKey) -> Result<(), NoKey> {
-    let contents = tokio::fs::read_to_string(path).await?;
-    let key = ApiKey::new(&contents)?;
+/// Takes the key horizon handed over, if there is one, and makes it the current key.
+///
+/// The file is moved aside before it is read, so a key horizon writes meanwhile waits for the next
+/// look instead of being removed unread. It is removed once read, as the directory may sit on a
+/// volume another container shares (the chart's log forwarder mounts /tmp). The file is a few
+/// bytes on a local disk, so it is read in place rather than on the blocking pool.
+fn take(path: &Path, current: &CurrentApiKey, removal_failed: &mut bool) -> Result<(), NoKey> {
+    let taken = path.with_file_name(TAKEN_FILE_NAME);
+    std::fs::rename(path, &taken)?;
+    let contents = std::fs::read_to_string(&taken);
+    if let Err(err) = std::fs::remove_file(&taken) {
+        if !*removal_failed {
+            warn!(
+                "Cannot remove {} after taking the API key horizon handed over: {err}",
+                taken.display()
+            );
+            *removal_failed = true;
+        }
+    }
+    let key = ApiKey::new(&contents?)?;
     if current.replace(key) {
         info!("Loaded the API key from horizon");
     }
@@ -111,6 +173,18 @@ mod tests {
         std::fs::rename(&staged, path).expect("Failed to move the key file into place");
     }
 
+    fn take_once(path: &Path, current: &CurrentApiKey) -> Result<(), NoKey> {
+        take(path, current, &mut false)
+    }
+
+    /// The names left in the directory horizon writes into.
+    fn left_in(dir: &Path) -> Vec<String> {
+        let entries = std::fs::read_dir(dir).expect("Failed to list the handoff directory");
+        entries
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect()
+    }
+
     async fn wait_for_key(current: &CurrentApiKey, expected: &str) {
         let waited = tokio::time::timeout(Duration::from_secs(5), async {
             while current.get().is_none_or(|key| key.as_str() != expected) {
@@ -124,28 +198,54 @@ mod tests {
         );
     }
 
+    /// Runs `watch` with the real interval and warning delay for `looks` looks at the file. The
+    /// clock must be paused: the runtime then jumps from one look to the next.
+    async fn watch_for(path: &Path, current: &CurrentApiKey, looks: u32) {
+        // The first look is immediate, so `looks` looks span `looks - 1` intervals
+        let span = POLL_INTERVAL * (looks - 1) + POLL_INTERVAL / 2;
+        let watching = watch(path, current, POLL_INTERVAL, WARN_AFTER);
+        let _ = tokio::time::timeout(span, watching).await;
+    }
+
     fn current_key(current: &CurrentApiKey) -> Option<String> {
         current.get().map(|key| key.as_str().to_string())
     }
 
-    #[tokio::test]
-    async fn test_key_in_the_file_becomes_the_current_key() {
+    #[test]
+    fn test_key_in_the_file_becomes_the_current_key() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(FILE_NAME);
         let current = CurrentApiKey::new(None);
 
         hand_over(&path, DERIVED);
-        check(&path, &current).await.unwrap();
+        take_once(&path, &current).unwrap();
 
         assert_eq!(current_key(&current).as_deref(), Some(DERIVED));
     }
 
-    #[tokio::test]
-    async fn test_missing_file_leaves_the_pdp_without_a_key() {
+    /// Nothing that held the key stays on disk once it is taken, and each later start's key is
+    /// taken the same way.
+    #[test]
+    fn test_taking_the_key_removes_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE_NAME);
+        let current = CurrentApiKey::new(None);
+
+        for key in [DERIVED, ROTATED] {
+            hand_over(&path, key);
+            take_once(&path, &current).unwrap();
+
+            assert_eq!(current_key(&current).as_deref(), Some(key));
+            assert!(left_in(dir.path()).is_empty(), "{:?}", left_in(dir.path()));
+        }
+    }
+
+    #[test]
+    fn test_missing_file_leaves_the_pdp_without_a_key() {
         let dir = tempfile::tempdir().unwrap();
         let current = CurrentApiKey::new(None);
 
-        let result = check(&dir.path().join(FILE_NAME), &current).await;
+        let result = take_once(&dir.path().join(FILE_NAME), &current);
 
         let Err(NoKey::Unreadable(err)) = result else {
             panic!("expected an unreadable file, got {result:?}");
@@ -154,8 +254,8 @@ mod tests {
         assert!(current.get().is_none());
     }
 
-    #[tokio::test]
-    async fn test_file_without_a_key_is_ignored() {
+    #[test]
+    fn test_file_without_a_key_is_ignored() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(FILE_NAME);
 
@@ -167,7 +267,7 @@ mod tests {
             let current = CurrentApiKey::new(None);
             hand_over(&path, contents);
 
-            let result = check(&path, &current).await;
+            let result = take_once(&path, &current);
 
             let Err(NoKey::Invalid(invalid)) = result else {
                 panic!("expected {reason:?} for {contents:?}, got {result:?}");
@@ -177,35 +277,36 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn test_file_without_a_key_keeps_the_key_already_loaded() {
+    #[test]
+    fn test_file_without_a_key_keeps_the_key_already_loaded() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(FILE_NAME);
         let current = CurrentApiKey::new(None);
         hand_over(&path, DERIVED);
-        check(&path, &current).await.unwrap();
+        take_once(&path, &current).unwrap();
 
         for contents in ["", PLACEHOLDER] {
             hand_over(&path, contents);
-            assert!(check(&path, &current).await.is_err());
+            assert!(take_once(&path, &current).is_err());
             assert_eq!(current_key(&current).as_deref(), Some(DERIVED));
         }
     }
 
-    #[tokio::test]
-    async fn test_unreadable_file_leaves_the_pdp_without_a_key() {
+    #[test]
+    fn test_unreadable_file_leaves_the_pdp_without_a_key() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(FILE_NAME);
         std::fs::write(&path, b"permit_key_\xff").unwrap();
         let current = CurrentApiKey::new(None);
 
-        let result = check(&path, &current).await;
+        let result = take_once(&path, &current);
 
         let Err(NoKey::Unreadable(err)) = result else {
             panic!("expected an unreadable file, got {result:?}");
         };
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         assert!(current.get().is_none());
+        assert!(left_in(dir.path()).is_empty(), "{:?}", left_in(dir.path()));
     }
 
     #[tokio::test]
@@ -220,83 +321,107 @@ mod tests {
 
         hand_over(&path, DERIVED);
         wait_for_key(&current, DERIVED).await;
+        assert!(left_in(dir.path()).is_empty(), "{:?}", left_in(dir.path()));
         hand_over(&path, ROTATED);
         wait_for_key(&current, ROTATED).await;
+        assert!(left_in(dir.path()).is_empty(), "{:?}", left_in(dir.path()));
 
         watcher.abort();
     }
 
     /// The key never reaches a log line: not its value, and not at any level.
-    #[tokio::test]
-    async fn test_loading_a_key_logs_that_it_did_but_not_the_key() {
+    #[test]
+    fn test_loading_a_key_logs_that_it_did_but_not_the_key() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(FILE_NAME);
         let current = CurrentApiKey::new(None);
         hand_over(&path, DERIVED);
         let logs = LogCapture::start();
 
-        check(&path, &current).await.unwrap();
+        take_once(&path, &current).unwrap();
 
         let lines = logs.lines();
         assert_eq!(lines, ["INFO Loaded the API key from horizon"]);
     }
 
     /// Missing the file is routine while horizon starts, so it is a debug line each time; only a
-    /// long wait without a key warns, and then once per wait rather than on every look.
-    #[tokio::test]
+    /// minute without a key warns, once per minute, and points at what to check.
+    #[tokio::test(start_paused = true)]
     async fn test_warns_when_horizon_does_not_hand_over_a_key() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(FILE_NAME);
         let current = CurrentApiKey::new(None);
         let logs = LogCapture::start();
 
-        let watching = watch(
-            &path,
-            &current,
-            Duration::from_millis(5),
-            Duration::from_millis(50),
-        );
-        let _ = tokio::time::timeout(Duration::from_millis(200), watching).await;
+        watch_for(&path, &current, 181).await;
 
         let lines = logs.lines();
-        let first_warning = lines.iter().position(|line| line.starts_with("WARN"));
-        let warnings = lines.iter().filter(|line| line.starts_with("WARN")).count();
-        assert!(
-            lines[0].starts_with("DEBUG No API key from horizon"),
-            "{lines:?}"
-        );
-        assert!(
-            first_warning.is_some_and(|index| index >= 2),
-            "expected a warning only after a wait without a key: {lines:?}"
-        );
-        assert!(
-            warnings <= 5,
-            "expected one warning per 50ms wait: {lines:?}"
-        );
-        assert!(
-            lines
-                .iter()
-                .any(|line| line.starts_with("WARN")
-                    && line.contains("has not handed over an API key")),
-            "{lines:?}"
-        );
+        let debug_lines = lines.iter().filter(|line| line.starts_with("DEBUG"));
+        let warnings: Vec<_> = lines.iter().filter(|l| l.starts_with("WARN")).collect();
+        assert_eq!(debug_lines.count(), 181, "one debug line per look");
+        assert_eq!(warnings.len(), 3, "{warnings:#?}");
+        for (warning, seconds) in warnings.iter().zip([60, 120, 180]) {
+            assert!(
+                warning.contains(&format!("in the {seconds}s since startup")),
+                "{warning}"
+            );
+        }
+        for hint in [
+            "horizon's log",
+            "PDP_API_KEY",
+            "PDP_PROJECT_API_KEY",
+            "PDP_ORG_API_KEY",
+        ] {
+            assert!(warnings[0].contains(hint), "{hint}: {}", warnings[0]);
+        }
     }
 
-    #[tokio::test]
-    async fn test_no_warning_once_there_is_a_key() {
+    /// Horizon writes the file once per start and the PDP removes it, so with a key the missing
+    /// file is the normal state and is not logged at all.
+    #[tokio::test(start_paused = true)]
+    async fn test_quiet_once_there_is_a_key() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(FILE_NAME);
         let current = CurrentApiKey::new(Some(ApiKey::new(DERIVED).unwrap()));
         let logs = LogCapture::start();
 
-        let watching = watch(&path, &current, FAST_POLL, Duration::ZERO);
-        let _ = tokio::time::timeout(Duration::from_millis(50), watching).await;
+        watch_for(&path, &current, 120).await;
+
+        assert_eq!(logs.lines(), Vec::<String>::new());
+    }
+
+    /// Something that is not a key is reported once, as it is taken like a key would be.
+    #[tokio::test(start_paused = true)]
+    async fn test_handoff_without_a_key_is_reported_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE_NAME);
+        let current = CurrentApiKey::new(None);
+        hand_over(&path, "");
+        let logs = LogCapture::start();
+
+        watch_for(&path, &current, 5).await;
 
         let lines = logs.lines();
+        let warnings: Vec<_> = lines.iter().filter(|l| l.starts_with("WARN")).collect();
+        assert_eq!(warnings.len(), 1, "{lines:#?}");
         assert!(
-            lines.iter().all(|line| !line.starts_with("WARN")),
-            "{lines:?}"
+            warnings[0].contains("the value is empty"),
+            "{}",
+            warnings[0]
         );
+        assert!(left_in(dir.path()).is_empty(), "{:?}", left_in(dir.path()));
+    }
+
+    #[test]
+    fn test_unwritable_temporary_directory_is_reported_with_what_to_do() {
+        let dir = tempfile::tempdir().unwrap();
+        let parent = dir.path().join("missing");
+
+        let err = private_dir_in(&parent).unwrap_err();
+
+        let message = err.to_string();
+        assert!(message.contains(&parent.display().to_string()), "{message}");
+        assert!(message.contains("TMPDIR"), "{message}");
     }
 
     #[tokio::test]

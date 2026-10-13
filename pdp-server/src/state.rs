@@ -1,6 +1,6 @@
 use crate::{
     api_key::{handoff, ApiKeySource, CurrentApiKey},
-    cache::{create_cache, Cache},
+    cache::Cache,
     config::{trino_authz::TrinoAuthzConfig, PDPConfig},
 };
 use http::header::{AUTHORIZATION, CONTENT_TYPE};
@@ -48,14 +48,6 @@ impl ChildOutputHandler for HorizonOutput {
 }
 
 impl AppState {
-    /// Create a new application state with all components initialized
-    pub async fn new(config: &PDPConfig) -> Result<Self, std::io::Error> {
-        let cache = create_cache(config)
-            .await
-            .map_err(|e| std::io::Error::other(format!("Failed to create cache: {e}")))?;
-        Self::with_existing_cache(config, cache).await
-    }
-
     /// Create a new application state with a pre-initialized cache
     pub async fn with_existing_cache(
         config: &PDPConfig,
@@ -141,11 +133,7 @@ fn init_api_key(config: &PDPConfig) -> std::io::Result<(CurrentApiKey, Option<Pa
     let api_key = CurrentApiKey::new(config.api_key.env_key());
     let handoff_file = match config.api_key {
         ApiKeySource::Env(_) => None,
-        ApiKeySource::Horizon => Some(handoff::start(api_key.clone()).map_err(|e| {
-            std::io::Error::other(format!(
-                "Failed to create the directory horizon hands the API key over in: {e}"
-            ))
-        })?),
+        ApiKeySource::Horizon => Some(handoff::start(api_key.clone())?),
     };
     Ok((api_key, handoff_file))
 }
@@ -171,9 +159,12 @@ fn horizon_command(config: &PDPConfig, api_key_handoff_file: Option<&Path>) -> C
     command.arg("--port");
     command.arg(config.horizon.port.to_string());
 
-    if let Some(file) = api_key_handoff_file {
-        command.env(handoff::FILE_ENV, file);
-    }
+    match api_key_handoff_file {
+        Some(file) => command.env(handoff::FILE_ENV, file),
+        // One inherited from the container's environment would have horizon write the key to a
+        // file nothing reads or removes
+        None => command.env_remove(handoff::FILE_ENV),
+    };
     command
 }
 
@@ -293,14 +284,28 @@ mod tests {
         assert!(Arc::ptr_eq(&state.cache, &cloned_state.cache));
     }
 
-    fn handoff_file_env(command: &Command) -> Option<String> {
-        let (_, value) = command
-            .as_std()
-            .get_envs()
-            .find(|(name, _)| *name == handoff::FILE_ENV)?;
-        value.map(|value| value.to_string_lossy().into_owned())
+    /// What the command does with PDP_API_KEY_HANDOFF_FILE: `Inherit` leaves the child whatever
+    /// this process has.
+    #[derive(Debug, PartialEq)]
+    enum HandoffFileEnv {
+        Inherit,
+        Remove,
+        Set(String),
     }
 
+    fn handoff_file_env(command: &Command) -> HandoffFileEnv {
+        let found = command
+            .as_std()
+            .get_envs()
+            .find(|(name, _)| *name == handoff::FILE_ENV);
+        match found {
+            None => HandoffFileEnv::Inherit,
+            Some((_, None)) => HandoffFileEnv::Remove,
+            Some((_, Some(value))) => HandoffFileEnv::Set(value.to_string_lossy().into_owned()),
+        }
+    }
+
+    /// With a key in PDP_API_KEY horizon gets no handoff file, not even one this process inherited.
     #[tokio::test]
     async fn test_key_from_env_needs_no_handoff() {
         let config = create_test_config();
@@ -310,7 +315,7 @@ mod tests {
         assert_eq!(api_key.get().unwrap().as_str(), "test-api-key");
         assert_eq!(handoff_file, None);
         let command = horizon_command(&config, handoff_file.as_deref());
-        assert_eq!(handoff_file_env(&command), None);
+        assert_eq!(handoff_file_env(&command), HandoffFileEnv::Remove);
     }
 
     #[tokio::test]
@@ -326,7 +331,7 @@ mod tests {
         let command = horizon_command(&config, Some(&handoff_file));
         assert_eq!(
             handoff_file_env(&command),
-            Some(handoff_file.display().to_string())
+            HandoffFileEnv::Set(handoff_file.display().to_string())
         );
     }
 
