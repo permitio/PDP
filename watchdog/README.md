@@ -4,34 +4,42 @@ A Rust library for monitoring and automatically restarting services and processe
 
 ## Features
 
-- **CommandWatchdog**: Automatically restarts a process when it terminates
-- **ServiceWatchdog**: Monitors service health and restarts services that are unhealthy
-- **Health Checkers**: HTTP, TCP, and composite health checks to monitor service health
-- **Configurable**: Customizable retry intervals, health check thresholds, and startup delays
-- **Statistics**: Track health checks, failures, and restarts
+- **CommandWatchdog**: Restarts a process when it exits, backing off while it keeps failing
+- **ServiceWatchdog**: Checks a service's health and restarts it when the checks keep failing
+- **Health checks**: `HttpHealthChecker` for HTTP endpoints; implement `HealthCheck` for any other check
+- **Configurable**: Restart intervals and backoff cap, health check interval and threshold, startup delay and termination timeout
+- **Statistics**: Starts, last exit code, failures in a row, health checks and failed health checks
 - **Graceful Termination**: Uses SIGTERM with a configurable timeout before SIGKILL
 - **Child Output Capture**: Optionally capture a child's stdout/stderr and receive it line by line, so its output can be attributed to the process that produced it
+
+The examples below are compiled as doctests of this crate, so they stay in step with its API.
+The ones that start a process are compiled but not run.
 
 ## Usage
 
 ### CommandWatchdog
 
-```rust
+```rust no_run
 use tokio::process::Command;
 use watchdog::CommandWatchdog;
 
-// Create a command to run your process
-let mut cmd = Command::new("my-service");
-cmd.args(["--port", "8080"]);
+#[tokio::main]
+async fn main() {
+    // Create a command to run your process
+    let mut cmd = Command::new("my-service");
+    cmd.args(["--port", "8080"]);
 
-// Start the watchdog to monitor the process
-let watchdog = CommandWatchdog::start(cmd);
+    // Start the process; whenever it exits, the watchdog starts it again
+    let watchdog = CommandWatchdog::start(cmd);
 
-// The process will be automatically restarted if it terminates
-// When the watchdog is dropped, the process will be terminated gracefully
+    // You can also restart the process yourself
+    watchdog.restart().await.expect("the watchdog has shut down");
 
-// You can also manually restart the process
-watchdog.restart().await.expect("Failed to restart process");
+    println!("Started {} times", watchdog.start_counter());
+
+    // Dropping the watchdog terminates the process gracefully
+    drop(watchdog);
+}
 ```
 
 ### Capturing child output
@@ -40,8 +48,9 @@ By default a watched child inherits the parent's stdout and stderr, so its
 output is indistinguishable from the parent's. Supply a `ChildOutputHandler` to
 receive it line by line instead:
 
-```rust
+```rust no_run
 use std::sync::Arc;
+use tokio::process::Command;
 use watchdog::{ChildOutputHandler, ChildStream, CommandWatchdog, CommandWatchdogOptions};
 
 struct LogLines;
@@ -52,11 +61,14 @@ impl ChildOutputHandler for LogLines {
     }
 }
 
-let opt = CommandWatchdogOptions {
-    output_handler: Some(Arc::new(LogLines)),
-    ..Default::default()
-};
-let watchdog = CommandWatchdog::start_with_opt(cmd, opt);
+#[tokio::main]
+async fn main() {
+    let opt = CommandWatchdogOptions {
+        output_handler: Some(Arc::new(LogLines)),
+        ..Default::default()
+    };
+    let _watchdog = CommandWatchdog::start_with_opt(Command::new("my-service"), opt);
+}
 ```
 
 The handler runs on the task that keeps the child's pipes drained. Bounded,
@@ -73,87 +85,62 @@ truncated with `TRUNCATION_MARKER` appended.
 
 ### ServiceWatchdog
 
-The `ServiceWatchdog` adds health checking capabilities to restart unresponsive services:
+The `ServiceWatchdog` adds health checks, and restarts a service that keeps failing them:
 
-```rust
+```rust no_run
+use std::time::Duration;
 use tokio::process::Command;
 use watchdog::{
-    HttpHealthChecker, ServiceWatchdog, ServiceWatchdogOptions,
-};
-use std::time::Duration;
-
-// Create a command to run your service
-let mut cmd = Command::new("my-service");
-cmd.args(["--port", "8080"]);
-
-// Create a health checker to monitor the service
-let health_checker = HttpHealthChecker::new("http://localhost:8080/health".to_string());
-
-// Configure the service watchdog
-let config = ServiceWatchdogOptions {
-    health_check_interval: Duration::from_secs(10),
-    health_check_failure_threshold: 3,
-    initial_startup_delay: Duration::from_secs(5),
+    CommandWatchdogOptions, HttpHealthChecker, ServiceWatchdog, ServiceWatchdogOptions,
 };
 
-// Create and start the service watchdog
-let watchdog = ServiceWatchdog::start_with_options(
-    cmd,
-    health_checker,
-    config,
-);
+#[tokio::main]
+async fn main() {
+    // Create a command to run your service
+    let mut cmd = Command::new("my-service");
+    cmd.args(["--port", "8080"]);
 
-// Wait for the service to become healthy before proceeding
-watchdog.wait_for_healthy(Duration::from_secs(30)).await
-    .expect("Service failed to become healthy within timeout");
+    // Create a health checker to monitor the service
+    let health_checker = HttpHealthChecker::new("http://localhost:8080/health".to_string());
 
-// Get statistics about the service watchdog
-println!("Health checks: {}", watchdog.stats().health_checks());
-println!("Failed health checks: {}", watchdog.stats().failed_health_checks());
-println!("Health-triggered restarts: {}", watchdog.stats().health_restart_count());
+    // Configure the service watchdog
+    let opt = ServiceWatchdogOptions {
+        health_check_interval: Duration::from_secs(10),
+        health_check_failure_threshold: 3,
+        health_check_unhealthy_threshold: 2,
+        initial_startup_delay: Duration::from_secs(5),
+        command_options: CommandWatchdogOptions {
+            restart_interval: Duration::from_secs(1),
+            max_restart_interval: Duration::from_secs(60),
+            ..Default::default()
+        },
+    };
 
-// Manually restart the service if needed
-watchdog.restart().await.expect("Failed to restart service");
-```
+    // Create and start the service watchdog
+    let watchdog = ServiceWatchdog::start_with_opt(cmd, health_checker, opt);
 
-### Waiting for Service Health
+    // Wait until a health check passes, for at most 30 seconds
+    match watchdog.wait_for_healthy(Duration::from_secs(30)).await {
+        Ok(()) => println!("Service is healthy"),
+        Err(elapsed) => println!("Service is not healthy yet: {elapsed}"),
+    }
 
-It's common to need to wait for a service to become healthy after starting it:
+    // Get statistics about the service watchdog
+    println!("Healthy now: {}", watchdog.is_healthy());
+    println!("Health checks: {}", watchdog.health_checks());
+    println!("Failed health checks: {}", watchdog.failed_health_checks());
+    println!("Failures in a row: {}", watchdog.consecutive_failures());
 
-```rust
-// Start the service watchdog
-let watchdog = ServiceWatchdog::start(cmd, health_checker);
-
-// Wait for the service to become healthy with a timeout
-match watchdog.wait_for_healthy(Duration::from_secs(60)).await {
-    Ok(_) => println!("Service is healthy and ready to use"),
-    Err(e) => println!("Service failed to become healthy: {}", e),
+    // Manually restart the service if needed
+    watchdog.restart().await.expect("the watchdog has shut down");
 }
-
-// Alternatively, wait indefinitely for the service to become healthy
-watchdog.wait_for_healthy(None).await
-    .expect("Service failed to become healthy");
 ```
 
-### Using Multiple Health Checks
+`ServiceWatchdog::start(cmd, health_checker)` does the same with the default options.
+`wait_for_healthy` waits for the next passing health check, even when the service is already
+healthy, and fails once the timeout elapses.
 
-```rust
-use watchdog::{CompositeHealthChecker, HttpHealthChecker, TcpHealthChecker};
-
-// Create multiple health checkers
-let http_checker = HttpHealthChecker::new("http://localhost:8080/health".to_string());
-let tcp_checker = TcpHealthChecker::new("localhost:8080".to_string());
-
-// Combine them into a composite health checker
-let mut composite_checker = CompositeHealthChecker::new();
-composite_checker.add(Box::new(http_checker));
-composite_checker.add(Box::new(tcp_checker));
-
-// Use the composite checker with the service watchdog
-let watchdog = ServiceWatchdog::start(cmd, composite_checker);
-```
-
-### Customizing Health Checks
+### HTTP health checks
 
 Health checks handle their own timeouts:
 
@@ -161,38 +148,95 @@ Health checks handle their own timeouts:
 use std::time::Duration;
 use watchdog::HttpHealthChecker;
 
-// HTTP health checker with custom timeout and expected status code
-let health_checker = HttpHealthChecker::with_options(
-    "http://localhost:8080/health".to_string(),
-    200,  // Expected status code
-    Duration::from_secs(3)  // Timeout
-);
+let url = "http://localhost:8080/health".to_string();
 
-// TCP health checker with custom timeout
-let tcp_checker = TcpHealthChecker::with_timeout(
-    "localhost:8080".to_string(),
-    Duration::from_secs(2)
-);
+// Healthy on status 200, with a 5 second timeout
+let default = HttpHealthChecker::new(url.clone());
+
+// Healthy on another status code, with a 5 second timeout
+let no_content = HttpHealthChecker::with_status(url.clone(), 204);
+
+// Healthy on a given status code, with a custom timeout
+let quick = HttpHealthChecker::with_options(url, 200, Duration::from_secs(3));
+```
+
+### Custom health checks
+
+Any type that implements `HealthCheck` can be the service watchdog's health checker. To check
+more than one thing, call each check in turn from one implementation:
+
+```rust
+use async_trait::async_trait;
+use std::error::Error;
+use std::time::Duration;
+use watchdog::HealthCheck;
+
+/// Healthy when the service accepts a TCP connection within 2 seconds
+#[derive(Debug)]
+struct AcceptsConnections(String);
+
+#[async_trait]
+impl HealthCheck for AcceptsConnections {
+    async fn check_health(&self) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let connect = tokio::net::TcpStream::connect(&self.0);
+        tokio::time::timeout(Duration::from_secs(2), connect).await??;
+        Ok(())
+    }
+}
+
+let health_checker = AcceptsConnections("localhost:8080".to_string());
 ```
 
 ## Configuration Options
 
 ### CommandWatchdogOptions
 
-- `restart_interval`: Maximum duration between restarts (default: 1s)
-- `termination_timeout`: Maximum time to wait for a process to terminate after SIGTERM (default: 60s)
+- `restart_interval`: Shortest time from one start to the next once the process has failed (default: 1s)
+- `max_restart_interval`: The most that time between starts grows to (default: 60s)
+- `termination_timeout`: Maximum time to wait for a process to terminate after SIGTERM before SIGKILL (default: 60s)
+- `output_handler`: Receives the child's stdout and stderr line by line (default: `None`, the child inherits the parent's)
+
+### Restart backoff
+
+A failure is the process exiting, failing to start, or, under a `ServiceWatchdog`, being
+restarted for failing its health checks. After the first failure in a row the next start comes
+no sooner than `restart_interval` after the previous one; each further failure doubles that, up
+to `max_restart_interval`. With the defaults, starts are at least 1, 2, 4, 8, 16, 32 and then 60
+seconds apart. A process that ran longer than that is restarted at once.
+
+The failures stop counting once the process stays up for `max_restart_interval`, or under a
+`ServiceWatchdog` passes its health checks for that long: a process that stays up but fails its
+health checks keeps counting. `consecutive_failures()` returns the current count. While no
+process runs, a `ServiceWatchdog` reports it unhealthy and skips its health checks, so it does
+not ask to restart a process the backoff is already restarting.
 
 ### ServiceWatchdogOptions
 
 - `health_check_interval`: How often to check service health (default: 10s)
 - `health_check_failure_threshold`: How many consecutive health check failures before restarting (default: 3)
-- `initial_startup_delay`: How long to wait before starting health checks after a restart (default: 5s)
+- `health_check_unhealthy_threshold`: How many consecutive health check failures before `is_healthy()` reports the service unhealthy; one passing check reports it healthy again (default: 1). A service that is not running, or a new run that has not passed a check yet, is reported unhealthy at once
+- `initial_startup_delay`: How long to wait before the first health check, and again after a restart for failed health checks (default: 5s)
+- `command_options`: The `CommandWatchdogOptions` for the service's process (default: their defaults)
+
+## Statistics
+
+Both watchdogs report:
+
+- `start_counter()`: How many times the process has been started, counting attempts that failed to start
+- `last_exit_code()`: The process's last exit code: 0 until it first exits, -1 when a signal ended it
+- `consecutive_failures()`: How many times in a row the process has failed (see Restart backoff)
+
+The `ServiceWatchdog` also reports:
+
+- `is_healthy()`: Whether the service is reported healthy (see `health_check_unhealthy_threshold`); false while the process is not running
+- `health_checks()` and `failed_health_checks()`: How many health checks it has run, and how many of them failed
+- `command_watchdog()`: The `CommandWatchdog` that runs the service's process
 
 ## Implementation Details
 
 The `ServiceWatchdog` builds upon `CommandWatchdog` by adding:
 1. Health checking with configurable checks and intervals
 2. Automatic restart when health checks fail consecutively
-3. Statistics tracking for health checks and restarts
+3. Counts of health checks and failed health checks
 
 Each health checker implementation handles its own timeout configuration, so health checks can have different timeouts based on their specific needs.
