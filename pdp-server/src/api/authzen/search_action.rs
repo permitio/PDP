@@ -125,7 +125,7 @@ pub async fn search_action_handler(
     let authzen_response = ActionSearchResponse {
         results,
         page: Some(PageResponse {
-            next_token: None, // Pagination not yet fully implemented
+            next_token: String::new(),
         }),
         context: None,
     };
@@ -419,5 +419,20 @@ mod tests {
                 "call {call} returned a different body than call 1"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn test_action_search_ignores_page_and_returns_empty_next_token() {
+        let fixture = TestFixture::new().await;
+        mock_user_permissions(&fixture, overlapping_permissions_response(), 1).await;
+        let mut request = action_search_request();
+        request["page"] = json!({"size": 1, "next_token": null});
+
+        let response = fixture.post("/access/v1/search/action", &request).await;
+
+        response.assert_ok();
+        let body = response.json();
+        assert_eq!(body["page"], json!({"next_token": ""}));
+        assert_eq!(body["results"].as_array().map(Vec::len), Some(9));
     }
 }

@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-/// Pagination request parameters
+/// Pagination request parameters. Search results are not paged: the PDP accepts this object,
+/// ignores it, and returns every result in one response.
 #[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
 pub struct PageRequest {
     /// Token for retrieving the next page of results
@@ -15,7 +16,7 @@ pub struct PageRequest {
 /// Pagination response parameters
 #[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
 pub struct PageResponse {
-    /// Token for retrieving the next page of results, empty if no more results
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next_token: Option<String>,
+    /// Token for retrieving the next page of results. An empty string means there are no more
+    /// results, which is always the case because every result is returned in one response.
+    pub next_token: String,
 }

@@ -103,7 +103,9 @@ pub async fn search_subject_handler(
     // Create the AuthZen response
     let response = SubjectSearchResponse {
         results: subjects,
-        page: Some(PageResponse { next_token: None }),
+        page: Some(PageResponse {
+            next_token: String::new(),
+        }),
         context: None,
     };
 
@@ -496,5 +498,28 @@ mod tests {
             ids.push(subject.id.as_str());
         }
         assert_eq!(ids, vec!["alice@example.com", "carol@example.com"]);
+    }
+
+    #[tokio::test]
+    async fn test_subject_search_ignores_page_and_returns_empty_next_token() {
+        let fixture = TestFixture::new().await;
+        mock_authorized_users(
+            &fixture,
+            authorized_users_response(&UNSORTED_USER_KEYS, &[]),
+            1,
+        )
+        .await;
+        let mut request = subject_search_request();
+        request["page"] = json!({"size": 1, "next_token": null});
+
+        let response = fixture.post("/access/v1/search/subject", &request).await;
+
+        response.assert_ok();
+        let body = response.json();
+        assert_eq!(body["page"], json!({"next_token": ""}));
+        assert_eq!(
+            body["results"].as_array().map(Vec::len),
+            Some(UNSORTED_USER_KEYS.len())
+        );
     }
 }
