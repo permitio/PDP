@@ -1,3 +1,5 @@
+import os
+from pathlib import Path
 from typing import Any
 
 import requests
@@ -140,3 +142,51 @@ def get_env_api_key() -> str:
             logger.error(f"Failed to get Environment API Key: {type(e).__name__}: {e}")
             raise SystemExit(GUNICORN_EXIT_APP) from e
     return _env_api_key
+
+
+def _write_owner_only_file_atomically(path: Path, content: str) -> None:
+    """Write ``content`` to ``path`` with mode 0600, so that ``path`` never holds part of it.
+
+    The content goes to ``<path>.tmp``, created fresh, which is then renamed over ``path``.
+    """
+    tmp_path = path.with_name(f"{path.name}.tmp")
+    # A start that crashed between creating and renaming it leaves one behind.
+    tmp_path.unlink(missing_ok=True)
+    fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as tmp_file:
+            tmp_file.write(content.encode())
+        tmp_path.replace(path)
+    except OSError:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
+def hand_off_env_api_key() -> None:
+    """Write the environment API key to PDP_API_KEY_HANDOFF_FILE, when the PDP front server set it.
+
+    With PDP_PROJECT_API_KEY or PDP_ORG_API_KEY only this process learns the environment API key,
+    and the front server needs the same key. It names a file in an owner-only directory, and the
+    key is written there on every start, replacing the file an earlier start wrote. The file holds
+    just the key, UTF-8 encoded with no trailing newline, with mode 0600. Without the setting this
+    does nothing.
+
+    Raises:
+        SystemExit: the key could not be derived (see ``get_env_api_key``) or the file could not
+            be written. The front server cannot serve without the key.
+    """
+    path = sidecar_config.API_KEY_HANDOFF_FILE
+    if not path:
+        return
+    env_api_key = get_env_api_key()
+    try:
+        _write_owner_only_file_atomically(Path(path), env_api_key)
+    except OSError as e:
+        logger.error(
+            "Failed to write the Environment API Key to {path} (PDP_API_KEY_HANDOFF_FILE) for the PDP front "
+            "server: {error_type}: {error}",
+            path=path,
+            error_type=type(e).__name__,
+            error=e,
+        )
+        raise SystemExit(GUNICORN_EXIT_APP) from e

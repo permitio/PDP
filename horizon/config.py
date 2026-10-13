@@ -151,6 +151,14 @@ class SidecarConfig(Confi):
         "ignored with PDP_API_KEY, which is already an environment's key",
     )
 
+    # where to hand the environment API key to the PDP front server
+    API_KEY_HANDOFF_FILE = confi.str(
+        "API_KEY_HANDOFF_FILE",
+        None,
+        description="set internally by the PDP front server; do not set it yourself. When set, the PDP writes "
+        "the environment API key it derived (from PDP_PROJECT_API_KEY or PDP_ORG_API_KEY) to this file at startup",
+    )
+
     # access token to perform system control operations
     CONTAINER_CONTROL_KEY = confi.str("CONTAINER_CONTROL_KEY", MOCK_API_KEY)
 

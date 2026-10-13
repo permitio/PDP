@@ -5,16 +5,20 @@ BlockingRequest builds the Authorization header and turns a 401 into InvalidPDPT
 """
 
 import re
+import stat
 from http import HTTPStatus
+from pathlib import Path
 
 import pytest
 import requests
 from opal_common.logger import logger
 from tenacity import stop
 
+from horizon import pdp
 from horizon.config import MOCK_API_KEY, ApiKeyLevel, sidecar_config
 from horizon.startup import api_keys
 from horizon.startup.exceptions import ApiKeyError, InvalidPDPTokenError
+from horizon.state import PersistentStateHandler
 from horizon.system.consts import GUNICORN_EXIT_APP
 
 BACKEND = "https://control.plane"
@@ -235,3 +239,166 @@ def test_a_rejected_key_exits_the_worker_and_logs_the_url_and_the_401(keys, cont
     assert "InvalidPDPTokenError" in failure
     assert env_key_url in failure
     assert "401" in failure
+
+
+# --------------------------------------------------------------------------- hand-off to the front server
+
+HANDED_OFF_KEY = "Qx7Lm2Vp-handed-off-env-key"
+
+
+@pytest.fixture
+def handoff_file(tmp_path, monkeypatch) -> Path:
+    """PDP_API_KEY_HANDOFF_FILE in an owner-only directory, as the front server sets it."""
+    directory = tmp_path / "handoff"
+    directory.mkdir(mode=0o700)
+    path = directory / "env-api-key"
+    monkeypatch.setattr(sidecar_config, "API_KEY_HANDOFF_FILE", str(path))
+    return path
+
+
+@pytest.fixture
+def every_log_line():
+    """Every record at every level: its message, and loguru's JSON of the whole record."""
+    text: list[str] = []
+    serialized: list[str] = []
+    handler_ids = [
+        logger.add(text.append, format="{message}", level="TRACE"),
+        logger.add(serialized.append, serialize=True, level="TRACE"),
+    ]
+    yield text, serialized
+    for handler_id in handler_ids:
+        logger.remove(handler_id)
+
+
+def _assert_only_the_key_is_there(path: Path, key: str) -> None:
+    assert path.read_bytes() == key.encode()
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert list(path.parent.iterdir()) == [path]
+
+
+def test_the_handoff_file_holds_just_the_key_and_only_its_owner_can_read_it(keys, handoff_file):
+    keys(API_KEY=HANDED_OFF_KEY)
+
+    api_keys.hand_off_env_api_key()
+
+    _assert_only_the_key_is_there(handoff_file, HANDED_OFF_KEY)
+
+
+def test_a_tmp_file_left_by_a_crashed_start_does_not_block_the_handoff(keys, handoff_file):
+    keys(API_KEY=HANDED_OFF_KEY)
+    handoff_file.with_name(f"{handoff_file.name}.tmp").write_text("half-written")
+
+    api_keys.hand_off_env_api_key()
+
+    _assert_only_the_key_is_there(handoff_file, HANDED_OFF_KEY)
+
+
+def test_the_handoff_replaces_the_file_an_earlier_start_wrote(keys, handoff_file):
+    keys(API_KEY=HANDED_OFF_KEY)
+    handoff_file.write_text("rotated-out-key")
+    handoff_file.chmod(0o644)
+
+    api_keys.hand_off_env_api_key()
+
+    _assert_only_the_key_is_there(handoff_file, HANDED_OFF_KEY)
+
+
+@pytest.mark.parametrize(
+    ("configured", "answers"),
+    [
+        pytest.param(
+            {"PROJECT_API_KEY": "project-key", "ACTIVE_ENV": "env"},
+            {
+                ("/v2/api-key/scope", "project-key"): {"project_id": "p1"},
+                ("/v2/api-key/p1/env", "project-key"): {"secret": HANDED_OFF_KEY},
+            },
+            id="project-key",
+        ),
+        pytest.param(
+            {"ORG_API_KEY": "org-key", "ACTIVE_PROJECT": "proj", "ACTIVE_ENV": "env"},
+            {("/v2/api-key/proj/env", "org-key"): {"secret": HANDED_OFF_KEY}},
+            id="org-key",
+        ),
+    ],
+)
+def test_the_env_key_fetched_from_the_control_plane_is_handed_off(
+    keys, control_plane, handoff_file, configured, answers
+):
+    keys(**configured)
+    for (route, token), answer in answers.items():
+        control_plane.answers[f"{sidecar_config.CONTROL_PLANE}{route}", token] = answer
+
+    api_keys.hand_off_env_api_key()
+
+    _assert_only_the_key_is_there(handoff_file, HANDED_OFF_KEY)
+
+
+@pytest.mark.parametrize("handoff_setting", [None, ""], ids=["unset", "empty"])
+def test_without_a_handoff_file_nothing_is_fetched_or_written(
+    keys, control_plane, tmp_path, monkeypatch, handoff_setting
+):
+    keys(ORG_API_KEY="org-key", ACTIVE_PROJECT="proj", ACTIVE_ENV="env")
+    monkeypatch.setattr(sidecar_config, "API_KEY_HANDOFF_FILE", handoff_setting)
+    monkeypatch.chdir(tmp_path)
+
+    api_keys.hand_off_env_api_key()
+
+    assert control_plane.requests == []
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_an_unwritable_handoff_file_exits_naming_the_path_and_never_logs_the_key(
+    keys, control_plane, tmp_path, monkeypatch, every_log_line
+):
+    keys(PROJECT_API_KEY="project-key", ACTIVE_ENV="env")
+    control_plane.answers[f"{sidecar_config.CONTROL_PLANE}/v2/api-key/scope", "project-key"] = {"project_id": "p1"}
+    control_plane.answers[f"{sidecar_config.CONTROL_PLANE}/v2/api-key/p1/env", "project-key"] = {
+        "secret": HANDED_OFF_KEY
+    }
+    path = tmp_path / "no-such-directory" / "env-api-key"
+    monkeypatch.setattr(sidecar_config, "API_KEY_HANDOFF_FILE", str(path))
+
+    with pytest.raises(SystemExit) as exc_info:
+        api_keys.hand_off_env_api_key()
+
+    assert exc_info.value.code == GUNICORN_EXIT_APP
+    assert isinstance(exc_info.value.__cause__, FileNotFoundError)
+    text, serialized = every_log_line
+    failure = next(line for line in text if "PDP_API_KEY_HANDOFF_FILE" in line)
+    # The path itself, not only the .tmp beside it that the OSError names.
+    assert re.search(rf"{re.escape(str(path))}(?!\.tmp)", failure)
+    assert "FileNotFoundError" in failure
+    for line in text + serialized:
+        assert HANDED_OFF_KEY not in line
+        assert HANDED_OFF_KEY[:8] not in line
+
+
+def test_a_failed_rename_exits_and_leaves_no_copy_of_the_key_behind(keys, handoff_file, logged):
+    keys(API_KEY=HANDED_OFF_KEY)
+    # A directory where the key file goes: the rename over it fails.
+    handoff_file.mkdir()
+
+    with pytest.raises(SystemExit) as exc_info:
+        api_keys.hand_off_env_api_key()
+
+    assert exc_info.value.code == GUNICORN_EXIT_APP
+    assert list(handoff_file.parent.iterdir()) == [handoff_file]
+    assert any(str(handoff_file) in line for line in logged)
+
+
+def test_the_pdp_hands_the_key_off_before_it_fetches_its_remote_config(keys, handoff_file, monkeypatch):
+    keys(API_KEY=HANDED_OFF_KEY)
+    handed_off_by_then: list[bytes] = []
+
+    def no_remote_config() -> None:
+        handed_off_by_then.append(handoff_file.read_bytes())
+
+    # It removes every loguru handler, pytest's included.
+    monkeypatch.setattr(pdp.PermitPDP, "_setup_temp_logger", lambda _self: None)
+    monkeypatch.setattr(PersistentStateHandler, "_instance", None)
+    monkeypatch.setattr(pdp, "get_remote_config", no_remote_config)
+
+    with pytest.raises(SystemExit):
+        pdp.PermitPDP()
+
+    assert handed_off_by_then == [HANDED_OFF_KEY.encode()]

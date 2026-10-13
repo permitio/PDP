@@ -43,7 +43,7 @@ from horizon.facts.router import facts_router
 from horizon.local.api import init_local_cache_api_router
 from horizon.opal_relay_api import OpalRelayAPIClient
 from horizon.proxy.api import router as proxy_router
-from horizon.startup.api_keys import get_env_api_key
+from horizon.startup.api_keys import get_env_api_key, hand_off_env_api_key
 from horizon.startup.exceptions import InvalidPDPTokenError
 from horizon.startup.remote_config import get_remote_config
 from horizon.state import PersistentStateHandler
@@ -327,6 +327,9 @@ class PermitPDP:
 
     def __init__(self):
         self._setup_temp_logger()
+        # The front server cannot serve until it has this key: hand it off before the remote config
+        # fetch and before OPA and OPAL start.
+        hand_off_env_api_key()
         PersistentStateHandler.initialize(get_env_api_key())
         # fetch and apply config override from cloud control plane
         try:
