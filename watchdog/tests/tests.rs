@@ -13,6 +13,16 @@ fn setup_logger() {
         .try_init();
 }
 
+/// A restart for failed health checks waits out the restart interval from the previous start,
+/// like any other restart after a failure. Tests of the health checks restart sooner after the
+/// start than the 1 s default, so they shorten it.
+fn quick_restarts() -> CommandWatchdogOptions {
+    CommandWatchdogOptions {
+        restart_interval: Duration::from_millis(10),
+        ..Default::default()
+    }
+}
+
 #[tokio::test]
 async fn test_watchdog_spawn() {
     setup_logger();
@@ -266,7 +276,7 @@ async fn test_service_watchdog_recover() {
         health_check_interval: Duration::from_millis(50),
         health_check_failure_threshold: 2,
         initial_startup_delay: Duration::from_millis(250),
-        ..Default::default()
+        command_options: quick_restarts(),
     };
     let watchdog = ServiceWatchdog::start_with_opt(
         test_server.get_command(),
@@ -316,7 +326,7 @@ async fn test_service_watchdog_recover_unresponsive() {
         health_check_interval: Duration::from_millis(50),
         health_check_failure_threshold: 2,
         initial_startup_delay: Duration::from_millis(50),
-        ..Default::default()
+        command_options: quick_restarts(),
     };
     let watchdog = ServiceWatchdog::start_with_opt(
         test_server.get_command(),
@@ -370,7 +380,7 @@ async fn test_service_watchdog_consecutive_failures() {
         health_check_interval: Duration::from_millis(50),
         health_check_failure_threshold: 3, // Require 3 consecutive failures
         initial_startup_delay: Duration::from_millis(100),
-        ..Default::default()
+        command_options: quick_restarts(),
     };
 
     let watchdog = ServiceWatchdog::start_with_opt(

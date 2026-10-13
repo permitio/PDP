@@ -96,7 +96,7 @@ impl AppState {
     }
 
     /// Set up and initialize the Horizon service watchdog
-    async fn setup_horizon_watchdog(
+    pub(crate) async fn setup_horizon_watchdog(
         config: &PDPConfig,
         api_key_handoff_file: Option<&Path>,
     ) -> ServiceWatchdog {
@@ -112,18 +112,22 @@ impl AppState {
             Duration::from_secs(config.horizon.health_check_timeout),
         );
 
-        let options = ServiceWatchdogOptions {
-            health_check_interval: Duration::from_secs(config.horizon.health_check_interval),
-            health_check_failure_threshold: config.horizon.health_check_failure_threshold,
-            initial_startup_delay: Duration::from_secs(config.horizon.startup_delay),
-            command_options: CommandWatchdogOptions {
-                restart_interval: Duration::from_secs(config.horizon.restart_interval),
-                termination_timeout: Duration::from_secs(config.horizon.termination_timeout),
-                output_handler: Some(Arc::new(HorizonOutput)),
-            },
-        };
+        ServiceWatchdog::start_with_opt(command, health_checker, horizon_watchdog_options(config))
+    }
+}
 
-        ServiceWatchdog::start_with_opt(command, health_checker, options)
+/// How the watchdog checks and restarts horizon, from the `PDP_HORIZON_*` settings.
+fn horizon_watchdog_options(config: &PDPConfig) -> ServiceWatchdogOptions {
+    ServiceWatchdogOptions {
+        health_check_interval: Duration::from_secs(config.horizon.health_check_interval),
+        health_check_failure_threshold: config.horizon.health_check_failure_threshold,
+        initial_startup_delay: Duration::from_secs(config.horizon.startup_delay),
+        command_options: CommandWatchdogOptions {
+            restart_interval: Duration::from_secs(config.horizon.restart_interval),
+            max_restart_interval: Duration::from_secs(config.horizon.max_restart_interval),
+            termination_timeout: Duration::from_secs(config.horizon.termination_timeout),
+            output_handler: Some(Arc::new(HorizonOutput)),
+        },
     }
 }
 
@@ -212,6 +216,7 @@ mod tests {
                 health_check_failure_threshold: 12,
                 startup_delay: 5,
                 restart_interval: 1,
+                max_restart_interval: 60,
                 termination_timeout: 30,
             },
             opa: crate::config::opa::OpaConfig {
@@ -282,6 +287,18 @@ mod tests {
         // Verify the clone is valid
         assert!(Arc::ptr_eq(&state.config, &cloned_state.config));
         assert!(Arc::ptr_eq(&state.cache, &cloned_state.cache));
+    }
+
+    #[test]
+    fn test_horizon_restarts_back_off_as_configured() {
+        let mut config = create_test_config();
+        config.horizon.restart_interval = 2;
+        config.horizon.max_restart_interval = 120;
+
+        let options = horizon_watchdog_options(&config).command_options;
+
+        assert_eq!(options.restart_interval, Duration::from_secs(2));
+        assert_eq!(options.max_restart_interval, Duration::from_secs(120));
     }
 
     /// What the command does with PDP_API_KEY_HANDOFF_FILE: `Inherit` leaves the child whatever

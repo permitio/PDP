@@ -35,9 +35,17 @@ pub struct HorizonConfig {
     #[config(env = "PDP_HORIZON_STARTUP_DELAY", default = 5)]
     pub startup_delay: u64,
 
-    /// Interval between service restart attempts in seconds (default: 1)
+    /// Shortest time in seconds from one horizon start to the next once horizon has failed: exited,
+    /// failed to start, or failed its health checks. Each further failure in a row doubles it, up
+    /// to max_restart_interval (default: 1)
     #[config(env = "PDP_HORIZON_RESTART_INTERVAL", default = 1)]
     pub restart_interval: u64,
+
+    /// The most that time between horizon starts grows to while horizon keeps failing, in seconds.
+    /// Once horizon passes its health checks for this long, its earlier failures stop counting.
+    /// Set it to restart_interval or less to restart at a fixed interval (default: 60)
+    #[config(env = "PDP_HORIZON_MAX_RESTART_INTERVAL", default = 60)]
+    pub max_restart_interval: u64,
 
     /// Service termination timeout in seconds (default: 30)
     #[config(env = "PDP_HORIZON_TERMINATION_TIMEOUT", default = 30)]

@@ -179,8 +179,23 @@ let tcp_checker = TcpHealthChecker::with_timeout(
 
 ### CommandWatchdogOptions
 
-- `restart_interval`: Maximum duration between restarts (default: 1s)
+- `restart_interval`: Shortest time from one start to the next once the process has failed (default: 1s)
+- `max_restart_interval`: The most that time between starts grows to (default: 60s)
 - `termination_timeout`: Maximum time to wait for a process to terminate after SIGTERM (default: 60s)
+
+### Restart backoff
+
+A failure is the process exiting, failing to start, or, under a `ServiceWatchdog`, being
+restarted for failing its health checks. After the first failure in a row the next start comes
+no sooner than `restart_interval` after the previous one; each further failure doubles that, up
+to `max_restart_interval`. With the defaults, starts are at least 1, 2, 4, 8, 16, 32 and then 60
+seconds apart. A process that ran longer than that is restarted at once.
+
+The failures stop counting once the process stays up for `max_restart_interval`, or under a
+`ServiceWatchdog` passes its health checks for that long: a process that stays up but fails its
+health checks keeps counting. `consecutive_failures()` returns the current count. While no
+process runs, a `ServiceWatchdog` reports it unhealthy and skips its health checks, so it does
+not ask to restart a process the backoff is already restarting.
 
 ### ServiceWatchdogOptions
 

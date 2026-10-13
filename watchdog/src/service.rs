@@ -1,12 +1,13 @@
+use crate::backoff::RestartBackoff;
 use crate::health::HealthCheck;
 use crate::stats::ServiceWatchdogStats;
-use crate::{CommandWatchdog, CommandWatchdogOptions};
+use crate::{CommandWatchdog, CommandWatchdogOptions, Recovery};
 use log::{debug, error, info, log, warn};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::process::Command;
 use tokio::sync::watch;
-use tokio::time::{interval, timeout};
+use tokio::time::{Instant, interval, timeout};
 use tokio_util::sync::CancellationToken;
 
 /// Configuration for the service watchdog
@@ -71,8 +72,11 @@ impl ServiceWatchdog {
         health_checker: H,
         opt: ServiceWatchdogOptions,
     ) -> Self {
-        let command_watchdog =
-            CommandWatchdog::start_with_opt(command, opt.command_options.clone());
+        let command_watchdog = CommandWatchdog::start_with_recovery(
+            command,
+            opt.command_options.clone(),
+            Recovery::PassesHealthChecks,
+        );
         let stats = Arc::new(ServiceWatchdogStats::default());
         let shutdown_token = CancellationToken::new();
         let (health_status, health_receiver) = watch::channel(false);
@@ -97,6 +101,11 @@ impl ServiceWatchdog {
         let stats = Arc::clone(&self.stats);
         let shutdown_token = self.shutdown_token.clone();
         let health_status = self.health_status.clone();
+        let reset_after = RestartBackoff::new(
+            opt.command_options.restart_interval,
+            opt.command_options.max_restart_interval,
+        )
+        .reset_after();
 
         tokio::spawn(async move {
             // Wait initial startup delay
@@ -110,6 +119,10 @@ impl ServiceWatchdog {
             // Skip the first tick which happens immediately
             check_interval.tick().await;
             let mut consecutive_failures = 0;
+            // When the current run of passing health checks began
+            let mut healthy_since: Option<Instant> = None;
+            // The run of the process the counts above are about
+            let mut checked_run = command_watchdog.start_counter();
 
             loop {
                 tokio::select! {
@@ -118,6 +131,25 @@ impl ServiceWatchdog {
                         break;
                     }
                     _ = check_interval.tick() => {
+                        // A restart can fall between two checks; a new run starts afresh either way
+                        let run = command_watchdog.start_counter();
+                        if run != checked_run {
+                            checked_run = run;
+                            consecutive_failures = 0;
+                            healthy_since = None;
+                        }
+                        if !command_watchdog.is_running() {
+                            // The command watchdog is between runs and starts the next one at
+                            // its own pace. A failed check here would only ask to restart a
+                            // process that is not running.
+                            debug!(
+                                "Service '{}' is not running; skipping its health check",
+                                command_watchdog.program_name
+                            );
+                            broadcast_health(&health_status, false);
+                            continue;
+                        }
+
                         // Increment health checks counter and perform health check
                         stats.increment_health_checks();
 
@@ -125,9 +157,7 @@ impl ServiceWatchdog {
                         match health_checker.check_health().await {
                             Ok(_) => {
                                 // Service is healthy
-                                if let Err(e) = health_status.send(true) {
-                                    warn!("Failed to broadcast health status: {e}");
-                                }
+                                broadcast_health(&health_status, true);
 
                                 if consecutive_failures > 0 {
                                     log!(
@@ -141,12 +171,25 @@ impl ServiceWatchdog {
                                     );
                                 }
                                 consecutive_failures = 0;
+
+                                let since = *healthy_since.get_or_insert_with(Instant::now);
+                                if since.elapsed() >= reset_after {
+                                    let forgotten = command_watchdog.reset_failures();
+                                    if forgotten > 0 {
+                                        info!(
+                                            "Service '{}' has been healthy for {}s; its {} \
+                                             earlier failure(s) no longer count",
+                                            command_watchdog.program_name,
+                                            since.elapsed().as_secs(),
+                                            forgotten
+                                        );
+                                    }
+                                }
                             }
                             Err(e) => {
                                 // Health check failed
-                                if let Err(e) = health_status.send(false) {
-                                    warn!("Failed to broadcast health status: {e}");
-                                }
+                                broadcast_health(&health_status, false);
+                                healthy_since = None;
 
                                 stats.increment_failed_health_checks();
                                 consecutive_failures += 1;
@@ -173,6 +216,8 @@ impl ServiceWatchdog {
                                 command_watchdog.program_name, consecutive_failures
                             );
 
+                            // Counted before the restart, so the command watchdog paces it
+                            command_watchdog.record_failure();
                             // Restart the command watchdog process
                             match command_watchdog.restart().await {
                                 Ok(_) => {
@@ -244,6 +289,13 @@ impl ServiceWatchdog {
         self.command_watchdog.last_exit_code()
     }
 
+    /// Gets how many times in a row the service has failed: exited, failed to start, or been
+    /// restarted for failing its health checks. It drops to 0 once the service passes its health
+    /// checks for `max_restart_interval`.
+    pub fn consecutive_failures(&self) -> u32 {
+        self.command_watchdog.consecutive_failures()
+    }
+
     /// Get the total number of health checks performed
     pub fn health_checks(&self) -> usize {
         self.stats.health_checks()
@@ -252,6 +304,13 @@ impl ServiceWatchdog {
     /// Get the total number of failed health checks
     pub fn failed_health_checks(&self) -> usize {
         self.stats.failed_health_checks()
+    }
+}
+
+/// Tells `is_healthy` and `wait_for_healthy` what the latest health check found.
+fn broadcast_health(health_status: &watch::Sender<bool>, healthy: bool) {
+    if let Err(e) = health_status.send(healthy) {
+        warn!("Failed to broadcast health status: {e}");
     }
 }
 

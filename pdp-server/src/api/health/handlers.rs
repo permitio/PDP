@@ -201,6 +201,7 @@ mod test {
     use crate::api_key::{ApiKeySource, NO_KEY_YET};
     use crate::test_utils::TestFixture;
     use log::LevelFilter;
+    use std::sync::Arc;
     use std::time::{Duration, Instant};
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -315,6 +316,69 @@ mod test {
         assert!(horizon_requests
             .iter()
             .all(|request| !request.headers.contains_key("Authorization")));
+    }
+
+    /// While horizon keeps failing to start and the watchdog waits between restarts, the PDP
+    /// stays up and every health route answers 503: liveness (/health) and readiness (/healthy)
+    /// as the chart probes them, and /ready. Without a key of its own the PDP also reports OPA
+    /// not ready, as it does whenever horizon has not handed one over.
+    #[tokio::test]
+    async fn test_health_answers_503_while_horizon_restarts_back_off() {
+        TestFixture::setup_logger(LevelFilter::Info);
+        let mut config = crate::config::PDPConfig::default();
+        // Exits at once, as horizon does when the control plane rejects its key
+        config.horizon.python_path = "false".to_string();
+        config.horizon.startup_delay = 0;
+        config.horizon.health_check_interval = 1;
+        config.horizon.health_check_timeout = 1;
+        config.horizon.restart_interval = 1;
+        config.horizon.max_restart_interval = 60;
+        let watchdog = Arc::new(AppState::setup_horizon_watchdog(&config, None).await);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while watchdog.consecutive_failures() < 2 {
+            assert!(Instant::now() < deadline, "horizon did not fail twice");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+
+        for api_key in [
+            ApiKeySource::from_env_value("test-api-key").unwrap(),
+            ApiKeySource::Horizon,
+        ] {
+            // Nothing serves horizon's routes while it is down
+            let horizon_mock = MockServer::start().await;
+            let opa_mock = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/health"))
+                .respond_with(ResponseTemplate::new(200))
+                .mount(&opa_mock)
+                .await;
+            let mut config =
+                crate::config::PDPConfig::for_test_with_mocks(&horizon_mock, &opa_mock);
+            config.api_key = api_key.clone();
+            let mut fixture = TestFixture::with_config(config, opa_mock, horizon_mock).await;
+            fixture.state.watchdog = Some(Arc::clone(&watchdog));
+            fixture.app = crate::create_app(fixture.state.clone()).await;
+            let (opa_status, opa_error) = match api_key {
+                ApiKeySource::Env(_) => ("ok", serde_json::Value::Null),
+                ApiKeySource::Horizon => ("error", serde_json::json!(NO_KEY_YET)),
+            };
+
+            for route in ["/health", "/healthy", "/ready"] {
+                let response = fixture.get(route).await;
+
+                response.assert_status(StatusCode::SERVICE_UNAVAILABLE);
+                let json = response.json();
+                let horizon = &json["components"]["horizon"];
+                assert_eq!(horizon["status"], "error", "{route} {api_key:?}");
+                assert_eq!(
+                    horizon["details"]["watchdog"]["status"], "error",
+                    "{route} {api_key:?}"
+                );
+                let opa = &json["components"]["opa"];
+                assert_eq!(opa["status"], opa_status, "{route} {api_key:?}");
+                assert_eq!(opa["error"], opa_error, "{route} {api_key:?}");
+            }
+        }
     }
 
     #[tokio::test]

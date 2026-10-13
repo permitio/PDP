@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicUsize, Ordering};
 
 /// Statistics for the subprocess managed by CommandWatchdog
 #[derive(Debug, Default)]
@@ -7,6 +7,10 @@ pub(crate) struct CommandWatchdogStats {
     start_counter: AtomicUsize,
     /// The last exit code of the subprocess (0 if not yet exited)
     last_exit_code: AtomicI32,
+    /// How many times in a row the process has failed since it last stayed up or healthy
+    consecutive_failures: AtomicU32,
+    /// Whether a started process is running
+    running: AtomicBool,
 }
 
 impl CommandWatchdogStats {
@@ -28,6 +32,37 @@ impl CommandWatchdogStats {
     /// Sets the last exit code
     pub(crate) fn set_last_exit_code(&self, code: i32) {
         self.last_exit_code.store(code, Ordering::SeqCst);
+    }
+
+    /// Gets how many times in a row the process has failed
+    pub(crate) fn consecutive_failures(&self) -> u32 {
+        self.consecutive_failures.load(Ordering::SeqCst)
+    }
+
+    /// Counts one more failure in a row
+    pub(crate) fn record_failure(&self) {
+        // At u32::MAX the count stays put rather than wrapping to 0: the backoff is long past its
+        // cap by then, so the `Err` that leaves it unchanged is not a failure to report
+        self.consecutive_failures
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |failures| {
+                failures.checked_add(1)
+            })
+            .ok();
+    }
+
+    /// Forgets the failures in a row and returns how many there were
+    pub(crate) fn reset_failures(&self) -> u32 {
+        self.consecutive_failures.swap(0, Ordering::SeqCst)
+    }
+
+    /// Whether a started process is running
+    pub(crate) fn is_running(&self) -> bool {
+        self.running.load(Ordering::SeqCst)
+    }
+
+    /// Records whether a started process is running
+    pub(crate) fn set_running(&self, running: bool) {
+        self.running.store(running, Ordering::SeqCst);
     }
 }
 

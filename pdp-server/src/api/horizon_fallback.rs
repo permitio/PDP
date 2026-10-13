@@ -601,6 +601,7 @@ mod tests {
                 health_check_failure_threshold: 12,
                 startup_delay: 5,
                 restart_interval: 1,
+                max_restart_interval: 60,
                 termination_timeout: 30,
             },
             opa: fixture.config.opa.clone(),
@@ -668,6 +669,7 @@ mod tests {
                 health_check_failure_threshold: 12,
                 startup_delay: 5,
                 restart_interval: 1,
+                max_restart_interval: 60,
                 termination_timeout: 30,
             },
             opa: crate::config::opa::OpaConfig {

@@ -1,12 +1,15 @@
 //! `CommandWatchdog` spawns a command as a subprocess and monitors it ensuring it stays alive.
 //!
-//! When the subprocess terminates, the watchdog starts a new instance of the subprocess.
+//! When the subprocess terminates, the watchdog starts a new instance of the subprocess. While
+//! it keeps failing, the watchdog backs off: the shortest time between starts doubles with each
+//! failure in a row, up to a cap.
 //! The watchdog gracefully shuts down the subprocess when it is dropped.
 //!
 //! `ServiceWatchdog` builds on top of `CommandWatchdog` to add health checking capabilities
 //! to restart services that become unhealthy or unresponsive.
 
-use log::{debug, error, info};
+use backoff::RestartBackoff;
+use log::{debug, error, info, warn};
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 use stats::CommandWatchdogStats;
@@ -14,8 +17,10 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::process::Command;
 use tokio::sync::mpsc::{self, Receiver, Sender};
+use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
+mod backoff;
 mod health;
 mod output;
 mod service;
@@ -42,8 +47,14 @@ pub struct CommandWatchdog {
 
 #[derive(Clone)]
 pub struct CommandWatchdogOptions {
-    /// Maximum duration between restarts from exits or failed boot (default: 1 s)
+    /// Shortest time from a start to the next one once the process has failed: exited, failed to
+    /// start, or been restarted by a [`ServiceWatchdog`] for failing its health checks. Each
+    /// further failure in a row doubles it, up to `max_restart_interval` (default: 1 s)
     pub restart_interval: Duration,
+    /// The most that time between starts grows to, never less than `restart_interval`. It is also
+    /// how long the process has to stay up, or under a [`ServiceWatchdog`] pass its health
+    /// checks, before its earlier failures stop counting (default: 60 s)
+    pub max_restart_interval: Duration,
     /// Maximum time to wait for a process to terminate after kill signal (default: 60 s)
     pub termination_timeout: Duration,
     /// Where the child's stdout and stderr go.
@@ -68,6 +79,7 @@ impl std::fmt::Debug for CommandWatchdogOptions {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CommandWatchdogOptions")
             .field("restart_interval", &self.restart_interval)
+            .field("max_restart_interval", &self.max_restart_interval)
             .field("termination_timeout", &self.termination_timeout)
             .field(
                 "output_handler",
@@ -85,15 +97,34 @@ impl Default for CommandWatchdogOptions {
     fn default() -> Self {
         Self {
             restart_interval: Duration::from_secs(1),
+            max_restart_interval: Duration::from_secs(60),
             termination_timeout: Duration::from_secs(60),
             output_handler: None,
         }
     }
 }
 
+/// What shows that a failing process has recovered, so its earlier failures stop counting.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Recovery {
+    /// It stays up for `max_restart_interval`.
+    StaysUp,
+    /// It passes its health checks for `max_restart_interval`. The [`ServiceWatchdog`] that runs
+    /// them resets the count.
+    PassesHealthChecks,
+}
+
+/// How a run of the process ended, short of the watchdog shutting down.
+enum RunEnd {
+    /// The process exited by itself.
+    Exited,
+    /// A restart was asked for, and the watchdog stopped the process.
+    RestartRequested,
+}
+
 impl CommandWatchdog {
     /// Starts a process and continuously monitors it for shutdown or failure.
-    /// When the process terminates, it will be restarted immediately.
+    /// When the process terminates, it is restarted, backing off while it keeps failing.
     ///
     /// When the `Watchdog` is dropped, the process will be terminated gracefully.
     ///
@@ -104,14 +135,23 @@ impl CommandWatchdog {
     }
 
     /// Starts a process and continuously monitors it for shutdown or failure.
-    /// When the process terminates, it will be restarted immediately.
+    /// When the process terminates, it is restarted, backing off while it keeps failing.
     ///
     /// When the `Watchdog` is dropped, the process will be terminated gracefully.
     ///
     /// # Arguments
     /// * `command` - The command to run the subprocess.
     /// * `opt` - Additional options for the watchdog.
-    pub fn start_with_opt(mut command: Command, opt: CommandWatchdogOptions) -> Self {
+    pub fn start_with_opt(command: Command, opt: CommandWatchdogOptions) -> Self {
+        Self::start_with_recovery(command, opt, Recovery::StaysUp)
+    }
+
+    /// Starts and monitors a process whose earlier failures stop counting once `recovery` says so.
+    pub(crate) fn start_with_recovery(
+        mut command: Command,
+        opt: CommandWatchdogOptions,
+        recovery: Recovery,
+    ) -> Self {
         let shutdown_token = CancellationToken::new();
         command.kill_on_drop(true);
 
@@ -140,7 +180,7 @@ impl CommandWatchdog {
         };
 
         // Spawn the watchdog process
-        handle.spawn(command, restart_rx, opt);
+        handle.spawn(command, restart_rx, opt, recovery);
         handle
     }
 
@@ -152,6 +192,28 @@ impl CommandWatchdog {
     /// Gets the last exit code of the subprocess
     pub fn last_exit_code(&self) -> i32 {
         self.stats.last_exit_code()
+    }
+
+    /// Gets how many times in a row the process has failed: exited, failed to start, or been
+    /// restarted for failing its health checks. It drops to 0 once the process stays up, or
+    /// passes its health checks, for `max_restart_interval`.
+    pub fn consecutive_failures(&self) -> u32 {
+        self.stats.consecutive_failures()
+    }
+
+    /// Whether a started process is running, rather than the watchdog waiting to start it
+    pub(crate) fn is_running(&self) -> bool {
+        self.stats.is_running()
+    }
+
+    /// Counts a failure the watchdog cannot see itself, such as failed health checks
+    pub(crate) fn record_failure(&self) {
+        self.stats.record_failure();
+    }
+
+    /// Forgets the failures in a row once the process has recovered. Returns how many there were.
+    pub(crate) fn reset_failures(&self) -> u32 {
+        self.stats.reset_failures()
     }
 
     /// Requests a restart of the process
@@ -166,19 +228,42 @@ impl CommandWatchdog {
         mut command: Command,
         restart_rx: Receiver<()>,
         opt: CommandWatchdogOptions,
+        recovery: Recovery,
     ) {
         let shutdown_token = self.shutdown_token.clone();
         let program_name = self.program_name.clone();
         let cmd_line = self.cmd_line.clone();
         let stats = self.stats.clone();
         let termination_timeout = opt.termination_timeout;
+        let backoff = RestartBackoff::new(opt.restart_interval, opt.max_restart_interval);
 
         // Spawn a new task to monitor the process
         tokio::spawn(async move {
-            let mut last_start_time;
             let mut restart_rx = restart_rx;
+            let mut previous_start: Option<Instant> = None;
 
             loop {
+                let failures = stats.consecutive_failures();
+                if failures > 0
+                    && let Some(previous_start) = previous_start
+                {
+                    let next_start = previous_start + backoff.delay(failures);
+                    let wait = next_start.saturating_duration_since(Instant::now());
+                    warn!(
+                        "Process '{program_name}' has failed {failures} time(s) in a row; \
+                         starting it again in {:.1}s",
+                        wait.as_secs_f64()
+                    );
+                    tokio::select! {
+                        _ = shutdown_token.cancelled() => break,
+                        _ = tokio::time::sleep_until(next_start) => {}
+                    }
+                }
+                // The start below answers a restart asked for while no process was running
+                while restart_rx.try_recv().is_ok() {
+                    debug!("Process '{program_name}' was not running when a restart was asked for");
+                }
+
                 let count = stats.increment_start_counter();
                 info!(
                     "Starting process '{}' with command line '{}' (start count: {})",
@@ -186,7 +271,8 @@ impl CommandWatchdog {
                     cmd_line,
                     count + 1
                 );
-                last_start_time = std::time::Instant::now();
+                let started = Instant::now();
+                previous_start = Some(started);
                 let mut child = match command.spawn() {
                     Ok(mut child) => {
                         // Attach a reader to each piped stream for THIS
@@ -219,11 +305,12 @@ impl CommandWatchdog {
                     }
                     Err(e) => {
                         info!("Failed to start process '{program_name}': {e}");
-                        tokio::time::sleep(opt.restart_interval).await;
+                        stats.record_failure();
                         continue;
                     }
                 };
-                tokio::select! {
+                stats.set_running(true);
+                let run_end = tokio::select! {
                     _ = shutdown_token.cancelled() => {
                         info!("Watchdog received shutdown signal, terminating process '{cmd_line}'");
                         match terminate_process_with_timeout(&mut child, &program_name, termination_timeout).await {
@@ -234,6 +321,7 @@ impl CommandWatchdog {
                                 error!("Failed to terminate process '{program_name}': {e}");
                             }
                         };
+                        stats.set_running(false);
                         break;
                     }
                     _ = restart_rx.recv() => {
@@ -246,8 +334,7 @@ impl CommandWatchdog {
                                 error!("Failed to terminate process '{program_name}' for restart: {e}");
                             }
                         };
-                        // Continue immediately without delay to restart
-                        continue;
+                        RunEnd::RestartRequested
                     }
                     result = child.wait() => {
                         match result {
@@ -260,18 +347,34 @@ impl CommandWatchdog {
                                 info!("Failed to wait for process '{program_name}': {e}");
                             }
                         }
+                        RunEnd::Exited
                     }
-                }
+                };
+                stats.set_running(false);
 
-                // Check if we need to wait before restarting
-                let elapsed = last_start_time.elapsed();
-                if elapsed < opt.restart_interval {
-                    let delay = opt.restart_interval - elapsed;
-                    info!(
-                        "Detected crash loop. Waiting {}ms before restarting process",
-                        delay.as_millis()
-                    );
-                    tokio::time::sleep(delay).await;
+                match recovery {
+                    Recovery::StaysUp => {
+                        let ran_for = started.elapsed();
+                        if ran_for >= backoff.reset_after() {
+                            let forgotten = stats.reset_failures();
+                            if forgotten > 0 {
+                                info!(
+                                    "Process '{program_name}' ran for {}s; its {forgotten} \
+                                     earlier failure(s) no longer count",
+                                    ran_for.as_secs()
+                                );
+                            }
+                        }
+                    }
+                    Recovery::PassesHealthChecks => {}
+                }
+                match run_end {
+                    RunEnd::Exited => {
+                        stats.record_failure();
+                    }
+                    // A restart for failed health checks is counted by the service watchdog
+                    // that asked for it
+                    RunEnd::RestartRequested => {}
                 }
             }
         });
