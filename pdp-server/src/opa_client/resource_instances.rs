@@ -80,15 +80,20 @@ pub async fn query_resource_instances(
         send_raw_request_to_opa(state, "/v1/query", &request).await?;
 
     let mut instances = BTreeMap::new();
+    let mut unprefixed_keys = 0_usize;
     for row in response.result {
         let Some(instance_key) = row.key.strip_prefix(&key_prefix) else {
-            log::warn!(
-                "Ignoring resource instance {:?} from OPA: expected the prefix {key_prefix:?}",
-                row.key
-            );
+            unprefixed_keys += 1;
             continue;
         };
         instances.insert(instance_key.to_string(), row.instance.attributes);
+    }
+    // Counted rather than listed: keys from OPA's response are not written to the log.
+    if unprefixed_keys > 0 {
+        log::warn!(
+            "Ignoring {unprefixed_keys} resource instance(s) from OPA whose key does not start \
+             with {key_prefix:?}"
+        );
     }
     Ok(instances)
 }
@@ -117,4 +122,61 @@ pub async fn query_resource_instance_tenant(
         .into_iter()
         .next()
         .and_then(|row| row.tenant))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::{LogCapture, TestFixture};
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn test_instances_with_an_unexpected_key_are_counted_in_one_warning() {
+        let fixture = TestFixture::new().await;
+        fixture
+            .add_opa_mock(
+                http::Method::POST,
+                "/v1/query",
+                json!({"result": [
+                    {"instance": {"attributes": {}, "tenant": "t1"}, "key": "doc:d-public"},
+                    {"instance": {"attributes": {}, "tenant": "t1"}, "key": "docx:secret-x"},
+                    {"instance": {"attributes": {}, "tenant": "t1"}, "key": "doc:d-secret"},
+                    {"instance": {"attributes": {}, "tenant": "t1"}, "key": "file:secret-y"}
+                ]}),
+                http::StatusCode::OK,
+                1,
+            )
+            .await;
+        let tenants = BTreeSet::from(["t1".to_string()]);
+        let logs = LogCapture::start();
+
+        let instances = query_resource_instances(&fixture.state, "doc", &tenants)
+            .await
+            .expect("the query succeeds");
+
+        let mut keys = Vec::new();
+        for key in instances.keys() {
+            keys.push(key.as_str());
+        }
+        assert_eq!(keys, vec!["d-public", "d-secret"]);
+        let mut warnings = Vec::new();
+        for line in logs.lines() {
+            if line.starts_with("WARN") {
+                warnings.push(line);
+            }
+        }
+        assert_eq!(
+            warnings,
+            vec![
+                "WARN Ignoring 2 resource instance(s) from OPA whose key does not start with \
+                 \"doc:\""
+            ]
+        );
+        for line in logs.lines() {
+            assert!(
+                !line.contains("secret-"),
+                "an OPA key reached the log: {line}"
+            );
+        }
+    }
 }
