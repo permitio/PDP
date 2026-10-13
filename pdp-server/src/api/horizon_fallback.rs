@@ -4,10 +4,11 @@ use axum::{
     http::{Method, Request, Response, StatusCode},
     response::IntoResponse,
 };
-use http::header::HeaderName;
+use http::header::{HeaderName, AUTHORIZATION};
 use reqwest::header::HeaderValue;
 use std::error::Error as StdError;
 
+use crate::api_key::NO_KEY_YET;
 use crate::state::AppState;
 
 /// Forward unmatched requests to the legacy Horizon PDP service (Python-based PDP)
@@ -41,14 +42,21 @@ pub(super) async fn fallback_to_horizon(
         }
     };
 
+    let Some(bearer) = state.api_key.bearer() else {
+        return (StatusCode::SERVICE_UNAVAILABLE, NO_KEY_YET).into_response();
+    };
+
     // Prepare request builder
     let url = state.config.horizon.get_url(path);
     log::debug!("Forwarding request to Horizon: {} {}", req.method(), url);
     let req_builder = state.horizon_client.request(method, &url);
 
-    // Forward headers
-    let mut req_builder = req_builder;
+    // Forward headers, except the caller's credentials: horizon gets the PDP's own key
+    let mut req_builder = req_builder.header(AUTHORIZATION, bearer);
     for (key, value) in req.headers() {
+        if key == AUTHORIZATION {
+            continue;
+        }
         if let Ok(header_value) = HeaderValue::from_bytes(value.as_bytes()) {
             req_builder = req_builder.header(key.as_str(), header_value);
         }
@@ -128,8 +136,9 @@ pub(super) async fn fallback_to_horizon(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api_key::{ApiKey, ApiKeySource};
     use crate::test_utils::TestFixture;
-    use http::{header::AUTHORIZATION, Method, StatusCode};
+    use http::{Method, StatusCode};
     use serde_json::json;
     use std::time::Duration;
     use wiremock::{matchers, Mock, ResponseTemplate};
@@ -137,7 +146,7 @@ mod tests {
     #[tokio::test]
     async fn test_forward_unmatched_fail_with_wrong_auth() {
         let fixture = TestFixture::with_config_modifier(|config| {
-            config.api_key = "test-token".to_string();
+            config.api_key = ApiKeySource::from_env_value("test-token").unwrap();
         })
         .await;
 
@@ -194,6 +203,61 @@ mod tests {
         response.assert_status(StatusCode::UNAUTHORIZED);
         assert_eq!(response.json(), "Missing Authorization header");
 
+        fixture.horizon_mock.verify().await;
+    }
+
+    /// Horizon gets the PDP's own key, once, whatever Authorization header reached the fallback.
+    #[tokio::test]
+    async fn test_forward_presents_the_current_key_not_the_callers() {
+        let fixture = TestFixture::new().await;
+        fixture
+            .state
+            .api_key
+            .replace(ApiKey::new("rotated-key").unwrap());
+        Mock::given(matchers::method("GET"))
+            .and(matchers::path("/test"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&fixture.horizon_mock)
+            .await;
+        let req = Request::builder()
+            .uri("/test")
+            .header(AUTHORIZATION, "Bearer callers-key")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = fallback_to_horizon(State(fixture.state.clone()), req)
+            .await
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let requests = fixture.horizon_mock.received_requests().await.unwrap();
+        let presented: Vec<_> = requests[0].headers.get_all(AUTHORIZATION).iter().collect();
+        assert_eq!(presented, ["Bearer rotated-key"]);
+    }
+
+    #[tokio::test]
+    async fn test_forward_without_a_key_does_not_reach_horizon() {
+        let fixture = TestFixture::with_config_modifier(|config| {
+            config.api_key = ApiKeySource::Horizon;
+        })
+        .await;
+        Mock::given(matchers::any())
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&fixture.horizon_mock)
+            .await;
+        let req = Request::builder()
+            .uri("/test")
+            .header(AUTHORIZATION, "Bearer MUST BE DEFINED")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = fallback_to_horizon(State(fixture.state.clone()), req)
+            .await
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         fixture.horizon_mock.verify().await;
     }
 
@@ -423,7 +487,7 @@ mod tests {
             ("X-Server", "Test-Server"),
             ("Vary", "Accept-Encoding"),
         ];
-        let auth_header = format!("Bearer {}", fixture.config.api_key);
+        let auth_header = fixture.auth_header();
         // Setup mock that demonstrates header forwarding
         // We use multiple headers in the request and in the response
         Mock::given(matchers::method("GET"))
@@ -520,7 +584,7 @@ mod tests {
 
         // Create a modified config for testing
         let config = crate::config::PDPConfig {
-            api_key: "test_api_key".to_string(),
+            api_key: ApiKeySource::from_env_value("test_api_key").unwrap(),
             host: "0.0.0.0".to_string(),
             debug: None,
             port: 0,
@@ -588,7 +652,7 @@ mod tests {
 
         // Create custom config with very short timeout
         let config = crate::config::PDPConfig {
-            api_key: "test_api_key".to_string(),
+            api_key: ApiKeySource::from_env_value("test_api_key").unwrap(),
             host: "0.0.0.0".to_string(),
             debug: None,
             port: 0,

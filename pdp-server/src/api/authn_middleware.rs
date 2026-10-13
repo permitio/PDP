@@ -1,3 +1,4 @@
+use crate::api_key::NO_KEY_YET;
 use crate::state::AppState;
 use axum::{
     body::Body,
@@ -55,10 +56,18 @@ pub(super) async fn authentication_middleware(
         }
     };
 
+    let Some(expected) = state.api_key.get() else {
+        warn!("Rejecting a request: the PDP has no API key yet");
+        return Response::builder()
+            .status(StatusCode::SERVICE_UNAVAILABLE)
+            .body(NO_KEY_YET.into())
+            .expect("Failed to create response");
+    };
+
     // Verify the API key
     let key_matches: bool = api_key
         .as_bytes()
-        .ct_eq(state.config.api_key.as_bytes())
+        .ct_eq(expected.as_str().as_bytes())
         .into();
     if !key_matches {
         warn!("Authentication failed: Invalid API key");
@@ -75,6 +84,7 @@ pub(super) async fn authentication_middleware(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api_key::{ApiKey, ApiKeySource, CurrentApiKey, PLACEHOLDER};
     use crate::test_utils::{LogCapture, TestFixture};
     use axum::routing::get;
     use axum::Router;
@@ -86,19 +96,28 @@ mod tests {
 
     /// Helper function to set up a mock app with authentication middleware
     async fn setup_authn_mock_app(api_key: &str) -> Router {
+        let (app, _) = setup_authn_mock_app_with_key(api_key).await;
+        app
+    }
+
+    /// Sets up the app as `PDP_API_KEY=<api_key>` would, and returns the key it holds, to hand a
+    /// key over to it the way horizon does.
+    async fn setup_authn_mock_app_with_key(api_key: &str) -> (Router, CurrentApiKey) {
         // Create a TestFixture and get settings from it, but customize the API key
         let fixture = TestFixture::new().await;
         let mut config = fixture.config.clone();
-        config.api_key = api_key.to_string();
+        config.api_key = ApiKeySource::from_env_value(api_key).expect("Invalid API key");
         let state = AppState::for_testing(&config);
+        let current = state.api_key.clone();
 
-        Router::new()
+        let app = Router::new()
             .route(TEST_ROUTE, get(async || (StatusCode::OK, "Authenticated")))
             .layer(axum::middleware::from_fn_with_state(
                 state.clone(),
                 authentication_middleware,
             ))
-            .with_state(state)
+            .with_state(state);
+        (app, current)
     }
 
     /// Helper function to build a request with optional authorization header
@@ -214,6 +233,66 @@ mod tests {
             let (status, _) = send_request(&app, Some(header)).await;
             assert_eq!(status, StatusCode::FORBIDDEN, "header {header:?}");
         }
+    }
+
+    /// `PDP_API_KEY` left at the image's placeholder, and horizon has not handed a key over: the
+    /// placeholder is no key, so nothing gets in, and the caller learns the PDP is still starting.
+    #[tokio::test]
+    async fn test_without_a_key_every_bearer_token_gets_503() {
+        for env_value in ["", PLACEHOLDER] {
+            let app = setup_authn_mock_app(env_value).await;
+
+            for header in ["Bearer MUST BE DEFINED", "Bearer ", "Bearer test_api_key"] {
+                let logs = LogCapture::start();
+
+                let (status, body) = send_request(&app, Some(header)).await;
+
+                assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{header:?}");
+                assert_eq!(body, "The PDP has no API key yet; it is still starting.");
+                let lines = logs.lines();
+                assert!(
+                    lines
+                        .iter()
+                        .any(|line| line.starts_with("WARN") && line.contains("no API key yet")),
+                    "{lines:?}"
+                );
+                assert!(
+                    lines.iter().all(|line| !line.contains("test_api_key")),
+                    "{lines:?}"
+                );
+            }
+
+            let (status, _) = send_request(&app, None).await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_key_handed_over_later_is_the_only_key_accepted() {
+        let (app, current) = setup_authn_mock_app_with_key(PLACEHOLDER).await;
+
+        current.replace(ApiKey::new("derived_key").unwrap());
+
+        let (status, body) = send_request(&app, Some("Bearer derived_key")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "Authenticated");
+        for header in ["Bearer MUST BE DEFINED", "Bearer ", "Bearer derived_ke"] {
+            let (status, _) = send_request(&app, Some(header)).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{header:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_rotated_key_replaces_the_old_one() {
+        let (app, current) = setup_authn_mock_app_with_key("").await;
+        current.replace(ApiKey::new("first_key").unwrap());
+
+        current.replace(ApiKey::new("second_key").unwrap());
+
+        let (status, _) = send_request(&app, Some("Bearer second_key")).await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, _) = send_request(&app, Some("Bearer first_key")).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
     }
 
     /// The Authorization header the caller sent appears in no log line, at any level, whatever

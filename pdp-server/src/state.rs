@@ -1,11 +1,12 @@
 use crate::{
+    api_key::{handoff, ApiKeySource, CurrentApiKey},
     cache::{create_cache, Cache},
     config::{trino_authz::TrinoAuthzConfig, PDPConfig},
 };
 use http::header::{AUTHORIZATION, CONTENT_TYPE};
 use http::{HeaderMap, HeaderValue};
-use reqwest::Client;
-use std::path::Path;
+use reqwest::{Client, RequestBuilder};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::process::Command;
@@ -18,6 +19,7 @@ use watchdog::{
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<PDPConfig>,
+    pub api_key: CurrentApiKey,
     pub cache: Arc<Cache>,
     pub watchdog: Option<Arc<ServiceWatchdog>>,
     pub opa_client: Arc<Client>,
@@ -48,31 +50,10 @@ impl ChildOutputHandler for HorizonOutput {
 impl AppState {
     /// Create a new application state with all components initialized
     pub async fn new(config: &PDPConfig) -> Result<Self, std::io::Error> {
-        let watchdog = Self::setup_horizon_watchdog(config).await;
-        let cache = Arc::new(
-            create_cache(config)
-                .await
-                .map_err(|e| std::io::Error::other(format!("Failed to create cache: {e}")))?,
-        );
-
-        // Load Trino authz config if available
-        let trino_authz_config =
-            TrinoAuthzConfig::load_from_file(&config.trino_authz_config_path).map(Arc::new);
-
-        Ok(Self {
-            config: Arc::new(config.clone()),
-            cache,
-            watchdog: Some(Arc::new(watchdog)),
-            opa_client: Arc::new(create_http_client(
-                config.api_key.clone(),
-                config.opa.client_query_timeout,
-            )),
-            horizon_client: Arc::new(create_http_client(
-                config.api_key.clone(),
-                config.horizon.client_timeout,
-            )),
-            trino_authz_config,
-        })
+        let cache = create_cache(config)
+            .await
+            .map_err(|e| std::io::Error::other(format!("Failed to create cache: {e}")))?;
+        Self::with_existing_cache(config, cache).await
     }
 
     /// Create a new application state with a pre-initialized cache
@@ -80,7 +61,8 @@ impl AppState {
         config: &PDPConfig,
         cache: Cache,
     ) -> Result<Self, std::io::Error> {
-        let watchdog = Self::setup_horizon_watchdog(config).await;
+        let (api_key, api_key_handoff_file) = init_api_key(config)?;
+        let watchdog = Self::setup_horizon_watchdog(config, api_key_handoff_file.as_deref()).await;
 
         // Load Trino authz config if available
         let trino_authz_config =
@@ -88,16 +70,11 @@ impl AppState {
 
         Ok(Self {
             config: Arc::new(config.clone()),
+            api_key,
             cache: Arc::new(cache),
             watchdog: Some(Arc::new(watchdog)),
-            opa_client: Arc::new(create_http_client(
-                config.api_key.clone(),
-                config.opa.client_query_timeout,
-            )),
-            horizon_client: Arc::new(create_http_client(
-                config.api_key.clone(),
-                config.horizon.client_timeout,
-            )),
+            opa_client: Arc::new(create_http_client(config.opa.client_query_timeout)),
+            horizon_client: Arc::new(create_http_client(config.horizon.client_timeout)),
             trino_authz_config,
         })
     }
@@ -107,39 +84,31 @@ impl AppState {
     pub fn for_testing(config: &PDPConfig) -> Self {
         Self {
             config: Arc::new(config.clone()),
+            api_key: CurrentApiKey::new(config.api_key.env_key()),
             cache: Arc::new(Cache::Null(crate::cache::null::NullCache::new())),
             watchdog: None,
-            opa_client: Arc::new(create_http_client(
-                config.api_key.clone(),
-                config.opa.client_query_timeout,
-            )),
-            horizon_client: Arc::new(create_http_client(
-                config.api_key.clone(),
-                config.horizon.client_timeout,
-            )),
+            opa_client: Arc::new(create_http_client(config.opa.client_query_timeout)),
+            horizon_client: Arc::new(create_http_client(config.horizon.client_timeout)),
             trino_authz_config: None,
         }
     }
 
-    /// Set up and initialize the Horizon service watchdog
-    async fn setup_horizon_watchdog(config: &PDPConfig) -> ServiceWatchdog {
-        let mut command = Command::new(&config.horizon.python_path);
-
-        // First, check if /app/horizon exists (Docker container case)
-        if Path::new("/app/horizon").exists() {
-            command.current_dir("/app");
-        } else {
-            // Use the original relative path for development
-            command.current_dir("../horizon");
+    /// Starts a GET to one of horizon's public routes (health, API docs). It presents the API key
+    /// when there is one; before there is one it goes without, as those routes do not ask for it.
+    pub fn get_public_horizon_route(&self, url: &str) -> RequestBuilder {
+        let request = self.horizon_client.get(url);
+        match self.api_key.bearer() {
+            Some(bearer) => request.header(AUTHORIZATION, bearer),
+            None => request,
         }
+    }
 
-        command.arg("-m");
-        command.arg("uvicorn");
-        command.arg("horizon.main:app");
-        command.arg("--host");
-        command.arg(&config.horizon.host);
-        command.arg("--port");
-        command.arg(config.horizon.port.to_string());
+    /// Set up and initialize the Horizon service watchdog
+    async fn setup_horizon_watchdog(
+        config: &PDPConfig,
+        api_key_handoff_file: Option<&Path>,
+    ) -> ServiceWatchdog {
+        let command = horizon_command(config, api_key_handoff_file);
 
         let health_endpoint = format!(
             "http://{}:{}/healthy",
@@ -166,15 +135,52 @@ impl AppState {
     }
 }
 
-/// Creates a configured HTTP client with default headers and timeouts
-fn create_http_client(token: String, timeout_secs: u64) -> Client {
+/// The key in force at startup. Without one in `PDP_API_KEY`, also starts taking the key horizon
+/// derives, and returns the file horizon hands it over in.
+fn init_api_key(config: &PDPConfig) -> std::io::Result<(CurrentApiKey, Option<PathBuf>)> {
+    let api_key = CurrentApiKey::new(config.api_key.env_key());
+    let handoff_file = match config.api_key {
+        ApiKeySource::Env(_) => None,
+        ApiKeySource::Horizon => Some(handoff::start(api_key.clone()).map_err(|e| {
+            std::io::Error::other(format!(
+                "Failed to create the directory horizon hands the API key over in: {e}"
+            ))
+        })?),
+    };
+    Ok((api_key, handoff_file))
+}
+
+/// The command that runs horizon, told where to write the key it derives when the PDP has none of
+/// its own.
+fn horizon_command(config: &PDPConfig, api_key_handoff_file: Option<&Path>) -> Command {
+    let mut command = Command::new(&config.horizon.python_path);
+
+    // First, check if /app/horizon exists (Docker container case)
+    if Path::new("/app/horizon").exists() {
+        command.current_dir("/app");
+    } else {
+        // Use the original relative path for development
+        command.current_dir("../horizon");
+    }
+
+    command.arg("-m");
+    command.arg("uvicorn");
+    command.arg("horizon.main:app");
+    command.arg("--host");
+    command.arg(&config.horizon.host);
+    command.arg("--port");
+    command.arg(config.horizon.port.to_string());
+
+    if let Some(file) = api_key_handoff_file {
+        command.env(handoff::FILE_ENV, file);
+    }
+    command
+}
+
+/// Creates a configured HTTP client with default headers and timeouts. The API key is not among
+/// them: it can change while the PDP runs, so each request that needs it adds it.
+fn create_http_client(timeout_secs: u64) -> Client {
     let mut headers = HeaderMap::new();
-    headers.insert(
-        AUTHORIZATION,
-        format!("Bearer {token}")
-            .parse()
-            .expect("Failed to parse API token"),
-    );
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
     // Create a client with appropriate configurations
@@ -197,7 +203,7 @@ mod tests {
 
     fn create_test_config() -> PDPConfig {
         PDPConfig {
-            api_key: "test-api-key".to_string(),
+            api_key: ApiKeySource::from_env_value("test-api-key").unwrap(),
             host: "0.0.0.0".to_string(),
             debug: Some(true),
             port: 3000,
@@ -285,6 +291,43 @@ mod tests {
         // Verify the clone is valid
         assert!(Arc::ptr_eq(&state.config, &cloned_state.config));
         assert!(Arc::ptr_eq(&state.cache, &cloned_state.cache));
+    }
+
+    fn handoff_file_env(command: &Command) -> Option<String> {
+        let (_, value) = command
+            .as_std()
+            .get_envs()
+            .find(|(name, _)| *name == handoff::FILE_ENV)?;
+        value.map(|value| value.to_string_lossy().into_owned())
+    }
+
+    #[tokio::test]
+    async fn test_key_from_env_needs_no_handoff() {
+        let config = create_test_config();
+
+        let (api_key, handoff_file) = init_api_key(&config).unwrap();
+
+        assert_eq!(api_key.get().unwrap().as_str(), "test-api-key");
+        assert_eq!(handoff_file, None);
+        let command = horizon_command(&config, handoff_file.as_deref());
+        assert_eq!(handoff_file_env(&command), None);
+    }
+
+    #[tokio::test]
+    async fn test_without_a_key_horizon_is_told_where_to_hand_it_over() {
+        let mut config = create_test_config();
+        config.api_key = ApiKeySource::Horizon;
+
+        let (api_key, handoff_file) = init_api_key(&config).unwrap();
+
+        assert!(api_key.get().is_none());
+        let handoff_file = handoff_file.expect("a handoff file without a key in PDP_API_KEY");
+        assert!(handoff_file.is_absolute(), "{handoff_file:?}");
+        let command = horizon_command(&config, Some(&handoff_file));
+        assert_eq!(
+            handoff_file_env(&command),
+            Some(handoff_file.display().to_string())
+        );
     }
 
     /// The handler must survive whatever the child writes: it runs on the task

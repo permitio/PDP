@@ -246,10 +246,20 @@ impl TestFixture {
         }
     }
 
+    /// The `Authorization` header value that presents the PDP's current API key.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the PDP has no API key.
+    pub fn auth_header(&self) -> String {
+        let key = self.state.api_key.get().expect("The PDP has no API key");
+        format!("Bearer {}", key.as_str())
+    }
+
     /// Creates a request builder with pre-configured headers.
     ///
     /// The request builder includes standard headers:
-    /// - Authorization: Bearer token using the test API key
+    /// - Authorization: Bearer token using the PDP's current API key, when it has one
     /// - Content-Type: application/json
     ///
     /// # Parameters
@@ -276,7 +286,9 @@ impl TestFixture {
         let mut builder = Request::builder().method(method).uri(uri.as_ref());
 
         // Add default headers
-        builder = builder.header("Authorization", format!("Bearer {}", self.config.api_key));
+        if let Some(bearer) = self.state.api_key.bearer() {
+            builder = builder.header("Authorization", bearer);
+        }
         builder = builder.header("Content-Type", "application/json");
 
         builder

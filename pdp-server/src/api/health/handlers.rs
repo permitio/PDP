@@ -198,10 +198,11 @@ pub fn router() -> Router<AppState> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::api_key::{ApiKeySource, NO_KEY_YET};
     use crate::test_utils::TestFixture;
     use log::LevelFilter;
     use std::time::{Duration, Instant};
-    use wiremock::matchers::{method, path};
+    use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     async fn setup_healthy_mocks() -> (MockServer, MockServer) {
@@ -264,6 +265,56 @@ mod test {
                 .unwrap(),
             "ok"
         );
+    }
+
+    #[tokio::test]
+    async fn test_opa_health_check_presents_the_key() {
+        TestFixture::setup_logger(LevelFilter::Info);
+        let horizon_mock = MockServer::start().await;
+        let opa_mock = MockServer::start().await;
+        let config = crate::config::PDPConfig::for_test_with_mocks(&horizon_mock, &opa_mock);
+        let fixture = TestFixture::with_config(config, opa_mock, horizon_mock).await;
+        Mock::given(method("GET"))
+            .and(path("/healthy"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&fixture.horizon_mock)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/health"))
+            .and(header("Authorization", fixture.auth_header()))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&fixture.opa_mock)
+            .await;
+
+        fixture.get("/health").await.assert_ok();
+
+        fixture.opa_mock.verify().await;
+    }
+
+    /// Health is served before the PDP has a key; OPA is not ready, since nothing can query it
+    /// yet, and no request goes to it.
+    #[tokio::test]
+    async fn test_health_without_a_key_reports_opa_not_ready() {
+        TestFixture::setup_logger(LevelFilter::Info);
+        let (horizon_mock, opa_mock) = setup_healthy_mocks().await;
+        let mut config = crate::config::PDPConfig::for_test_with_mocks(&horizon_mock, &opa_mock);
+        config.api_key = ApiKeySource::Horizon;
+        let fixture = TestFixture::with_config(config, opa_mock, horizon_mock).await;
+
+        let response = fixture.get("/health").await;
+
+        response.assert_status(StatusCode::SERVICE_UNAVAILABLE);
+        let json_response = response.json();
+        assert_eq!(json_response["components"]["horizon"]["status"], "ok");
+        assert_eq!(json_response["components"]["opa"]["status"], "error");
+        assert_eq!(json_response["components"]["opa"]["error"], NO_KEY_YET);
+        let opa_requests = fixture.opa_mock.received_requests().await.unwrap();
+        assert!(opa_requests.is_empty(), "{opa_requests:?}");
+        let horizon_requests = fixture.horizon_mock.received_requests().await.unwrap();
+        assert!(horizon_requests
+            .iter()
+            .all(|request| !request.headers.contains_key("Authorization")));
     }
 
     #[tokio::test]

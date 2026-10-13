@@ -1,4 +1,5 @@
 mod api;
+mod api_key;
 mod cache;
 mod config;
 mod errors;

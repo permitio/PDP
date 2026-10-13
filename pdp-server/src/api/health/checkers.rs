@@ -1,7 +1,9 @@
 use super::models::ComponentStatus;
 use super::models::HealthStatusType;
+use crate::api_key::NO_KEY_YET;
 use crate::cache::CacheBackend;
 use crate::state::AppState;
+use http::header::AUTHORIZATION;
 use serde_json::json;
 use std::future::Future;
 use std::pin::Pin;
@@ -56,9 +58,20 @@ pub fn check_opa_health<'a>(
 ) -> Pin<Box<dyn Future<Output = ComponentStatus> + Send + 'a>> {
     let opa_url_owned = format!("{}/health", state.config.opa.url);
     let opa_client_clone = state.opa_client.clone();
+    let bearer = state.api_key.bearer();
 
     Box::pin(async move {
-        match opa_client_clone.get(&opa_url_owned).send().await {
+        let Some(bearer) = bearer else {
+            return ComponentStatus {
+                status: HealthStatusType::Error,
+                error: Some(NO_KEY_YET.to_string()),
+                details: None,
+            };
+        };
+        let request = opa_client_clone
+            .get(&opa_url_owned)
+            .header(AUTHORIZATION, bearer);
+        match request.send().await {
             Ok(response) => {
                 if response.status().is_success() {
                     ComponentStatus {
@@ -130,7 +143,7 @@ where
 /// Check Horizon's health directly through HTTP
 async fn check_horizon_health_directly(state: &AppState) -> ComponentStatus {
     let horizon_url = state.config.horizon.get_url("/healthy");
-    match state.horizon_client.get(&horizon_url).send().await {
+    match state.get_public_horizon_route(&horizon_url).send().await {
         Ok(response) => {
             if response.status().is_success() {
                 ComponentStatus {
@@ -179,6 +192,7 @@ mod tests {
 
         AppState {
             config: Arc::new(pdp_config),
+            api_key: crate::api_key::CurrentApiKey::new(None),
             opa_client: Arc::new(Client::new()),
             horizon_client: Arc::new(Client::new()),
             cache: Arc::new(Cache::Null(NullCache::new())),

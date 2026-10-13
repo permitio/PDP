@@ -31,7 +31,7 @@ pub(crate) struct ApiDoc;
 async fn openapi_json_handler(State(state): State<AppState>) -> impl IntoResponse {
     let openapi_url = state.config.horizon.get_url("/openapi.json");
 
-    match state.horizon_client.get(&openapi_url).send().await {
+    match state.get_public_horizon_route(&openapi_url).send().await {
         Ok(response) => match response.bytes().await {
             Ok(bytes) => match serde_json::from_slice::<serde_json::Value>(&bytes) {
                 Ok(json) => axum::Json(json).into_response(),
@@ -53,7 +53,7 @@ async fn openapi_json_handler(State(state): State<AppState>) -> impl IntoRespons
 async fn redoc_handler(State(state): State<AppState>) -> impl IntoResponse {
     let redoc_url = state.config.horizon.get_url("/redoc");
 
-    match state.horizon_client.get(&redoc_url).send().await {
+    match state.get_public_horizon_route(&redoc_url).send().await {
         Ok(response) => {
             // Extract content-type header before consuming the response
             let content_type = response
@@ -84,7 +84,7 @@ async fn redoc_handler(State(state): State<AppState>) -> impl IntoResponse {
 async fn scalar_handler(State(state): State<AppState>) -> impl IntoResponse {
     let scalar_url = state.config.horizon.get_url("/scalar");
 
-    match state.horizon_client.get(&scalar_url).send().await {
+    match state.get_public_horizon_route(&scalar_url).send().await {
         Ok(response) => {
             // Extract content-type header before consuming the response
             let content_type = response
@@ -117,4 +117,71 @@ pub(crate) fn router() -> Router<AppState> {
         .route("/openapi.json", get(openapi_json_handler))
         .route("/redoc", get(redoc_handler))
         .route("/scalar", get(scalar_handler))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::api_key::ApiKeySource;
+    use crate::test_utils::TestFixture;
+    use http::header::AUTHORIZATION;
+    use serde_json::json;
+    use wiremock::{matchers, Mock, ResponseTemplate};
+
+    async fn mount_docs(fixture: &TestFixture) {
+        Mock::given(matchers::method("GET"))
+            .and(matchers::path("/openapi.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"openapi": "3.1.0"})))
+            .mount(&fixture.horizon_mock)
+            .await;
+        for path in ["/redoc", "/scalar"] {
+            Mock::given(matchers::method("GET"))
+                .and(matchers::path(path))
+                .respond_with(ResponseTemplate::new(200).set_body_string("<html></html>"))
+                .mount(&fixture.horizon_mock)
+                .await;
+        }
+    }
+
+    async fn authorization_horizon_received(fixture: &TestFixture) -> Vec<Option<String>> {
+        let requests = fixture.horizon_mock.received_requests().await.unwrap();
+        requests
+            .iter()
+            .map(|request| {
+                let header = request.headers.get(AUTHORIZATION)?;
+                Some(String::from_utf8_lossy(header.as_bytes()).into_owned())
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn test_docs_are_served_before_the_pdp_has_a_key() {
+        let fixture = TestFixture::with_config_modifier(|config| {
+            config.api_key = ApiKeySource::Horizon;
+        })
+        .await;
+        mount_docs(&fixture).await;
+
+        for path in ["/openapi.json", "/redoc", "/scalar"] {
+            fixture.get(path).await.assert_ok();
+        }
+
+        assert_eq!(
+            authorization_horizon_received(&fixture).await,
+            [None, None, None]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_docs_requests_present_the_key_when_there_is_one() {
+        let fixture = TestFixture::new().await;
+        mount_docs(&fixture).await;
+
+        let response = fixture.get("/openapi.json").await;
+
+        response.assert_ok();
+        assert_eq!(
+            authorization_horizon_received(&fixture).await,
+            [Some(fixture.auth_header())]
+        );
+    }
 }
