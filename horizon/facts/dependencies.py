@@ -20,15 +20,23 @@ _data_update_subscriber: DataUpdateSubscriber | None = None
 
 def get_data_update_subscriber(
     opal_client: OpalClientDependency,
-) -> DataUpdateSubscriber:
+) -> DataUpdateSubscriber | None:
+    """The subscriber that publishes facts updates and waits for this PDP to apply them.
+
+    None when OPAL's data updater is disabled (OPAL_DATA_UPDATER_ENABLED=false): the PDP then
+    applies no data updates, so it has none to publish or wait for.
+    """
+    data_updater = opal_client.data_updater
+    if data_updater is None:
+        return None
     global _data_update_subscriber  # noqa: PLW0603 - built on first use, then shared by every request
     if _data_update_subscriber is None:
-        _data_update_subscriber = DataUpdateSubscriber(opal_client.data_updater)  # ty: ignore[invalid-argument-type]  # a PDP without one fails at startup
+        _data_update_subscriber = DataUpdateSubscriber(data_updater)
 
     return _data_update_subscriber
 
 
-DataUpdateSubscriberDependency = Annotated[DataUpdateSubscriber, Depends(get_data_update_subscriber)]
+DataUpdateSubscriberDependency = Annotated[DataUpdateSubscriber | None, Depends(get_data_update_subscriber)]
 
 
 def get_wait_timeout(request: Request) -> float | None:

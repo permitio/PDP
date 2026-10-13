@@ -380,9 +380,7 @@ class PermitPDP:
         self._configure_cloud_logging(remote_config.context)
 
         self._opal_relay = OpalRelayAPIClient(remote_config.context, self._opal)
-        self._opal.data_updater.callbacks_reporter.set_user_data_handler(  # ty: ignore[unresolved-attribute]  # no data updater: startup fails here
-            PersistentStateHandler.get_instance().reporter_user_data_handler
-        )
+        self._configure_data_update_reports()
 
         # use opal client app and add sidecar routes on top
         app: FastAPI = self._opal.app
@@ -540,6 +538,20 @@ class PermitPDP:
             wait_strategy="random_exponential",
             attempts=14,
             wait_time=1,
+        )
+
+    def _configure_data_update_reports(self) -> None:
+        """Add the PDP's state to OPAL's data update reports, or say that OPAL's data updater is disabled."""
+        data_updater = self._opal.data_updater
+        if data_updater is None:
+            logger.warning(
+                "OPAL's data updater is disabled (OPAL_DATA_UPDATER_ENABLED=false), so dynamic data updates are "
+                "off: facts writes are forwarded to the control plane without waiting for them to apply on this "
+                "PDP, and /data-updater/trigger and /update_policy_data answer 503."
+            )
+            return
+        data_updater.callbacks_reporter.set_user_data_handler(
+            PersistentStateHandler.get_instance().reporter_user_data_handler
         )
 
     def _configure_opal_offline_mode(self):
