@@ -27,6 +27,7 @@ from opal_common.fetcher.providers.http_fetch_provider import (
     HttpMethods,
 )
 from opal_common.logging_utils.formatter import Formatter
+from opal_common.logging_utils.scrubbing import CredentialScrubbingStream
 from pydantic import BaseModel, Field
 from scalar_fastapi import get_scalar_api_reference
 
@@ -400,9 +401,10 @@ class PermitPDP:
         """
         # Clean slate
         logger.remove()
-        # Logger configuration
+        # Logger configuration. Until OpalClient configures logging, this is the only sink: it masks
+        # URL userinfo, token query params and Authorization values the way OPAL's own sink does.
         logger.add(
-            sys.stdout,
+            CredentialScrubbingStream(sys.stdout),
             format=sidecar_config.TEMP_LOG_FORMAT,
             level="INFO",
             backtrace=False,
