@@ -1,6 +1,8 @@
 use serde::{de::DeserializeOwned, Serialize};
 use thiserror::Error;
 
+#[cfg(test)]
+pub(crate) mod fake_redis;
 pub mod memory;
 pub mod null;
 pub mod redis;

@@ -3,6 +3,7 @@ use crate::headers::ClientCacheControl;
 use crate::opa_client::ForwardingError;
 use crate::state::AppState;
 use log::{debug, warn};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
@@ -29,15 +30,15 @@ async fn handle_cache_get<T: serde::de::DeserializeOwned + Send + Sync>(
 
     match state.cache.get::<T>(cache_key).await {
         Ok(Some(cached_result)) => {
-            debug!("Cache hit for key: {cache_key}");
+            debug!("Cache hit");
             Some(cached_result)
         }
         Ok(None) => {
-            debug!("Cache miss for key: {cache_key}");
+            debug!("Cache miss");
             None
         }
         Err(cache_err) => {
-            warn!("Cache error for key {cache_key}: {cache_err}");
+            warn!("Cache lookup failed: {cache_err}");
             None
         }
     }
@@ -57,12 +58,11 @@ async fn handle_cache_set<T: serde::Serialize + Send + Sync>(
     }
 
     if let Err(cache_err) = state.cache.set(cache_key, value).await {
-        warn!("Failed to cache result for {cache_key}: {cache_err}");
+        warn!("Failed to cache a result: {cache_err}");
     }
 }
 
-/// The first 16 lowercase hex characters of a digest - the cache-key suffix every key
-/// has used, so existing cache entries keep matching across the sha2 0.11 upgrade.
+/// The first 16 lowercase hex characters of a digest: the hash part of every cache key.
 fn hex_prefix(digest: &[u8]) -> String {
     let mut hex = String::with_capacity(16);
     for byte in digest.iter().take(8) {
@@ -71,40 +71,35 @@ fn hex_prefix(digest: &[u8]) -> String {
     hex
 }
 
+/// Hashes a query into a cache key under `opa:{kind}:`.
+///
+/// Equal queries must get equal keys, so the hash input is a canonical serialization: the
+/// query goes through `serde_json::Value` and every object's keys are sorted, at every depth.
+/// Serializing the query directly would follow the iteration order of its `HashMap` fields
+/// (`context`, `attributes`), which differs between two maps holding the same entries.
+fn cache_key<Q: Serialize>(kind: &str, query: &Q) -> Result<String, String> {
+    let mut canonical = serde_json::to_value(query)
+        .map_err(|e| format!("Failed to serialize the {kind} query for its cache key: {e}"))?;
+    // A no-op unless some crate enables serde_json's `preserve_order` feature, which would
+    // turn `Value` objects back into insertion-ordered maps.
+    canonical.sort_all_objects();
+    let digest = Sha256::digest(canonical.to_string().as_bytes());
+    Ok(format!("opa:{kind}:{}", hex_prefix(digest.as_slice())))
+}
+
 /// Generate a cache key for allowed queries
 fn generate_allowed_cache_key(query: &AllowedQuery) -> Result<String, String> {
-    let mut hasher = Sha256::new();
-    let serialized = serde_json::to_string(query)
-        .map_err(|e| format!("Failed to serialize AllowedQuery for cache key: {e}"))?;
-    hasher.update(serialized.as_bytes());
-    Ok(format!(
-        "opa:allowed:{}",
-        hex_prefix(hasher.finalize().as_slice())
-    ))
+    cache_key("allowed", query)
 }
 
 /// Generate a cache key for user permissions queries
 fn generate_user_permissions_cache_key(query: &UserPermissionsQuery) -> Result<String, String> {
-    let mut hasher = Sha256::new();
-    let serialized = serde_json::to_string(query)
-        .map_err(|e| format!("Failed to serialize UserPermissionsQuery for cache key: {e}"))?;
-    hasher.update(serialized.as_bytes());
-    Ok(format!(
-        "opa:user_permissions:{}",
-        hex_prefix(hasher.finalize().as_slice())
-    ))
+    cache_key("user_permissions", query)
 }
 
 /// Generate a cache key for authorized users queries
 fn generate_authorized_users_cache_key(query: &AuthorizedUsersQuery) -> Result<String, String> {
-    let mut hasher = Sha256::new();
-    let serialized = serde_json::to_string(query)
-        .map_err(|e| format!("Failed to serialize AuthorizedUsersQuery for cache key: {e}"))?;
-    hasher.update(serialized.as_bytes());
-    Ok(format!(
-        "opa:authorized_users:{}",
-        hex_prefix(hasher.finalize().as_slice())
-    ))
+    cache_key("authorized_users", query)
 }
 
 /// Cached version of query_allowed with cache control support
@@ -155,10 +150,10 @@ pub async fn query_allowed_bulk_cached(
         if let Some(cached_result) =
             handle_cache_get::<AllowedResult>(state, &cache_key, cache_control).await
         {
-            debug!("Cache hit for bulk allowed query {index}: {cache_key}");
+            debug!("Cache hit for bulk allowed query {index}");
             results.push(Some(cached_result));
         } else {
-            debug!("Cache miss for bulk allowed query {index}: {cache_key}");
+            debug!("Cache miss for bulk allowed query {index}");
             results.push(None);
             cache_misses.push(query.clone());
             cache_miss_indices.push(index);
@@ -250,18 +245,229 @@ pub async fn query_authorized_users_cached(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_hex_prefix_matches_the_old_key_format() {
-        // SHA-256("abc") starts ba7816bf8f01cfea; sha2 0.10's `{:x}` rendered the same 16 chars.
-        let digest = Sha256::digest(b"abc");
-        assert_eq!(hex_prefix(digest.as_slice()), "ba7816bf8f01cfea");
-    }
+    use crate::cache::fake_redis::FakeRedis;
+    use crate::cache::memory::InMemoryCache;
+    use crate::cache::redis::RedisCache;
+    use crate::cache::Cache;
     use crate::opa_client::allowed::{Resource, User};
-    use crate::test_utils::TestFixture;
+    use crate::test_utils::{TestFixture, TestResponse};
+    use axum::body::Body;
     use http::{Method, StatusCode};
     use serde_json::json;
     use std::collections::HashMap;
+
+    #[test]
+    fn test_hex_prefix_is_the_first_16_hex_chars() {
+        // SHA-256("abc") starts ba7816bf8f01cfea.
+        let digest = Sha256::digest(b"abc");
+        assert_eq!(hex_prefix(digest.as_slice()), "ba7816bf8f01cfea");
+    }
+
+    /// Every ordering of `items`.
+    fn permutations(items: &[usize]) -> Vec<Vec<usize>> {
+        if items.len() <= 1 {
+            return vec![items.to_vec()];
+        }
+        let mut all = Vec::new();
+        for (index, first) in items.iter().enumerate() {
+            let mut rest = items.to_vec();
+            rest.remove(index);
+            for mut tail in permutations(&rest) {
+                tail.insert(0, *first);
+                all.push(tail);
+            }
+        }
+        all
+    }
+
+    /// The same four-entry JSON object as text, in all 24 entry orders. One entry holds a
+    /// nested object whose own keys also swap order, so sorting has to recurse.
+    fn permuted_objects() -> Vec<String> {
+        let mut objects = Vec::new();
+        for (index, order) in permutations(&[0, 1, 2, 3]).into_iter().enumerate() {
+            let nested = if index % 2 == 0 {
+                r#"{"hour":9,"day":"mon"}"#
+            } else {
+                r#"{"day":"mon","hour":9}"#
+            };
+            let mut entries = Vec::new();
+            for entry in order {
+                entries.push(match entry {
+                    0 => r#""region":"eu""#.to_string(),
+                    1 => r#""ip":"10.0.0.1""#.to_string(),
+                    2 => format!(r#""time":{nested}"#),
+                    _ => r#""tier":["gold",2]"#.to_string(),
+                });
+            }
+            objects.push(format!("{{{}}}", entries.join(",")));
+        }
+        objects
+    }
+
+    /// An `/allowed` request body whose maps all hold `object`.
+    fn allowed_body(object: &str) -> String {
+        format!(
+            r#"{{"user":{{"key":"u1","attributes":{object}}},"action":"read",
+                "resource":{{"type":"doc","key":"d1","tenant":"t1",
+                "attributes":{object},"context":{object}}},"context":{object}}}"#
+        )
+    }
+
+    /// Asserts that `key_of` gives one key, under `prefix`, for every permuted body `body_of`
+    /// builds.
+    fn assert_one_key_for_all_orders(
+        prefix: &str,
+        body_of: impl Fn(&str) -> String,
+        key_of: impl Fn(&str) -> String,
+    ) {
+        let mut keys = std::collections::HashSet::new();
+        for object in permuted_objects() {
+            keys.insert(key_of(&body_of(&object)));
+        }
+        assert_eq!(keys.len(), 1, "map order changed the cache key: {keys:?}");
+        for key in keys {
+            assert!(key.starts_with(prefix), "{key} is not under {prefix}");
+        }
+    }
+
+    #[test]
+    fn test_allowed_cache_key_ignores_map_order() {
+        assert_one_key_for_all_orders("opa:allowed:", allowed_body, |body| {
+            let query: AllowedQuery = serde_json::from_str(body).unwrap();
+            generate_allowed_cache_key(&query).unwrap()
+        });
+    }
+
+    #[test]
+    fn test_user_permissions_cache_key_ignores_map_order() {
+        let body_of = |object: &str| {
+            format!(
+                r#"{{"user":{{"key":"u1","attributes":{object}}},"tenants":["t1"],
+                    "context":{object}}}"#
+            )
+        };
+        assert_one_key_for_all_orders("opa:user_permissions:", body_of, |body| {
+            let query: UserPermissionsQuery = serde_json::from_str(body).unwrap();
+            generate_user_permissions_cache_key(&query).unwrap()
+        });
+    }
+
+    #[test]
+    fn test_authorized_users_cache_key_ignores_map_order() {
+        let body_of = |object: &str| {
+            format!(
+                r#"{{"action":"read","resource":{{"type":"doc","attributes":{object},
+                    "context":{object}}},"context":{object}}}"#
+            )
+        };
+        assert_one_key_for_all_orders("opa:authorized_users:", body_of, |body| {
+            let query: AuthorizedUsersQuery = serde_json::from_str(body).unwrap();
+            generate_authorized_users_cache_key(&query).unwrap()
+        });
+    }
+
+    #[test]
+    fn test_cache_key_changes_with_any_map_value() {
+        let key_of = |body: &str| {
+            let query: AllowedQuery = serde_json::from_str(body).unwrap();
+            generate_allowed_cache_key(&query).unwrap()
+        };
+        let object = r#"{"region":"eu","time":{"hour":9,"day":"mon"}}"#;
+        let base = key_of(&allowed_body(object));
+        let variants = [
+            r#"{"region":"us","time":{"hour":9,"day":"mon"}}"#,
+            r#"{"region":"eu","time":{"hour":10,"day":"mon"}}"#,
+            r#"{"region":"eu","time":{"hour":9}}"#,
+            r#"{"region":"eu"}"#,
+        ];
+        for variant in variants {
+            assert_ne!(base, key_of(&allowed_body(variant)), "{variant}");
+        }
+        assert_ne!(
+            base,
+            key_of(&allowed_body(object).replace(r#""u1""#, r#""u2""#))
+        );
+    }
+
+    /// Sends `bodies` to `uri` in order and returns each response.
+    async fn post_raw(fixture: &TestFixture, uri: &str, bodies: &[String]) -> Vec<TestResponse> {
+        let mut responses = Vec::new();
+        for body in bodies {
+            let request = fixture
+                .request_builder(Method::POST, uri)
+                .body(Body::from(body.clone()))
+                .unwrap();
+            responses.push(fixture.send(request).await);
+        }
+        responses
+    }
+
+    /// Sends one `/allowed` query four times, its maps in a different order each time, and
+    /// expects one OPA call: every request after the first is a cache hit.
+    async fn assert_repeat_allowed_requests_hit(fixture: &TestFixture) {
+        fixture
+            .add_opa_mock(
+                Method::POST,
+                "/v1/data/permit/root",
+                json!({"result": {"allow": true, "result": true}}),
+                StatusCode::OK,
+                1,
+            )
+            .await;
+        let mut bodies = Vec::new();
+        for object in permuted_objects().into_iter().step_by(6) {
+            bodies.push(allowed_body(&object));
+        }
+        assert_eq!(bodies.len(), 4);
+
+        for response in post_raw(fixture, "/allowed", &bodies).await {
+            response.assert_ok();
+            assert!(response.json_as::<AllowedResult>().allow);
+        }
+        fixture.opa_mock.verify().await;
+    }
+
+    #[tokio::test]
+    async fn test_repeat_allowed_request_hits_the_in_memory_cache() {
+        let cache = Cache::InMemory(InMemoryCache::new(60, 128).unwrap());
+        let fixture = TestFixture::new().await.with_cache(cache).await;
+        assert_repeat_allowed_requests_hit(&fixture).await;
+    }
+
+    #[tokio::test]
+    async fn test_repeat_allowed_request_hits_the_redis_cache() {
+        let redis = FakeRedis::start().await;
+        let cache = Cache::Redis(RedisCache::new(&redis.url(), 60).await.unwrap());
+        let fixture = TestFixture::new().await.with_cache(cache).await;
+        assert_repeat_allowed_requests_hit(&fixture).await;
+        assert_eq!(redis.key_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_repeat_bulk_request_hits_the_cache() {
+        let cache = Cache::InMemory(InMemoryCache::new(60, 128).unwrap());
+        let fixture = TestFixture::new().await.with_cache(cache).await;
+        fixture
+            .add_opa_mock(
+                Method::POST,
+                "/v1/data/permit/bulk",
+                json!({"result": {"allow": [{"allow": true, "result": true}]}}),
+                StatusCode::OK,
+                1,
+            )
+            .await;
+        let objects = permuted_objects();
+        let bodies = [
+            format!("[{}]", allowed_body(&objects[0])),
+            format!("[{}]", allowed_body(&objects[23])),
+        ];
+
+        for response in post_raw(&fixture, "/allowed/bulk", &bodies).await {
+            response.assert_ok();
+            assert!(response.json_as::<BulkAuthorizationResult>().allow[0].allow);
+        }
+        fixture.opa_mock.verify().await;
+    }
 
     #[tokio::test]
     async fn test_allowed_cache_respects_no_cache() {
@@ -390,7 +596,6 @@ mod tests {
         let mut fixture = TestFixture::new().await;
 
         // Replace the null cache with an in-memory cache for this test
-        use crate::cache::{memory::InMemoryCache, Cache};
         fixture.state.cache = Arc::new(Cache::InMemory(InMemoryCache::new(60, 128).unwrap()));
 
         let query = AllowedQuery {
@@ -544,7 +749,6 @@ mod tests {
         let mut fixture = TestFixture::new().await;
 
         // Replace with in-memory cache to test actual caching
-        use crate::cache::{memory::InMemoryCache, Cache};
         fixture.state.cache = Arc::new(Cache::InMemory(InMemoryCache::new(60, 128).unwrap()));
 
         // Create three queries where we'll cache the first two
@@ -639,7 +843,6 @@ mod tests {
         let mut fixture = TestFixture::new().await;
 
         // Replace with in-memory cache to test actual caching
-        use crate::cache::{memory::InMemoryCache, Cache};
         fixture.state.cache = Arc::new(Cache::InMemory(InMemoryCache::new(60, 128).unwrap()));
 
         // Create five queries with distinct identifiable results
