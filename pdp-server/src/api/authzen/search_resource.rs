@@ -42,6 +42,8 @@ pub struct ResourceSearchResponse {
     /// those grants the results list the resource instances that exist in Permit and are
     /// synced to the PDP. A resource key that was never created as an instance in Permit is
     /// not listed, even though an access check on it in that tenant is allowed.
+    ///
+    /// Resources granted only by ABAC rules are returned without properties.
     pub results: Vec<AuthZenResource>,
     /// Pagination information
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -51,18 +53,16 @@ pub struct ResourceSearchResponse {
     pub context: Option<HashMap<String, serde_json::Value>>,
 }
 
-impl TryFrom<ResourceSearchRequest> for UserPermissionsQuery {
-    type Error = AuthZenError;
-
-    fn try_from(req: ResourceSearchRequest) -> Result<Self, Self::Error> {
-        let tenant = tenant_property(&req.resource)?;
-        Ok(UserPermissionsQuery {
-            user: req.subject.into(),
-            tenants: tenant.map(|tenant| vec![tenant]),
-            resources: None,
-            resource_types: Some(vec![req.resource.r#type, TENANT_TYPE.to_string()]),
-            context: req.context,
-        })
+fn user_permissions_query(
+    req: ResourceSearchRequest,
+    tenant: Option<String>,
+) -> UserPermissionsQuery {
+    UserPermissionsQuery {
+        user: req.subject.into(),
+        tenants: tenant.map(|tenant| vec![tenant]),
+        resources: None,
+        resource_types: Some(vec![req.resource.r#type, TENANT_TYPE.to_string()]),
+        context: req.context,
     }
 }
 
@@ -99,10 +99,11 @@ pub async fn search_resource_handler(
 ) -> Response {
     let resource_type = request.resource.r#type.clone();
     let action = request.action.name.clone();
-    let query = match UserPermissionsQuery::try_from(request) {
-        Ok(query) => query,
+    let tenant = match tenant_property(&request.resource) {
+        Ok(tenant) => tenant,
         Err(authzen_error) => return authzen_error.into_response(),
     };
+    let query = user_permissions_query(request, tenant.clone());
 
     // Query OPA using the existing function
     let permissions = match query_user_permissions(&state, &query).await {
@@ -127,32 +128,58 @@ pub async fn search_resource_handler(
     // permissions on every resource type in the tenant.
     let tenant_required_permission = format!("{resource_type}:{action}");
     for (opa_key, perm) in permissions {
-        if let Some(tenant) = opa_key
+        // OPA applies the tenant filter to role grants, not to ABAC grants.
+        if let Some(tenant) = &tenant {
+            let in_tenant = perm
+                .tenant
+                .as_ref()
+                .is_some_and(|entry_tenant| &entry_tenant.key == tenant);
+            if !in_tenant {
+                continue;
+            }
+        }
+        if let Some(granting_tenant) = opa_key
             .strip_prefix(TENANT_TYPE)
             .and_then(|rest| rest.strip_prefix(':'))
         {
             if perm.permissions.contains(&tenant_required_permission) {
-                granting_tenants.insert(tenant.to_string());
+                granting_tenants.insert(granting_tenant.to_string());
             }
             continue;
         }
-        let Some(resource_details) = perm.resource else {
-            continue;
+        // An instance granted only by ABAC rules has no `resource` in its entry, so its type
+        // and id come from the `<type>:<key>` OPA key, and it has no properties.
+        let (entry_type, entry_key, attributes) = match perm.resource {
+            Some(resource_details) => (
+                resource_details.r#type,
+                resource_details.key,
+                resource_details.attributes,
+            ),
+            None => {
+                let Some((entry_type, entry_key)) = opa_key.split_once(':') else {
+                    log::warn!(
+                        "Ignoring user_permissions entry {opa_key:?} from OPA: it has no \
+                         resource and its key is not <resource type>:<resource key>"
+                    );
+                    continue;
+                };
+                (
+                    entry_type.to_string(),
+                    entry_key.to_string(),
+                    HashMap::new(),
+                )
+            }
         };
-        let required_permission = format!("{}:{action}", resource_details.r#type);
+        let required_permission = format!("{entry_type}:{action}");
         if !perm.permissions.contains(&required_permission) {
             continue;
         }
-        let resource_key = (
-            resource_details.r#type.clone(),
-            resource_details.key.clone(),
-        );
         unique_resources
-            .entry(resource_key)
+            .entry((entry_type.clone(), entry_key.clone()))
             .or_insert_with(|| AuthZenResource {
-                r#type: resource_details.r#type,
-                id: Some(resource_details.key),
-                properties: non_empty(resource_details.attributes),
+                r#type: entry_type,
+                id: Some(entry_key),
+                properties: non_empty(attributes),
             });
     }
 
@@ -1014,5 +1041,96 @@ mod tests {
         let response = search_docs(&fixture, "read").await;
 
         response.assert_status(http::StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    /// `user_permissions` as OPA returns it with `enable_abac_user_permissions` for user-1: an
+    /// ABAC rule grants `delete` on Document:doc-1 (an entry with no `resource`), and a ReBAC
+    /// role grants `delete` on Document:doc-2. OPA returns the ABAC entry whatever the tenant
+    /// filter is.
+    fn abac_permissions_response() -> serde_json::Value {
+        json!({
+            "result": {
+                "permissions": {
+                    "Document:doc-1": {
+                        "permissions": ["Document:delete"],
+                        "roles": [],
+                        "tenant": {"attributes": {}, "key": "default"}
+                    },
+                    "Document:doc-2": {
+                        "permissions": ["Document:delete", "Document:read"],
+                        "resource": {"attributes": {"cost": 0}, "key": "doc-2", "type": "Document"},
+                        "roles": ["owner"],
+                        "tenant": {"attributes": {}, "key": "default", "type": "__tenant"}
+                    }
+                }
+            }
+        })
+    }
+
+    async fn search_documents(fixture: &TestFixture, tenant: Option<&str>) -> Vec<AuthZenResource> {
+        let mut request = json!({
+            "subject": {"type": "user", "id": "user-1"},
+            "action": {"name": "delete"},
+            "resource": {"type": "Document"},
+            "context": {"enable_abac_user_permissions": true}
+        });
+        if let Some(tenant) = tenant {
+            request["resource"]["properties"] = json!({"tenant": tenant});
+        }
+        let response = fixture.post("/access/v1/search/resource", &request).await;
+        response.assert_ok();
+        let search_response: ResourceSearchResponse = response.json_as();
+        search_response.results
+    }
+
+    #[tokio::test]
+    async fn test_resource_search_returns_resources_granted_by_abac_rules() {
+        let fixture = TestFixture::new().await;
+        mock_user_permissions(&fixture, abac_permissions_response(), 1).await;
+
+        let cost_zero = HashMap::from([("cost".to_string(), json!(0))]);
+        assert_eq!(
+            search_documents(&fixture, None).await,
+            vec![
+                AuthZenResource {
+                    r#type: "Document".to_string(),
+                    id: Some("doc-1".to_string()),
+                    properties: None,
+                },
+                AuthZenResource {
+                    r#type: "Document".to_string(),
+                    id: Some("doc-2".to_string()),
+                    properties: Some(cost_zero),
+                },
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resource_search_applies_the_tenant_property_to_abac_grants() {
+        let fixture = TestFixture::new().await;
+        // For tenant "other", OPA filters out the ReBAC entry but still returns the ABAC one.
+        let mut abac_only = abac_permissions_response();
+        if let Some(permissions) = abac_only["result"]["permissions"].as_object_mut() {
+            permissions.remove("Document:doc-2");
+        }
+        Mock::given(matchers::method("POST"))
+            .and(matchers::path("/v1/data/permit/user_permissions"))
+            .and(matchers::body_partial_json(
+                json!({"input": {"tenants": ["other"]}}),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(abac_only))
+            .with_priority(1)
+            .expect(1)
+            .mount(&fixture.opa_mock)
+            .await;
+        mock_user_permissions(&fixture, abac_permissions_response(), 1).await;
+
+        assert_eq!(search_documents(&fixture, Some("other")).await, Vec::new());
+        let mut ids = Vec::new();
+        for resource in search_documents(&fixture, Some("default")).await {
+            ids.push(resource.id.unwrap_or_default());
+        }
+        assert_eq!(ids, vec!["doc-1", "doc-2"]);
     }
 }
