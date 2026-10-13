@@ -44,7 +44,7 @@ impl CommandWatchdogStats {
         // At u32::MAX the count stays put rather than wrapping to 0: the backoff is long past its
         // cap by then, so the `Err` that leaves it unchanged is not a failure to report
         self.consecutive_failures
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |failures| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |failures| {
                 failures.checked_add(1)
             })
             .ok();
