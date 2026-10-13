@@ -11,29 +11,43 @@ pub(crate) const RESOURCE_INSTANCES_QUERY: &str = "instance := data.resource_ins
      startswith(key, input.key_prefix); \
      instance.tenant == input.tenants[_]";
 
+/// OPA ad-hoc query for the tenant of one synced resource instance, by its `<type>:<key>`.
+pub(crate) const RESOURCE_INSTANCE_TENANT_QUERY: &str =
+    "tenant := data.resource_instances[input.key].tenant";
+
 #[derive(Serialize)]
-struct QueryRequest<'a> {
+struct QueryRequest<I> {
     query: &'static str,
-    input: QueryInput<'a>,
+    input: I,
 }
 
 #[derive(Serialize)]
-struct QueryInput<'a> {
+struct InstancesQueryInput<'a> {
     key_prefix: &'a str,
     tenants: &'a BTreeSet<String>,
 }
 
-#[derive(Deserialize)]
-struct QueryResponse {
-    /// OPA leaves `result` out when nothing matches.
-    #[serde(default)]
-    result: Vec<QueryRow>,
+#[derive(Serialize)]
+struct TenantQueryInput<'a> {
+    key: &'a str,
 }
 
 #[derive(Deserialize)]
-struct QueryRow {
+struct QueryResponse<R> {
+    /// OPA leaves `result` out when nothing matches.
+    #[serde(default = "Vec::new")]
+    result: Vec<R>,
+}
+
+#[derive(Deserialize)]
+struct InstanceRow {
     key: String,
     instance: InstanceData,
+}
+
+#[derive(Deserialize)]
+struct TenantRow {
+    tenant: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -57,12 +71,13 @@ pub async fn query_resource_instances(
     let key_prefix = format!("{resource_type}:");
     let request = QueryRequest {
         query: RESOURCE_INSTANCES_QUERY,
-        input: QueryInput {
+        input: InstancesQueryInput {
             key_prefix: &key_prefix,
             tenants,
         },
     };
-    let response: QueryResponse = send_raw_request_to_opa(state, "/v1/query", &request).await?;
+    let response: QueryResponse<InstanceRow> =
+        send_raw_request_to_opa(state, "/v1/query", &request).await?;
 
     let mut instances = BTreeMap::new();
     for row in response.result {
@@ -76,4 +91,30 @@ pub async fn query_resource_instances(
         instances.insert(instance_key.to_string(), row.instance.attributes);
     }
     Ok(instances)
+}
+
+/// Returns the tenant of the synced instance `<resource_type>:<resource_key>`.
+///
+/// Returns `None` when the PDP has no such instance, or the instance has no tenant.
+///
+/// # Errors
+///
+/// Returns a [`ForwardingError`] when the query to OPA fails or its response can't be parsed.
+pub async fn query_resource_instance_tenant(
+    state: &AppState,
+    resource_type: &str,
+    resource_key: &str,
+) -> Result<Option<String>, ForwardingError> {
+    let key = format!("{resource_type}:{resource_key}");
+    let request = QueryRequest {
+        query: RESOURCE_INSTANCE_TENANT_QUERY,
+        input: TenantQueryInput { key: &key },
+    };
+    let response: QueryResponse<TenantRow> =
+        send_raw_request_to_opa(state, "/v1/query", &request).await?;
+    Ok(response
+        .result
+        .into_iter()
+        .next()
+        .and_then(|row| row.tenant))
 }

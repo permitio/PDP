@@ -3,14 +3,19 @@ use crate::api::authzen::schema::AuthZenResource;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-/// Reads a search request's `resource.properties.tenant` as the tenant filter for OPA.
+/// The resource type of tenant-level roles in OPA's user_permissions. Their entries are keyed
+/// `__tenant:<tenant key>` and have no `resource`. OPA returns them only when this type is in
+/// the query's `resource_types`.
+pub const TENANT_TYPE: &str = "__tenant";
+
+/// Reads a search request's `resource.properties.tenant`.
 ///
 /// Returns `None` when the property is absent.
 ///
 /// # Errors
 ///
 /// Returns an `invalid_request` (400) error when the property is not a JSON string.
-pub fn tenant_filter(resource: &AuthZenResource) -> Result<Option<Vec<String>>, AuthZenError> {
+pub fn tenant_property(resource: &AuthZenResource) -> Result<Option<String>, AuthZenError> {
     let Some(tenant) = resource
         .properties
         .as_ref()
@@ -23,7 +28,7 @@ pub fn tenant_filter(resource: &AuthZenResource) -> Result<Option<Vec<String>>, 
             "resource.properties.tenant must be a string",
         ));
     };
-    Ok(Some(vec![tenant.clone()]))
+    Ok(Some(tenant.clone()))
 }
 
 /// Pagination request parameters. Search results are not paged: the PDP accepts this object,
