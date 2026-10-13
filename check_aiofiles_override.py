@@ -1,9 +1,9 @@
 """Build-time check for the aiofiles override in pyproject.toml's [tool.uv] (PER-16234).
 
-The Dockerfile's Python dependency layer bind-mounts and runs this as its last step, so it sees
-exactly what ships. It fails the image build if:
+The Dockerfile's Python dependency layer bind-mounts and runs this after its install and cleanup,
+so it sees exactly what ships. It fails the image build if:
 
-1. opal-client is no longer 0.9.6. uv's override-dependencies replaces opal-client's aiofiles<1
+1. opal-client is no longer 0.9.10rc1. uv's override-dependencies replaces opal-client's aiofiles<1
    outright, so a bumped opal-client would keep the overridden aiofiles whatever it declares.
    Re-evaluate the override first; this check goes away with it (see the exit note next to
    override-dependencies in pyproject.toml).
@@ -23,7 +23,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-EXPECTED_OPAL_CLIENT = "0.9.6"
+EXPECTED_OPAL_CLIENT = "0.9.10rc1"
 EXPORT = {"policies": {}, "data": {}}
 
 

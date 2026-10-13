@@ -26,7 +26,7 @@ dependencies = [
     "typer>=0.27.2,<1",
     "uvicorn[standard]>=0.54.0,<1",
     "logzio-python-handler",
-    # Capped <4 by opal-common 0.9.6. CVE-2026-50271 is fixed only in 4.8.2, so it is mitigated
+    # Capped <4 by opal-common 0.9.10rc1. CVE-2026-50271 is fixed only in 4.8.2, so it is mitigated
     # in the Dockerfile (DD_TRACE_PROPAGATION_STYLE_EXTRACT drops "baggage") and waived in
     # .trivyignore.yaml and .docker/scout/pdp-v2.vex.json. Pinned exactly so the waiver PURL
     # (pkg:pypi/ddtrace@3.19.8) stays bound: uv.lock holds it too, but a range would move on the
@@ -42,7 +42,7 @@ dependencies = [
     # cap is ours, to keep a major out of a lock refresh. musllinux wheels exist for x86_64 and
     # aarch64, so the Alpine build needs no Rust toolchain for it.
     "cryptography>=50.0.0,<51",
-    # Capped <1 by opal-common/opal-client 0.9.6 (and <0.51.0 via fastapi-utils -> fastapi
+    # Capped <1 by opal-common/opal-client 0.9.10rc1 (and <0.51.0 via fastapi-utils -> fastapi
     # 0.125). Four CVEs (CVE-2026-54283, CVE-2026-48817, CVE-2026-48818, CVE-2026-48710) are fixed
     # only in 1.x and are waived as unreachable in .trivyignore.yaml and the OpenVEX doc. Pinned
     # exactly so the waiver PURLs stay bound. Remove the pin and the four waivers once OPAL relaxes
@@ -55,9 +55,9 @@ dependencies = [
     "websockets==17.0",
     # OPAL's pub/sub transport. horizon/facts/update_subscriber.py imports exception classes from
     # both, to tell a facts update the PDP could not publish from a bug, so they are declared here
-    # rather than left to opal-client. OPAL 0.9.6 only bounds them (<2 and <1); pinned exactly at
-    # the locked versions so a lock refresh cannot move those classes. On a bump, check that they
-    # are still what OPAL's PubSubClient.publish() raises.
+    # rather than left to opal-client. OPAL 0.9.10rc1 only bounds them (<2 and <1); pinned exactly
+    # at the locked versions so a lock refresh cannot move those classes. On a bump, check that
+    # they are still what OPAL's PubSubClient.publish() raises.
     "fastapi-websocket-pubsub==1.0.1",
     "fastapi-websocket-rpc==0.1.29",
     # Transitive via opal-common (gitpython<4,>=3.1.32). The floor clears CVE-2026-78676 (critical
@@ -65,12 +65,13 @@ dependencies = [
     # below it. A floor, not an exact pin - no waiver depends on it and nothing here imports it.
     # Drop it once opal-common itself floors gitpython>=3.1.59. See PER-15358.
     "GitPython>=3.1.59,<4",
-    # opal-common/opal-client 0.9.9 declare Requires-Python <3.13, so they cannot run on the 3.13
-    # image. Stay on 0.9.6 until an OPAL release lifts that bound.
-    "opal-common==0.9.6",
+    # 0.9.10 is the first OPAL 0.9.x whose opal-common and opal-client support Python 3.13
+    # (0.9.9 declares Requires-Python <3.13). 0.9.10rc1 is its release candidate; move both pins
+    # to ==0.9.10 once it is released.
+    "opal-common==0.9.10rc1",
     # opal-client caps aiofiles<1; the override is in [tool.uv] below. Changing this pin fails the
     # image build (check_aiofiles_override.py) until that override is re-evaluated (PER-16234).
-    "opal-client==0.9.6",
+    "opal-client==0.9.10rc1",
 ]
 
 [dependency-groups]
@@ -100,7 +101,7 @@ dev = [
 # locked dependencies, so there is no build backend and nothing is built.
 package = false
 required-version = ">=0.12.19"
-# opal-client 0.9.6 caps aiofiles<1, which admits only 0.8.0 (Nov 2021). Its tempfile shim
+# opal-client 0.9.10rc1 caps aiofiles<1, which admits only 0.8.0 (Nov 2021). Its tempfile shim
 # raises AttributeError on CPython >= 3.12, so OPAL's offline-mode backup_store() silently stops
 # updating the backup. 24.1.0 is the first release tested on 3.13 (23.2.0, the first with the
 # fix, is yanked). Exit: drop this, check_opal_client_pin() in check_aiofiles_override.py and the
