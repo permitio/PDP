@@ -31,7 +31,7 @@ from pydantic import BaseModel, Field
 from scalar_fastapi import get_scalar_api_reference
 
 from horizon.authentication import enforce_pdp_token
-from horizon.config import IGNORED_CALLBACK_URLS_SETTING, MOCK_API_KEY, sidecar_config
+from horizon.config import IGNORED_CALLBACK_URLS_SETTING, sidecar_config
 from horizon.connectivity.api import init_connectivity_router
 from horizon.debounce import MAX_DEBOUNCE_SECONDS, DebouncedTrigger, clamp_window, resolve_window
 from horizon.enforcer.api import init_enforcer_api_router, init_enforcer_health_router, stats_manager
@@ -924,11 +924,6 @@ class PermitPDP:
     @property
     def app(self):
         return self._app
-
-    def _verify_config(self):
-        if get_env_api_key() == MOCK_API_KEY:
-            logger.critical("No API key specified. Please specify one with the PDP_API_KEY environment variable.")
-            raise SystemExit(GUNICORN_EXIT_APP)
 
     def _inject_extra_callbacks(self) -> None:
         register = self._opal._callbacks_register

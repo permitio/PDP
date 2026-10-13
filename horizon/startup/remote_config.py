@@ -108,7 +108,6 @@ class RemoteConfigFetcher:
                 config_context = sidecar_config.dict(include={"context"}).get("context", {})
                 logger.info(f"Received remote config with the following context: {config_context}")
             except ValidationError as exc:
-                # The response body holds the OPAL client token, so only the validation errors are logged.
                 logger.error("Got invalid config contents: {exc}", exc=exc)
                 raise
         except requests.RequestException as exc:

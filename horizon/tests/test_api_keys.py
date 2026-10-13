@@ -6,6 +6,8 @@ BlockingRequest builds the Authorization header and turns a 401 into InvalidPDPT
 
 import re
 import stat
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from http import HTTPStatus
 from pathlib import Path
 
@@ -109,10 +111,28 @@ def test_an_environment_key_is_used_as_is_without_asking_the_control_plane(keys,
     assert control_plane.requests == []
 
 
-@pytest.mark.usefixtures("keys")
-def test_no_key_at_all_is_an_api_key_error():
+@pytest.mark.parametrize("unset_env_key", [MOCK_API_KEY, ""], ids=["placeholder", "empty"])
+def test_no_key_at_all_is_an_api_key_error(keys, unset_env_key):
+    keys(API_KEY=unset_env_key)
     with pytest.raises(ApiKeyError, match="No API key specified"):
         api_keys.EnvApiKeyFetcher()
+
+
+@pytest.mark.parametrize(
+    ("other_keys", "level"),
+    [
+        pytest.param({"PROJECT_API_KEY": "project-key", "ACTIVE_ENV": "env"}, ApiKeyLevel.PROJECT, id="project-key"),
+        pytest.param(
+            {"ORG_API_KEY": "org-key", "ACTIVE_PROJECT": "proj", "ACTIVE_ENV": "env"},
+            ApiKeyLevel.ORGANIZATION,
+            id="org-key",
+        ),
+    ],
+)
+def test_an_empty_environment_key_counts_as_unset(keys, logged, other_keys, level):
+    keys(API_KEY="", **other_keys)
+    assert api_keys.EnvApiKeyFetcher().api_key_level == level
+    assert logged == []
 
 
 def test_a_project_key_needs_an_active_env(keys):
@@ -284,11 +304,35 @@ def test_the_handoff_file_holds_just_the_key_and_only_its_owner_can_read_it(keys
     _assert_only_the_key_is_there(handoff_file, HANDED_OFF_KEY)
 
 
-def test_a_tmp_file_left_by_a_crashed_start_does_not_block_the_handoff(keys, handoff_file):
+def test_a_tmp_file_left_by_another_writer_is_neither_in_the_way_nor_used(keys, handoff_file):
     keys(API_KEY=HANDED_OFF_KEY)
-    handoff_file.with_name(f"{handoff_file.name}.tmp").write_text("half-written")
+    leftovers = {
+        handoff_file.with_name(f"{handoff_file.name}.tmp"): "half-written",
+        handoff_file.with_name(f"{handoff_file.name}.another-worker"): "other-worker-key",
+    }
+    for leftover, contents in leftovers.items():
+        leftover.write_text(contents)
 
     api_keys.hand_off_env_api_key()
+
+    assert handoff_file.read_bytes() == HANDED_OFF_KEY.encode()
+    assert stat.S_IMODE(handoff_file.stat().st_mode) == 0o600
+    assert {leftover: leftover.read_text() for leftover in leftovers} == leftovers
+    assert sorted(handoff_file.parent.iterdir()) == sorted([handoff_file, *leftovers])
+
+
+def test_workers_handing_off_at_once_each_complete_and_leave_one_whole_key(keys, handoff_file):
+    keys(API_KEY=HANDED_OFF_KEY)
+    workers = 8
+    start_together = threading.Barrier(workers)
+
+    def hand_off() -> None:
+        start_together.wait()
+        api_keys.hand_off_env_api_key()
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for handed_off in [pool.submit(hand_off) for _ in range(workers)]:
+            handed_off.result()
 
     _assert_only_the_key_is_there(handoff_file, HANDED_OFF_KEY)
 
@@ -313,6 +357,14 @@ def test_the_handoff_replaces_the_file_an_earlier_start_wrote(keys, handoff_file
                 ("/v2/api-key/p1/env", "project-key"): {"secret": HANDED_OFF_KEY},
             },
             id="project-key",
+        ),
+        pytest.param(
+            {"API_KEY": "", "PROJECT_API_KEY": "project-key", "ACTIVE_ENV": "env"},
+            {
+                ("/v2/api-key/scope", "project-key"): {"project_id": "p1"},
+                ("/v2/api-key/p1/env", "project-key"): {"secret": HANDED_OFF_KEY},
+            },
+            id="empty-env-key-and-project-key",
         ),
         pytest.param(
             {"ORG_API_KEY": "org-key", "ACTIVE_PROJECT": "proj", "ACTIVE_ENV": "env"},
@@ -365,12 +417,26 @@ def test_an_unwritable_handoff_file_exits_naming_the_path_and_never_logs_the_key
     assert isinstance(exc_info.value.__cause__, FileNotFoundError)
     text, serialized = every_log_line
     failure = next(line for line in text if "PDP_API_KEY_HANDOFF_FILE" in line)
-    # The path itself, not only the .tmp beside it that the OSError names.
-    assert re.search(rf"{re.escape(str(path))}(?!\.tmp)", failure)
+    # The path itself, not only the temporary file beside it (<path>.<suffix>) that the OSError names.
+    assert re.search(rf"{re.escape(str(path))}(?!\.)", failure)
     assert "FileNotFoundError" in failure
     for line in text + serialized:
         assert HANDED_OFF_KEY not in line
         assert HANDED_OFF_KEY[:8] not in line
+
+
+def test_an_empty_env_key_exits_without_writing_the_handoff_file(keys, control_plane, handoff_file, logged):
+    keys(ORG_API_KEY="org-key", ACTIVE_PROJECT="proj", ACTIVE_ENV="env")
+    control_plane.answers[f"{sidecar_config.CONTROL_PLANE}/v2/api-key/proj/env", "org-key"] = {"secret": ""}
+
+    with pytest.raises(SystemExit) as exc_info:
+        api_keys.hand_off_env_api_key()
+
+    assert exc_info.value.code == GUNICORN_EXIT_APP
+    assert list(handoff_file.parent.iterdir()) == []
+    failure = next(line for line in logged if "PDP_API_KEY_HANDOFF_FILE" in line)
+    assert "empty" in failure
+    assert str(handoff_file) in failure
 
 
 def test_a_failed_rename_exits_and_leaves_no_copy_of_the_key_behind(keys, handoff_file, logged):

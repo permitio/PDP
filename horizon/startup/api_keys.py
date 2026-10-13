@@ -1,4 +1,5 @@
 import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -33,7 +34,9 @@ class EnvApiKeyFetcher:
 
     @staticmethod
     def _get_api_key_level() -> ApiKeyLevel:
-        if sidecar_config.API_KEY != MOCK_API_KEY:
+        # An empty PDP_API_KEY counts as no key, as in the PDP front server: compose files that pass
+        # `PDP_API_KEY=${PDP_API_KEY}` set it empty when the variable is unset.
+        if sidecar_config.API_KEY and sidecar_config.API_KEY != MOCK_API_KEY:
             if sidecar_config.ORG_API_KEY or sidecar_config.PROJECT_API_KEY:
                 logger.warning(
                     "PDP_API_KEY is set, but PDP_ORG_API_KEY or PDP_PROJECT_API_KEY are also set and will be ignored."
@@ -147,15 +150,15 @@ def get_env_api_key() -> str:
 def _write_owner_only_file_atomically(path: Path, content: str) -> None:
     """Write ``content`` to ``path`` with mode 0600, so that ``path`` never holds part of it.
 
-    The content goes to ``<path>.tmp``, created fresh, which is then renamed over ``path``.
+    The content goes to a new file beside ``path`` whose name is unique to this writer, which is
+    then renamed over ``path``. Workers writing at the same time each use their own file.
     """
-    tmp_path = path.with_name(f"{path.name}.tmp")
-    # A start that crashed between creating and renaming it leaves one behind.
-    tmp_path.unlink(missing_ok=True)
-    fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    data = content.encode()
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f"{path.name}.")
+    tmp_path = Path(tmp_name)
     try:
         with os.fdopen(fd, "wb") as tmp_file:
-            tmp_file.write(content.encode())
+            tmp_file.write(data)
         tmp_path.replace(path)
     except OSError:
         tmp_path.unlink(missing_ok=True)
@@ -172,13 +175,20 @@ def hand_off_env_api_key() -> None:
     does nothing.
 
     Raises:
-        SystemExit: the key could not be derived (see ``get_env_api_key``) or the file could not
-            be written. The front server cannot serve without the key.
+        SystemExit: the key could not be derived (see ``get_env_api_key``), it is empty, or the
+            file could not be written. The front server cannot serve without the key.
     """
     path = sidecar_config.API_KEY_HANDOFF_FILE
     if not path:
         return
     env_api_key = get_env_api_key()
+    if not env_api_key:
+        logger.error(
+            "The Environment API Key is empty, so it was not written to {path} (PDP_API_KEY_HANDOFF_FILE) for "
+            "the PDP front server. Check the API key of the environment PDP_ACTIVE_ENV names.",
+            path=path,
+        )
+        raise SystemExit(GUNICORN_EXIT_APP)
     try:
         _write_owner_only_file_atomically(Path(path), env_api_key)
     except OSError as e:

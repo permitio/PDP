@@ -28,8 +28,10 @@ pdp:
   # pdpEnvs values are stored in the Deployment as plain text, so put a reference there that
   # the webhook resolves when the container starts (for example a bank-vaults `vault:` path),
   # and keep a literal key in ApiKey or existingApiKeySecret. Must be a boolean: a quoted
-  # "false" fails the render. Without PDP_API_KEY the PDP does not start: its health checks
-  # fail and Kubernetes keeps restarting the container.
+  # "false" fails the render. Without PDP_API_KEY the PDP needs a project or organization key,
+  # supplied the same way: PDP_PROJECT_API_KEY with PDP_ACTIVE_ENV, or PDP_ORG_API_KEY with
+  # PDP_ACTIVE_PROJECT and PDP_ACTIVE_ENV. With no key at all the PDP does not start: its health
+  # checks fail and Kubernetes keeps restarting the container.
   userProvidedSecret: false
   port: 7766
   # Example - expose Envoy gRPC ext_authz port (requires PDP_OPA_PLUGINS env var above):
