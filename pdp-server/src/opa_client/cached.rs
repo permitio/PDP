@@ -1,4 +1,4 @@
-use crate::cache::CacheBackend;
+use crate::cache::{CacheBackend, CacheError};
 use crate::headers::ClientCacheControl;
 use crate::opa_client::ForwardingError;
 use crate::state::AppState;
@@ -15,6 +15,17 @@ pub use super::allowed::{AllowedQuery, AllowedResult};
 pub use super::allowed_bulk::BulkAuthorizationResult;
 pub use super::authorized_users::{AuthorizedUsersQuery, AuthorizedUsersResult};
 pub use super::user_permissions::{UserPermissionsQuery, UserPermissionsResult};
+
+/// Logs a failed cache operation, unless it is a Redis outage: the Redis backend's circuit
+/// breaker logs those itself, once per state change rather than once per request.
+fn log_cache_error(operation: &str, err: &CacheError) {
+    match err {
+        CacheError::Redis(_) | CacheError::Unavailable => {}
+        CacheError::Serialization(_) | CacheError::Deserialization(_) | CacheError::Config(_) => {
+            warn!("Cache {operation} failed: {err}");
+        }
+    }
+}
 
 /// Common cache handling logic
 async fn handle_cache_get<T: serde::de::DeserializeOwned + Send + Sync>(
@@ -38,10 +49,32 @@ async fn handle_cache_get<T: serde::de::DeserializeOwned + Send + Sync>(
             None
         }
         Err(cache_err) => {
-            warn!("Cache lookup failed: {cache_err}");
+            log_cache_error("lookup", &cache_err);
             None
         }
     }
+}
+
+/// Looks up a batch of keys in one cache read. Every key is a miss when the client asked to
+/// bypass the cache or the read fails.
+async fn handle_cache_get_many<T: serde::de::DeserializeOwned + Send + Sync>(
+    state: &AppState,
+    cache_keys: &[String],
+    cache_control: &ClientCacheControl,
+) -> Vec<Option<T>> {
+    if cache_control.should_use_cache() {
+        match state.cache.get_many::<T>(cache_keys).await {
+            Ok(values) => return values,
+            Err(cache_err) => log_cache_error("lookup", &cache_err),
+        }
+    } else {
+        debug!("Skipping cache lookup due to cache control directives: {cache_control:?}");
+    }
+    let mut misses = Vec::with_capacity(cache_keys.len());
+    for _ in cache_keys {
+        misses.push(None);
+    }
+    misses
 }
 
 /// Common cache storage logic
@@ -51,14 +84,23 @@ async fn handle_cache_set<T: serde::Serialize + Send + Sync>(
     value: &T,
     cache_control: &ClientCacheControl,
 ) {
+    handle_cache_set_many(state, &[(cache_key, value)], cache_control).await;
+}
+
+/// Stores a batch of results in one cache write.
+async fn handle_cache_set_many<T: serde::Serialize + Send + Sync>(
+    state: &AppState,
+    entries: &[(&str, &T)],
+    cache_control: &ClientCacheControl,
+) {
     // Skip caching if client requested no-store
     if cache_control.no_store {
         debug!("Skipping cache storage due to no-store directive");
         return;
     }
 
-    if let Err(cache_err) = state.cache.set(cache_key, value).await {
-        warn!("Failed to cache a result: {cache_err}");
+    if let Err(cache_err) = state.cache.set_many(entries).await {
+        log_cache_error("write", &cache_err);
     }
 }
 
@@ -126,8 +168,10 @@ pub async fn query_allowed_cached(
     Ok(result)
 }
 
-/// Cached version of query_allowed_bulk with cache control support
-/// This function leverages the shared cache with individual allowed queries
+/// Cached version of query_allowed_bulk with cache control support.
+///
+/// It shares cache entries with single allowed queries. The whole batch is looked up with one
+/// cache read, OPA evaluates only the misses, and their results go back in one cache write.
 pub async fn query_allowed_bulk_cached(
     state: &AppState,
     queries: &[AllowedQuery],
@@ -139,57 +183,54 @@ pub async fn query_allowed_bulk_cached(
         return super::allowed_bulk::query_allowed_bulk(state, queries).await;
     }
 
-    let mut results = Vec::with_capacity(queries.len());
-    let mut cache_misses = Vec::new();
-    let mut cache_miss_indices = Vec::new();
+    let mut cache_keys = Vec::with_capacity(queries.len());
+    for query in queries {
+        cache_keys.push(generate_allowed_cache_key(query)?);
+    }
+    let mut results =
+        handle_cache_get_many::<AllowedResult>(state, &cache_keys, cache_control).await;
 
-    // Check cache for each individual query
-    for (index, query) in queries.iter().enumerate() {
-        let cache_key = generate_allowed_cache_key(query)?;
+    let mut miss_indices = Vec::new();
+    let mut misses = Vec::new();
+    for (index, result) in results.iter().enumerate() {
+        if result.is_none() {
+            miss_indices.push(index);
+            misses.push(queries[index].clone());
+        }
+    }
+    debug!(
+        "Bulk check: {} of {} results cached",
+        queries.len() - misses.len(),
+        queries.len()
+    );
 
-        if let Some(cached_result) =
-            handle_cache_get::<AllowedResult>(state, &cache_key, cache_control).await
-        {
-            debug!("Cache hit for bulk allowed query {index}");
-            results.push(Some(cached_result));
-        } else {
-            debug!("Cache miss for bulk allowed query {index}");
-            results.push(None);
-            cache_misses.push(query.clone());
-            cache_miss_indices.push(index);
+    if !misses.is_empty() {
+        let fetched = super::allowed_bulk::query_allowed_bulk(state, &misses)
+            .await?
+            .allow;
+        // OPA answers the checks in order. Any other count leaves no way to pair results with
+        // checks, so nothing is cached or returned.
+        if fetched.len() != misses.len() {
+            return Err(ForwardingError::BulkResultCount {
+                checks: misses.len(),
+                results: fetched.len(),
+            });
+        }
+
+        let mut entries = Vec::with_capacity(fetched.len());
+        for (index, result) in miss_indices.iter().zip(&fetched) {
+            entries.push((cache_keys[*index].as_str(), result));
+        }
+        handle_cache_set_many(state, &entries, cache_control).await;
+
+        for (index, result) in miss_indices.into_iter().zip(fetched) {
+            results[index] = Some(result);
         }
     }
 
-    // If we have cache misses, query OPA for them
-    if !cache_misses.is_empty() {
-        debug!(
-            "Querying OPA for {} cache misses out of {} total queries",
-            cache_misses.len(),
-            queries.len()
-        );
-
-        let bulk_result = super::allowed_bulk::query_allowed_bulk(state, &cache_misses).await?;
-
-        // Store individual results in cache and update our results array
-        for (miss_index, opa_result) in cache_miss_indices.iter().zip(bulk_result.allow.iter()) {
-            let query = &queries[*miss_index];
-            let cache_key = generate_allowed_cache_key(query)?;
-
-            // Store in cache if allowed
-            handle_cache_set(state, &cache_key, opa_result, cache_control).await;
-
-            results[*miss_index] = Some(opa_result.clone());
-        }
-    }
-
-    // Convert Option<AllowedResult> to AllowedResult (should all be Some at this point)
-    let final_results: Vec<AllowedResult> = results
-        .into_iter()
-        .map(|opt| opt.expect("All results should be populated by now"))
-        .collect();
-
+    // Every slot holds a result now: a cached one, or OPA's for a miss.
     Ok(BulkAuthorizationResult {
-        allow: final_results,
+        allow: results.into_iter().flatten().collect(),
     })
 }
 
@@ -245,12 +286,12 @@ pub async fn query_authorized_users_cached(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cache::fake_redis::FakeRedis;
+    use crate::cache::fake_redis::{FakeRedis, Mode};
     use crate::cache::memory::InMemoryCache;
-    use crate::cache::redis::RedisCache;
+    use crate::cache::redis::{RedisCache, OPERATION_TIMEOUT};
     use crate::cache::Cache;
     use crate::opa_client::allowed::{Resource, User};
-    use crate::test_utils::{TestFixture, TestResponse};
+    use crate::test_utils::{LogCapture, TestFixture, TestResponse};
     use axum::body::Body;
     use http::{Method, StatusCode};
     use serde_json::json;
@@ -403,8 +444,9 @@ mod tests {
     }
 
     /// Sends one `/allowed` query four times, its maps in a different order each time, and
-    /// expects one OPA call: every request after the first is a cache hit.
-    async fn assert_repeat_allowed_requests_hit(fixture: &TestFixture) {
+    /// expects one OPA call: every request after the first is a cache hit. With `redis`, waits
+    /// for the first result's background write before sending the rest.
+    async fn assert_repeat_allowed_requests_hit(fixture: &TestFixture, redis: Option<&FakeRedis>) {
         fixture
             .add_opa_mock(
                 Method::POST,
@@ -420,7 +462,13 @@ mod tests {
         }
         assert_eq!(bodies.len(), 4);
 
-        for response in post_raw(fixture, "/allowed", &bodies).await {
+        let (first, rest) = bodies.split_at(1);
+        let mut responses = post_raw(fixture, "/allowed", first).await;
+        if let Some(redis) = redis {
+            redis.wait_for_commands("SETEX", 1).await;
+        }
+        responses.extend(post_raw(fixture, "/allowed", rest).await);
+        for response in responses {
             response.assert_ok();
             assert!(response.json_as::<AllowedResult>().allow);
         }
@@ -431,7 +479,7 @@ mod tests {
     async fn test_repeat_allowed_request_hits_the_in_memory_cache() {
         let cache = Cache::InMemory(InMemoryCache::new(60, 128).unwrap());
         let fixture = TestFixture::new().await.with_cache(cache).await;
-        assert_repeat_allowed_requests_hit(&fixture).await;
+        assert_repeat_allowed_requests_hit(&fixture, None).await;
     }
 
     #[tokio::test]
@@ -439,8 +487,246 @@ mod tests {
         let redis = FakeRedis::start().await;
         let cache = Cache::Redis(RedisCache::new(&redis.url(), 60).await.unwrap());
         let fixture = TestFixture::new().await.with_cache(cache).await;
-        assert_repeat_allowed_requests_hit(&fixture).await;
+        assert_repeat_allowed_requests_hit(&fixture, Some(&redis)).await;
         assert_eq!(redis.key_count(), 1);
+        assert_eq!(redis.command_count("GET"), 4);
+        assert_eq!(redis.command_count("SETEX"), 1);
+    }
+
+    /// Mocks OPA to allow exactly the users whose key starts with "allowed", for single and
+    /// bulk checks, so every decision can be checked whatever the cache held.
+    async fn mock_opa_by_user_key(fixture: &TestFixture) {
+        use wiremock::{matchers, Mock, Request, ResponseTemplate};
+
+        fn decide(check: &serde_json::Value) -> serde_json::Value {
+            let user = check["user"]["key"].as_str().unwrap_or_default();
+            let allow = user.starts_with("allowed");
+            json!({"allow": allow, "result": allow})
+        }
+        Mock::given(matchers::method("POST"))
+            .and(matchers::path("/v1/data/permit/root"))
+            .respond_with(|request: &Request| {
+                let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+                ResponseTemplate::new(200).set_body_json(json!({"result": decide(&body["input"])}))
+            })
+            .mount(&fixture.opa_mock)
+            .await;
+        Mock::given(matchers::method("POST"))
+            .and(matchers::path("/v1/data/permit/bulk"))
+            .respond_with(|request: &Request| {
+                let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+                let mut allow = Vec::new();
+                for check in body["input"]["checks"].as_array().unwrap() {
+                    allow.push(decide(check));
+                }
+                ResponseTemplate::new(200).set_body_json(json!({"result": {"allow": allow}}))
+            })
+            .mount(&fixture.opa_mock)
+            .await;
+    }
+
+    fn check(user: &str) -> serde_json::Value {
+        json!({
+            "user": {"key": user, "attributes": {"plan": "pro", "region": "eu"}},
+            "action": "read",
+            "resource": {"type": "doc", "tenant": "t1"},
+            "context": {"ip": "10.0.0.1", "region": "eu", "day": "mon", "tier": 2}
+        })
+    }
+
+    /// 100 bulk checks, alternating allowed and denied users, and their expected decisions.
+    fn hundred_checks() -> (serde_json::Value, Vec<bool>) {
+        let mut checks = Vec::new();
+        let mut expected = Vec::new();
+        for index in 0..100 {
+            let allowed = index % 2 == 0;
+            let prefix = if allowed { "allowed" } else { "denied" };
+            checks.push(check(&format!("{prefix}-{index}")));
+            expected.push(allowed);
+        }
+        (json!(checks), expected)
+    }
+
+    fn bulk_decisions(response: &TestResponse) -> Vec<bool> {
+        response.assert_ok();
+        let mut decisions = Vec::new();
+        for result in response.json_as::<BulkAuthorizationResult>().allow {
+            decisions.push(result.allow);
+        }
+        decisions
+    }
+
+    fn single_decision(response: &TestResponse) -> bool {
+        response.assert_ok();
+        response.json_as::<AllowedResult>().allow
+    }
+
+    fn opa_bulk_calls(requests: &[wiremock::Request]) -> usize {
+        let mut calls = 0;
+        for request in requests {
+            if request.url.path() == "/v1/data/permit/bulk" {
+                calls += 1;
+            }
+        }
+        calls
+    }
+
+    /// Takes Redis down with `outage` and checks that only the first check waits on it: after
+    /// that the breaker is open, single and bulk checks skip Redis, and every decision still
+    /// matches OPA's. Then Redis recovers and the bulk check is served from the cache again.
+    async fn assert_redis_outage_is_cheap(outage: Mode) {
+        let redis = FakeRedis::start().await;
+        let cache = RedisCache::new(&redis.url(), 60).await.unwrap();
+        let fixture = TestFixture::new()
+            .await
+            .with_cache(Cache::Redis(cache.clone()))
+            .await;
+        mock_opa_by_user_key(&fixture).await;
+        let (checks, expected) = hundred_checks();
+
+        // Warm the cache: one MGET, then all 100 results in one background pipeline.
+        let warm = fixture.post("/allowed/bulk", &checks).await;
+        assert_eq!(bulk_decisions(&warm), expected);
+        redis.wait_for_commands("SETEX", 100).await;
+        assert_eq!(redis.command_count("MGET"), 1);
+        assert_eq!(redis.command_count("GET"), 0);
+
+        let logs = LogCapture::start();
+        redis.set_mode(outage);
+
+        // The first check waits for Redis at most once.
+        let started = std::time::Instant::now();
+        let first = fixture.post("/allowed", &check("allowed-first")).await;
+        let first_elapsed = started.elapsed();
+        assert!(single_decision(&first));
+        assert!(
+            first_elapsed < OPERATION_TIMEOUT * 2,
+            "first check took {first_elapsed:?}"
+        );
+        assert_eq!(cache.breaker_state().name(), "open");
+
+        // With the breaker open, nothing reaches Redis. The bound is half the Redis operation
+        // timeout, so even one wait on Redis would fail it.
+        let commands_when_opened = redis.total_commands();
+        let started = std::time::Instant::now();
+        let single = fixture.post("/allowed", &check("denied-single")).await;
+        let single_elapsed = started.elapsed();
+        let started = std::time::Instant::now();
+        let bulk = fixture.post("/allowed/bulk", &checks).await;
+        let bulk_elapsed = started.elapsed();
+
+        assert!(!single_decision(&single));
+        assert_eq!(bulk_decisions(&bulk), expected);
+        let bound = OPERATION_TIMEOUT / 2;
+        assert!(
+            single_elapsed < bound,
+            "single check took {single_elapsed:?}"
+        );
+        assert!(
+            bulk_elapsed < bound,
+            "100 bulk checks took {bulk_elapsed:?}"
+        );
+        assert_eq!(redis.total_commands(), commands_when_opened);
+
+        // One warning for the whole outage, from the breaker, and none per request.
+        let mut warnings = Vec::new();
+        for line in logs.lines() {
+            if line.starts_with("WARN") {
+                warnings.push(line);
+            }
+        }
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains("Circuit breaker open"), "{warnings:?}");
+
+        // Redis recovers: the breaker closes and the cached results serve the bulk check.
+        redis.set_mode(Mode::Serving);
+        cache.probe_until_closed().await;
+        let opa_bulk_calls_before =
+            opa_bulk_calls(&fixture.opa_mock.received_requests().await.unwrap());
+        let cached = fixture.post("/allowed/bulk", &checks).await;
+        assert_eq!(bulk_decisions(&cached), expected);
+        let opa_bulk_calls_after =
+            opa_bulk_calls(&fixture.opa_mock.received_requests().await.unwrap());
+        assert_eq!(opa_bulk_calls_after, opa_bulk_calls_before);
+
+        // Cache keys derive from request data, so no log line may carry one.
+        let lines = logs.lines();
+        assert!(lines
+            .iter()
+            .any(|line| line.contains("Circuit breaker closed")));
+        for line in lines {
+            assert!(
+                !line.contains("opa:allowed:"),
+                "a cache key was logged: {line}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_paused_redis_costs_one_timeout() {
+        assert_redis_outage_is_cheap(Mode::Paused).await;
+    }
+
+    #[tokio::test]
+    async fn test_stopped_redis_costs_one_failure() {
+        assert_redis_outage_is_cheap(Mode::Stopped).await;
+    }
+
+    #[tokio::test]
+    async fn test_bulk_honors_no_store_and_no_cache() {
+        let cache = Cache::InMemory(InMemoryCache::new(60, 128).unwrap());
+        let fixture = TestFixture::new().await.with_cache(cache).await;
+        mock_opa_by_user_key(&fixture).await;
+        let checks = json!([check("allowed-1"), check("denied-2")]);
+
+        let mut opa_calls = Vec::new();
+        for directive in ["no-store", "", "no-cache", ""] {
+            let mut headers = Vec::new();
+            if !directive.is_empty() {
+                headers.push(("Cache-Control", directive));
+            }
+            let response = fixture
+                .post_with_headers("/allowed/bulk", &checks, &headers)
+                .await;
+            assert_eq!(bulk_decisions(&response), [true, false]);
+            let requests = fixture.opa_mock.received_requests().await.unwrap();
+            opa_calls.push(opa_bulk_calls(&requests));
+        }
+
+        // no-store: OPA answers and nothing is cached. No directive: OPA again, and the results
+        // are cached. no-cache: OPA despite the cache. No directive: served from the cache.
+        assert_eq!(opa_calls, [1, 2, 3, 3]);
+    }
+
+    #[tokio::test]
+    async fn test_bulk_rejects_a_short_opa_reply() {
+        let cache = Cache::InMemory(InMemoryCache::new(60, 128).unwrap());
+        let fixture = TestFixture::new().await.with_cache(cache).await;
+        fixture
+            .add_opa_mock(
+                Method::POST,
+                "/v1/data/permit/bulk",
+                json!({"result": {"allow": [{"allow": true, "result": true}]}}),
+                StatusCode::OK,
+                1,
+            )
+            .await;
+        let checks = json!([check("allowed-1"), check("allowed-2")]);
+
+        let response = fixture.post("/allowed/bulk", &checks).await;
+
+        response.assert_status(StatusCode::BAD_GATEWAY);
+        let mut keys = Vec::new();
+        for user in ["allowed-1", "allowed-2"] {
+            let query: AllowedQuery = serde_json::from_value(check(user)).unwrap();
+            keys.push(generate_allowed_cache_key(&query).unwrap());
+        }
+        let cached = fixture.state.cache.get_many::<AllowedResult>(&keys);
+        assert_eq!(
+            cached.await.unwrap(),
+            [None, None],
+            "a short reply was cached"
+        );
     }
 
     #[tokio::test]
