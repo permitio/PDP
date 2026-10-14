@@ -504,7 +504,7 @@ jobs:
         working-directory: ./pdp-tester
         run: uv pip install --system --editable ".[docker]"
 
-      - name: Run PDP tester with a ${{ matrix.mode }} key on a temporary environment
+      - name: Run PDP tester in ${{ matrix.mode }}-key mode on a temporary environment
         if: steps.secrets.outputs.ready == 'true'
         working-directory: ./pdp-tester
         env:
