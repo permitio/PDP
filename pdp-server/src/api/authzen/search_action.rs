@@ -33,8 +33,9 @@ pub struct ActionSearchRequest {
 /// AuthZen Action Search Response - contains list of actions the subject can perform on the resource
 #[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
 pub struct ActionSearchResponse {
-    /// Actions the subject can perform on the resource, by name (`read`, not `document:read`),
-    /// sorted by name, comparing strings by code point.
+    /// Actions the subject can perform on the resource, named by OPA's permission key
+    /// `<resource type>:<action>` (`document:read`), sorted by name, comparing strings by
+    /// code point.
     ///
     /// The resource's tenant is `resource.properties.tenant` when given, otherwise the tenant
     /// of the resource instance synced to the PDP. When the tenant is known, only grants in
@@ -130,8 +131,8 @@ pub async fn search_action_handler(
             return authzen_error.into_response();
         }
     };
-    // OPA lists permissions as `<resource type>:<action>`. The results are the actions on the
-    // requested resource type.
+    // OPA lists permissions as `<resource type>:<action>`. The results are the permissions on
+    // the requested resource type, named by the full permission key.
     let mut action_names = Vec::new();
     let mut untyped_permissions = 0_usize;
     for result in permissions_map.values() {
@@ -146,12 +147,12 @@ pub async fn search_action_handler(
             }
         }
         for permission in &result.permissions {
-            let Some((permission_type, action_name)) = permission.split_once(':') else {
+            let Some((permission_type, _)) = permission.split_once(':') else {
                 untyped_permissions += 1;
                 continue;
             };
             if permission_type == resource_type {
-                action_names.push(action_name.to_string());
+                action_names.push(permission.clone());
             }
         }
     }
@@ -252,7 +253,7 @@ mod tests {
         let read_action = search_response
             .results
             .iter()
-            .find(|action| action.name == "can_read")
+            .find(|action| action.name == "document:can_read")
             .unwrap();
         assert!(read_action.properties.is_none());
 
@@ -260,7 +261,7 @@ mod tests {
         let edit_action = search_response
             .results
             .iter()
-            .find(|action| action.name == "can_edit")
+            .find(|action| action.name == "document:can_edit")
             .unwrap();
         assert!(edit_action.properties.is_none());
 
@@ -367,7 +368,7 @@ mod tests {
 
         // Check the response (should have 1 action)
         assert_eq!(search_response.results.len(), 1);
-        assert_eq!(search_response.results[0].name, "can_read");
+        assert_eq!(search_response.results[0].name, "document:can_read");
 
         // Verify page is present
         assert!(search_response.page.is_some());
@@ -451,15 +452,15 @@ mod tests {
         assert_eq!(
             names,
             vec![
-                "Can_admin",
-                "can_archive",
-                "can_comment",
-                "can_delete",
-                "can_export",
-                "can_print",
-                "can_read",
-                "can_share",
-                "can_write",
+                "document:Can_admin",
+                "document:can_archive",
+                "document:can_comment",
+                "document:can_delete",
+                "document:can_export",
+                "document:can_print",
+                "document:can_read",
+                "document:can_share",
+                "document:can_write",
             ]
         );
     }
@@ -536,7 +537,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_action_search_returns_action_names_not_permission_keys() {
+    async fn test_action_search_returns_permission_keys_on_the_requested_type() {
         let fixture = TestFixture::new().await;
         mock_unsynced_instance(&fixture).await;
         mock_user_permissions(
@@ -548,7 +549,7 @@ mod tests {
 
         assert_eq!(
             search_file_a1_actions(&fixture).await,
-            vec!["delete", "read"]
+            vec!["file:delete", "file:read"]
         );
     }
 
@@ -563,7 +564,7 @@ mod tests {
         )
         .await;
 
-        assert_eq!(search_file_a1_actions(&fixture).await, vec!["read"]);
+        assert_eq!(search_file_a1_actions(&fixture).await, vec!["file:read"]);
     }
 
     #[tokio::test]
@@ -597,7 +598,7 @@ mod tests {
         for action in search_response.results {
             names.push(action.name);
         }
-        assert_eq!(names, vec!["delete", "read"]);
+        assert_eq!(names, vec!["file:delete", "file:read"]);
     }
 
     #[tokio::test]
@@ -702,7 +703,7 @@ mod tests {
         let response =
             search_alice_actions(&fixture, json!({"type": "doc", "id": "d-secret"})).await;
 
-        assert_eq!(action_names(&response), vec!["read", "write"]);
+        assert_eq!(action_names(&response), vec!["doc:read", "doc:write"]);
     }
 
     #[tokio::test]
@@ -715,7 +716,7 @@ mod tests {
         let resource = json!({"type": "doc", "id": "d-secret", "properties": {"tenant": "t1"}});
         let response = search_alice_actions(&fixture, resource).await;
 
-        assert_eq!(action_names(&response), vec!["read", "write"]);
+        assert_eq!(action_names(&response), vec!["doc:read", "doc:write"]);
     }
 
     #[tokio::test]
@@ -772,7 +773,7 @@ mod tests {
         let resource = json!({"type": "doc", "id": "d-secret", "properties": {"tenant": "t1"}});
         let response = search_alice_actions(&fixture, resource).await;
 
-        assert_eq!(action_names(&response), vec!["read"]);
+        assert_eq!(action_names(&response), vec!["doc:read"]);
     }
 
     #[tokio::test]
