@@ -43,8 +43,8 @@ def _key_hash(pem: str) -> str | None:
     for a certificate cryptography refuses to load."""
     try:
         with warnings.catch_warnings():
-            # Six certifi roots have a non-positive serial, which only warns, for now; a later
-            # cryptography will refuse them, and that must not break this suite.
+            # A non-positive serial in a real root only warns, for now; a later cryptography will
+            # refuse those roots, and that must not break this suite.
             warnings.simplefilter("ignore", CryptographyDeprecationWarning)
             cert = x509.load_pem_x509_certificate(pem.encode())
     except ValueError:
@@ -139,6 +139,25 @@ def test_a_link_to_a_bundle_is_reported_once(stores):
     system_bundle.write_text(system_bundle.read_text() + CAS[G3])
     (certs_dir / "ca-certificates.crt").symlink_to(system_bundle)
     assert check_trust_store.find_distrusted() == {system_bundle.resolve(): [G3]}
+
+
+def test_a_symlinked_default_ca_file_is_read_once(stores, monkeypatch):
+    # OpenSSL's default CA file as a symlink to a bundle inside the certificate directory (on
+    # Alpine /etc/ssl/cert.pem -> certs/ca-certificates.crt): one file, read and reported once,
+    # under its resolved path.
+    _, system_bundle, certs_dir = stores
+    real_bundle = certs_dir / "ca-certificates.crt"
+    real_bundle.write_text(system_bundle.read_text() + CAS[G3])
+    cafile = certs_dir.parent / "cert-link.pem"
+    cafile.symlink_to(real_bundle)
+    monkeypatch.setattr(
+        check_trust_store.ssl,
+        "get_default_verify_paths",
+        lambda: ssl.DefaultVerifyPaths(
+            str(cafile), str(certs_dir), "SSL_CERT_FILE", str(cafile), "SSL_CERT_DIR", str(certs_dir)
+        ),
+    )
+    assert check_trust_store.find_distrusted() == {real_bundle.resolve(): [G3]}
 
 
 @pytest.mark.parametrize("store", [0, 1], ids=["certifi", "system"])
@@ -284,6 +303,9 @@ def test_a_non_der_certificate_fails_instead_of_hashing_the_wrong_bytes(stores, 
         pytest.param(b"\x30\x85\x01\x00\x00\x00\x00", "oversized", id="five length octets"),
         pytest.param(b"\x30\x82\x00\x80", "non-minimal", id="leading zero octet"),
         pytest.param(b"\x30\x80", "indefinite", id="indefinite"),
+        # The declared length (0x81) runs one byte past the 128 bytes of padding: only the
+        # truncation rule catches it (no later read would fail).
+        pytest.param(b"\x30\x81\x81", "truncated", id="truncated"),
         pytest.param(b"\x3f\x10\x81\x80", "high-tag-number", id="high tag number"),
         pytest.param(b"\x1f\x02\x81\x80", "high-tag-number", id="primitive high tag number"),
     ],
