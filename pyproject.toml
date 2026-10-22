@@ -61,10 +61,11 @@ dependencies = [
     "fastapi-websocket-pubsub==1.0.1",
     "fastapi-websocket-rpc==0.1.29",
     # Transitive via opal-common (gitpython<4,>=3.1.32). The floor clears CVE-2026-78676 (critical
-    # RCE) and ten other advisories fixed by 3.1.58-3.1.59: `uv lock` can never produce a lock
-    # below it. A floor, not an exact pin - no waiver depends on it and nothing here imports it.
-    # Drop it once opal-common itself floors gitpython>=3.1.59. See PER-15358.
-    "GitPython>=3.1.59,<4",
+    # RCE) and the other advisories fixed by 3.1.58-3.2.1, the last being CVE-2026-114145 (high,
+    # fixed in 3.2.1): `uv lock` can never produce a lock below it. A floor, not an exact pin -
+    # no waiver depends on it and nothing here imports it. Drop it once the opal-common release
+    # PDP uses floors gitpython>=3.2.1 itself. See PER-15358.
+    "GitPython>=3.2.1,<4",
     # Transitive via requests and httpx, whose default verification trusts certifi's bundle,
     # not the Alpine one. The floor removes emSign ECC Root CA - G3, the root over the eight
     # eMudhra intermediates whose private keys are recoverable from their certificates

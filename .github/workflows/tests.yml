@@ -122,6 +122,17 @@ jobs:
       # default. This public repo's build compiles the private permit-opa, so keep the
       # build record out of the run's downloadable artifacts, as v5 did.
       DOCKER_BUILD_RECORD_UPLOAD: 'false'
+      # buildx writes provenance into the build's metadata file too, separately from the
+      # attestation and even in its default `min` mode, and the action prints that file
+      # in each step's "Metadata" log group. Its invocation environment holds the whole
+      # GitHub event payload: for a pull_request run, the PR title and description as
+      # they were when the run started, so editing the description later could not take
+      # text back out of these public logs.
+      BUILDX_METADATA_PROVENANCE: disabled
+    # The build steps below also set `provenance: false`. On a public repo the action
+    # otherwise adds a max-mode provenance attestation to the cache-only builds (not to the
+    # `load: true` one), which embeds the same payload. These builds load the image locally,
+    # fill the cache or only compile a stage, so they have nothing to attest.
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -217,6 +228,7 @@ jobs:
           outputs: type=cacheonly
           context: .
           target: rust_chef
+          provenance: false
           cache-from: type=gha,scope=rust-chef
           cache-to: type=gha,mode=max,scope=rust-chef
 
@@ -233,6 +245,7 @@ jobs:
           context: .
           target: opa_build
           platforms: linux/arm64
+          provenance: false
 
       - name: Build and load PDP Docker image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -242,6 +255,7 @@ jobs:
           context: .
           platforms: linux/amd64
           tags: permitio/pdp-v2:next
+          provenance: false
           # rust_chef only, from the step above; no cache-to (that step says why).
           cache-from: type=gha,scope=rust-chef
           # Must match release.yml. Without it the image that pdp-tester exercises and
