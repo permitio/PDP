@@ -18,6 +18,7 @@ import certifi
 import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+from cryptography.utils import CryptographyDeprecationWarning
 
 import check_trust_store
 
@@ -37,11 +38,17 @@ def _blocks(text: str) -> list[str]:
     return [pem for _, pem in BLOCK.findall(text)]
 
 
-def _key_hash(pem: str) -> str:
-    """The SubjectPublicKeyInfo SHA-256, computed by cryptography rather than by the script."""
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")  # a negative serial in a real root only warns, for now
-        cert = x509.load_pem_x509_certificate(pem.encode())
+def _key_hash(pem: str) -> str | None:
+    """The SubjectPublicKeyInfo SHA-256, computed by cryptography rather than by the script; None
+    for a certificate cryptography refuses to load."""
+    try:
+        with warnings.catch_warnings():
+            # A non-positive serial in a real root only warns, for now; a later cryptography will
+            # refuse those roots, and that must not break this suite.
+            warnings.simplefilter("ignore", CryptographyDeprecationWarning)
+            cert = x509.load_pem_x509_certificate(pem.encode())
+    except ValueError:
+        return None
     return hashlib.sha256(cert.public_key().public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)).hexdigest()
 
 
@@ -83,9 +90,11 @@ def test_the_denied_keys_are_the_fixture_certificates():
 
 def test_the_key_walk_agrees_with_cryptography_on_every_real_root():
     pems = _blocks(Path(certifi.where()).read_text()) + list(CAS.values())
-    assert len(pems) > 100
-    for pem in pems:
-        assert check_trust_store.key_hashes(pem) == {_key_hash(pem)}
+    # Only the roots cryptography loads can be compared; keep enough of them.
+    compared = [(pem, key) for pem in pems if (key := _key_hash(pem)) is not None]
+    assert len(compared) > 100
+    for pem, key in compared:
+        assert check_trust_store.key_hashes(pem) == {key}
 
 
 def test_locked_certifi_does_not_trust_them():
@@ -130,6 +139,18 @@ def test_a_link_to_a_bundle_is_reported_once(stores):
     system_bundle.write_text(system_bundle.read_text() + CAS[G3])
     (certs_dir / "ca-certificates.crt").symlink_to(system_bundle)
     assert check_trust_store.find_distrusted() == {system_bundle.resolve(): [G3]}
+
+
+def test_a_symlinked_default_ca_file_is_read_once(stores):
+    # OpenSSL's default CA file as a symlink to a bundle inside the certificate directory (on
+    # Alpine /etc/ssl/cert.pem -> certs/ca-certificates.crt): one file, read and reported once,
+    # under its resolved path.
+    certifi_bundle, system_bundle, certs_dir = stores
+    real_bundle = system_bundle.rename(certs_dir / "ca-certificates.crt")
+    real_bundle.write_text(real_bundle.read_text() + CAS[G3])
+    system_bundle.symlink_to("certs/ca-certificates.crt")
+    assert check_trust_store.trust_stores() == ([certifi_bundle.resolve(), real_bundle.resolve()], [])
+    assert check_trust_store.find_distrusted() == {real_bundle.resolve(): [G3]}
 
 
 @pytest.mark.parametrize("store", [0, 1], ids=["certifi", "system"])
@@ -275,6 +296,9 @@ def test_a_non_der_certificate_fails_instead_of_hashing_the_wrong_bytes(stores, 
         pytest.param(b"\x30\x85\x01\x00\x00\x00\x00", "oversized", id="five length octets"),
         pytest.param(b"\x30\x82\x00\x80", "non-minimal", id="leading zero octet"),
         pytest.param(b"\x30\x80", "indefinite", id="indefinite"),
+        # The declared length (0x81) runs one byte past the 128 bytes of padding: only the
+        # truncation rule catches it (no later read would fail).
+        pytest.param(b"\x30\x81\x81", "truncated", id="truncated"),
         pytest.param(b"\x3f\x10\x81\x80", "high-tag-number", id="high tag number"),
         pytest.param(b"\x1f\x02\x81\x80", "high-tag-number", id="primitive high tag number"),
     ],
