@@ -122,13 +122,16 @@ jobs:
       # default. This public repo's build compiles the private permit-opa, so keep the
       # build record out of the run's downloadable artifacts, as v5 did.
       DOCKER_BUILD_RECORD_UPLOAD: 'false'
-    # The build steps below set `provenance: false`. On a public repo the action
-    # defaults to max-mode provenance, whose invocation block holds the whole GitHub
-    # event payload, and the action prints it in each step's "Metadata" log group. For
-    # a pull_request run that payload is the PR title and description as they were when
-    # the run started, so an edit to the description could not take text back out of
-    # the public logs. These builds only load the image locally or fill the cache, so
-    # they have nothing to attest.
+      # buildx writes provenance into the build's metadata file too, separately from the
+      # attestation and even in its default `min` mode, and the action prints that file
+      # in each step's "Metadata" log group. Its invocation environment holds the whole
+      # GitHub event payload: for a pull_request run, the PR title and description as
+      # they were when the run started, so editing the description later could not take
+      # text back out of these public logs.
+      BUILDX_METADATA_PROVENANCE: disabled
+    # The build steps below also set `provenance: false`. On a public repo the action
+    # defaults to a max-mode provenance attestation, which embeds the same payload. These
+    # builds only load the image locally or fill the cache, so they have nothing to attest.
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
