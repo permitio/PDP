@@ -141,22 +141,15 @@ def test_a_link_to_a_bundle_is_reported_once(stores):
     assert check_trust_store.find_distrusted() == {system_bundle.resolve(): [G3]}
 
 
-def test_a_symlinked_default_ca_file_is_read_once(stores, monkeypatch):
+def test_a_symlinked_default_ca_file_is_read_once(stores):
     # OpenSSL's default CA file as a symlink to a bundle inside the certificate directory (on
     # Alpine /etc/ssl/cert.pem -> certs/ca-certificates.crt): one file, read and reported once,
     # under its resolved path.
-    _, system_bundle, certs_dir = stores
-    real_bundle = certs_dir / "ca-certificates.crt"
-    real_bundle.write_text(system_bundle.read_text() + CAS[G3])
-    cafile = certs_dir.parent / "cert-link.pem"
-    cafile.symlink_to(real_bundle)
-    monkeypatch.setattr(
-        check_trust_store.ssl,
-        "get_default_verify_paths",
-        lambda: ssl.DefaultVerifyPaths(
-            str(cafile), str(certs_dir), "SSL_CERT_FILE", str(cafile), "SSL_CERT_DIR", str(certs_dir)
-        ),
-    )
+    certifi_bundle, system_bundle, certs_dir = stores
+    real_bundle = system_bundle.rename(certs_dir / "ca-certificates.crt")
+    real_bundle.write_text(real_bundle.read_text() + CAS[G3])
+    system_bundle.symlink_to("certs/ca-certificates.crt")
+    assert check_trust_store.trust_stores() == ([certifi_bundle.resolve(), real_bundle.resolve()], [])
     assert check_trust_store.find_distrusted() == {real_bundle.resolve(): [G3]}
 
 
