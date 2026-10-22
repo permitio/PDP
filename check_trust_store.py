@@ -57,16 +57,32 @@ PEM_BLOCK = re.compile(
     r"-----BEGIN (?:TRUSTED |X509 )?CERTIFICATE-----(.+?)-----END (?:TRUSTED |X509 )?CERTIFICATE-----", re.DOTALL
 )
 LONG_FORM = 0x80
+MAX_LENGTH_OCTETS = 4  # 4 GiB; no certificate comes near it
+SEQUENCE = 0x30
 CONTEXT_TAG_0 = 0xA0  # TBSCertificate's optional [0] version
 TBS_FIELDS_BEFORE_SPKI = 5  # serialNumber, signature, issuer, validity, subject
+CERTIFI_FIX = "certifi must be >= 2026.10.19: check uv.lock against the pyproject.toml floor"
+SYSTEM_FIX = (
+    "the system store comes from the apk layer, which needs ca-certificates >= 20261020-r0: rebuild it "
+    "without the cached layer (docker buildx build --no-cache-filter main ...), and check the Alpine "
+    "mirror has that version"
+)
 
 
 def _element(der: bytes, pos: int) -> tuple[int, int]:
-    """Where the content of the DER element at pos starts, and where the element ends."""
+    """Where the content of the DER element at pos starts, and where the element ends.
+
+    Raises:
+        ValueError: the element is truncated, or uses a length form DER does not allow (BER's
+            indefinite length, which would otherwise read as an empty element and send the walk to
+            the wrong field, or more length octets than a certificate can need).
+    """
     length = der[pos + 1]
     start = pos + 2
     if length & LONG_FORM:
         size = length & ~LONG_FORM
+        if not 0 < size <= MAX_LENGTH_OCTETS:
+            raise ValueError("not DER: indefinite or oversized length")
         length = int.from_bytes(der[start : start + size], "big")
         start += size
     if start + length > len(der):
@@ -79,7 +95,11 @@ def spki(der: bytes) -> bytes:
 
     A walk over the TBSCertificate fields rather than a parse with the cryptography package,
     which warns about (and in a later release will refuse to load) certificates the system
-    bundle really holds, such as one with a negative serial number.
+    bundle really holds, such as one with a negative serial number. v1 certificates, which have
+    no [0] version field, are walked too.
+
+    Raises:
+        ValueError: the walk does not end on a SEQUENCE, i.e. the certificate is malformed.
     """
     tbs, _ = _element(der, 0)
     pos, _ = _element(der, tbs)
@@ -87,22 +107,40 @@ def spki(der: bytes) -> bytes:
         pos = _element(der, pos)[1]
     for _ in range(TBS_FIELDS_BEFORE_SPKI):
         pos = _element(der, pos)[1]
+    if der[pos] != SEQUENCE:
+        raise ValueError("no SubjectPublicKeyInfo where the TBSCertificate walk ends")
     return der[pos : _element(der, pos)[1]]
 
 
 def key_hashes(text: str) -> set[str]:
-    """The SubjectPublicKeyInfo SHA-256 of every certificate in a PEM file."""
-    try:
-        return {hashlib.sha256(spki(base64.b64decode(body))).hexdigest() for body in PEM_BLOCK.findall(text)}
-    except (binascii.Error, IndexError, ValueError) as e:
-        raise ValueError(f"unparseable certificate: {e!r}") from e
+    """The SubjectPublicKeyInfo SHA-256 of every certificate in a PEM file.
+
+    Raises:
+        ValueError: a certificate block does not parse; the message gives its 1-based number.
+    """
+    hashes = set()
+    for number, body in enumerate(PEM_BLOCK.findall(text), start=1):
+        try:
+            hashes.add(hashlib.sha256(spki(base64.b64decode(body))).hexdigest())
+        except (binascii.Error, IndexError, ValueError) as e:
+            raise ValueError(f"unparseable certificate (block {number}): {e!r}") from e
+    return hashes
 
 
 def trust_stores() -> tuple[list[Path], list[Path]]:
     """certifi's bundle and the system bundle, then the files of the certificate directory.
 
     Resolved, so /etc/ssl/cert.pem and the /etc/ssl/certs/ca-certificates.crt it links to are
-    read once.
+    read once. Of the directory, only top-level files are kept: subdirectories and dangling
+    symlinks are skipped, and a file with no PEM certificate in it (a DER file, a README)
+    contributes nothing. That is what OpenSSL's hashed-directory lookup, Go and
+    rustls-native-certs load from it.
+
+    Returns:
+        (the two bundles, the directory's files other than those bundles).
+
+    Exits:
+        when OpenSSL reports no default CA file.
     """
     paths = ssl.get_default_verify_paths()
     if not paths.cafile:
@@ -115,6 +153,15 @@ def trust_stores() -> tuple[list[Path], list[Path]]:
 
 
 def find_distrusted() -> dict[Path, list[str]]:
+    """Every trust store file that holds a certificate for a compromised key.
+
+    Returns:
+        {resolved path: sorted names of the CAs whose keys it holds}; empty when the image is clean.
+
+    Exits:
+        when a bundle is missing or holds no certificate (the check would pass without checking
+        anything), when a file holds a certificate that does not parse, and as trust_stores() does.
+    """
     bundles, dir_files = trust_stores()
     hits = {}
     for path in bundles + dir_files:
@@ -122,7 +169,6 @@ def find_distrusted() -> dict[Path, list[str]]:
             found = key_hashes(path.read_text(errors="replace")) if path.is_file() else set()
         except ValueError as e:
             sys.exit(f"check_trust_store: {path}: {e}")
-        # A missing or empty bundle would pass without checking anything.
         if path in bundles and not found:
             sys.exit(f"check_trust_store: no certificates in trust store {path}")
         if names := sorted(DISTRUSTED_KEYS[key] for key in found & DISTRUSTED_KEYS.keys()):
@@ -130,7 +176,18 @@ def find_distrusted() -> dict[Path, list[str]]:
     return hits
 
 
+def main() -> int:
+    """The build gate: 1, with what to fix on stderr, if any store trusts a compromised key."""
+    hits = find_distrusted()
+    if not hits:
+        return 0
+    certifi_bundle = Path(certifi.where()).resolve()
+    sys.stderr.write("check_trust_store: compromised eMudhra CAs are still trusted (PER-17672):\n")
+    for path, names in hits.items():
+        fix = CERTIFI_FIX if path == certifi_bundle else SYSTEM_FIX
+        sys.stderr.write(f"  {path}: {', '.join(names)}\n    fix: {fix}\n")
+    return 1
+
+
 if __name__ == "__main__":
-    if hits := find_distrusted():
-        found = "; ".join(f"{path}: {', '.join(names)}" for path, names in hits.items())
-        sys.exit(f"check_trust_store: compromised eMudhra CAs are still trusted (PER-17672): {found}")
+    sys.exit(main())
