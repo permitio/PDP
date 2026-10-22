@@ -18,6 +18,7 @@ import certifi
 import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+from cryptography.utils import CryptographyDeprecationWarning
 
 import check_trust_store
 
@@ -37,11 +38,17 @@ def _blocks(text: str) -> list[str]:
     return [pem for _, pem in BLOCK.findall(text)]
 
 
-def _key_hash(pem: str) -> str:
-    """The SubjectPublicKeyInfo SHA-256, computed by cryptography rather than by the script."""
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")  # a negative serial in a real root only warns, for now
-        cert = x509.load_pem_x509_certificate(pem.encode())
+def _key_hash(pem: str) -> str | None:
+    """The SubjectPublicKeyInfo SHA-256, computed by cryptography rather than by the script; None
+    for a certificate cryptography refuses to load."""
+    try:
+        with warnings.catch_warnings():
+            # Six certifi roots have a non-positive serial, which only warns, for now; a later
+            # cryptography will refuse them, and that must not break this suite.
+            warnings.simplefilter("ignore", CryptographyDeprecationWarning)
+            cert = x509.load_pem_x509_certificate(pem.encode())
+    except ValueError:
+        return None
     return hashlib.sha256(cert.public_key().public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)).hexdigest()
 
 
@@ -83,9 +90,11 @@ def test_the_denied_keys_are_the_fixture_certificates():
 
 def test_the_key_walk_agrees_with_cryptography_on_every_real_root():
     pems = _blocks(Path(certifi.where()).read_text()) + list(CAS.values())
-    assert len(pems) > 100
-    for pem in pems:
-        assert check_trust_store.key_hashes(pem) == {_key_hash(pem)}
+    # Only the roots cryptography loads can be compared; keep enough of them.
+    compared = [(pem, key) for pem in pems if (key := _key_hash(pem)) is not None]
+    assert len(compared) > 100
+    for pem, key in compared:
+        assert check_trust_store.key_hashes(pem) == {key}
 
 
 def test_locked_certifi_does_not_trust_them():
