@@ -87,7 +87,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # The FROM line is digest-pinned, so a rebuild of the same commit gets the same
 # toolchain. The `docker` entry in .github/dependabot.yml moves tag and digest together
 # daily, so a Go security release (a new go1.27.x behind the same tag) arrives as a
-# reviewable PR instead of silently on the next build.
+# reviewable PR instead of silently on the next build. The exception is a release that the
+# floor check below must require: the digest then moves by hand, in the same commit as the
+# floor, since a digest bump alone does not stop a stale local image (go1.27.3, PER-17672).
 #
 # This stage pins nothing beyond that floor, and that is a statement about THIS builder
 # only. permit-opa builds its own artifacts (its own Dockerfile and release workflow)
@@ -105,7 +107,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # a crypto/x509 deny list that rejects any chain through the eight eMudhra intermediates
 # whose private keys are recoverable (CVE-2026-111943, PER-17672). OPA verifies against the
 # image's Alpine bundle, which no longer holds their root (check_trust_store.py gates it),
-# so the deny list is a second layer, not the fix. The RUN below fails the build on
+# so the deny list is a second layer, not the fix - and only for the permit build, which is
+# compiled here: OPA_BUILD=vanilla ships upstream's binary, built with upstream's Go, and
+# relies on the Alpine bundle alone. The RUN below fails the build on
 # anything older (e.g. a stale local image).
 # It prints the version it accepted, but it is a GATE, not a record: a local
 # build can serve it from cache until the pinned digest moves. (CI exports no
