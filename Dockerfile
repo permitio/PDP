@@ -288,9 +288,10 @@ RUN mkdir -p /app/backup && chmod -R 777 /app/backup
 
 # Install runtime libraries and remove sqlite-libs.
 # The ca-certificates floors are the eMudhra fix (CVE-2026-111943, PER-17672). The pinned base
-# ships 20260909-r0, so only `apk upgrade` against a live index brings 20261020-r0; with the
-# floor, a stale mirror or cache fails here with a version error rather than later in
-# check_trust_store.py, which stays as the gate on what the stores actually hold.
+# ships 20260909-r0; the floor makes this RUN install 20261020-r0 from the live index, or fail
+# with a version error when the mirror lacks it. A cached copy of this layer cannot predate the
+# floor, which is part of the instruction. check_trust_store.py stays as the gate on what the
+# stores actually hold: a release that still ships a key, or a file added by something else.
 # Build deps (build-base, *-dev) are installed and removed in the Python dependency
 # layer to avoid persisting binutils CVEs (CVE-2025-69649, CVE-2025-69650).
 #
