@@ -130,8 +130,9 @@ jobs:
       # text back out of these public logs.
       BUILDX_METADATA_PROVENANCE: disabled
     # The build steps below also set `provenance: false`. On a public repo the action
-    # defaults to a max-mode provenance attestation, which embeds the same payload. These
-    # builds only load the image locally or fill the cache, so they have nothing to attest.
+    # otherwise adds a max-mode provenance attestation to the cache-only builds (not to the
+    # `load: true` one), which embeds the same payload. These builds load the image locally,
+    # fill the cache or only compile a stage, so they have nothing to attest.
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
