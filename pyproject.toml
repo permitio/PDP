@@ -65,6 +65,13 @@ dependencies = [
     # below it. A floor, not an exact pin - no waiver depends on it and nothing here imports it.
     # Drop it once opal-common itself floors gitpython>=3.1.59. See PER-15358.
     "GitPython>=3.1.59,<4",
+    # Transitive via requests and httpx, whose default verification trusts certifi's bundle,
+    # not the Alpine one. The floor removes emSign ECC Root CA - G3, the root over the eight
+    # eMudhra intermediates whose private keys are recoverable from their certificates
+    # (CVE-2026-111943): `uv lock` can never go back to a bundle that trusts them.
+    # check_trust_store.py fails the image build if either bundle still carries that root.
+    # See PER-17672.
+    "certifi>=2026.10.19",
     # opal-common/opal-client 0.9.9 declare Requires-Python <3.13, so they cannot run on the 3.13
     # image. Stay on 0.9.6 until an OPAL release lifts that bound.
     "opal-common==0.9.6",
