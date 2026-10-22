@@ -87,7 +87,11 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # The FROM line is digest-pinned, so a rebuild of the same commit gets the same
 # toolchain. The `docker` entry in .github/dependabot.yml moves tag and digest together
 # daily, so a Go security release (a new go1.27.x behind the same tag) arrives as a
-# reviewable PR instead of silently on the next build.
+# reviewable PR instead of silently on the next build. The exception is a release that the
+# floor check below must require: the digest then moves by hand, in the same commit as the
+# floor, because the old digest would fail the new floor. From then on the floor fails the
+# build if a later FROM edit (a revert, an older digest, an unpinned tag) lands a toolchain
+# below it (go1.27.3, PER-17672).
 #
 # This stage pins nothing beyond that floor, and that is a statement about THIS builder
 # only. permit-opa builds its own artifacts (its own Dockerfile and release workflow)
@@ -100,10 +104,16 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # audit, not a gate. The gates are the Docker Scout and Trivy scans in tests.yml and
 # release.yml, and scheduled-security-scan.yml re-scans published tags (PER-15358).
 #
-# The floor is go1.27.2, the first 1.27 release with the standard-library fixes for
-# CVE-2026-56857, CVE-2026-78663 and the other stdlib CVEs Docker Scout reported against
-# 1.27.1, and the RUN below fails the build on anything older (e.g. a stale local
-# image). It prints the version it accepted, but it is a GATE, not a record: a local
+# The floor is go1.27.3. 1.27.2 carried the standard-library fixes for CVE-2026-56857,
+# CVE-2026-78663 and the other stdlib CVEs Docker Scout reported against 1.27.1; 1.27.3 adds
+# a crypto/x509 deny list that rejects any chain through the eight eMudhra intermediates
+# whose private keys are recoverable (CVE-2026-111943, PER-17672). OPA verifies against the
+# image's Alpine bundle, which no longer holds their root (check_trust_store.py gates it),
+# so the deny list is a second layer, not the fix - and only for the permit build, which is
+# compiled here: OPA_BUILD=vanilla ships upstream's binary, built with upstream's Go, and
+# relies on the Alpine bundle alone. The RUN below fails the build on anything older
+# (e.g. a FROM edit that lands an older toolchain).
+# It prints the version it accepted, but it is a GATE, not a record: a local
 # build can serve it from cache until the pinned digest moves. (CI exports no
 # opa_build layers, so there it re-runs every build.) The compile RUN
 # below echoes the toolchain too, and that one is reliable: `COPY custom* /custom` sees
@@ -122,11 +132,11 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # an ARG, splitting the FROM across lines or renaming the stage turns permit-opa's CI
 # red with "cannot compare go.mod's directive" - which is a fail-closed by design, but
 # it will look like an unrelated repo breaking for no reason.
-FROM --platform=$BUILDPLATFORM golang:1.27-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61 AS opa_build
+FROM --platform=$BUILDPLATFORM golang:1.27-bookworm@sha256:972b4110ba0f47539a975c31e52c64765e1ff19f2d74469ae4a595c6676e80a5 AS opa_build
 ENV GOTOOLCHAIN=local
 RUN v=$(go env GOVERSION) && \
-    [ "$(printf '%s\n' go1.27.2 "$v" | sort -V | head -n1)" = go1.27.2 ] || \
-    { echo "opa_build: $v is below the go1.27.2 floor (CVE-2026-56857, CVE-2026-78663 and others fixed in 1.27.2)"; exit 1; } && \
+    [ "$(printf '%s\n' go1.27.3 "$v" | sort -V | head -n1)" = go1.27.3 ] || \
+    { echo "opa_build: $v is below the go1.27.3 floor (eMudhra deny list, CVE-2026-111943; stdlib CVEs fixed in 1.27.2)"; exit 1; } && \
     echo "opa_build: building with $v"
 
 COPY custom* /custom
@@ -277,6 +287,11 @@ RUN addgroup -S permit -g 1001 && \
 RUN mkdir -p /app/backup && chmod -R 777 /app/backup
 
 # Install runtime libraries and remove sqlite-libs.
+# The ca-certificates floors are the eMudhra fix (CVE-2026-111943, PER-17672). The pinned base
+# ships 20260909-r0; the floor makes this RUN install 20261020-r0 from the live index, or fail
+# with a version error when the mirror lacks it. A cached copy of this layer cannot predate the
+# floor, which is part of the instruction. check_trust_store.py stays as the gate on what the
+# stores actually hold: a release that still ships a key, or a file added by something else.
 # Build deps (build-base, *-dev) are installed and removed in the Python dependency
 # layer to avoid persisting binutils CVEs (CVE-2025-69649, CVE-2025-69650).
 #
@@ -312,7 +327,7 @@ RUN --mount=type=cache,target=/var/cache/apk \
     ln -s /var/cache/apk /etc/apk/cache && \
     apk update && \
     apk upgrade && \
-    apk add bash libffi libressl gcompat && \
+    apk add bash libffi libressl gcompat 'ca-certificates>=20261020-r0' 'ca-certificates-bundle>=20261020-r0' && \
     apk add --no-cache --virtual .python-rundeps-nosqlite \
         $(apk info -qR .python-rundeps | grep '^so:' | grep -v 'libsqlite3') && \
     apk del .python-rundeps sqlite-libs && \
@@ -347,13 +362,16 @@ COPY kong_routes.json /config/kong_routes.json
 # cannot write to site-packages, so without it every start would recompile. Nothing here
 # resolves: a dependency only changes when uv.lock does.
 #
-# check_aiofiles_override.py is bind-mounted, so it never ships, and runs last: it fails the
-# build if opal-client leaves 0.9.6 or the real backup_store() stops working here.
+# check_aiofiles_override.py and check_trust_store.py are bind-mounted, so they never ship,
+# and run last: the first fails the build if opal-client leaves 0.9.6 or the real
+# backup_store() stops working here, the second if certifi's bundle or the system trust store
+# (from the apk layer above) still trusts the compromised eMudhra roots (PER-17672).
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
     --mount=type=bind,source=pyproject.toml,target=/tmp/project/pyproject.toml \
     --mount=type=bind,source=uv.lock,target=/tmp/project/uv.lock \
     --mount=type=bind,source=check_aiofiles_override.py,target=/tmp/check_aiofiles_override.py \
+    --mount=type=bind,source=check_trust_store.py,target=/tmp/check_trust_store.py \
     apk add --no-cache --virtual .build-deps build-base libffi-dev libressl-dev musl-dev zlib-dev && \
     uv export --project /tmp/project --frozen --no-dev --no-emit-project --no-header \
         --output-file /tmp/requirements.lock && \
@@ -363,7 +381,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     python -m pip uninstall -y pip setuptools wheel && \
     rm -r "$(python3 -c 'import sysconfig; print(sysconfig.get_paths()["stdlib"])')/ensurepip" && \
     apk del .build-deps && \
-    python /tmp/check_aiofiles_override.py
+    python /tmp/check_aiofiles_override.py && \
+    python /tmp/check_trust_store.py
 
 USER permit
 
