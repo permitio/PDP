@@ -10,6 +10,12 @@ pdp:
     # Example - enable Envoy gRPC ext_authz on port 9191 (requires PDP >= 0.9.10):
     # - name: PDP_OPA_PLUGINS
     #   value: '{"permit_graph":{},"envoy_ext_authz_grpc":{"addr":":9191","path":"permit/root"}}'
+    # PDP_OPA_PLUGINS replaces the image's plugin list, so keep "permit_graph" in it: that plugin
+    # keeps OPA's ReBAC cache current. Without it, or with "permit_graph":{"enabled":false}, the
+    # PDP rebuilds that cache through its ReBAC cache_rebuild data-update callback after each data
+    # update. PDP 0.9.16 and earlier drop that callback, so there a plugin list without
+    # "permit_graph" denies every ReBAC check. They also read a JSON true or false in plugin
+    # settings as 1 or 0, which OPA rejects.
   # The PDP's API key. By default the chart stores ApiKey in a Secret it creates
   # (permitio-pdp-secret) and passes it to the PDP as PDP_API_KEY. existingApiKeySecret and
   # userProvidedSecret below change that. Set at most one of them: with both set, the chart
