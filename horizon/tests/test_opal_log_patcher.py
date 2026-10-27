@@ -34,7 +34,8 @@ def test_opal_patcher_survives_the_pdp_logger_setup():
     result = subprocess.run(
         [sys.executable, "-c", code],
         cwd=REPO_ROOT,
-        env=os.environ.copy(),
+        # OPAL's own sink goes to stdout when this is false; keep stdout for the test sink only
+        env={**os.environ, "OPAL_LOG_PIPE_TO_STDERR": "true"},
         capture_output=True,
         text=True,
         timeout=120,
