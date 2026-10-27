@@ -103,7 +103,7 @@ dev = [
     # lock refresh must not turn the required `pre-commit` check red on its own. Dependabot
     # still proposes each bump, in its own `ty` group (.github/dependabot.yml) so a release
     # that reports new diagnostics fails only that PR; fix what it reports there.
-    "ty==0.0.84",
+    "ty==0.0.90",
 ]
 
 [tool.uv]
