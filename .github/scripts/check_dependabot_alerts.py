@@ -11,11 +11,11 @@ the report cannot disagree about which alerts count. The script never shells out
 `gh`, so every decision it makes is unit-testable.
 
 WHY THE WAIVER FILTER IS THE WHOLE POINT
-At the time of writing, all three open HIGH alerts on this repo - CVE-2026-50271
-(ddtrace), CVE-2026-54283 and CVE-2026-48818 (starlette) - are CVEs already triaged and
+At the time of writing, both open HIGH alerts on this repo - CVE-2026-54283 and
+CVE-2026-48818 (starlette) - are CVEs already triaged and
 waived in `.trivyignore.yaml` and `.docker/scout/pdp-v2.vex.json`, because opal-common
 0.9.6 caps the dependency that would otherwise fix them. A report that listed "any open
-critical/high" would carry the same three CVEs every run, and the channel would be muted
+critical/high" would carry the same CVEs every run, and the channel would be muted
 inside a week - at which point the alert that DOES matter arrives in a muted channel. So
 the filter is not a nicety: an alert is listed only if the same waiver list the image
 scanners read does not already answer it.

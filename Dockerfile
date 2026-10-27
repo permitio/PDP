@@ -249,8 +249,15 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 #
 # The patch version USED to float (see the previous python:3.10-alpine3.22 base and the
 # rebuild-picks-it-up posture in PER-15532). It no longer does - the digest below carries
-# 3.13.15 - because "a rebuild will pick it up" only holds if something rebuilds. See the
+# 3.13.18 - because "a rebuild will pick it up" only holds if something rebuilds. See the
 # pinning note below.
+#
+# The tag names the patch version (3.13.18-alpine3.23, not 3.13-alpine3.23) since PER-17853.
+# Dependabot never bumped the 3.13.15 digest: the docker entry's 7-day cooldown restarts every
+# time the floating tag gets a new digest, which happened more often than once a week, so the
+# PR never opened while the interpreter collected ten CVEs (CVE-2026-19445 among them). A
+# patch tag gets a new version, not just a new digest, when CPython releases, which is what
+# Dependabot's version updates track.
 #
 # Python 3.10 also reaches end of life in October 2026, so this move was due regardless.
 # Base images are pinned by DIGEST, and Dependabot's docker ecosystem
@@ -259,7 +266,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # pinning a per-arch digest instead would break the linux/amd64 + linux/arm64 build.
 #
 # Why pin at all, when floating the tag sounds strictly fresher: upstream rebuilds these
-# tags IN PLACE. `python:3.13-alpine3.23` can silently gain a new digest with patched
+# tags IN PLACE. `python:3.13.18-alpine3.23` can silently gain a new digest with patched
 # OpenSSL, and because the tag string never changes there is nothing for anyone - human
 # or bot - to notice. A floating tag is only fresh at the instant of a build, and nothing
 # triggers builds. Pinning inverts that: the drift arrives as a digest-bump PR that CI
@@ -275,7 +282,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # same Dependabot `docker` entry as the other base images.
 FROM ghcr.io/astral-sh/uv:0.12.19@sha256:04d046b13e60d6bcec73cbc5e1cad25d680dea90c8573340950a0ac2d1aef424 AS uv
 
-FROM python:3.13-alpine3.23@sha256:6438599575cca0d1df94aeee0d2ae088d4d8846eab554b2ee7784a3a6df0d516 AS main
+FROM python:3.13.18-alpine3.23@sha256:d911085e59772e458649b0184ca311c309068961c5efa11d5761ea0c64a91383 AS main
 
 WORKDIR /app
 
@@ -402,23 +409,6 @@ ENV OPAL_LOG_TRACEBACK="false"
 ENV OPAL_LOG_MODULE_EXCLUDE_LIST="[]"
 ENV OPAL_INLINE_OPA_ENABLED="true"
 ENV OPAL_INLINE_OPA_LOG_FORMAT="http"
-
-# datadog / ddtrace configuration -------------------
-# Drop "baggage" from ddtrace's default extract styles ("datadog,tracecontext,baggage").
-# CVE-2026-50271: ddtrace's W3C baggage propagator does not enforce
-# DD_TRACE_BAGGAGE_MAX_ITEMS / DD_TRACE_BAGGAGE_MAX_BYTES on the *extract* path, so an
-# unauthenticated caller can force unbounded CPU/memory use with an oversized baggage
-# header. The fix is only in ddtrace >= 4.8.2, which opal-common's `ddtrace<4,>=3.0.0`
-# cap forbids, so we remove the vulnerable parser from the request path instead.
-#
-# ddtrace reaches the inbound request path only with monitoring on - that is what calls
-# patch(fastapi=True). PDP_ENABLE_MONITORING defaults to false, but horizon/pdp.py applies
-# the control plane's remote config before it checks the flag, so monitoring can be turned
-# on without touching this image's env. That is why this ENV, not the default, is the
-# mitigation the waivers rely on. Injection is
-# left at its default, so outbound baggage propagation is unaffected. Remove this once
-# OPAL relaxes its ddtrace<4 bound and ddtrace moves to >= 4.8.2. See PER-15358.
-ENV DD_TRACE_PROPAGATION_STYLE_EXTRACT="datadog,tracecontext"
 
 # horizon configuration -----------------------------
 # by default, the backend is at port 8000 on the docker host

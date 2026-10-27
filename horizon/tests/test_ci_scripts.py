@@ -833,8 +833,10 @@ def test_exact_pins_reads_dependencies_and_uv_overrides(tmp_path):
 
 def test_exact_pins_reads_the_repo_pyproject():
     pins = classifier.exact_pins(REPO_ROOT / "pyproject.toml")
-    assert {"starlette", "ddtrace", "websockets", "aiofiles"} <= pins
+    assert {"starlette", "websockets", "aiofiles"} <= pins
+    # ddtrace was pinned ==3.19.8 to bind a waiver until PER-17853 replaced the pin with a floor.
     assert "fastapi" not in pins
+    assert "ddtrace" not in pins
 
 
 def test_classifier_table_cells_survive_hostile_scanner_text(tmp_path):

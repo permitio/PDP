@@ -323,7 +323,7 @@ jobs:
 
       # The extract step already wrote a docker-archive named `permitio/pdp-v2:release-scan`;
       # loading it lets Scout read it as `local://`, the same way the PR gate reads `:next`.
-      # That name is what the OpenVEX doc's `@release-scan` product matches, so the five
+      # That name is what the OpenVEX doc's `@release-scan` product matches, so the
       # waivers apply here. Loading an arm64 image on an amd64 runner only stores it.
       - name: Load the image for Docker Scout
         if: ${{ !cancelled() && steps.extract.outputs.input != '' }}

@@ -242,8 +242,8 @@ jobs:
     steps:
       - name: Checkout code
         # The OpenVEX doc the gate below reads lives in this repo, so the checkout is not
-        # optional here: without it `vex-location` resolves to nothing and all five
-        # waivers stop suppressing.
+        # optional here: without it `vex-location` resolves to nothing and every
+        # waiver stops suppressing.
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -302,13 +302,13 @@ jobs:
           exit-code: false
           # THE file the report reads, and it has to be this one rather than the report
           # SARIF above, because only this step applies the OpenVEX waivers: the report's
-          # SARIF still contains all five waived CVEs at critical/high.
+          # SARIF still contains every waived CVE at critical/high.
           sarif-file: scout-latest-gate.sarif
           summary: true
           write-comment: false
           # Accept CVEs marked not_affected in .docker/scout/pdp-v2.vex.json. Scout matches
           # products on the full PURL string, so pointing this step at a tag the doc does
-          # not list drops all five waivers silently.
+          # not list drops every waiver silently.
           vex-location: .docker/scout
           only-vex-affected: true
           # REQUIRED: scout only *applies* VEX statements whose author matches its
