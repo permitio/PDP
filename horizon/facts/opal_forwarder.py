@@ -57,7 +57,9 @@ def create_data_source_entry(
         dst_path=f"{obj_type}/{obj_key}",
         save_method="PUT",
         topics=[topic],
-        config=HttpFetcherConfig(headers=headers).dict(),
+        # mode="json": the entry is published over pubsub, and pydantic 2's python mode keeps the
+        # HttpMethods enum. OPAL's own publisher dumps the same way.
+        config=HttpFetcherConfig(headers=headers).model_dump(mode="json"),
     )
 
 

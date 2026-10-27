@@ -4,7 +4,6 @@ import re
 from urllib.parse import parse_qsl
 
 from loguru import logger
-from pydantic import AnyHttpUrl
 from starlette.datastructures import QueryParams
 
 from horizon.enforcer.schemas import MappingRuleData, UrlTypes
@@ -191,7 +190,7 @@ class MappingRulesUtils:
         cls,
         mapping_rules: list[MappingRuleData],
         http_method: str,
-        url: AnyHttpUrl,
+        url: str,
     ) -> MappingRuleData | None:
         """The highest-priority mapping rule for the request's method and URL, or None if none matches.
 

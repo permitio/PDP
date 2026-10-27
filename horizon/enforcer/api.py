@@ -13,7 +13,7 @@ from opal_client.policy_store.policy_store_client_factory import (
     DEFAULT_POLICY_STORE_GETTER,
 )
 from opal_client.utils import proxy_response
-from pydantic import parse_obj_as
+from pydantic import TypeAdapter
 from starlette.responses import JSONResponse
 
 from horizon.config import sidecar_config
@@ -62,6 +62,10 @@ stats_manager = StatisticsManager(
 
 AUTHZ_HEADER_PARTS = 2  # "<scheme> <token>"
 
+# Built once: a TypeAdapter compiles a validator for the type, and these run on every request.
+_USER_PERMISSIONS_RESULT = TypeAdapter(UserPermissionsResult)
+_USER_TENANTS_RESULT = TypeAdapter(UserTenantsResult)
+
 
 def extract_pdp_api_key(request: Request) -> str:
     authorization: str = request.headers.get(AUTHZ_HEADER, "")
@@ -81,7 +85,7 @@ def _url_not_allowed(query: UrlAuthorizationQuery, error: ConflictingQueryParame
     """
     logger.debug("allowed_url: {reason}; not allowed", reason=str(error), url=query.url)
     reason = "A query parameter the mapping rule reads has more than one distinct value in the requested URL"
-    return {"allow": False, "result": False, "query": query.dict(), "debug": {"reason": reason}}
+    return {"allow": False, "result": False, "query": query.model_dump(), "debug": {"reason": reason}}
 
 
 def transform_headers(request: Request) -> dict:
@@ -128,7 +132,7 @@ def log_query_result(query: BaseSchema, response: Response):
     # /user-permissions, /user-tenants and /authorized_users results carry neither "allow" nor
     # "allowed_tenants". A body that is not JSON is logged with its traceback by the endpoint's fallback.
     if result is None or (result.get("allow") is None and "allowed_tenants" not in result):
-        _log_raw_query_result(params, query.dict(), response)
+        _log_raw_query_result(params, query.model_dump(), response)
         return
     try:
         allowed: bool | list[dict] | None = result.get("allow")
@@ -158,12 +162,12 @@ def log_query_result(query: BaseSchema, response: Response):
             template,
             allowed=allow_output,
             api_params=params,
-            input=query.dict(),
+            input=query.model_dump(),
             debug=debug,
         )
     except Exception:  # noqa: BLE001 - log-only: the decision is answered even if its log line fails
         logger.opt(exception=True).warning("Could not format the decision log line; logging the OPA response raw")
-        _log_raw_query_result(params, query.dict(), response)
+        _log_raw_query_result(params, query.model_dump(), response)
 
 
 def log_query_result_kong(kong_input: KongAuthorizationInput, response: Response):
@@ -174,7 +178,7 @@ def log_query_result_kong(kong_input: KongAuthorizationInput, response: Response
     params = f"({username}, {kong_input.request.http.method}, {kong_input.request.http.path})"
     result = _opa_result(response)
     if result is None:
-        _log_raw_query_result(params, kong_input.dict(), response)
+        _log_raw_query_result(params, kong_input.model_dump(), response)
         return
     try:
         allowed = result.get("allow", False)
@@ -191,12 +195,12 @@ def log_query_result_kong(kong_input: KongAuthorizationInput, response: Response
             template,
             allowed=allowed,
             api_params=params,
-            input=kong_input.dict(),
+            input=kong_input.model_dump(),
             debug=debug,
         )
     except Exception:  # noqa: BLE001 - log-only: the decision is answered even if its log line fails
         logger.opt(exception=True).warning("Could not format the decision log line; logging the OPA response raw")
-        _log_raw_query_result(params, kong_input.dict(), response)
+        _log_raw_query_result(params, kong_input.model_dump(), response)
 
 
 def get_v1_processed_query(result: dict) -> dict | None:
@@ -273,7 +277,7 @@ def _set_use_debugger(data: dict | None) -> None:
 
 
 async def _is_allowed(query: BaseSchema, request: Request, policy_package: str):
-    opa_input = {"input": query.dict()}
+    opa_input = {"input": query.model_dump()}
     path = policy_package.replace(".", "/")
     return await post_to_opa(request, path, opa_input)
 
@@ -322,7 +326,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient | None = None):
         try:
             response_json = json.loads(response.body)
             raw_result = response_json.get("result", {}).get("result", {})
-            result = parse_obj_as(AuthorizedUsersResult, raw_result)
+            result = AuthorizedUsersResult.model_validate(raw_result)
         except Exception as e:  # noqa: BLE001 - fallback no users: OPA output is untrusted and must not 500
             result = AuthorizedUsersResult.empty(query.resource)
             logger.opt(exception=True).warning(
@@ -347,7 +351,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient | None = None):
 
         data_result = json.loads(data.body).get("result") or {}
         mapping_rules_json = data_result.get("all") or []
-        mapping_rules = [parse_obj_as(MappingRuleData, mapping_rule) for mapping_rule in mapping_rules_json]
+        mapping_rules = [MappingRuleData.model_validate(mapping_rule) for mapping_rule in mapping_rules_json]
         try:
             matched_mapping_rule = MappingRulesUtils.extract_mapping_rule_by_request(
                 mapping_rules, query.http_method, query.url
@@ -358,7 +362,7 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient | None = None):
             return {
                 "allow": False,
                 "result": False,
-                "query": query.dict(),
+                "query": query.model_dump(),
                 "debug": {
                     "reason": "Matched mapping rule not found for the requested URL and HTTP method",
                     "mapping_rules": mapping_rules_json,
@@ -411,12 +415,12 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient | None = None):
         log_query_result(query, response)
         try:
             raw_result = json.loads(response.body).get("result", {})
-            return parse_obj_as(UserPermissionsResult, raw_result.get("permissions", {}))
+            return _USER_PERMISSIONS_RESULT.validate_python(raw_result.get("permissions", {}))
         except Exception as e:  # noqa: BLE001 - fallback no permissions: OPA output is untrusted and must not 500
             logger.opt(exception=True).warning(
                 "is allowed (fallback response)", reason=f"cannot decode opa response: {e}"
             )
-            return parse_obj_as(UserPermissionsResult, {})
+            return _USER_PERMISSIONS_RESULT.validate_python({})
 
     @router.post(
         "/user-tenants",
@@ -441,13 +445,13 @@ def init_enforcer_api_router(policy_store: BasePolicyStoreClient | None = None):
             else:
                 # Caught below on purpose: every malformed OPA result gets the same fallback.
                 raise TypeError(f"Expected raw result to be dict or list, got {type(raw_result)}")  # noqa: TRY301
-            return parse_obj_as(UserTenantsResult, tenants)
+            return _USER_TENANTS_RESULT.validate_python(tenants)
         except Exception as e:  # noqa: BLE001 - fallback no tenants: OPA output is untrusted and must not 500
             logger.opt(exception=True).warning(
                 "get user tenants (fallback response)",
                 reason=f"cannot decode opa response: {e}",
             )
-            return parse_obj_as(UserTenantsResult, [])
+            return _USER_TENANTS_RESULT.validate_python([])
 
     @router.post(
         "/allowed/all-tenants",

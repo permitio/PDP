@@ -3,7 +3,7 @@ import math
 import os
 import sys
 from pathlib import Path
-from typing import ClassVar, Literal
+from typing import Literal
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
@@ -27,7 +27,7 @@ from opal_common.fetcher.providers.http_fetch_provider import (
     HttpMethods,
 )
 from opal_common.logging_utils.formatter import Formatter
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from scalar_fastapi import get_scalar_api_reference
 
 from horizon.authentication import enforce_pdp_token
@@ -238,8 +238,7 @@ class TriggerResponse(BaseModel):
         ),
     )
 
-    class Config:
-        schema_extra: ClassVar[dict] = {"example": {"status": "ok", "triggered": True}}
+    model_config = ConfigDict(json_schema_extra={"example": {"status": "ok", "triggered": True}})
 
 
 # OpalClient mounts these two forced-reload trigger routes before PermitPDP gains control.
@@ -484,7 +483,7 @@ class PermitPDP:
             return
 
         # Start from the existing config
-        inline_opa_config = opal_client_config.INLINE_OPA_CONFIG.dict()
+        inline_opa_config = opal_client_config.INLINE_OPA_CONFIG.model_dump()
 
         logger.debug(f"existing OPAL_INLINE_OPA_CONFIG={inline_opa_config}")
 

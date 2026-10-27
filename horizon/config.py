@@ -1,11 +1,11 @@
 import json
 import re
 from enum import StrEnum
-from typing import Any, ClassVar
+from typing import Annotated, Any, ClassVar
 
 from opal_common.confi import Confi, confi
 from opal_common.schemas.data import CallbackEntry
-from pydantic import parse_obj_as, parse_raw_as
+from pydantic import Field, StrictBool, TypeAdapter
 
 # One-way import edge, config -> debounce: the default lives beside the clamp that falls back
 # to it, so a value this module declares and a value the debouncer substitutes can never drift.
@@ -13,6 +13,15 @@ from pydantic import parse_obj_as, parse_raw_as
 from horizon.debounce import DEFAULT_DEBOUNCE_SECONDS
 
 MOCK_API_KEY = "MUST BE DEFINED"
+
+# A plugin setting is tried as StrictBool, then int, then str, in that order (union_mode). pydantic 1
+# tried `int | bool | str` in order and its int accepted a JSON bool, so `"enabled": false` reached OPA
+# as `enabled: 0` and OPA exited at startup. StrictBool first keeps JSON bools bools; int before str
+# keeps "5" -> 5 as before. pydantic 2's default smart mode would leave "5" a string. PER-16197.
+OpaPluginSetting = Annotated[StrictBool | int | str, Field(union_mode="left_to_right")]
+OpaPlugins = dict[str, dict[str, OpaPluginSetting]]
+_OPA_PLUGINS = TypeAdapter(OpaPlugins)
+_CALLBACKS = TypeAdapter(list[CallbackEntry])
 
 IGNORED_CALLBACK_URLS_SETTING = "PDP_IGNORE_DEFAULT_DATA_UPDATE_CALLBACKS_URLS"
 _SHOWN_VALUE_MAX_CHARS = 200
@@ -290,12 +299,12 @@ class SidecarConfig(Confi):
     )
 
     @staticmethod
-    def parse_plugins(value: Any) -> dict[str, dict[str, int | bool | str]]:
+    def parse_plugins(value: Any) -> OpaPlugins:
         if isinstance(value, str):
-            return parse_raw_as(dict[str, dict[str, int | bool | str]], value)
-        return parse_obj_as(dict[str, dict[str, int | bool | str]], value)
+            return _OPA_PLUGINS.validate_json(value)
+        return _OPA_PLUGINS.validate_python(value)
 
-    OPA_PLUGINS: dict[str, dict[str, int | bool | str]] = confi.str(  # ty: ignore[invalid-assignment]  # cast= sets the type
+    OPA_PLUGINS: OpaPlugins = confi.str(  # ty: ignore[invalid-assignment]  # cast= sets the type
         "OPA_PLUGINS",
         {},
         description="List of plugins to be loaded into OPA, "
@@ -377,8 +386,8 @@ class SidecarConfig(Confi):
     @staticmethod
     def parse_callbacks(value: Any) -> list[CallbackEntry]:
         if isinstance(value, str):
-            return parse_raw_as(list[CallbackEntry], value)
-        return parse_obj_as(list[CallbackEntry], value)
+            return _CALLBACKS.validate_json(value)
+        return _CALLBACKS.validate_python(value)
 
     DATA_UPDATE_CALLBACKS: list[CallbackEntry] = confi.str(  # ty: ignore[invalid-assignment]  # cast= sets the type
         "DATA_UPDATE_CALLBACKS",

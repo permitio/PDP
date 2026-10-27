@@ -150,7 +150,7 @@ class OpalRelayAPIClient:
                         f"Server responded to token request with a bad status: {_error_body_repr.repr(text)}",
                     )
                 try:
-                    obj = RelayJWTResponse.parse_obj(await response.json())
+                    obj = RelayJWTResponse.model_validate(await response.json())
                 # ValueError covers pydantic's ValidationError and a body that is not JSON or not UTF-8.
                 except (ValueError, aiohttp.ContentTypeError) as e:
                     # json() above already read the body, so read() only returns it. The body may hold a token
@@ -201,7 +201,7 @@ class OpalRelayAPIClient:
                     pdp_instance_id=PersistentStateHandler.get().pdp_instance_id,
                     topics=topics,
                     timestamp_ns=time.time_ns(),
-                    platform=PDPPingPlatformState.parse_obj(
+                    platform=PDPPingPlatformState.model_validate(
                         await asyncio.get_event_loop().run_in_executor(None, PersistentStateHandler.get_runtime_state)
                     ),
                 )

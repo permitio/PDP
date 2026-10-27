@@ -105,7 +105,7 @@ class RemoteConfigFetcher:
 
             try:
                 sidecar_config = RemoteConfig(**response)
-                config_context = sidecar_config.dict(include={"context"}).get("context", {})
+                config_context = sidecar_config.model_dump(include={"context"}).get("context", {})
                 logger.info(f"Received remote config with the following context: {config_context}")
             except ValidationError as exc:
                 logger.error("Got invalid config contents: {exc}", exc=exc)

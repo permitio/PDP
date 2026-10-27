@@ -318,7 +318,7 @@ def test_medium_findings_are_counted_but_not_alerted(run):
         ("libssl3", "alpine", "a release rebuild picks it up"),
         ("golang.org/x/net", "gobinary", "bump it in permit-opa"),
         ("stdlib", "gobinary", "needs the golang base-image digest bump"),
-        ("starlette", "python-pkg", "bump the exact pin in pyproject.toml"),
+        ("websockets", "python-pkg", "bump the exact pin in pyproject.toml"),
         ("httpx", "python-pkg", "update it in uv.lock"),
     ],
 )
@@ -367,19 +367,19 @@ def test_a_python_finding_names_mains_locked_version_and_is_never_a_rebuild(run,
     ("installed", "held"),
     [
         pytest.param("0.49.0", False, id="pin-moved"),
-        pytest.param(_in_mains_lock("starlette"), True, id="pin-holds-the-image-version"),
+        pytest.param(_in_mains_lock("websockets"), True, id="pin-holds-the-image-version"),
     ],
 )
 def test_a_pinned_python_finding_names_mains_pinned_version(run, installed, held):
-    vuln = _vuln("CVE-2026-0011", pkg="starlette", installed=installed, fixed="0.49.1")
+    vuln = _vuln("CVE-2026-0011", pkg="websockets", installed=installed, fixed="0.49.1")
     message, _, _ = run(trivy={"latest": _trivy(vuln, result_type="python-pkg")}, scout=_sarif(), alerts=[])
     line = next(line for line in message.splitlines() if "CVE-2026-0011" in line)
-    starlette = _in_mains_lock("starlette")
+    websockets = _in_mains_lock("websockets")
     if held:
-        assert f"fix: 0.49.1, main's uv.lock still holds starlette {starlette}, the version Trivy flagged - " in line
+        assert f"fix: 0.49.1, main's uv.lock still holds websockets {websockets}, the version Trivy flagged - " in line
     else:
-        assert f"fix: 0.49.1, main's uv.lock has starlette {starlette} - cutting a release clears each " in line
-    assert "raise the `==` pin for starlette in pyproject.toml and run `uv lock`, then cut a release" in line
+        assert f"fix: 0.49.1, main's uv.lock has websockets {websockets} - cutting a release clears each " in line
+    assert "raise the `==` pin for websockets in pyproject.toml and run `uv lock`, then cut a release" in line
 
 
 @pytest.mark.parametrize(

@@ -11,14 +11,19 @@ description = "The Python side of the Permit.io PDP: OPAL client, policy-store s
 requires-python = "==3.13.*"
 dependencies = [
     "aiohttp>=3.14.3,<4",
-    # Floor 0.124.0 matches a contract the route-auth audit depends on: get_flat_dependant only
-    # propagates sub-dependants into flat_dependant.dependencies from 0.124.0, which
-    # _route_auth_gates in horizon/tests/test_route_auth_audit.py reads. Ceiling in practice is
-    # 0.125.x, the last release supporting pydantic v1 (0.126.0 requires pydantic>=2.7.0), so the
-    # usable window is 0.124-0.125 while the pydantic<2 pin stands. See PER-15249.
-    "fastapi>=0.124.0,<1",
+    # Floor 0.135.0 is opal-common/opal-client 0.10's, the first fastapi that admits starlette 1.x.
+    # It also keeps the contract the route-auth audit depends on: get_flat_dependant propagates
+    # sub-dependants into flat_dependant.dependencies from 0.124.0, which _route_auth_gates in
+    # horizon/tests/test_route_auth_audit.py reads. See PER-15249, PER-16197.
+    # Capped <0.137: 0.137.0 stopped flattening include_router() into app.router.routes (it keeps
+    # _IncludedRouter wrappers, and upstream now calls router.routes internal). _remove_opal_trigger_routes
+    # in horizon/pdp.py finds OPAL's trigger routes by walking that list, so on 0.137+ it finds none
+    # and refuses to start, as designed; the route-auth audit walks it too. Lift the cap only with a
+    # rework of both that does not depend on router.routes.
+    "fastapi>=0.135.0,<0.137",
     "Jinja2>=3.1.2,<4",
-    "pydantic[email]>=1.9.1,<2",
+    # opal-common/opal-client 0.10 are pydantic 2 (their floor is 2.9.0). PER-16197.
+    "pydantic[email]>=2.9.0,<3",
     "requests>=2.32.4,<3",
     "urllib3>=2.8.0,<3",
     "gunicorn>=23.0.0,<24",
@@ -27,7 +32,7 @@ dependencies = [
     "uvicorn[standard]>=0.54.0,<1",
     "logzio-python-handler",
     # The floor clears CVE-2026-50271 (W3C baggage DoS), fixed only in 4.8.2. opal-common 0.9.6
-    # caps ddtrace<4, so the override in [tool.uv] below - scoped to opal-common 0.9.6 only,
+    # caps ddtrace<4, so the override in [tool.uv] below - scoped to opal-common 0.10.0rc1 only,
     # leaving this requirement in charge - is what lets this resolve. OPAL calls
     # only patch(), tracer.configure(trace_processors=...), tracer.trace/wrap, TraceFilter and
     # Span.get_tag, and horizon/pdp.py only patch() and config.fastapi: none of them changed in
@@ -45,12 +50,11 @@ dependencies = [
     # cap is ours, to keep a major out of a lock refresh. musllinux wheels exist for x86_64 and
     # aarch64, so the Alpine build needs no Rust toolchain for it.
     "cryptography>=50.0.0,<51",
-    # Capped <1 by opal-common/opal-client 0.9.6 (and <0.51.0 via fastapi-utils -> fastapi
-    # 0.125). Four CVEs (CVE-2026-54283, CVE-2026-48817, CVE-2026-48818, CVE-2026-48710) are fixed
-    # only in 1.x and are waived as unreachable in .trivyignore.yaml and the OpenVEX doc. Pinned
-    # exactly so the waiver PURLs stay bound. Remove the pin and the four waivers once OPAL relaxes
-    # starlette<1. See PER-15358.
-    "starlette==0.50.0",
+    # The floor clears the five starlette CVEs 0.50.0 carried: CVE-2026-48710 (fixed in 1.0.1),
+    # CVE-2026-48817 and CVE-2026-48818 (1.1.0), CVE-2026-54282 (1.3.0) and CVE-2026-54283 (1.3.1).
+    # opal-common/opal-client 0.10 require the same floor; 0.9.6 capped starlette<1, which is why
+    # four of them used to be waived. PER-16197.
+    "starlette>=1.3.1,<2",
     # Pinned exactly because nothing else bounds it (OPAL allows >=10.3) and it sits on the OPAL
     # pub/sub path: during #329 a rebuild would have taken a new major hours after validation. 17.0
     # is the version pdp-tester validated. Bump it deliberately and let pdp-tester run on the
@@ -58,7 +62,7 @@ dependencies = [
     "websockets==17.0",
     # OPAL's pub/sub transport. horizon/facts/update_subscriber.py imports exception classes from
     # both, to tell a facts update the PDP could not publish from a bug, so they are declared here
-    # rather than left to opal-client. OPAL 0.9.6 only bounds them (<2 and <1); pinned exactly at
+    # rather than left to opal-client. OPAL 0.10 only bounds them (<2 and <1); pinned exactly at
     # the locked versions so a lock refresh cannot move those classes. On a bump, check that they
     # are still what OPAL's PubSubClient.publish() raises.
     "fastapi-websocket-pubsub==1.0.1",
@@ -76,12 +80,11 @@ dependencies = [
     # check_trust_store.py fails the image build if either bundle still carries that root.
     # See PER-17672.
     "certifi>=2026.10.19",
-    # opal-common/opal-client 0.9.9 declare Requires-Python <3.13, so they cannot run on the 3.13
-    # image. Stay on 0.9.6 until an OPAL release lifts that bound.
-    "opal-common==0.9.6",
+    # 0.10 is OPAL's pydantic 2 / starlette 1.x line, and admits Python 3.13 (opal#960). PER-16197.
+    "opal-common==0.10.0rc1",
     # opal-client caps aiofiles<1; the override is in [tool.uv] below. Changing this pin fails the
     # image build (check_aiofiles_override.py) until that override is re-evaluated (PER-16234).
-    "opal-client==0.9.6",
+    "opal-client==0.10.0rc1",
 ]
 
 [dependency-groups]
@@ -111,23 +114,24 @@ dev = [
 # locked dependencies, so there is no build backend and nothing is built.
 package = false
 required-version = ">=0.12.19"
-# opal-client 0.9.6 caps aiofiles<1, which admits only 0.8.0 (Nov 2021). Its tempfile shim
+# opal-client 0.10.0rc1 (like 0.9.6) caps aiofiles<1, which admits only 0.8.0 (Nov 2021). Its tempfile shim
 # raises AttributeError on CPython >= 3.12, so OPAL's offline-mode backup_store() silently stops
 # updating the backup. 24.1.0 is the first release tested on 3.13 (23.2.0, the first with the
 # fix, is yanked). Exit: drop this, check_opal_client_pin() in check_aiofiles_override.py and the
 # note at the opal-client pin once an opal-client admits aiofiles>=24.1.0. PER-16234,
 # permitio/PDP#340.
 #
-# ddtrace: opal-common 0.9.6 declares ddtrace<4,>=3.0.0, which excludes the CVE-2026-50271 fix
-# (4.8.2). The scoped entry replaces that one requirement of opal-common 0.9.6 and nothing else:
-# the PDP's own ddtrace requirement above still governs, and when the opal-common pin moves the
-# entry stops applying, so a release that still caps ddtrace<4 fails the resolve loudly instead
-# of being overridden silently. The PDP and the OPAL code it runs work unchanged on 4.x
-# (horizon/tests/test_ddtrace_monitoring.py drives both). Exit: drop it once the opal-common
-# release the PDP uses declares ddtrace>=4.8.2 itself (permitio/opal PER-17706). PER-17853.
+# ddtrace: opal-common 0.10.0rc1 (like 0.9.6) declares ddtrace<4,>=3.0.0, which excludes the
+# CVE-2026-50271 fix (4.8.2). The scoped entry replaces that one requirement of opal-common
+# 0.10.0rc1 and nothing else: the PDP's own ddtrace requirement above still governs, and when
+# the opal-common pin moves the entry stops applying, so a release that still caps ddtrace<4
+# fails the resolve loudly instead of being overridden silently. The PDP and the OPAL code it
+# runs work unchanged on 4.x (horizon/tests/test_ddtrace_monitoring.py drives both). Exit: drop
+# it once the opal-common release the PDP uses declares ddtrace>=4.8.2 itself (permitio/opal
+# PER-17706). PER-17853.
 override-dependencies = [
     "aiofiles==24.1.0",
-    { package = { name = "opal-common", version = "0.9.6" }, dependencies = ["ddtrace>=4.8.2,<5"] },
+    { package = { name = "opal-common", version = "0.10.0rc1" }, dependencies = ["ddtrace>=4.8.2,<5"] },
 ]
 
 [tool.pytest.ini_options]

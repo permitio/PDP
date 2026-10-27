@@ -43,38 +43,17 @@ updates:
       minor-and-patch:
         update-types: ["minor", "patch"]
     ignore:
-      # starlette is CAPPED BY OPAL, not by us: opal-common/opal-client 0.9.6 require
-      # `starlette<1`. It is pinned exactly in pyproject.toml so the OpenVEX/trivyignore
-      # waiver PURLs stay bound to a known version, and the CVEs that would be fixed by
-      # upgrading (CVE-2026-48818, CVE-2026-54283, CVE-2026-48710 and CVE-2026-48817) are
-      # waived as unreachable instead.
-      #
-      # A Dependabot PR for it is therefore unmergeable by construction - it would bump
-      # past OPAL's cap, break the resolve, and silently unbind the waivers. Ignoring it
-      # keeps the queue honest rather than accumulating PRs nobody can merge.
-      #
-      # Removal gate: drop this entry the moment opal-common relaxes its cap. At that
-      # point also delete the exact pin in pyproject.toml, the four .trivyignore.yaml
-      # entries and the matching OpenVEX statements - they are one change, not three.
-      # See PER-15358.
-      #
-      # ddtrace used to be listed here for the same reason (opal-common's ddtrace<4). It
-      # is no longer: pyproject.toml's [tool.uv] override lifts that cap, so ddtrace
-      # updates resolve like any other dependency (PER-17853).
-      - dependency-name: "starlette"
-      # Also capped by OPAL 0.9.6: `pydantic<2` and `tenacity<9`. scalar-fastapi 1.9.0+
-      # requires pydantic>=2, so it is held at 1.8.x by the same cap. Drop these three
-      # when OPAL moves to pydantic 2 and tenacity 9.
-      - dependency-name: "pydantic"
-        versions: [">=2"]
+      # starlette, pydantic and scalar-fastapi used to be listed here: opal-common/opal-client
+      # 0.9.6 capped starlette<1 and pydantic<2 (and scalar-fastapi 1.9.0+ needs pydantic 2).
+      # The PDP is on OPAL 0.10 now, which lifts both caps (PER-16197).
+      # tenacity is still capped <9 by opal-common/opal-client 0.10.
       - dependency-name: "tenacity"
         versions: [">=9"]
-      - dependency-name: "scalar-fastapi"
-        versions: [">=1.9.0"]
-      # fastapi 0.126.0 and later require pydantic>=2.7, so 0.125.x is the ceiling under the
-      # same OPAL pydantic<2 cap (see the fastapi note in pyproject.toml).
+      # fastapi 0.137.0 stopped flattening included routers into app.router.routes, which the
+      # PDP's OPAL trigger-route swap walks (see the fastapi note in pyproject.toml). A PR past
+      # the cap would fail the resolve; drop this with the cap.
       - dependency-name: "fastapi"
-        versions: [">=0.126.0"]
+        versions: [">=0.137.0"]
       # websockets is pinned exactly and bumped BY HAND on purpose. pyproject.toml
       # records why: during review of #329 the validated build shipped 16.1.1 and 17.0
       # published hours later, so the next rebuild would have carried an unvalidated
@@ -83,16 +62,6 @@ updates:
       # exercises end to end. Majors stay manual; minors and patches are fine.
       - dependency-name: "websockets"
         update-types: ["version-update:semver-major"]
-      # opal-common and opal-client 0.9.9, the first final release after the 0.9.6 pinned in
-      # pyproject.toml, declare Requires-Python <3.13 and cannot run on the 3.13 image (see the
-      # note at that pin). uv ignores Requires-Python upper bounds when it locks, so Dependabot
-      # would still open the PR and only the pytests job's pip check would catch it. 0.10 stays
-      # in, so a release that lifts the bound still arrives as a PR. Drop these two once an
-      # OPAL 0.9.x release supports Python 3.13.
-      - dependency-name: "opal-common"
-        versions: [">=0.9.7, <0.10"]
-      - dependency-name: "opal-client"
-        versions: [">=0.9.7, <0.10"]
     commit-message:
       prefix: "deps"
       prefix-development: "deps-dev"

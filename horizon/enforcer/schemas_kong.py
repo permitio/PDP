@@ -61,10 +61,10 @@ class KongAuthorizationInputConsumer(BaseSchema):
 
 class KongAuthorizationInput(BaseSchema):
     request: KongAuthorizationInputRequest
-    client_ip: str | None
-    service: KongAuthorizationInputService | None
-    route: KongAuthorizationInputRoute | None
-    consumer: KongAuthorizationInputConsumer | None
+    client_ip: str | None = None
+    service: KongAuthorizationInputService | None = None
+    route: KongAuthorizationInputRoute | None = None
+    consumer: KongAuthorizationInputConsumer | None = None
 
 
 class KongAuthorizationQuery(BaseSchema):

@@ -100,7 +100,7 @@ class DataUpdateSubscriber:
         try:
             await client.publish(
                 topics=topics,
-                data=data_update.dict(),
+                data=data_update.model_dump(mode="json"),  # as OPAL's DataUpdatePublisher sends it
                 notifier_id=self._notifier_id,  # we fake a different notifier id to make the other side broadcast
                 # the message back to our main channel
                 sync=False,  # sync=False means we don't wait for the other side to acknowledge the message,

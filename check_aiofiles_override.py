@@ -3,8 +3,9 @@
 The Dockerfile's Python dependency layer bind-mounts and runs this as its last step, so it sees
 exactly what ships. It fails the image build if:
 
-1. opal-client is no longer 0.9.6. uv's override-dependencies replaces opal-client's aiofiles<1
-   outright, so a bumped opal-client would keep the overridden aiofiles whatever it declares.
+1. opal-client is no longer the version EXPECTED_OPAL_CLIENT names. uv's override-dependencies
+   replaces opal-client's aiofiles<1 outright, so a bumped opal-client would keep the overridden
+   aiofiles whatever it declares.
    Re-evaluate the override first; this check goes away with it (see the exit note next to
    override-dependencies in pyproject.toml).
 2. OPAL's offline-mode backup does not work in the image: the real OpalClient.backup_store() must
@@ -23,7 +24,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-EXPECTED_OPAL_CLIENT = "0.9.6"
+EXPECTED_OPAL_CLIENT = "0.10.0rc1"
 EXPORT = {"policies": {}, "data": {}}
 
 

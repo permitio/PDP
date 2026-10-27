@@ -233,7 +233,7 @@ def test_kong_endpoint_undecodable_opa_result_denies_with_200(kong_client, opa_r
 
 
 def test_kong_decision_log_names_a_missing_consumer_instead_of_raising():
-    without_consumer = KongAuthorizationInput.parse_obj(
+    without_consumer = KongAuthorizationInput.model_validate(
         {key: value for key, value in KONG_QUERY["input"].items() if key != "consumer"}
     )
     messages: list[str] = []
@@ -318,7 +318,7 @@ def test_allowed_with_an_opa_body_nested_too_deeply_to_decode_denies_with_200(mo
         response = client.post(
             "/allowed",
             headers={"authorization": f"Bearer {sidecar_config.API_KEY}"},
-            json=DECISION_QUERY.dict(),
+            json=DECISION_QUERY.model_dump(),
         )
 
     assert response.status_code == status.HTTP_200_OK
@@ -406,7 +406,7 @@ def _post_allowed_url(monkeypatch, url: str, mapping_rules: list[dict]) -> tuple
         m.post(f"{opa_data_url}/mapping_rules", payload={"result": {"all": mapping_rules}})
         m.post(f"{opa_data_url}/permit/root", payload={"result": {"allow": True}}, repeat=True)
         response = TestClient(sidecar._app).post(
-            "/allowed_url", headers={"authorization": f"Bearer {sidecar_config.API_KEY}"}, json=query.dict()
+            "/allowed_url", headers={"authorization": f"Bearer {sidecar_config.API_KEY}"}, json=query.model_dump()
         )
     checks = [
         json.loads(call.kwargs["data"])["input"]
@@ -1171,7 +1171,7 @@ async def test_enforce_endpoint_statistics(
             return client.post(
                 endpoint,
                 headers={"authorization": f"Bearer {sidecar_config.API_KEY}"},
-                json=query.dict() if not isinstance(query, list) else [q.dict() for q in query],
+                json=query.model_dump() if not isinstance(query, list) else [q.model_dump() for q in query],
             )
 
         with aioresponses() as m:
@@ -1252,7 +1252,7 @@ def test_enforce_endpoint(
         return _client.post(
             endpoint,
             headers={"authorization": f"Bearer {sidecar_config.API_KEY}"},
-            json=query.dict() if not isinstance(query, list) else [q.dict() for q in query],
+            json=query.model_dump() if not isinstance(query, list) else [q.model_dump() for q in query],
         )
 
     with aioresponses() as m:

@@ -1,15 +1,30 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import AnyHttpUrl, BaseModel, Field
+from pydantic import AfterValidator, AnyHttpUrl, BaseModel, ConfigDict, Field, StringConstraints, TypeAdapter
+
+_ANY_HTTP_URL = TypeAdapter(AnyHttpUrl)
+
+
+def _check_http_url(url: str) -> str:
+    # Validates like pydantic 1's AnyHttpUrl but keeps the caller's string. pydantic 2 would return a
+    # Url object and normalize it (e.g. "http://h" -> "http://h/"), which changes what URL mapping
+    # rules match against. pydantic 1's AnyHttpUrl stripped surrounding whitespace, so this does too.
+    url = url.strip()
+    _ANY_HTTP_URL.validate_python(url)
+    return url
+
+
+HttpUrlStr = Annotated[str, AfterValidator(_check_http_url)]
 
 
 class BaseSchema(BaseModel):
-    class Config:
-        orm_mode = True
-        allow_population_by_field_name = True
+    # coerce_numbers_to_str: pydantic 1 accepted a number for a str field ({"key": 1} -> "1");
+    # pydantic 2 rejects it with a 422 unless told otherwise. SDKs and integrations that send
+    # numeric user or resource keys keep working (PER-16197).
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True, coerce_numbers_to_str=True)
 
 
 class User(BaseSchema):
@@ -64,7 +79,7 @@ class UrlAuthorizationQuery(BaseSchema):
 
     user: User
     http_method: str
-    url: AnyHttpUrl
+    url: HttpUrlStr
     tenant: str
     context: dict[str, Any] | None = Field(default_factory=dict)
     sdk: str | None = None
@@ -86,7 +101,7 @@ class UserPermissionsQuery(BaseSchema):
 class AuthorizationResult(BaseSchema):
     allow: bool = False
     query: dict | None = None
-    debug: dict | None
+    debug: dict | None = None
     result: bool = False  # fallback for older sdks (TODO: remove)
 
 
@@ -104,9 +119,11 @@ class _ResourceDetails(_TenantDetails):
 
 
 class _UserPermissionsResult(BaseSchema):
-    tenant: _TenantDetails | None
-    resource: _ResourceDetails | None
-    permissions: list[str] = Field(default_factory=list, regex="^.+:.+$")
+    tenant: _TenantDetails | None = None
+    resource: _ResourceDetails | None = None
+    # Per item, as pydantic 1 applied Field(regex=) on a list[str]. pydantic 2 cannot apply `pattern`
+    # to a list: it raises on every non-empty value.
+    permissions: list[Annotated[str, StringConstraints(pattern="^.+:.+$")]] = Field(default_factory=list)
     roles: list[str] | None = None
 
 
@@ -168,8 +185,8 @@ class AuthorizedUsersResult(BaseSchema):
             users={},
         )
 
-    class Config:
-        schema_extra = {  # noqa: RUF012
+    model_config = ConfigDict(
+        json_schema_extra={
             "examples": [
                 {
                     "resource": "repo:*",
@@ -207,6 +224,7 @@ class AuthorizedUsersResult(BaseSchema):
                 },
             ]
         }
+    )
 
 
 class AuthorizedUsersAuthorizationQuery(BaseSchema):
@@ -217,7 +235,7 @@ class AuthorizedUsersAuthorizationQuery(BaseSchema):
     action: str
     resource: Resource
     context: dict[str, Any] | None = Field(default_factory=dict)
-    sdk: str | None
+    sdk: str | None = None
 
     def __repr__(self) -> str:
         return f"({self.action}, {self.resource.type})"

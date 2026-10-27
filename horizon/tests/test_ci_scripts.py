@@ -795,8 +795,8 @@ def test_locked_versions_reads_every_package_by_normalised_name(tmp_path):
 
 def test_pins_and_lock_default_to_the_repo_files_from_any_working_directory(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    assert "starlette" in classifier.exact_pins()
-    assert classifier.locked_versions()["starlette"]
+    assert "websockets" in classifier.exact_pins()
+    assert classifier.locked_versions()["websockets"]
 
 
 @pytest.mark.parametrize(
@@ -835,10 +835,12 @@ def test_exact_pins_reads_dependencies_and_uv_overrides(tmp_path):
 
 def test_exact_pins_reads_the_repo_pyproject():
     pins = classifier.exact_pins(REPO_ROOT / "pyproject.toml")
-    assert {"starlette", "websockets", "aiofiles"} <= pins
-    # ddtrace was pinned ==3.19.8 to bind a waiver until PER-17853 replaced the pin with a floor.
+    assert {"websockets", "aiofiles"} <= pins
+    # ddtrace and starlette were pinned exactly to bind their waivers, until PER-17853 and PER-16197
+    # replaced the pins with floors that carry the fixes.
     assert "fastapi" not in pins
     assert "ddtrace" not in pins
+    assert "starlette" not in pins
 
 
 def test_classifier_table_cells_survive_hostile_scanner_text(tmp_path):
