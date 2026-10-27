@@ -26,12 +26,15 @@ from pydantic.v1 import parse_obj_as as _v1_parse
 
 def _check_http_url(url: str) -> str:
     # pydantic 1's own AnyHttpUrl, from the pydantic.v1 package pydantic 2 still ships, so
-    # /allowed_url accepts, rejects and rewrites exactly what it did on pydantic 1: it strips the
-    # string, rejects a backslash, an empty host or port and invalid host labels, IDNA-encodes
-    # only the host, and drops an empty `?` or `#`. pydantic 2's AnyHttpUrl parses WHATWG-style
-    # and repairs some of those, so the URL that passed would not be the one MappingRulesUtils
-    # matches. Compared input by input with pydantic 1.10.26 (test_pydantic2_compat.py).
-    # pydantic.v1 goes away in pydantic 3: replace this with an equivalent check before that.
+    # /allowed_url accepts, rejects and rewrites exactly what it did on pydantic 1. As a spec for
+    # its replacement: it strips the string; rejects a backslash in the host (one in the path is
+    # kept), an empty host or port, and invalid host labels; IDNA-encodes only the host; and drops
+    # an empty `?` or `#` only when it rebuilds the URL, which it does for a non-ASCII host or a
+    # host with no TLD (`http://svc/x#` -> `http://svc/x`, `https://h.com/x#` kept as given).
+    # pydantic 2's AnyHttpUrl parses WHATWG-style and repairs some of what pydantic 1 rejected,
+    # so the URL that passed would not be the one MappingRulesUtils matches. Compared input by
+    # input with pydantic 1.10.26 (test_pydantic2_compat.py). pydantic.v1 goes away in pydantic
+    # 3: replace this with an equivalent check before that.
     try:
         return str(_v1_parse(_V1AnyHttpUrl, url))
     except _V1ValidationError as e:
@@ -60,7 +63,11 @@ def _arms(annotation: Any) -> list[Any]:
 def _coercion_plan(annotation: Any) -> tuple[bool, bool, bool, bool, bool]:
     """Which pydantic 1 coercions apply to a field, worked out once per annotation: (bool -> str,
     fractional float -> int, list -> dict, bool values of a dict[..., str] -> str, bool items of a
-    list[str] -> str)."""
+    list[str] -> str).
+
+    Item and value coercion reach one level only: a bare `list[str]` or `dict[..., str]` arm.
+    `list[str | None]`, `list[list[str]]` or `dict[str, list[str]]` would still answer 422 for a
+    `true` item where pydantic 1 gave "True"; no field has such a shape today."""
     arms = _arms(annotation)
     plain = {arm for arm in arms if isinstance(arm, type)}
     dicts = [arm for arm in arms if arm is dict or typing.get_origin(arm) is dict]
@@ -84,18 +91,27 @@ def _fractional_float_in_int_field(value: float, plan: tuple[bool, ...]) -> Any:
     return int(value) if plan[1] and not value.is_integer() else value
 
 
-def _list_in_dict_field(value: list, plan: tuple[bool, ...]) -> Any:
+def _bools_in_str_list(value: list, plan: tuple[bool, ...]) -> list:
     # A list[str] field: pydantic 1 coerced each item like a str field ([true] -> ["True"]).
-    if plan[4]:
-        return [str(v) if isinstance(v, bool) else v for v in value]
+    return [str(v) if isinstance(v, bool) else v for v in value] if plan[4] else value
+
+
+def _list_in_dict_field(value: list, plan: tuple[bool, ...]) -> Any:
     # pydantic 1 ran dict(value): [] -> {} (an empty map some JSON encoders write as an array) and
-    # a list of pairs -> a dict. Anything dict() refuses is left to fail.
-    if not plan[2]:
+    # a list of pairs -> a dict. Anything dict() refuses is left to fail. A list that is already a
+    # valid list[str] for a `list[str] | dict` field stays a list: pydantic 1 tried list[str] first,
+    # and dict() would turn ["xy"] into {"x": "y"}.
+    if not plan[2] or (plan[4] and all(isinstance(v, str) for v in value)):
         return value
     try:
         return dict(value)
     except (TypeError, ValueError):
         return value
+
+
+def _list_value(value: list, plan: tuple[bool, ...]) -> Any:
+    # Both steps, in pydantic 1's order; neither short-circuits the other.
+    return _list_in_dict_field(_bools_in_str_list(value, plan), plan)
 
 
 def _bools_in_str_dict(value: dict, plan: tuple[bool, ...]) -> Any:
@@ -107,7 +123,7 @@ def _bools_in_str_dict(value: dict, plan: tuple[bool, ...]) -> Any:
 _COERCIONS: dict[type, Any] = {
     bool: _bool_in_str_field,
     float: _fractional_float_in_int_field,
-    list: _list_in_dict_field,
+    list: _list_value,
     dict: _bools_in_str_dict,
 }
 

@@ -85,6 +85,17 @@ def test_request_bodies_pydantic1_accepted_are_still_accepted(body, check):
     assert check(AuthorizationQuery.model_validate({**base, **body}))
 
 
+def test_list_coercion_steps_do_not_short_circuit():
+    """A list[str] | dict field: bool items still become strings, a list of pairs still becomes a
+    dict, and a valid list of strings stays a list (dict() would turn ["xy"] into {"x": "y"})."""
+    from horizon.enforcer.schemas import _coercion_plan, _list_value
+
+    plan = _coercion_plan(list[str] | dict[str, str])
+    assert _list_value([True, "a"], plan) == ["True", "a"]
+    assert _list_value([["a", "b"]], plan) == {"a": "b"}
+    assert _list_value(["xy"], plan) == ["xy"]
+
+
 def test_bools_in_a_list_of_str_become_strings():
     """pydantic 1 coerced list[str] items like str fields: tenants [true] -> ["True"]."""
     query = UserPermissionsQuery.model_validate({"user": {"key": "u"}, "tenants": [True, "t1"]})
@@ -131,6 +142,12 @@ def test_kong_flag_query_parameters_are_accepted():
         ("http://svc/x#frag", "http://svc/x#frag"),
         ("http://[::1]:8080/x", "http://[::1]:8080/x"),
         ("HTTP://H.COM/X", "HTTP://H.COM/X"),
+        # ...but only when it rebuilt the URL (a non-ASCII host, or a host with no TLD): with a
+        # TLD, the empty query or fragment is kept, and a backslash in the path is kept too.
+        ("https://h.com/x#", "https://h.com/x#"),
+        ("https://h.com/x?", "https://h.com/x?"),
+        ("https://h.com/a\\b", "https://h.com/a\\b"),
+        ("http://exämple.com/x#", "http://xn--exmple-cua.com/x"),
     ],
 )
 def test_allowed_url_keeps_the_callers_url_string(given, kept):
@@ -161,8 +178,9 @@ def test_allowed_url_keeps_the_callers_url_string(given, kept):
         "https://h-.com/x",
         "https://h..com/x",
         "https://" + "a" * 64 + ".com/x",
-        "http://h.com:65536/x",
         "http://*.h.com/x",
+        # Rejected by both pydantic 1 and pydantic 2.
+        "http://h.com:65536/x",
     ],
 )
 def test_allowed_url_still_rejects_what_is_not_an_http_url(bad):
