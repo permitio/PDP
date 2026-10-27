@@ -5,7 +5,7 @@
 name = "permit-pdp"
 version = "0.2.0"
 description = "The Python side of the Permit.io PDP: OPAL client, policy-store sync and the PDP API."
-# uv.lock is resolved for the interpreter the image ships (Dockerfile: python:3.13-alpine3.23)
+# uv.lock is resolved for the interpreter the image ships (Dockerfile: python:3.13.18-alpine3.23)
 # and nothing else. uv ignores Requires-Python UPPER bounds of dependencies when it locks, so
 # CI also installs the exported lock with pip on 3.13, which does enforce them.
 requires-python = "==3.13.*"
@@ -26,13 +26,16 @@ dependencies = [
     "typer>=0.27.2,<1",
     "uvicorn[standard]>=0.54.0,<1",
     "logzio-python-handler",
-    # Capped <4 by opal-common 0.9.6. CVE-2026-50271 is fixed only in 4.8.2, so it is mitigated
-    # in the Dockerfile (DD_TRACE_PROPAGATION_STYLE_EXTRACT drops "baggage") and waived in
-    # .trivyignore.yaml and .docker/scout/pdp-v2.vex.json. Pinned exactly so the waiver PURL
-    # (pkg:pypi/ddtrace@3.19.8) stays bound: uv.lock holds it too, but a range would move on the
-    # next `uv lock --upgrade`. Remove the pin, the waivers and the Dockerfile ENV once OPAL
-    # relaxes ddtrace<4. See PER-15358.
-    "ddtrace==3.19.8",
+    # The floor clears CVE-2026-50271 (W3C baggage DoS), fixed only in 4.8.2. opal-common 0.9.6
+    # caps ddtrace<4, so the override in [tool.uv] below - scoped to opal-common 0.9.6 only,
+    # leaving this requirement in charge - is what lets this resolve. OPAL calls
+    # only patch(), tracer.configure(trace_processors=...), tracer.trace/wrap, TraceFilter and
+    # Span.get_tag, and horizon/pdp.py only patch() and config.fastapi: none of them changed in
+    # 4.x (see the v4.0.0 upgrade notes). PER-17853.
+    "ddtrace>=4.8.2,<5",
+    # Transitive via ddtrace. The floor clears CVE-2026-114603 (unbounded tracestate parsing),
+    # fixed in 1.45.1: `uv lock` can never go back to a version below it. PER-17853.
+    "opentelemetry-api>=1.45.1",
     "scalar-fastapi==1.8.2",
     "httpx>=0.27.0,<1",
     # TODO: switch regex matching to google-re2 once it builds on Alpine (C++ library issues).
@@ -114,7 +117,18 @@ required-version = ">=0.12.19"
 # fix, is yanked). Exit: drop this, check_opal_client_pin() in check_aiofiles_override.py and the
 # note at the opal-client pin once an opal-client admits aiofiles>=24.1.0. PER-16234,
 # permitio/PDP#340.
-override-dependencies = ["aiofiles==24.1.0"]
+#
+# ddtrace: opal-common 0.9.6 declares ddtrace<4,>=3.0.0, which excludes the CVE-2026-50271 fix
+# (4.8.2). The scoped entry replaces that one requirement of opal-common 0.9.6 and nothing else:
+# the PDP's own ddtrace requirement above still governs, and when the opal-common pin moves the
+# entry stops applying, so a release that still caps ddtrace<4 fails the resolve loudly instead
+# of being overridden silently. The PDP and the OPAL code it runs work unchanged on 4.x
+# (horizon/tests/test_ddtrace_monitoring.py drives both). Exit: drop it once the opal-common
+# release the PDP uses declares ddtrace>=4.8.2 itself (permitio/opal PER-17706). PER-17853.
+override-dependencies = [
+    "aiofiles==24.1.0",
+    { package = { name = "opal-common", version = "0.9.6" }, dependencies = ["ddtrace>=4.8.2,<5"] },
+]
 
 [tool.pytest.ini_options]
 # horizon is not installed (package = false above) - the tests import it from the repo root,

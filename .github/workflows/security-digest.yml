@@ -16,7 +16,7 @@
 # digest is the one deliberate heartbeat: it posts even on a clean week, so a scanner
 # that silently stopped running is noticed within a week.
 #
-# What this workflow uniquely carries is the WAIVER-EXPIRY warning below. All five
+# What this workflow uniquely carries is the WAIVER-EXPIRY warning below. All the
 # waivers expire 2026-12-31, and nothing else in the repo looks ahead of that date, so if
 # this workflow stops running the PR gate and the release gate both go red one morning
 # with no warning. There are deliberately no tracking issues and no automated PRs from any

@@ -7,7 +7,7 @@
 # `statement` fields here are deliberately short pointers to it.
 #
 # Every entry MUST carry `expired_at`. A waiver that never expires silently
-# becomes permanent. All five below exist only because opal-common 0.9.6 caps the
+# becomes permanent. All four below exist only because opal-common 0.9.6 caps the
 # dependency that would otherwise fix them. (The two x/crypto/ssh waivers that used
 # to be here are gone: the pinned permit-opa 0.0.23 ships x/crypto v0.57.0.) When
 # the date passes, Trivy starts reporting the CVE again, which is the intended prompt to re-check
@@ -68,18 +68,4 @@ vulnerabilities:
       so the vulnerable dispatch class is never instantiated. Fixed only in starlette
       >= 1.1.0, which opal-common's starlette<1 cap forbids.
       See .docker/scout/pdp-v2.vex.json.
-    expired_at: 2026-12-31
-  # ddtrace is capped <4 by opal-common 0.9.6 (`ddtrace<4,>=3.0.0`).
-  - id: CVE-2026-50271
-    purls:
-      - pkg:pypi/ddtrace@3.19.8
-    statement: >-
-      not_affected / inline_mitigations_already_exist. Unbounded W3C baggage
-      header extraction. The Dockerfile drops "baggage" from
-      DD_TRACE_PROPAGATION_STYLE_EXTRACT, removing the vulnerable parser from the
-      request path. That env is the mitigation: PDP_ENABLE_MONITORING defaults to
-      false, but the control plane's remote config can turn monitoring on, so the
-      default alone does not keep ddtrace off the request path. Fixed only in
-      ddtrace >= 4.8.2, which opal-common's
-      ddtrace<4 cap forbids. See .docker/scout/pdp-v2.vex.json.
     expired_at: 2026-12-31

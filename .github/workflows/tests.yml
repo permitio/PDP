@@ -70,10 +70,11 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           # Keep in lockstep with the interpreter the image actually ships
-          # (Dockerfile: python:3.13-alpine3.23). This job pinned 3.11.8 while the image
+          # (Dockerfile: python:3.13.18-alpine3.23). This job pinned 3.11.8 while the image
           # ran 3.10, so the unit suite never executed on the shipped interpreter and a
-          # regression that only reproduces there could not fail CI. Patch version floats,
-          # matching the Dockerfile base. Bump both together. See PER-15358.
+          # regression that only reproduces there could not fail CI. The patch version floats
+          # here while the Dockerfile pins it; the minor is what must match. Bump both
+          # together. See PER-15358, PER-17853.
           python-version: '3.13'
 
       - name: Checkout code
@@ -512,7 +513,7 @@ jobs:
           exit-code: true
           # THE file the unified PR comment and its fail step read. It has to be this one
           # and not scout-results.sarif above, because only this step applies the OpenVEX
-          # waivers: the report step's SARIF still contains all five waived CVEs at
+          # waivers: the report step's SARIF still contains every waived CVE at
           # critical/high, so counting it would fail every PR on known non-issues. Reading
           # the gate's own output instead means the comment shows, and the fail step blocks
           # on, exactly the finding set this step already exits non-zero for - the gate
@@ -527,9 +528,7 @@ jobs:
           # vulnerabilities whose code path the PDP never executes and for which
           # no usable fix is available: starlette CVE-2026-48710 / CVE-2026-48817 /
           # CVE-2026-48818 / CVE-2026-54283, all fixed only in starlette >=1.x, which
-          # OPAL's starlette<1 cap forbids; ddtrace CVE-2026-50271, fixed only in
-          # ddtrace >=4.8.2, which OPAL's ddtrace<4 cap forbids and which the Dockerfile
-          # mitigates by dropping "baggage" from the extract styles.
+          # OPAL's starlette<1 cap forbids.
           #
           # NOTE: this gate reads packages, so it does not flag the CPython interpreter
           # itself the way a CPE-based scanner does - CPython CVEs can pass this gate
@@ -890,13 +889,13 @@ jobs:
         with:
           fail-on-severity: high
           show-patched-versions: true
-          # The five CVEs waived in .trivyignore.yaml and .docker/scout/pdp-v2.vex.json,
+          # The four CVEs waived in .trivyignore.yaml and .docker/scout/pdp-v2.vex.json,
           # by GHSA id (this action does not read either file). Without this, a PR that
-          # touches the starlette or ddtrace pins fails here on CVEs every other gate
-          # treats as waived. Keep in step with those two files.
+          # touches the starlette pin fails here on CVEs every other gate treats as
+          # waived. Keep in step with those two files.
           allow-ghsas: >-
             GHSA-wqp7-x3pw-xc5r, GHSA-82w8-qh3p-5jfq, GHSA-86qp-5c8j-p5mr,
-            GHSA-x746-7m8f-x49c, GHSA-mw54-j2v2-42hr
+            GHSA-x746-7m8f-x49c
           # This action posts its own sticky comment under its own marker, so it needs
           # none of the github-script plumbing the image report above does. `on-failure`
           # keeps a clean PR silent. `never` on fork and Dependabot PRs, where

@@ -100,7 +100,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 #
 # Auditability: the toolchain is recorded in the binary's build info, survives `-s -w`,
 # and is readable with `go version` on an extracted copy - extracted, because the
-# runtime base is python:3.13-alpine3.23 and ships no Go. That is an after-the-fact
+# runtime base is python:3.13.18-alpine3.23 and ships no Go. That is an after-the-fact
 # audit, not a gate. The gates are the Docker Scout and Trivy scans in tests.yml and
 # release.yml, and scheduled-security-scan.yml re-scans published tags (PER-15358).
 #
@@ -198,8 +198,9 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # MAIN IMAGE ----------------------------------------
 # Main image setup (optimized)
 # ---------------------------------------------------
-# Python 3.13 (>= 3.13.14) on Alpine 3.23. Moved off python:3.10-alpine3.22 to clear four
-# CPython CVEs that CPE-based scanners raise against the 3.10 interpreter (PER-15358):
+# Python 3.13 (>= 3.13.18 since PER-17853; see the floor in the apk layer) on Alpine 3.23.
+# Moved off python:3.10-alpine3.22 to clear four CPython CVEs that CPE-based scanners raise
+# against the 3.10 interpreter (PER-15358):
 #   CVE-2026-6019  (http.cookies Morsel.js_output escaping) - fixed in 3.13.14
 #   CVE-2026-7210  (expat hash-flooding entropy)            - fixed in 3.13.14 AND needs
 #                                                             libexpat >= 2.8.0; this image
@@ -211,12 +212,18 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # so the vulnerable code really was present in 3.10.20 and an upgrade was the only fix.
 # CVE-2026-15308 (html.parser CPU-exhaustion DoS) is now cleared too: it was waived here as
 # unreachable while it was patched only in 3.15.0b4, but CPython backported the fix and it
-# landed in 3.13.15 (also 3.14.7). The base digest below carries 3.13.15, so the waiver has
-# been REMOVED from .docker/scout/pdp-v2.vex.json.
-# Do not drop below the patched floor for whichever branch the base resolves to: 3.13.15 on
-# the 3.13 line, 3.14.7 on 3.14. The apk layer below enforces exactly that, per branch -
-# a flat `>= (3,13,15)` would have passed 3.14.0 through 3.14.6, which are the versions the
-# line above says still lack the backport.
+# landed in 3.13.15 (also 3.14.7), so the waiver has been REMOVED from
+# .docker/scout/pdp-v2.vex.json. The floor is now 3.13.18 / 3.14.10 (PER-17853):
+# CVE-2026-19445 (critical, SSL sni_callback use-after-free) and nine more are fixed in
+# 3.13.16 / 3.14.8, and CVE-2026-114583 (tarfile tar_filter bypass through an empty-named
+# symlink), CVE-2026-115557 (ssl: distrust compromised intermediate certificates) and
+# CVE-2026-12345 (tempfile.TemporaryDirectory cleanup race) in 3.13.18 / 3.14.10.
+# Do not drop below the patched floor for whichever branch the base resolves to. The apk
+# layer below enforces exactly that, per branch - a flat `>= (3,13,18)` would pass 3.14.0
+# through 3.14.9, which still lack the fixes - and fails on a branch it has no floor for
+# (3.15.0 and 3.15.1 are affected too), so a move to another branch must set its floor on
+# purpose. Scout and Trivy do not report interpreter CVEs, so this check is what stops a
+# digest rollback to an older 3.13 build.
 #
 # Removing the CVE-2026-15308 waiver is NOT what enforces it. Scout indexes the interpreter
 # - `docker scout sbom` reports `pkg:generic/python@3.13.15` for this base - but it does not
@@ -249,8 +256,20 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 #
 # The patch version USED to float (see the previous python:3.10-alpine3.22 base and the
 # rebuild-picks-it-up posture in PER-15532). It no longer does - the digest below carries
-# 3.13.15 - because "a rebuild will pick it up" only holds if something rebuilds. See the
+# 3.13.18 - because "a rebuild will pick it up" only holds if something rebuilds. See the
 # pinning note below.
+#
+# The tag names the patch version (3.13.18-alpine3.23, not 3.13-alpine3.23) since PER-17853.
+# Dependabot never bumped the 3.13.15 digest while the interpreter collected ten CVEs
+# (CVE-2026-19445 among them): the updater offers the highest tag of the same shape, so its
+# only python PRs were 3.14 moves nobody could merge (#391, #392), and the 7-day cooldown -
+# which dates every candidate tag, and digest-only refreshes, by Docker Hub's last push -
+# restarts whenever upstream re-pushes a tag in place, which it does for patch tags too.
+# What changes the outcome is .github/dependabot.yml's ignore of python minor and major
+# updates: the next 3.13 patch is now a candidate. The cooldown still applies to it, so do
+# not rely on Dependabot alone for interpreter CVEs. Only a CPE-based scanner (Grype, for
+# example) reports them; Scout and Trivy do not (see the NOTE in tests.yml). The floor in the
+# apk layer below is the build-time check.
 #
 # Python 3.10 also reaches end of life in October 2026, so this move was due regardless.
 # Base images are pinned by DIGEST, and Dependabot's docker ecosystem
@@ -259,7 +278,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # pinning a per-arch digest instead would break the linux/amd64 + linux/arm64 build.
 #
 # Why pin at all, when floating the tag sounds strictly fresher: upstream rebuilds these
-# tags IN PLACE. `python:3.13-alpine3.23` can silently gain a new digest with patched
+# tags IN PLACE. `python:3.13.18-alpine3.23` can silently gain a new digest with patched
 # OpenSSL, and because the tag string never changes there is nothing for anyone - human
 # or bot - to notice. A floating tag is only fresh at the instant of a build, and nothing
 # triggers builds. Pinning inverts that: the drift arrives as a digest-bump PR that CI
@@ -275,7 +294,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # same Dependabot `docker` entry as the other base images.
 FROM ghcr.io/astral-sh/uv:0.12.19@sha256:04d046b13e60d6bcec73cbc5e1cad25d680dea90c8573340950a0ac2d1aef424 AS uv
 
-FROM python:3.13-alpine3.23@sha256:6438599575cca0d1df94aeee0d2ae088d4d8846eab554b2ee7784a3a6df0d516 AS main
+FROM python:3.13.18-alpine3.23@sha256:d911085e59772e458649b0184ca311c309068961c5efa11d5761ea0c64a91383 AS main
 
 WORKDIR /app
 
@@ -331,7 +350,7 @@ RUN --mount=type=cache,target=/var/cache/apk \
     apk add --no-cache --virtual .python-rundeps-nosqlite \
         $(apk info -qR .python-rundeps | grep '^so:' | grep -v 'libsqlite3') && \
     apk del .python-rundeps sqlite-libs && \
-    python3 -c "import sys, _ssl, _hashlib, _decimal, zlib, _lzma, _bz2, _ctypes, pyexpat, _uuid; v = sys.version_info[:3]; v >= {13: (3, 13, 15), 14: (3, 14, 7)}.get(v[1], (3, 15, 0)) or sys.exit('CPython %s is below the patched floor for its branch' % sys.version)"
+    python3 -c "import sys, _ssl, _hashlib, _decimal, zlib, _lzma, _bz2, _ctypes, pyexpat, _uuid; v = sys.version_info[:3]; f = {13: (3, 13, 18), 14: (3, 14, 10)}.get(v[1]); f and v >= f or sys.exit('CPython %s: no patched floor set for its branch, or below it' % sys.version)"
 
 
 # Copy OPA binary from the build stage
@@ -357,10 +376,11 @@ COPY kong_routes.json /config/kong_routes.json
 #
 # uv comes from the `uv` stage and pyproject.toml/uv.lock are bind-mounted, so none of them
 # ship. `uv export` writes the exact, hash-pinned set for this platform - including the
-# [tool.uv] override that lifts opal-client's aiofiles<1 cap (PER-16234) - and `--no-deps`
-# installs exactly that set. `--compile-bytecode` precompiles .pyc as pip did: the runtime user
-# cannot write to site-packages, so without it every start would recompile. Nothing here
-# resolves: a dependency only changes when uv.lock does.
+# [tool.uv] overrides that lift opal-client's aiofiles<1 cap (PER-16234) and opal-common's
+# ddtrace<4 cap (PER-17853) - and `--no-deps` installs exactly that set. `--compile-bytecode`
+# precompiles .pyc as pip did: the runtime user cannot write to site-packages, so without it
+# every start would recompile. Nothing here resolves: a dependency only changes when uv.lock
+# does.
 #
 # check_aiofiles_override.py and check_trust_store.py are bind-mounted, so they never ship,
 # and run last: the first fails the build if opal-client leaves 0.9.6 or the real
@@ -402,23 +422,6 @@ ENV OPAL_LOG_TRACEBACK="false"
 ENV OPAL_LOG_MODULE_EXCLUDE_LIST="[]"
 ENV OPAL_INLINE_OPA_ENABLED="true"
 ENV OPAL_INLINE_OPA_LOG_FORMAT="http"
-
-# datadog / ddtrace configuration -------------------
-# Drop "baggage" from ddtrace's default extract styles ("datadog,tracecontext,baggage").
-# CVE-2026-50271: ddtrace's W3C baggage propagator does not enforce
-# DD_TRACE_BAGGAGE_MAX_ITEMS / DD_TRACE_BAGGAGE_MAX_BYTES on the *extract* path, so an
-# unauthenticated caller can force unbounded CPU/memory use with an oversized baggage
-# header. The fix is only in ddtrace >= 4.8.2, which opal-common's `ddtrace<4,>=3.0.0`
-# cap forbids, so we remove the vulnerable parser from the request path instead.
-#
-# ddtrace reaches the inbound request path only with monitoring on - that is what calls
-# patch(fastapi=True). PDP_ENABLE_MONITORING defaults to false, but horizon/pdp.py applies
-# the control plane's remote config before it checks the flag, so monitoring can be turned
-# on without touching this image's env. That is why this ENV, not the default, is the
-# mitigation the waivers rely on. Injection is
-# left at its default, so outbound baggage propagation is unaffected. Remove this once
-# OPAL relaxes its ddtrace<4 bound and ddtrace moves to >= 4.8.2. See PER-15358.
-ENV DD_TRACE_PROPAGATION_STYLE_EXTRACT="datadog,tracecontext"
 
 # horizon configuration -----------------------------
 # by default, the backend is at port 8000 on the docker host

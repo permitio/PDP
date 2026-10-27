@@ -27,7 +27,7 @@ absorb. Two more cases a plain rebuild cannot fix, because the Dockerfile pins t
     themselves, so a version at or above it can still be vulnerable: a range left open with
     no fix, or a regression on a later line. A fixed Python package is therefore owner
     'lock' (Dependabot's `uv` PR, or `uv lock --upgrade-package NAME`), or 'pinned' when
-    pyproject.toml pins it with `==` (e.g. starlette, ddtrace, websockets) and the pin has
+    pyproject.toml pins it with `==` (e.g. starlette, websockets) and the pin has
     to move first - never 'rebuild'. The one call it does make compares the lock with the
     image, not with FixedVersion: when main's lock still holds the very version Trivy
     flagged, a release reinstalls it, so the finding certainly needs the lock (or the pin)
@@ -104,8 +104,9 @@ def exact_pins(pyproject: Path | None = None) -> set[str]:
     """Names of Python packages pinned with `==` in pyproject.toml.
 
     Reads `[project].dependencies` and `[tool.uv].override-dependencies` - an override is a pin
-    too. Names are normalised the PEP 503 way (lower case, runs of `-_.` folded to `-`), which is
-    also how Trivy reports them closely enough to compare.
+    too, and so is a requirement inside a package-scoped override (a table whose `dependencies`
+    list replaces what one package declares). Names are normalised the PEP 503 way (lower case,
+    runs of `-_.` folded to `-`), which is also how Trivy reports them closely enough to compare.
 
     Args:
         pyproject: File to read. Defaults to the repository's own pyproject.toml, whatever the
@@ -117,7 +118,8 @@ def exact_pins(pyproject: Path | None = None) -> set[str]:
     path = pyproject or repo_root() / "pyproject.toml"
     data = tomllib.loads(path.read_text(encoding="utf-8"))
     requirements = list(data.get("project", {}).get("dependencies", []))
-    requirements += data.get("tool", {}).get("uv", {}).get("override-dependencies", [])
+    for override in data.get("tool", {}).get("uv", {}).get("override-dependencies", []):
+        requirements += override.get("dependencies", []) if isinstance(override, dict) else [override]
     pins: set[str] = set()
     for requirement in requirements:
         m = _PIN.match(requirement)
