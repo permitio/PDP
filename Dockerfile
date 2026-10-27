@@ -198,8 +198,9 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # MAIN IMAGE ----------------------------------------
 # Main image setup (optimized)
 # ---------------------------------------------------
-# Python 3.13 (>= 3.13.18 since PER-17853; see the floor in the apk layer) on Alpine 3.23. Moved off python:3.10-alpine3.22 to clear four
-# CPython CVEs that CPE-based scanners raise against the 3.10 interpreter (PER-15358):
+# Python 3.13 (>= 3.13.18 since PER-17853; see the floor in the apk layer) on Alpine 3.23.
+# Moved off python:3.10-alpine3.22 to clear four CPython CVEs that CPE-based scanners raise
+# against the 3.10 interpreter (PER-15358):
 #   CVE-2026-6019  (http.cookies Morsel.js_output escaping) - fixed in 3.13.14
 #   CVE-2026-7210  (expat hash-flooding entropy)            - fixed in 3.13.14 AND needs
 #                                                             libexpat >= 2.8.0; this image
@@ -214,12 +215,15 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # landed in 3.13.15 (also 3.14.7), so the waiver has been REMOVED from
 # .docker/scout/pdp-v2.vex.json. The floor is now 3.13.18 / 3.14.10 (PER-17853):
 # CVE-2026-19445 (critical, SSL sni_callback use-after-free) and nine more are fixed in
-# 3.13.16 / 3.14.8, and CVE-2026-114583 (http.cookiejar), CVE-2026-115557 (tarfile
-# tar_filter) and CVE-2026-12345 (tempfile.TemporaryDirectory cleanup) in 3.13.18 / 3.14.10.
+# 3.13.16 / 3.14.8, and CVE-2026-114583 (tarfile tar_filter bypass through an empty-named
+# symlink), CVE-2026-115557 (ssl: distrust compromised intermediate certificates) and
+# CVE-2026-12345 (tempfile.TemporaryDirectory cleanup race) in 3.13.18 / 3.14.10.
 # Do not drop below the patched floor for whichever branch the base resolves to. The apk
 # layer below enforces exactly that, per branch - a flat `>= (3,13,18)` would pass 3.14.0
-# through 3.14.9, which still lack the fixes. Scout and Trivy do not report interpreter
-# CVEs, so this check is what stops a digest rollback to an older 3.13 build.
+# through 3.14.9, which still lack the fixes - and fails on a branch it has no floor for
+# (3.15.0 and 3.15.1 are affected too), so a move to another branch must set its floor on
+# purpose. Scout and Trivy do not report interpreter CVEs, so this check is what stops a
+# digest rollback to an older 3.13 build.
 #
 # Removing the CVE-2026-15308 waiver is NOT what enforces it. Scout indexes the interpreter
 # - `docker scout sbom` reports `pkg:generic/python@3.13.15` for this base - but it does not
@@ -346,7 +350,7 @@ RUN --mount=type=cache,target=/var/cache/apk \
     apk add --no-cache --virtual .python-rundeps-nosqlite \
         $(apk info -qR .python-rundeps | grep '^so:' | grep -v 'libsqlite3') && \
     apk del .python-rundeps sqlite-libs && \
-    python3 -c "import sys, _ssl, _hashlib, _decimal, zlib, _lzma, _bz2, _ctypes, pyexpat, _uuid; v = sys.version_info[:3]; v >= {13: (3, 13, 18), 14: (3, 14, 10)}.get(v[1], (3, 15, 0)) or sys.exit('CPython %s is below the patched floor for its branch' % sys.version)"
+    python3 -c "import sys, _ssl, _hashlib, _decimal, zlib, _lzma, _bz2, _ctypes, pyexpat, _uuid; v = sys.version_info[:3]; f = {13: (3, 13, 18), 14: (3, 14, 10)}.get(v[1]); f and v >= f or sys.exit('CPython %s: no patched floor set for its branch, or below it' % sys.version)"
 
 
 # Copy OPA binary from the build stage
@@ -373,10 +377,10 @@ COPY kong_routes.json /config/kong_routes.json
 # uv comes from the `uv` stage and pyproject.toml/uv.lock are bind-mounted, so none of them
 # ship. `uv export` writes the exact, hash-pinned set for this platform - including the
 # [tool.uv] overrides that lift opal-client's aiofiles<1 cap (PER-16234) and opal-common's
-# ddtrace<4 cap (PER-17853) - and `--no-deps`
-# installs exactly that set. `--compile-bytecode` precompiles .pyc as pip did: the runtime user
-# cannot write to site-packages, so without it every start would recompile. Nothing here
-# resolves: a dependency only changes when uv.lock does.
+# ddtrace<4 cap (PER-17853) - and `--no-deps` installs exactly that set. `--compile-bytecode`
+# precompiles .pyc as pip did: the runtime user cannot write to site-packages, so without it
+# every start would recompile. Nothing here resolves: a dependency only changes when uv.lock
+# does.
 #
 # check_aiofiles_override.py and check_trust_store.py are bind-mounted, so they never ship,
 # and run last: the first fails the build if opal-client leaves 0.9.6 or the real

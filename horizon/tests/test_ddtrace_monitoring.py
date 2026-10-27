@@ -57,7 +57,6 @@ def test_monitoring_setup_runs_without_ddtrace_warnings():
         """
         import warnings
         warnings.simplefilter("always")
-        from ddtrace import DDTraceDeprecationWarning
         with warnings.catch_warnings(record=True) as caught:
             from opal_common.logger import configure_logs
             configure_logs()
@@ -72,6 +71,7 @@ def test_monitoring_setup_runs_without_ddtrace_warnings():
             app.get("/probe")(lambda: {"ok": True})
             assert TestClient(app).get("/probe").json() == {"ok": True}
         assert getattr(fastapi, "_datadog_patch", False), "patch(fastapi=True) did not patch FastAPI"
+        from ddtrace import DDTraceDeprecationWarning  # after the capture, so its import-time warnings count
         ours = [str(w.message) for w in caught if issubclass(w.category, DDTraceDeprecationWarning)]
         assert not ours, ours
         """
