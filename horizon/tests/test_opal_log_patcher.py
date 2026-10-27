@@ -41,7 +41,8 @@ def test_opal_patcher_survives_the_pdp_logger_setup():
         check=False,  # asserted below, with stderr
     )
     assert result.returncode == 0, result.stderr
-    assert "example.com" in result.stdout, result.stdout
+    # The whole line, not a substring check: the host survives, the credentials do not.
+    assert result.stdout.splitlines()[0] == "fetch failed for https://***@example.com/data", result.stdout
     assert "not-a-real-secret" not in result.stdout
 
 
