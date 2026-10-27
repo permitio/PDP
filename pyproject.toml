@@ -31,7 +31,7 @@ dependencies = [
     "typer>=0.27.2,<1",
     "uvicorn[standard]>=0.54.0,<1",
     "logzio-python-handler",
-    # The floor clears CVE-2026-50271 (W3C baggage DoS), fixed only in 4.8.2. opal-common 0.9.6
+    # The floor clears CVE-2026-50271 (W3C baggage DoS), fixed only in 4.8.2. opal-common
     # caps ddtrace<4, so the override in [tool.uv] below - scoped to opal-common 0.10.0rc1 only,
     # leaving this requirement in charge - is what lets this resolve. OPAL calls
     # only patch(), tracer.configure(trace_processors=...), tracer.trace/wrap, TraceFilter and

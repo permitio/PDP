@@ -2,9 +2,10 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
+from horizon.enforcer.schemas import Pydantic1Compat
 
-class BaseSchema(BaseModel):
-    # coerce_numbers_to_str: pydantic 1 accepted a number for a str field; keep that (PER-16197).
+
+class BaseSchema(Pydantic1Compat):
     model_config = ConfigDict(from_attributes=True, coerce_numbers_to_str=True)
 
 

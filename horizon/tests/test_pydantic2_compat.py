@@ -17,8 +17,8 @@ from horizon.enforcer.schemas import (
     AuthorizationQuery,
     AuthorizationResult,
     AuthorizedUsersAuthorizationQuery,
+    MappingRuleData,
     UrlAuthorizationQuery,
-    UserPermissionsQuery,
     _UserPermissionsResult,
 )
 from horizon.enforcer.schemas_kong import KongAuthorizationInput
@@ -61,16 +61,41 @@ def test_camel_case_aliases_and_field_names_both_populate():
     assert by_alias.model_dump()["user"]["first_name"] == "A"
 
 
+def test_optional_request_fields_stay_optional():
+    """A bare `X | None` annotation was optional on pydantic 1 and is required on pydantic 2."""
+    assert AuthorizedUsersAuthorizationQuery.model_validate({"action": "read", "resource": {"type": "doc"}}).sdk is None
+
+
 @pytest.mark.parametrize(
-    ("model", "body"),
+    ("body", "check"),
     [
-        (AuthorizedUsersAuthorizationQuery, {"action": "read", "resource": {"type": "doc"}}),
-        (UserPermissionsQuery, {"user": {"key": "u"}}),
+        # An empty map some JSON encoders (PHP's json_encode([])) write as an array.
+        ({"user": {"key": "u", "attributes": []}}, lambda q: q.user.attributes == {}),
+        ({"resource": {"type": "doc", "attributes": []}}, lambda q: q.resource.attributes == {}),
+        ({"context": []}, lambda q: q.context == {}),
+        ({"user": {"key": "u", "attributes": [["region", "eu"]]}}, lambda q: q.user.attributes == {"region": "eu"}),
+        ({"user": {"key": True}}, lambda q: q.user.key == "True"),
+        ({"action": False}, lambda q: q.action == "False"),
     ],
 )
-def test_optional_request_fields_stay_optional(model, body):
-    """A bare `X | None` annotation was optional on pydantic 1 and is required on pydantic 2."""
-    model.model_validate(body)
+def test_request_bodies_pydantic1_accepted_are_still_accepted(body, check):
+    """pydantic 1 ran dict() on a list for a dict field and str() on a bool for a str field."""
+    base = {"user": {"key": "u"}, "action": "read", "resource": {"type": "doc"}}
+    assert check(AuthorizationQuery.model_validate({**base, **body}))
+
+
+def test_a_dict_field_still_rejects_what_dict_refuses():
+    with pytest.raises(ValidationError):
+        AuthorizationQuery.model_validate(
+            {"user": {"key": "u", "attributes": "x"}, "action": "read", "resource": {"type": "doc"}}
+        )
+
+
+def test_kong_flag_query_parameters_are_accepted():
+    """Kong sends `true` for a query parameter with no value (?verbose); pydantic 1 read "True"."""
+    http = {"host": "h", "port": 80, "tls": {}, "method": "GET", "scheme": "http", "path": "/", "headers": {}}
+    kong = KongAuthorizationInput.model_validate({"request": {"http": {**http, "querystring": {"verbose": True}}}})
+    assert kong.request.http.querystring == {"verbose": "True"}
 
 
 # --------------------------------------------------------------------------- URLs
@@ -83,6 +108,8 @@ def test_optional_request_fields_stay_optional(model, body):
         ("https://api.example.com/docs?a=1&a=2", "https://api.example.com/docs?a=1&a=2"),
         ("  https://api.example.com/docs  ", "https://api.example.com/docs"),
         ("http://localhost:8080/x", "http://localhost:8080/x"),
+        # pydantic 1 IDNA-encoded the host and left the path alone.
+        ("http://exämple.com/ä", "http://xn--exmple-cua.com/ä"),
     ],
 )
 def test_allowed_url_keeps_the_callers_url_string(given, kept):
@@ -97,7 +124,7 @@ def test_allowed_url_keeps_the_callers_url_string(given, kept):
     json.dumps(query.model_dump())  # the OPA input stays JSON-serializable
 
 
-@pytest.mark.parametrize("bad", ["not a url", "ftp://example.com/x", "", "https://"])
+@pytest.mark.parametrize("bad", ["not a url", "ftp://example.com/x", "", "https://", "http://h/a b"])
 def test_allowed_url_still_rejects_what_is_not_an_http_url(bad):
     with pytest.raises(ValidationError):
         UrlAuthorizationQuery.model_validate({"user": {"key": "u"}, "http_method": "get", "url": bad, "tenant": "t"})
@@ -123,6 +150,31 @@ def test_user_permissions_pattern_applies_per_item():
 
 def test_authorization_result_debug_is_optional():
     assert AuthorizationResult.model_validate({"allow": True}).debug is None
+
+
+def test_malformed_opa_debug_and_priority_parse_as_on_pydantic1():
+    """A list for the debug dict, a fractional priority: pydantic 1 coerced both; pydantic 2 would
+    500 /allowed (response validation) and /allowed_url."""
+    assert AuthorizationResult.model_validate({"allow": True, "debug": []}).debug == {}
+    rule = MappingRuleData.model_validate(
+        {"url": "https://h/x", "http_method": "get", "resource": "r", "action": "a", "priority": 1.5}
+    )
+    assert rule.priority == 1
+
+
+def test_exclude_none_drops_nulls_inside_dict_fields():
+    """FastAPI encoded pydantic 1 responses with jsonable_encoder, which dropped None-valued keys
+    at any depth under response_model_exclude_none. pydantic 2 drops only None model fields."""
+    result = AuthorizationResult.model_validate(
+        {"allow": True, "debug": {"rbac": {"allow": [{"role": "admin", "tenant": None}], "code": None}, "abac": None}}
+    )
+    assert result.model_dump(mode="json", exclude_none=True) == {
+        "allow": True,
+        "debug": {"rbac": {"allow": [{"role": "admin"}]}},
+        "result": False,
+    }
+    # Without exclude_none nothing is dropped.
+    assert result.model_dump(mode="json")["debug"]["abac"] is None
 
 
 def test_kong_input_parses_without_the_optional_sections():
@@ -173,12 +225,16 @@ def test_role_assignment_filters_leave_unset_filters_out_of_the_opa_input():
         ('{"envoy": {"port": "9191"}}', {"envoy": {"port": 9191}}),
         ('{"envoy": {"port": 9191, "path": "a/b"}}', {"envoy": {"port": 9191, "path": "a/b"}}),
         ('{"p": {"t": "t"}}', {"p": {"t": "t"}}),
+        # Changed on purpose: pydantic 1 truncated 0.5 to 0 and read "false" as False.
+        ('{"p": {"ratio": 0.5}}', {"p": {"ratio": 0.5}}),
         ("{}", {}),
     ],
 )
 def test_opa_plugin_settings_keep_their_json_types(raw, parsed):
     """JSON bools stay bools (pydantic 1 read them as 0/1 and OPA refused to start); numeric
-    strings still become ints, as they did on pydantic 1."""
+    strings still become ints, as they did on pydantic 1. Two cases differ from pydantic 1 on
+    purpose: "false" stays a string (OPA reads it unquoted, as YAML false; see #402) and a
+    fractional number stays a float (pydantic 1 truncated it)."""
     result = SidecarConfig.parse_plugins(raw)
     assert result == parsed
     for settings in result.values():

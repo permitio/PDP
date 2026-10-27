@@ -14,11 +14,13 @@ from horizon.debounce import DEFAULT_DEBOUNCE_SECONDS
 
 MOCK_API_KEY = "MUST BE DEFINED"
 
-# A plugin setting is tried as StrictBool, then int, then str, in that order (union_mode). pydantic 1
+# A plugin setting is tried as StrictBool, int, float, then str, in that order (union_mode). pydantic 1
 # tried `int | bool | str` in order and its int accepted a JSON bool, so `"enabled": false` reached OPA
 # as `enabled: 0` and OPA exited at startup. StrictBool first keeps JSON bools bools; int before str
-# keeps "5" -> 5 as before. pydantic 2's default smart mode would leave "5" a string. PER-16197.
-OpaPluginSetting = Annotated[StrictBool | int | str, Field(union_mode="left_to_right")]
+# keeps "5" -> 5 as before; pydantic 2's default smart mode would leave "5" a string. float keeps a
+# fractional number (pydantic 1 truncated 0.5 to 0; without it pydantic 2 would refuse to start). The
+# strings "true"/"false" stay strings, as in #402: OPA reads the value unquoted, as YAML. PER-16197.
+OpaPluginSetting = Annotated[StrictBool | int | float | str, Field(union_mode="left_to_right")]
 OpaPlugins = dict[str, dict[str, OpaPluginSetting]]
 _OPA_PLUGINS = TypeAdapter(OpaPlugins)
 _CALLBACKS = TypeAdapter(list[CallbackEntry])

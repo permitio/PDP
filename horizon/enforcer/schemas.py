@@ -1,9 +1,26 @@
 from __future__ import annotations
 
+import functools
+import types
+import typing
 from enum import StrEnum
 from typing import Annotated, Any
+from urllib.parse import urlsplit
 
-from pydantic import AfterValidator, AnyHttpUrl, BaseModel, ConfigDict, Field, StringConstraints, TypeAdapter
+from pydantic import (
+    AfterValidator,
+    AnyHttpUrl,
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializationInfo,
+    SerializerFunctionWrapHandler,
+    StringConstraints,
+    TypeAdapter,
+    ValidationInfo,
+    field_serializer,
+    field_validator,
+)
 
 _ANY_HTTP_URL = TypeAdapter(AnyHttpUrl)
 
@@ -11,19 +28,124 @@ _ANY_HTTP_URL = TypeAdapter(AnyHttpUrl)
 def _check_http_url(url: str) -> str:
     # Validates like pydantic 1's AnyHttpUrl but keeps the caller's string. pydantic 2 would return a
     # Url object and normalize it (e.g. "http://h" -> "http://h/"), which changes what URL mapping
-    # rules match against. pydantic 1's AnyHttpUrl stripped surrounding whitespace, so this does too.
+    # rules match against. Like pydantic 1: surrounding whitespace is stripped, whitespace inside is
+    # rejected, and a non-ASCII host is IDNA-encoded (the rest of the URL is left as given).
     url = url.strip()
+    if any(c.isspace() for c in url):
+        raise ValueError("URL contains whitespace")
     _ANY_HTTP_URL.validate_python(url)
+    host = urlsplit(url).netloc.rpartition("@")[2].partition(":")[0]
+    if host and not host.isascii():
+        url = url.replace(host, host.encode("idna").decode("ascii"), 1)
     return url
 
 
 HttpUrlStr = Annotated[str, AfterValidator(_check_http_url)]
 
 
-class BaseSchema(BaseModel):
+def _arms(annotation: Any) -> list[Any]:
+    """The types a field annotation accepts, with Optional/Union/Annotated unwrapped."""
+    origin = typing.get_origin(annotation)
+    if origin is Annotated:
+        return _arms(typing.get_args(annotation)[0])
+    if origin in (typing.Union, types.UnionType):
+        return [arm for arg in typing.get_args(annotation) for arm in _arms(arg)]
+    return [annotation]
+
+
+@functools.cache
+def _coercion_plan(annotation: Any) -> tuple[bool, bool, bool, bool]:
+    """Which pydantic 1 coercions apply to a field, worked out once per annotation:
+    (bool -> str, fractional float -> int, list -> dict, bool values of a dict[..., str] -> str)."""
+    arms = _arms(annotation)
+    plain = {arm for arm in arms if isinstance(arm, type)}
+    dicts = [arm for arm in arms if arm is dict or typing.get_origin(arm) is dict]
+    return (
+        str in plain and bool not in plain,
+        int in plain and float not in plain,
+        bool(dicts),
+        any(typing.get_args(arm)[1:] == (str,) for arm in dicts),
+    )
+
+
+def _bool_in_str_field(value: Any, plan: tuple[bool, ...]) -> Any:
+    # pydantic 1 gave "True"/"False"; pydantic 2 answers 422.
+    return str(value) if plan[0] else value
+
+
+def _fractional_float_in_int_field(value: float, plan: tuple[bool, ...]) -> Any:
+    # pydantic 1 truncated; pydantic 2 rejects a fractional float for an int.
+    return int(value) if plan[1] and not value.is_integer() else value
+
+
+def _list_in_dict_field(value: list, plan: tuple[bool, ...]) -> Any:
+    # pydantic 1 ran dict(value): [] -> {} (an empty map some JSON encoders write as an array) and
+    # a list of pairs -> a dict. Anything dict() refuses is left to fail.
+    if not plan[2]:
+        return value
+    try:
+        return dict(value)
+    except (TypeError, ValueError):
+        return value
+
+
+def _bools_in_str_dict(value: dict, plan: tuple[bool, ...]) -> Any:
+    # dict[..., str]: pydantic 1 coerced each value like a str field (Kong's querystring holds
+    # `true` for a flag parameter with no value).
+    return {k: str(v) if isinstance(v, bool) else v for k, v in value.items()} if plan[3] else value
+
+
+_COERCIONS: dict[type, Any] = {
+    bool: _bool_in_str_field,
+    float: _fractional_float_in_int_field,
+    list: _list_in_dict_field,
+    dict: _bools_in_str_dict,
+}
+
+
+def _pydantic1_coercion(value: Any, annotation: Any) -> Any:
+    """What pydantic 1 accepted for a field and pydantic 2's lax mode does not."""
+    coerce = _COERCIONS.get(type(value))  # None for the common case: str, int, None
+    return value if coerce is None else coerce(value, _coercion_plan(annotation))
+
+
+def _drop_none(value: Any) -> Any:
+    # FastAPI's jsonable_encoder(exclude_none=True), which pydantic 1 responses went through:
+    # None-valued keys go from every dict, at any depth; list items are kept (and recursed into).
+    if isinstance(value, dict):
+        return {k: _drop_none(v) for k, v in value.items() if v is not None}
+    if isinstance(value, list):
+        return [_drop_none(v) for v in value]
+    return value
+
+
+class Pydantic1Compat(BaseModel):
+    """Keeps what callers and OPA saw from these models on pydantic 1 (PER-16197)."""
+
     # coerce_numbers_to_str: pydantic 1 accepted a number for a str field ({"key": 1} -> "1");
     # pydantic 2 rejects it with a 422 unless told otherwise. SDKs and integrations that send
-    # numeric user or resource keys keep working (PER-16197).
+    # numeric user or resource keys keep working.
+    model_config = ConfigDict(coerce_numbers_to_str=True)
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _accept_what_pydantic1_accepted(cls, value: Any, info: ValidationInfo) -> Any:
+        # The rest of pydantic 1's coercions on the request and OPA-result models: see
+        # _pydantic1_coercion. Before-validators do not change the JSON schema.
+        if info.field_name is None:
+            return value
+        return _pydantic1_coercion(value, cls.model_fields[info.field_name].annotation)
+
+    @field_serializer("*", mode="wrap")
+    def _exclude_none_inside_dicts(self, value: Any, handler: SerializerFunctionWrapHandler, info: SerializationInfo):
+        # response_model_exclude_none used to drop nulls inside dict fields too (debug, query,
+        # attributes): FastAPI encoded pydantic 1 responses with jsonable_encoder. On pydantic 2 it
+        # serializes through pydantic, which drops only None model fields. PER-16197.
+        out = handler(value)
+        return _drop_none(out) if info.exclude_none and isinstance(out, dict | list) else out
+
+
+class BaseSchema(Pydantic1Compat):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True, coerce_numbers_to_str=True)
 
 
