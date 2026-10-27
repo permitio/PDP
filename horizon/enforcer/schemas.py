@@ -30,8 +30,9 @@ def _check_http_url(url: str) -> str:
     # its replacement: it strips the string; rejects a backslash in the host (one in the path is
     # kept), an empty host or port, and invalid host labels; IDNA-encodes only the host; and drops
     # an empty `?`, `#`, user or password only when it rebuilds the URL, which it does for a
-    # non-ASCII host or a host with no TLD (`http://svc/x#` -> `http://svc/x`, `http://u:@svc/x`
-    # -> `http://u@svc/x`, while `https://h.com/x#` and `https://u:@h.com/x` are kept as given).
+    # domain host that is non-ASCII or has no TLD; an IPv4 or IPv6 host is never rebuilt
+    # (`http://svc/x#` -> `http://svc/x`, `http://u:@svc/x` -> `http://u@svc/x`, while
+    # `https://h.com/x#`, `https://u:@h.com/x` and `http://127.0.0.1/x#` are kept as given).
     # pydantic 2's AnyHttpUrl parses WHATWG-style and repairs some of what pydantic 1 rejected,
     # so the URL that passed would not be the one MappingRulesUtils matches. Compared input by
     # input with pydantic 1.10.26 (test_pydantic2_compat.py). pydantic.v1 goes away in pydantic
@@ -67,12 +68,14 @@ def _coercion_plan(annotation: Any) -> tuple[bool, bool, bool, bool, bool]:
     list[str] -> str).
 
     Item and value coercion reach one level only: a bare `list[str]` or `dict[..., str]` arm.
-    Known differences from pydantic 1, none reachable by a field the PDP has today:
-    - `list[str | None]`, `list[list[str]]` or `dict[str, list[str]]` still answer 422 for a
-      `true` item where pydantic 1 gave "True";
-    - a `dict | list[str]` field declared dict-first keeps a list of strings as a list, where
-      pydantic 1 (trying dict first) ran dict() on it;
-    - bool keys are not coerced: `[[true, "x"]]` for a `dict[str, Any]` field gave {"True": "x"}."""
+    Known differences from pydantic 1:
+    - (no field has these shapes today) `list[str | None]`, `list[list[str]]` or
+      `dict[str, list[str]]` still answer 422 for a `true` item where pydantic 1 gave "True";
+      and the plan ignores arm order: where an earlier arm took the value as is, pydantic 1 kept
+      it (`dict | list[str]` ran dict() on a list of strings; `int | str` kept `true` as 1);
+    - (any dict field with str keys: attributes, context, metadata, Kong's querystring and
+      headers) bool keys are not coerced: `[[true, "x"]]` gave {"True": "x"} on pydantic 1 and
+      answers 422 here. Only a list of pairs can carry a bool key, so it is an unlikely input."""
     arms = _arms(annotation)
     plain = {arm for arm in arms if isinstance(arm, type)}
     dicts = [arm for arm in arms if arm is dict or typing.get_origin(arm) is dict]

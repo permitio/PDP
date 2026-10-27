@@ -172,6 +172,10 @@ def test_kong_flag_query_parameters_are_accepted():
         ("http://u:@svc/x", "http://u@svc/x"),
         ("https://@h.com/x", "https://@h.com/x"),
         ("https://u:@h.com/x", "https://u:@h.com/x"),
+        # An IP host is never rebuilt; `localhost` (a domain host with no TLD) is.
+        ("http://127.0.0.1/x#", "http://127.0.0.1/x#"),
+        ("http://u:@[::1]/x", "http://u:@[::1]/x"),
+        ("http://localhost/x#", "http://localhost/x"),
     ],
 )
 def test_allowed_url_keeps_the_callers_url_string(given, kept):
