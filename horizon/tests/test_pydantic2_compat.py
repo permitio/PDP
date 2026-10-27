@@ -17,11 +17,10 @@ from horizon.enforcer.schemas import (
     AuthorizationQuery,
     AuthorizationResult,
     AuthorizedUsersAuthorizationQuery,
+    BaseSchema,
     MappingRuleData,
     UrlAuthorizationQuery,
     UserPermissionsQuery,
-    _coercion_plan,
-    _list_value,
     _UserPermissionsResult,
 )
 from horizon.enforcer.schemas_kong import KongAuthorizationInput
@@ -87,13 +86,32 @@ def test_request_bodies_pydantic1_accepted_are_still_accepted(body, check):
     assert check(AuthorizationQuery.model_validate({**base, **body}))
 
 
-def test_list_coercion_steps_do_not_short_circuit():
-    """A list[str] | dict field: bool items still become strings, a list of pairs still becomes a
-    dict, and a valid list of strings stays a list (dict() would turn ["xy"] into {"x": "y"})."""
-    plan = _coercion_plan(list[str] | dict[str, str])
-    assert _list_value([True, "a"], plan) == ["True", "a"]
-    assert _list_value([["a", "b"]], plan) == {"a": "b"}
-    assert _list_value(["xy"], plan) == ["xy"]
+class _ListOrDict(BaseSchema):
+    v: list[str] | dict[str, str]
+
+
+@pytest.mark.parametrize(
+    ("given", "expected"),
+    [
+        # Expected values are pydantic 1.10.26's, for the same field.
+        ([True, "a"], ["True", "a"]),
+        ([["a", "b"]], {"a": "b"}),
+        (["xy"], ["xy"]),
+        (["ab", ["c", "d"]], {"a": "b", "c": "d"}),
+        ([], []),
+    ],
+)
+def test_list_or_dict_field_matches_pydantic1(given, expected):
+    """Both list steps run in pydantic 1's order; a valid list of strings stays a list (dict()
+    would turn ["xy"] into {"x": "y"}), and a mixed list still becomes a dict."""
+    assert _ListOrDict.model_validate({"v": given}).v == expected
+
+
+def test_kong_querystring_as_a_list_of_pairs_coerces_bool_values():
+    """pydantic 1 ran dict() on the list and then coerced the values: {"flag": "True"}."""
+    http = {"host": "h", "port": 80, "tls": {}, "method": "GET", "scheme": "http", "path": "/", "headers": {}}
+    kong = KongAuthorizationInput.model_validate({"request": {"http": {**http, "querystring": [["flag", True]]}}})
+    assert kong.request.http.querystring == {"flag": "True"}
 
 
 def test_bools_in_a_list_of_str_become_strings():
@@ -148,6 +166,12 @@ def test_kong_flag_query_parameters_are_accepted():
         ("https://h.com/x?", "https://h.com/x?"),
         ("https://h.com/a\\b", "https://h.com/a\\b"),
         ("http://exämple.com/x#", "http://xn--exmple-cua.com/x"),
+        # A rebuild also drops an empty user or password; without one they are kept.
+        ("http://@svc/x", "http://svc/x"),
+        ("http://:@svc/x", "http://svc/x"),
+        ("http://u:@svc/x", "http://u@svc/x"),
+        ("https://@h.com/x", "https://@h.com/x"),
+        ("https://u:@h.com/x", "https://u:@h.com/x"),
     ],
 )
 def test_allowed_url_keeps_the_callers_url_string(given, kept):

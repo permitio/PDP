@@ -29,8 +29,9 @@ def _check_http_url(url: str) -> str:
     # /allowed_url accepts, rejects and rewrites exactly what it did on pydantic 1. As a spec for
     # its replacement: it strips the string; rejects a backslash in the host (one in the path is
     # kept), an empty host or port, and invalid host labels; IDNA-encodes only the host; and drops
-    # an empty `?` or `#` only when it rebuilds the URL, which it does for a non-ASCII host or a
-    # host with no TLD (`http://svc/x#` -> `http://svc/x`, `https://h.com/x#` kept as given).
+    # an empty `?`, `#`, user or password only when it rebuilds the URL, which it does for a
+    # non-ASCII host or a host with no TLD (`http://svc/x#` -> `http://svc/x`, `http://u:@svc/x`
+    # -> `http://u@svc/x`, while `https://h.com/x#` and `https://u:@h.com/x` are kept as given).
     # pydantic 2's AnyHttpUrl parses WHATWG-style and repairs some of what pydantic 1 rejected,
     # so the URL that passed would not be the one MappingRulesUtils matches. Compared input by
     # input with pydantic 1.10.26 (test_pydantic2_compat.py). pydantic.v1 goes away in pydantic
@@ -66,8 +67,12 @@ def _coercion_plan(annotation: Any) -> tuple[bool, bool, bool, bool, bool]:
     list[str] -> str).
 
     Item and value coercion reach one level only: a bare `list[str]` or `dict[..., str]` arm.
-    `list[str | None]`, `list[list[str]]` or `dict[str, list[str]]` would still answer 422 for a
-    `true` item where pydantic 1 gave "True"; no field has such a shape today."""
+    Known differences from pydantic 1, none reachable by a field the PDP has today:
+    - `list[str | None]`, `list[list[str]]` or `dict[str, list[str]]` still answer 422 for a
+      `true` item where pydantic 1 gave "True";
+    - a `dict | list[str]` field declared dict-first keeps a list of strings as a list, where
+      pydantic 1 (trying dict first) ran dict() on it;
+    - bool keys are not coerced: `[[true, "x"]]` for a `dict[str, Any]` field gave {"True": "x"}."""
     arms = _arms(annotation)
     plain = {arm for arm in arms if isinstance(arm, type)}
     dicts = [arm for arm in arms if arm is dict or typing.get_origin(arm) is dict]
@@ -104,7 +109,9 @@ def _list_in_dict_field(value: list, plan: tuple[bool, ...]) -> Any:
     if not plan[2] or (plan[4] and all(isinstance(v, str) for v in value)):
         return value
     try:
-        return dict(value)
+        # The resulting dict's values are coerced like a dict field's: [["flag", true]] for
+        # Kong's dict[str, str] querystring gave {"flag": "True"} on pydantic 1.
+        return _bools_in_str_dict(dict(value), plan)
     except (TypeError, ValueError):
         return value
 
