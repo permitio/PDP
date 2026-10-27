@@ -5,42 +5,45 @@ import types
 import typing
 from enum import StrEnum
 from typing import Annotated, Any
-from urllib.parse import urlsplit
 
 from pydantic import (
     AfterValidator,
-    AnyHttpUrl,
     BaseModel,
     ConfigDict,
     Field,
     SerializationInfo,
     SerializerFunctionWrapHandler,
     StringConstraints,
-    TypeAdapter,
     ValidationInfo,
+    WithJsonSchema,
     field_serializer,
     field_validator,
 )
-
-_ANY_HTTP_URL = TypeAdapter(AnyHttpUrl)
+from pydantic.v1 import AnyHttpUrl as _V1AnyHttpUrl
+from pydantic.v1 import ValidationError as _V1ValidationError
+from pydantic.v1 import parse_obj_as as _v1_parse
 
 
 def _check_http_url(url: str) -> str:
-    # Validates like pydantic 1's AnyHttpUrl but keeps the caller's string. pydantic 2 would return a
-    # Url object and normalize it (e.g. "http://h" -> "http://h/"), which changes what URL mapping
-    # rules match against. Like pydantic 1: surrounding whitespace is stripped, whitespace inside is
-    # rejected, and a non-ASCII host is IDNA-encoded (the rest of the URL is left as given).
-    url = url.strip()
-    if any(c.isspace() for c in url):
-        raise ValueError("URL contains whitespace")
-    _ANY_HTTP_URL.validate_python(url)
-    host = urlsplit(url).netloc.rpartition("@")[2].partition(":")[0]
-    if host and not host.isascii():
-        url = url.replace(host, host.encode("idna").decode("ascii"), 1)
-    return url
+    # pydantic 1's own AnyHttpUrl, from the pydantic.v1 package pydantic 2 still ships, so
+    # /allowed_url accepts, rejects and rewrites exactly what it did on pydantic 1: it strips the
+    # string, rejects a backslash, an empty host or port and invalid host labels, IDNA-encodes
+    # only the host, and drops an empty `?` or `#`. pydantic 2's AnyHttpUrl parses WHATWG-style
+    # and repairs some of those, so the URL that passed would not be the one MappingRulesUtils
+    # matches. Compared input by input with pydantic 1.10.26 (test_pydantic2_compat.py).
+    # pydantic.v1 goes away in pydantic 3: replace this with an equivalent check before that.
+    try:
+        return str(_v1_parse(_V1AnyHttpUrl, url))
+    except _V1ValidationError as e:
+        raise ValueError(f"invalid URL: {e.errors()[0]['msg']}") from None
 
 
-HttpUrlStr = Annotated[str, AfterValidator(_check_http_url)]
+# A str in the model and in the OPA input, documented as pydantic 1 documented it.
+HttpUrlStr = Annotated[
+    str,
+    AfterValidator(_check_http_url),
+    WithJsonSchema({"type": "string", "format": "uri", "minLength": 1, "maxLength": 65536}),
+]
 
 
 def _arms(annotation: Any) -> list[Any]:
@@ -54,17 +57,20 @@ def _arms(annotation: Any) -> list[Any]:
 
 
 @functools.cache
-def _coercion_plan(annotation: Any) -> tuple[bool, bool, bool, bool]:
-    """Which pydantic 1 coercions apply to a field, worked out once per annotation:
-    (bool -> str, fractional float -> int, list -> dict, bool values of a dict[..., str] -> str)."""
+def _coercion_plan(annotation: Any) -> tuple[bool, bool, bool, bool, bool]:
+    """Which pydantic 1 coercions apply to a field, worked out once per annotation: (bool -> str,
+    fractional float -> int, list -> dict, bool values of a dict[..., str] -> str, bool items of a
+    list[str] -> str)."""
     arms = _arms(annotation)
     plain = {arm for arm in arms if isinstance(arm, type)}
     dicts = [arm for arm in arms if arm is dict or typing.get_origin(arm) is dict]
+    lists = [arm for arm in arms if typing.get_origin(arm) is list]
     return (
         str in plain and bool not in plain,
         int in plain and float not in plain,
         bool(dicts),
         any(typing.get_args(arm)[1:] == (str,) for arm in dicts),
+        any(typing.get_args(arm) == (str,) for arm in lists),
     )
 
 
@@ -79,6 +85,9 @@ def _fractional_float_in_int_field(value: float, plan: tuple[bool, ...]) -> Any:
 
 
 def _list_in_dict_field(value: list, plan: tuple[bool, ...]) -> Any:
+    # A list[str] field: pydantic 1 coerced each item like a str field ([true] -> ["True"]).
+    if plan[4]:
+        return [str(v) if isinstance(v, bool) else v for v in value]
     # pydantic 1 ran dict(value): [] -> {} (an empty map some JSON encoders write as an array) and
     # a list of pairs -> a dict. Anything dict() refuses is left to fail.
     if not plan[2]:

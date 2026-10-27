@@ -135,6 +135,11 @@ override-dependencies = [
 ]
 
 [tool.pytest.ini_options]
+filterwarnings = [
+    # starlette 1.x prefers httpx2 for TestClient and warns on the httpx fallback. Drop this once the
+    # dev group installs httpx2. (StarletteDeprecationWarning is a UserWarning, not a DeprecationWarning.)
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated:UserWarning",
+]
 # horizon is not installed (package = false above) - the tests import it from the repo root,
 # the way the image runs it from /app.
 pythonpath = ["."]

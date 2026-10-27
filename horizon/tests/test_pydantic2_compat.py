@@ -19,6 +19,7 @@ from horizon.enforcer.schemas import (
     AuthorizedUsersAuthorizationQuery,
     MappingRuleData,
     UrlAuthorizationQuery,
+    UserPermissionsQuery,
     _UserPermissionsResult,
 )
 from horizon.enforcer.schemas_kong import KongAuthorizationInput
@@ -84,6 +85,18 @@ def test_request_bodies_pydantic1_accepted_are_still_accepted(body, check):
     assert check(AuthorizationQuery.model_validate({**base, **body}))
 
 
+def test_bools_in_a_list_of_str_become_strings():
+    """pydantic 1 coerced list[str] items like str fields: tenants [true] -> ["True"]."""
+    query = UserPermissionsQuery.model_validate({"user": {"key": "u"}, "tenants": [True, "t1"]})
+    assert query.tenants == ["True", "t1"]
+
+
+def test_allowed_url_is_documented_as_a_uri():
+    """OpenAPI kept pydantic 1's description of the field, so generated SDKs still see a URI."""
+    schema = UrlAuthorizationQuery.model_json_schema()["properties"]["url"]
+    assert (schema["type"], schema["format"], schema["minLength"], schema["maxLength"]) == ("string", "uri", 1, 65536)
+
+
 def test_a_dict_field_still_rejects_what_dict_refuses():
     with pytest.raises(ValidationError):
         AuthorizationQuery.model_validate(
@@ -110,6 +123,14 @@ def test_kong_flag_query_parameters_are_accepted():
         ("http://localhost:8080/x", "http://localhost:8080/x"),
         # pydantic 1 IDNA-encoded the host and left the path alone.
         ("http://exämple.com/ä", "http://xn--exmple-cua.com/ä"),
+        # ...the host only, even when the userinfo holds the same text.
+        ("https://münchen.de@münchen.de/x", "https://münchen.de@xn--mnchen-3ya.de/x"),
+        # pydantic 1 rebuilt the URL, dropping an empty query or fragment.
+        ("http://svc/x#", "http://svc/x"),
+        ("http://svc/x?", "http://svc/x"),
+        ("http://svc/x#frag", "http://svc/x#frag"),
+        ("http://[::1]:8080/x", "http://[::1]:8080/x"),
+        ("HTTP://H.COM/X", "HTTP://H.COM/X"),
     ],
 )
 def test_allowed_url_keeps_the_callers_url_string(given, kept):
@@ -124,7 +145,26 @@ def test_allowed_url_keeps_the_callers_url_string(given, kept):
     json.dumps(query.model_dump())  # the OPA input stays JSON-serializable
 
 
-@pytest.mark.parametrize("bad", ["not a url", "ftp://example.com/x", "", "https://", "http://h/a b"])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "not a url",
+        "ftp://example.com/x",
+        "",
+        "https://",
+        "http://h/a b",
+        # pydantic 2's AnyHttpUrl parses WHATWG-style and repairs these; pydantic 1 rejected them.
+        "https://api.example.com\\docs",
+        "http:///docs",
+        "https://h.com:/x",
+        "https://-h.com/x",
+        "https://h-.com/x",
+        "https://h..com/x",
+        "https://" + "a" * 64 + ".com/x",
+        "http://h.com:65536/x",
+        "http://*.h.com/x",
+    ],
+)
 def test_allowed_url_still_rejects_what_is_not_an_http_url(bad):
     with pytest.raises(ValidationError):
         UrlAuthorizationQuery.model_validate({"user": {"key": "u"}, "http_method": "get", "url": bad, "tenant": "t"})
