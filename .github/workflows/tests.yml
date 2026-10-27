@@ -70,10 +70,11 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           # Keep in lockstep with the interpreter the image actually ships
-          # (Dockerfile: python:3.13-alpine3.23). This job pinned 3.11.8 while the image
+          # (Dockerfile: python:3.13.18-alpine3.23). This job pinned 3.11.8 while the image
           # ran 3.10, so the unit suite never executed on the shipped interpreter and a
-          # regression that only reproduces there could not fail CI. Patch version floats,
-          # matching the Dockerfile base. Bump both together. See PER-15358.
+          # regression that only reproduces there could not fail CI. The patch version floats
+          # here while the Dockerfile pins it; the minor is what must match. Bump both
+          # together. See PER-15358, PER-17853.
           python-version: '3.13'
 
       - name: Checkout code

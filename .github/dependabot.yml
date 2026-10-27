@@ -152,6 +152,13 @@ updates:
     open-pull-requests-limit: 5
     cooldown:
       default-days: 7
+    # The image runs 3.13 (requires-python ==3.13.*, and ddtrace 4.16 declares <3.15): a minor or
+    # major python bump is a migration, not a dependency update. Without this, the updater offers
+    # the highest tag of the same shape (3.15.x-alpine3.23) instead of the next 3.13 patch
+    # (PER-17853).
+    ignore:
+      - dependency-name: "python"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
     commit-message:
       prefix: "deps"
 
@@ -164,6 +171,13 @@ updates:
     open-pull-requests-limit: 5
     cooldown:
       default-days: 7
+    # The image runs 3.13 (requires-python ==3.13.*, and ddtrace 4.16 declares <3.15): a minor or
+    # major python bump is a migration, not a dependency update. Without this, the updater offers
+    # the highest tag of the same shape (3.15.x-alpine3.23) instead of the next 3.13 patch
+    # (PER-17853).
+    ignore:
+      - dependency-name: "python"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
     commit-message:
       prefix: "deps"
 

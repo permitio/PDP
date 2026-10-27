@@ -100,7 +100,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 #
 # Auditability: the toolchain is recorded in the binary's build info, survives `-s -w`,
 # and is readable with `go version` on an extracted copy - extracted, because the
-# runtime base is python:3.13-alpine3.23 and ships no Go. That is an after-the-fact
+# runtime base is python:3.13.18-alpine3.23 and ships no Go. That is an after-the-fact
 # audit, not a gate. The gates are the Docker Scout and Trivy scans in tests.yml and
 # release.yml, and scheduled-security-scan.yml re-scans published tags (PER-15358).
 #
@@ -211,12 +211,13 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # so the vulnerable code really was present in 3.10.20 and an upgrade was the only fix.
 # CVE-2026-15308 (html.parser CPU-exhaustion DoS) is now cleared too: it was waived here as
 # unreachable while it was patched only in 3.15.0b4, but CPython backported the fix and it
-# landed in 3.13.15 (also 3.14.7). The base digest below carries 3.13.15, so the waiver has
-# been REMOVED from .docker/scout/pdp-v2.vex.json.
-# Do not drop below the patched floor for whichever branch the base resolves to: 3.13.15 on
-# the 3.13 line, 3.14.7 on 3.14. The apk layer below enforces exactly that, per branch -
-# a flat `>= (3,13,15)` would have passed 3.14.0 through 3.14.6, which are the versions the
-# line above says still lack the backport.
+# landed in 3.13.15 (also 3.14.7), so the waiver has been REMOVED from
+# .docker/scout/pdp-v2.vex.json. The floor is now 3.13.16 / 3.14.8: CVE-2026-19445 (critical,
+# SSL sni_callback use-after-free) and nine more are fixed there (PER-17853), and the base
+# below carries 3.13.18.
+# Do not drop below the patched floor for whichever branch the base resolves to: 3.13.16 on
+# the 3.13 line, 3.14.8 on 3.14. The apk layer below enforces exactly that, per branch -
+# a flat `>= (3,13,16)` would have passed 3.14.0 through 3.14.7, which still lack the fixes.
 #
 # Removing the CVE-2026-15308 waiver is NOT what enforces it. Scout indexes the interpreter
 # - `docker scout sbom` reports `pkg:generic/python@3.13.15` for this base - but it does not
@@ -252,12 +253,16 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # 3.13.18 - because "a rebuild will pick it up" only holds if something rebuilds. See the
 # pinning note below.
 #
-# The tag names the patch version (3.13.18-alpine3.23, not 3.13-alpine3.23) since PER-17853.
-# Dependabot never bumped the 3.13.15 digest: the docker entry's 7-day cooldown restarts every
-# time the floating tag gets a new digest, which happened more often than once a week, so the
-# PR never opened while the interpreter collected ten CVEs (CVE-2026-19445 among them). A
-# patch tag gets a new version, not just a new digest, when CPython releases, which is what
-# Dependabot's version updates track.
+# The tag names the patch version (3.13.18-alpine3.23, not 3.13-alpine3.23) since PER-17853,
+# so a CPython release changes the tag, not just the digest. Dependabot never bumped the
+# 3.13.15 digest while the interpreter collected ten CVEs (CVE-2026-19445 among them). Two
+# things kept it away: the 7-day cooldown (the floating tag got a new digest more often than
+# weekly) and the updater's preference for the highest tag of the same shape, which made its
+# only PR a 3.14 move nobody could merge (#391, #392). .github/dependabot.yml now ignores
+# python minor and major updates, so what it proposes is the next 3.13 patch. Whether the
+# cooldown still holds that back when upstream rebuilds the patch tag in place is untested:
+# do not rely on Dependabot alone for interpreter CVEs. Only a CPE-based scanner (Grype, Wiz)
+# reports them; Scout and Trivy do not (see the NOTE in tests.yml).
 #
 # Python 3.10 also reaches end of life in October 2026, so this move was due regardless.
 # Base images are pinned by DIGEST, and Dependabot's docker ecosystem
@@ -338,7 +343,7 @@ RUN --mount=type=cache,target=/var/cache/apk \
     apk add --no-cache --virtual .python-rundeps-nosqlite \
         $(apk info -qR .python-rundeps | grep '^so:' | grep -v 'libsqlite3') && \
     apk del .python-rundeps sqlite-libs && \
-    python3 -c "import sys, _ssl, _hashlib, _decimal, zlib, _lzma, _bz2, _ctypes, pyexpat, _uuid; v = sys.version_info[:3]; v >= {13: (3, 13, 15), 14: (3, 14, 7)}.get(v[1], (3, 15, 0)) or sys.exit('CPython %s is below the patched floor for its branch' % sys.version)"
+    python3 -c "import sys, _ssl, _hashlib, _decimal, zlib, _lzma, _bz2, _ctypes, pyexpat, _uuid; v = sys.version_info[:3]; v >= {13: (3, 13, 16), 14: (3, 14, 8)}.get(v[1], (3, 15, 0)) or sys.exit('CPython %s is below the patched floor for its branch' % sys.version)"
 
 
 # Copy OPA binary from the build stage

@@ -11,6 +11,7 @@ rest of the suite.
 """
 
 import os
+import re
 import subprocess
 import sys
 import textwrap
@@ -23,13 +24,16 @@ DD_ENV = {
     "DD_INSTRUMENTATION_TELEMETRY_ENABLED": "false",
     "DD_REMOTE_CONFIGURATION_ENABLED": "false",
 }
+# Inherited propagation settings would change what the extractor does: with "baggage" left out
+# (the workaround older images set), extraction returns nothing and a vulnerable ddtrace passes.
+_PROPAGATION_ENV = re.compile(r"^(DD|OTEL)_.*PROPAGAT")
 
 
 def _run(code: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, "-c", textwrap.dedent(code)],
         cwd=REPO_ROOT,
-        env={**os.environ, **DD_ENV},
+        env={**{k: v for k, v in os.environ.items() if not _PROPAGATION_ENV.match(k)}, **DD_ENV},
         capture_output=True,
         text=True,
         timeout=120,
@@ -53,7 +57,10 @@ def test_monitoring_setup_runs_without_ddtrace_warnings():
             fix_ddtrace_logging()
         from ddtrace import config
         assert config.fastapi["service_name"] == "permit-pdp", config.fastapi["service_name"]
-        ours = [str(w.message) for w in caught if "ddtrace" in (w.filename or "") or "ddtrace" in str(w.message)]
+        # By category: ddtrace warns with a stacklevel, so the filename is the caller's (OPAL's or
+        # horizon's), and the message need not name ddtrace.
+        from ddtrace import DDTraceDeprecationWarning
+        ours = [str(w.message) for w in caught if issubclass(w.category, DDTraceDeprecationWarning)]
         assert not ours, ours
         """
     )
@@ -76,4 +83,5 @@ def test_baggage_extraction_is_bounded():
         """
     )
     assert result.returncode == 0, result.stderr
-    assert int(result.stdout.strip().splitlines()[-1]) <= 64
+    # 0 would mean extraction is off, not that it is bounded: that passes on a vulnerable ddtrace.
+    assert 0 < int(result.stdout.strip().splitlines()[-1]) <= 64

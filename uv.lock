@@ -1,11 +1,11 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = "==3.13.*"
 
 [manifest]
 overrides = [
+    { package = { name = "opal-common", version = "0.9.6" }, dependencies = [{ name = "ddtrace", specifier = ">=4.8.2,<5" }] },
     { name = "aiofiles", specifier = "==24.1.0" },
-    { name = "ddtrace", specifier = ">=4.8.2,<5" },
 ]
 
 [[package]]
