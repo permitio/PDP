@@ -5,7 +5,6 @@ from opal_client.policy_store.base_policy_store_client import BasePolicyStoreCli
 from opal_client.policy_store.policy_store_client_factory import (
     DEFAULT_POLICY_STORE_GETTER,
 )
-from pydantic import parse_obj_as, parse_raw_as
 from starlette.responses import Response
 
 from horizon.authentication import enforce_pdp_token
@@ -71,14 +70,14 @@ def init_local_cache_api_router(policy_store: BasePolicyStoreClient | None = Non
 
         You can filter the results by providing optional filters.
         """
-        filters = ListRoleAssignmentsFilters.construct(
+        filters = ListRoleAssignmentsFilters(
             user=user,
             role=role,
             tenant=tenant,
             resource=resource,
             resource_instance=resource_instance,
-        ).dict(exclude_none=True)
-        pagination = ListRoleAssignmentsPagination.construct(
+        )
+        pagination = ListRoleAssignmentsPagination(
             page=page,
             per_page=per_page,
         )
@@ -89,11 +88,11 @@ def init_local_cache_api_router(policy_store: BasePolicyStoreClient | None = Non
             Response | dict,
             await policy_store.get_data_with_input(
                 "/permit/api/role_assignments/list_role_assignments",
-                ListRoleAssignmentsPDPBody.construct(filters=filters, pagination=pagination),
+                ListRoleAssignmentsPDPBody(filters=filters, pagination=pagination),
             ),
         )
         if isinstance(result, Response):
-            return parse_raw_as(WrappedResponse, bytes(result.body)).result
-        return parse_obj_as(WrappedResponse, result).result
+            return WrappedResponse.model_validate_json(bytes(result.body)).result
+        return WrappedResponse.model_validate(result).result
 
     return router

@@ -59,7 +59,7 @@ class PersistentStateHandler:
             return False
 
         try:
-            self._state = PersistentState.parse_file(self._path)
+            self._state = PersistentState.model_validate_json(self._path.read_bytes())
         except ValidationError:
             logger.warning("Unable to load existing persistent state: Invalid schema.")
             return False
@@ -67,7 +67,7 @@ class PersistentStateHandler:
             return True
 
     def _save(self):
-        content = self._state.json()
+        content = self._state.model_dump_json()
         self._path.write_text(content)
 
     @classmethod
@@ -98,14 +98,14 @@ class PersistentStateHandler:
             prev_state = self._state
             try:
                 async with self._write_lock:
-                    new_state = self._state.copy()
+                    new_state = self._state.model_copy()
                     yield new_state
                 try:
                     await self._report(new_state)
                 finally:
                     # Throttle even if the report failed
                     self._prev_state_update_attempt = time.time()
-                self._state = new_state.copy()
+                self._state = new_state.model_copy()
                 self._save()
             except Exception as e:  # noqa: BLE001 - seen-SDK report runs inside requests: revert, never 500
                 logger.exception("Failed to update state: {}, reverting...", e)
@@ -197,7 +197,7 @@ class PersistentStateHandler:
 
     async def _report(self, state: PersistentState | None = None):
         if state is not None:
-            self._state = state.copy()
+            self._state = state.model_copy()
         config_url = f"{sidecar_config.CONTROL_PLANE}{sidecar_config.REMOTE_STATE_ENDPOINT}"
         async with aiohttp.ClientSession(
             trust_env=True,

@@ -1,11 +1,12 @@
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_serializer
+
+from horizon.enforcer.schemas import Pydantic1Compat
 
 
-class BaseSchema(BaseModel):
-    class Config:
-        orm_mode = True
+class BaseSchema(Pydantic1Compat):
+    model_config = ConfigDict(from_attributes=True, coerce_numbers_to_str=True)
 
 
 class Message(BaseModel):
@@ -14,17 +15,17 @@ class Message(BaseModel):
 
 class SyncedRole(BaseSchema):
     id: str
-    name: str | None
-    tenant_id: str | None
-    metadata: dict[str, Any] | None
-    permissions: list[str] | None
+    name: str | None = None
+    tenant_id: str | None = None
+    metadata: dict[str, Any] | None = None
+    permissions: list[str] | None = None
 
 
 class SyncedUser(BaseSchema):
     id: str
-    name: str | None
-    email: str | None
-    metadata: dict[str, Any] | None
+    name: str | None = None
+    email: str | None = None
+    metadata: dict[str, Any] | None = None
     roles: list[SyncedRole]
 
 
@@ -45,6 +46,11 @@ class ListRoleAssignmentsPDPBody(BaseSchema):
     filters: ListRoleAssignmentsFilters = Field(..., description="The filters to apply to the list")
     pagination: ListRoleAssignmentsPagination = Field(..., description="The pagination settings")
 
+    @field_serializer("filters")
+    def _omit_unset_filters(self, filters: ListRoleAssignmentsFilters) -> dict:
+        # The policy reads an absent filter as "no filter"; a null one is not the same thing.
+        return filters.model_dump(exclude_none=True)
+
 
 class RoleAssignment(BaseSchema):
     """
@@ -56,8 +62,8 @@ class RoleAssignment(BaseSchema):
     tenant: str = Field(..., description="the tenant the role is associated with")
     resource_instance: str | None = Field(None, description="the resource instance the role is associated with")
 
-    class Config:
-        schema_extra = {  # noqa: RUF012
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": [
                 {
                     "user": "jane@coolcompany.com",
@@ -72,6 +78,7 @@ class RoleAssignment(BaseSchema):
                 },
             ]
         }
+    )
 
 
 class WrappedResponse(BaseSchema):

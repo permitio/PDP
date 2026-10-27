@@ -47,9 +47,9 @@ class OfflineModeManager:
         self._backup_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             content = RemoteConfigBackup(
-                enc_remote_config=Fernet(enc_key).encrypt(remote_config.json(ensure_ascii=False).encode()),
+                enc_remote_config=Fernet(enc_key).encrypt(remote_config.model_dump_json().encode()),
                 key_derivation_salt=salt,
-            ).json(ensure_ascii=False)
+            ).model_dump_json()
             self._backup_path.write_text(content)
         except Exception as e:  # noqa: BLE001 - best-effort: a failed backup must not fail startup or a request
             logger.exception(f"Failed to backup sidecar config: {e}")
@@ -61,7 +61,7 @@ class OfflineModeManager:
         )
         remote_config_backup: RemoteConfigBackup
         try:
-            remote_config_backup = RemoteConfigBackup.parse_file(self._backup_path)
+            remote_config_backup = RemoteConfigBackup.model_validate_json(self._backup_path.read_bytes())
         except FileNotFoundError:
             logger.warning("Local backup file of sidecar config not found")
             return None
@@ -70,7 +70,7 @@ class OfflineModeManager:
             return None
 
         dec_key, _ = self._derive_backup_key(remote_config_backup.key_derivation_salt)
-        return RemoteConfig.parse_raw(Fernet(dec_key).decrypt(remote_config_backup.enc_remote_config))
+        return RemoteConfig.model_validate_json(Fernet(dec_key).decrypt(remote_config_backup.enc_remote_config))
 
     def process_remote_config(self, remote_config: RemoteConfig | None) -> RemoteConfig | None:
         if remote_config is None:

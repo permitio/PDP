@@ -1,7 +1,7 @@
 """The PDP's ddtrace paths against the installed ddtrace (PER-17853).
 
-opal-common 0.9.6 caps ddtrace<4; the ``override-dependencies`` entry in pyproject.toml replaces
-that cap so the image gets the CVE-2026-50271 fix (4.8.2). Nothing else exercises these paths:
+opal-common 0.10.0rc2 requires ddtrace>=4.8.2 (the CVE-2026-50271 fix); 0.9.6 and 0.10.0rc1 capped it
+below 4. These tests check that the PDP and the OPAL code it runs work on 4.x. Nothing else exercises these paths:
 monitoring is off by default (``PDP_ENABLE_MONITORING``), so a ddtrace major that broke them
 would pass every other test.
 

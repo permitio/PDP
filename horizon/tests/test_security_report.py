@@ -318,11 +318,14 @@ def test_medium_findings_are_counted_but_not_alerted(run):
         ("libssl3", "alpine", "a release rebuild picks it up"),
         ("golang.org/x/net", "gobinary", "bump it in permit-opa"),
         ("stdlib", "gobinary", "needs the golang base-image digest bump"),
-        ("starlette", "python-pkg", "bump the exact pin in pyproject.toml"),
+        ("examplepkg", "python-pkg", "bump the exact pin in pyproject.toml"),
         ("httpx", "python-pkg", "update it in uv.lock"),
     ],
 )
 def test_trivy_remediation_names_who_acts(run, monkeypatch, pkg, result_type, hint):
+    # A synthetic `==` pin, so this test does not depend on which package the real pyproject.toml
+    # pins exactly (test_ci_scripts.py's test_exact_pins_reads_the_repo_pyproject covers that).
+    monkeypatch.setattr(report.classifier, "exact_pins", lambda *_a, **_k: {"examplepkg"})
     monkeypatch.setattr(report.classifier, "locked_versions", dict)
     vuln = _vuln("CVE-2026-0007", pkg=pkg)
     message, _, _ = run(trivy={"latest": _trivy(vuln, result_type=result_type)}, scout=_sarif(), alerts=[])
@@ -366,20 +369,23 @@ def test_a_python_finding_names_mains_locked_version_and_is_never_a_rebuild(run,
 @pytest.mark.parametrize(
     ("installed", "held"),
     [
-        pytest.param("0.49.0", False, id="pin-moved"),
-        pytest.param(_in_mains_lock("starlette"), True, id="pin-holds-the-image-version"),
+        pytest.param("2.3.0", False, id="pin-moved"),
+        pytest.param("2.4.0", True, id="pin-holds-the-image-version"),
     ],
 )
-def test_a_pinned_python_finding_names_mains_pinned_version(run, installed, held):
-    vuln = _vuln("CVE-2026-0011", pkg="starlette", installed=installed, fixed="0.49.1")
+def test_a_pinned_python_finding_names_mains_pinned_version(run, monkeypatch, installed, held):
+    # A synthetic package pinned ==2.4.0 in a synthetic lock: the real pyproject.toml's exact pins
+    # change as caps lift (starlette, ddtrace), and this test is about the report, not them.
+    monkeypatch.setattr(report.classifier, "exact_pins", lambda *_a, **_k: {"examplepkg"})
+    monkeypatch.setattr(report.classifier, "locked_versions", lambda *_a, **_k: {"examplepkg": {"2.4.0"}})
+    vuln = _vuln("CVE-2026-0011", pkg="examplepkg", installed=installed, fixed="2.4.1")
     message, _, _ = run(trivy={"latest": _trivy(vuln, result_type="python-pkg")}, scout=_sarif(), alerts=[])
     line = next(line for line in message.splitlines() if "CVE-2026-0011" in line)
-    starlette = _in_mains_lock("starlette")
     if held:
-        assert f"fix: 0.49.1, main's uv.lock still holds starlette {starlette}, the version Trivy flagged - " in line
+        assert "fix: 2.4.1, main's uv.lock still holds examplepkg 2.4.0, the version Trivy flagged - " in line
     else:
-        assert f"fix: 0.49.1, main's uv.lock has starlette {starlette} - cutting a release clears each " in line
-    assert "raise the `==` pin for starlette in pyproject.toml and run `uv lock`, then cut a release" in line
+        assert "fix: 2.4.1, main's uv.lock has examplepkg 2.4.0 - cutting a release clears each " in line
+    assert "raise the `==` pin for examplepkg in pyproject.toml and run `uv lock`, then cut a release" in line
 
 
 @pytest.mark.parametrize(

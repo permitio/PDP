@@ -1,15 +1,187 @@
 from __future__ import annotations
 
+import functools
+import types
+import typing
 from enum import StrEnum
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import AnyHttpUrl, BaseModel, Field
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializationInfo,
+    SerializerFunctionWrapHandler,
+    StringConstraints,
+    ValidationInfo,
+    WithJsonSchema,
+    field_serializer,
+    field_validator,
+)
+from pydantic.v1 import AnyHttpUrl as _V1AnyHttpUrl
+from pydantic.v1 import ValidationError as _V1ValidationError
+from pydantic.v1 import parse_obj_as as _v1_parse
 
 
-class BaseSchema(BaseModel):
-    class Config:
-        orm_mode = True
-        allow_population_by_field_name = True
+def _check_http_url(url: str) -> str:
+    # pydantic 1's own AnyHttpUrl, from the pydantic.v1 package pydantic 2 still ships, so
+    # /allowed_url accepts, rejects and rewrites exactly what it did on pydantic 1. As a spec for
+    # its replacement: it strips the string; rejects a backslash in the host (one in the path is
+    # kept), an empty host or port, and invalid host labels; IDNA-encodes only the host; and drops
+    # an empty `?`, `#`, user or password only when it rebuilds the URL, which it does for a
+    # domain host that is non-ASCII or has no TLD; an IPv4 or IPv6 host is never rebuilt
+    # (`http://svc/x#` -> `http://svc/x`, `http://u:@svc/x` -> `http://u@svc/x`, while
+    # `https://h.com/x#`, `https://u:@h.com/x` and `http://127.0.0.1/x#` are kept as given).
+    # pydantic 2's AnyHttpUrl parses WHATWG-style and repairs some of what pydantic 1 rejected,
+    # so the URL that passed would not be the one MappingRulesUtils matches. Compared input by
+    # input with pydantic 1.10.26 (test_pydantic2_compat.py). pydantic.v1 goes away in pydantic
+    # 3: replace this with an equivalent check before that.
+    try:
+        return str(_v1_parse(_V1AnyHttpUrl, url))
+    except _V1ValidationError as e:
+        raise ValueError(f"invalid URL: {e.errors()[0]['msg']}") from None
+
+
+# A str in the model and in the OPA input, documented as pydantic 1 documented it.
+HttpUrlStr = Annotated[
+    str,
+    AfterValidator(_check_http_url),
+    WithJsonSchema({"type": "string", "format": "uri", "minLength": 1, "maxLength": 65536}),
+]
+
+
+def _arms(annotation: Any) -> list[Any]:
+    """The types a field annotation accepts, with Optional/Union/Annotated unwrapped."""
+    origin = typing.get_origin(annotation)
+    if origin is Annotated:
+        return _arms(typing.get_args(annotation)[0])
+    if origin in (typing.Union, types.UnionType):
+        return [arm for arg in typing.get_args(annotation) for arm in _arms(arg)]
+    return [annotation]
+
+
+@functools.cache
+def _coercion_plan(annotation: Any) -> tuple[bool, bool, bool, bool, bool]:
+    """Which pydantic 1 coercions apply to a field, worked out once per annotation: (bool -> str,
+    fractional float -> int, list -> dict, bool values of a dict[..., str] -> str, bool items of a
+    list[str] -> str).
+
+    Item and value coercion reach one level only: a bare `list[str]` or `dict[..., str]` arm.
+    Known differences from pydantic 1:
+    - (no field has these shapes today) `list[str | None]`, `list[list[str]]` or
+      `dict[str, list[str]]` still answer 422 for a `true` item where pydantic 1 gave "True";
+      and the plan ignores arm order: where an earlier arm took the value as is, pydantic 1 kept
+      it (`dict | list[str]` ran dict() on a list of strings; `int | str` kept `true` as 1);
+    - (any dict field with str keys: attributes, context, metadata, Kong's querystring and
+      headers) bool keys are not coerced: `[[true, "x"]]` gave {"True": "x"} on pydantic 1 and
+      answers 422 here. Only a list of pairs can carry a bool key, so it is an unlikely input."""
+    arms = _arms(annotation)
+    plain = {arm for arm in arms if isinstance(arm, type)}
+    dicts = [arm for arm in arms if arm is dict or typing.get_origin(arm) is dict]
+    lists = [arm for arm in arms if typing.get_origin(arm) is list]
+    return (
+        str in plain and bool not in plain,
+        int in plain and float not in plain,
+        bool(dicts),
+        any(typing.get_args(arm)[1:] == (str,) for arm in dicts),
+        any(typing.get_args(arm) == (str,) for arm in lists),
+    )
+
+
+def _bool_in_str_field(value: Any, plan: tuple[bool, ...]) -> Any:
+    # pydantic 1 gave "True"/"False"; pydantic 2 answers 422.
+    return str(value) if plan[0] else value
+
+
+def _fractional_float_in_int_field(value: float, plan: tuple[bool, ...]) -> Any:
+    # pydantic 1 truncated; pydantic 2 rejects a fractional float for an int.
+    return int(value) if plan[1] and not value.is_integer() else value
+
+
+def _bools_in_str_list(value: list, plan: tuple[bool, ...]) -> list:
+    # A list[str] field: pydantic 1 coerced each item like a str field ([true] -> ["True"]).
+    return [str(v) if isinstance(v, bool) else v for v in value] if plan[4] else value
+
+
+def _list_in_dict_field(value: list, plan: tuple[bool, ...]) -> Any:
+    # pydantic 1 ran dict(value): [] -> {} (an empty map some JSON encoders write as an array) and
+    # a list of pairs -> a dict. Anything dict() refuses is left to fail. A list that is already a
+    # valid list[str] for a `list[str] | dict` field stays a list: pydantic 1 tried list[str] first,
+    # and dict() would turn ["xy"] into {"x": "y"}.
+    if not plan[2] or (plan[4] and all(isinstance(v, str) for v in value)):
+        return value
+    try:
+        # The resulting dict's values are coerced like a dict field's: [["flag", true]] for
+        # Kong's dict[str, str] querystring gave {"flag": "True"} on pydantic 1.
+        return _bools_in_str_dict(dict(value), plan)
+    except (TypeError, ValueError):
+        return value
+
+
+def _list_value(value: list, plan: tuple[bool, ...]) -> Any:
+    # Both steps, in pydantic 1's order; neither short-circuits the other.
+    return _list_in_dict_field(_bools_in_str_list(value, plan), plan)
+
+
+def _bools_in_str_dict(value: dict, plan: tuple[bool, ...]) -> Any:
+    # dict[..., str]: pydantic 1 coerced each value like a str field (Kong's querystring holds
+    # `true` for a flag parameter with no value).
+    return {k: str(v) if isinstance(v, bool) else v for k, v in value.items()} if plan[3] else value
+
+
+_COERCIONS: dict[type, Any] = {
+    bool: _bool_in_str_field,
+    float: _fractional_float_in_int_field,
+    list: _list_value,
+    dict: _bools_in_str_dict,
+}
+
+
+def _pydantic1_coercion(value: Any, annotation: Any) -> Any:
+    """What pydantic 1 accepted for a field and pydantic 2's lax mode does not."""
+    coerce = _COERCIONS.get(type(value))  # None for the common case: str, int, None
+    return value if coerce is None else coerce(value, _coercion_plan(annotation))
+
+
+def _drop_none(value: Any) -> Any:
+    # FastAPI's jsonable_encoder(exclude_none=True), which pydantic 1 responses went through:
+    # None-valued keys go from every dict, at any depth; list items are kept (and recursed into).
+    if isinstance(value, dict):
+        return {k: _drop_none(v) for k, v in value.items() if v is not None}
+    if isinstance(value, list):
+        return [_drop_none(v) for v in value]
+    return value
+
+
+class Pydantic1Compat(BaseModel):
+    """Keeps what callers and OPA saw from these models on pydantic 1 (PER-16197)."""
+
+    # coerce_numbers_to_str: pydantic 1 accepted a number for a str field ({"key": 1} -> "1");
+    # pydantic 2 rejects it with a 422 unless told otherwise. SDKs and integrations that send
+    # numeric user or resource keys keep working.
+    model_config = ConfigDict(coerce_numbers_to_str=True)
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _accept_what_pydantic1_accepted(cls, value: Any, info: ValidationInfo) -> Any:
+        # The rest of pydantic 1's coercions on the request and OPA-result models: see
+        # _pydantic1_coercion. Before-validators do not change the JSON schema.
+        if info.field_name is None:
+            return value
+        return _pydantic1_coercion(value, cls.model_fields[info.field_name].annotation)
+
+    @field_serializer("*", mode="wrap")
+    def _exclude_none_inside_dicts(self, value: Any, handler: SerializerFunctionWrapHandler, info: SerializationInfo):
+        # response_model_exclude_none used to drop nulls inside dict fields too (debug, query,
+        # attributes): FastAPI encoded pydantic 1 responses with jsonable_encoder. On pydantic 2 it
+        # serializes through pydantic, which drops only None model fields. PER-16197.
+        out = handler(value)
+        return _drop_none(out) if info.exclude_none and isinstance(out, dict | list) else out
+
+
+class BaseSchema(Pydantic1Compat):
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True, coerce_numbers_to_str=True)
 
 
 class User(BaseSchema):
@@ -64,7 +236,7 @@ class UrlAuthorizationQuery(BaseSchema):
 
     user: User
     http_method: str
-    url: AnyHttpUrl
+    url: HttpUrlStr
     tenant: str
     context: dict[str, Any] | None = Field(default_factory=dict)
     sdk: str | None = None
@@ -86,7 +258,7 @@ class UserPermissionsQuery(BaseSchema):
 class AuthorizationResult(BaseSchema):
     allow: bool = False
     query: dict | None = None
-    debug: dict | None
+    debug: dict | None = None
     result: bool = False  # fallback for older sdks (TODO: remove)
 
 
@@ -104,9 +276,11 @@ class _ResourceDetails(_TenantDetails):
 
 
 class _UserPermissionsResult(BaseSchema):
-    tenant: _TenantDetails | None
-    resource: _ResourceDetails | None
-    permissions: list[str] = Field(default_factory=list, regex="^.+:.+$")
+    tenant: _TenantDetails | None = None
+    resource: _ResourceDetails | None = None
+    # Per item, as pydantic 1 applied Field(regex=) on a list[str]. pydantic 2 cannot apply `pattern`
+    # to a list: it raises on every non-empty value.
+    permissions: list[Annotated[str, StringConstraints(pattern="^.+:.+$")]] = Field(default_factory=list)
     roles: list[str] | None = None
 
 
@@ -168,8 +342,8 @@ class AuthorizedUsersResult(BaseSchema):
             users={},
         )
 
-    class Config:
-        schema_extra = {  # noqa: RUF012
+    model_config = ConfigDict(
+        json_schema_extra={
             "examples": [
                 {
                     "resource": "repo:*",
@@ -207,6 +381,7 @@ class AuthorizedUsersResult(BaseSchema):
                 },
             ]
         }
+    )
 
 
 class AuthorizedUsersAuthorizationQuery(BaseSchema):
@@ -217,7 +392,7 @@ class AuthorizedUsersAuthorizationQuery(BaseSchema):
     action: str
     resource: Resource
     context: dict[str, Any] | None = Field(default_factory=dict)
-    sdk: str | None
+    sdk: str | None = None
 
     def __repr__(self) -> str:
         return f"({self.action}, {self.resource.type})"

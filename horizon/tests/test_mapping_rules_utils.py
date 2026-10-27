@@ -1,17 +1,19 @@
 """Which mapping rule /allowed_url picks for a request URL."""
 
 import pytest
-from pydantic import AnyHttpUrl, parse_obj_as
+from pydantic import TypeAdapter
 
-from horizon.enforcer.schemas import MappingRuleData, UrlTypes
+from horizon.enforcer.schemas import HttpUrlStr, MappingRuleData, UrlTypes
 from horizon.enforcer.utils.mapping_rules_utils import ConflictingQueryParameterError, MappingRulesUtils
+
+_URL = TypeAdapter(HttpUrlStr)
 
 BASE = "https://api.example.com/documents"
 
 
 def _matches(rule_url: str, request_url: str, url_type: UrlTypes = UrlTypes.DEFAULT) -> bool:
     rule = MappingRuleData(url=rule_url, http_method="get", resource="document", action="read", url_type=url_type)
-    url = parse_obj_as(AnyHttpUrl, request_url)  # what UrlAuthorizationQuery.url holds
+    url = _URL.validate_python(request_url)  # what UrlAuthorizationQuery.url holds
     return MappingRulesUtils.extract_mapping_rule_by_request([rule], "GET", url) is rule
 
 
@@ -130,7 +132,7 @@ def test_conflicting_values_do_not_fall_through_to_a_rule_that_ignores_the_param
     """Skipping only the rule on ?admin=true would hand the request to the catch-all rule, whatever
     value the app goes on to read."""
     rules = [_rule(BASE + "?admin=true", priority=10), _rule(BASE, priority=1)]
-    url = parse_obj_as(AnyHttpUrl, BASE + request_query)
+    url = _URL.validate_python(BASE + request_query)
 
     with pytest.raises(ConflictingQueryParameterError):
         MappingRulesUtils.extract_mapping_rule_by_request(rules, "GET", url)
@@ -158,7 +160,7 @@ def test_a_rule_without_conflicts_that_comes_first_decides_whatever_value_a_lowe
     rules: list[MappingRuleData], expected_rule: int
 ):
     """tag=x&tag=y could select the tag rule, but the id rule comes first under either reading."""
-    url = parse_obj_as(AnyHttpUrl, TAGGED_REQUEST)
+    url = _URL.validate_python(TAGGED_REQUEST)
 
     assert MappingRulesUtils.extract_mapping_rule_by_request(rules, "GET", url) is rules[expected_rule]
 
@@ -176,7 +178,7 @@ def test_a_rule_with_conflicting_values_that_comes_first_raises_over_a_rule_with
     rules: list[MappingRuleData],
 ):
     """Read as tag=x the tag rule wins, read as tag=y the id rule does: the reading decides."""
-    url = parse_obj_as(AnyHttpUrl, TAGGED_REQUEST)
+    url = _URL.validate_python(TAGGED_REQUEST)
 
     with pytest.raises(ConflictingQueryParameterError) as raised:
         MappingRulesUtils.extract_mapping_rule_by_request(rules, "GET", url)
@@ -185,7 +187,7 @@ def test_a_rule_with_conflicting_values_that_comes_first_raises_over_a_rule_with
 
 def test_conflicting_values_matter_only_for_rules_on_the_requested_path():
     rules = [_rule("https://api.example.com/other?id=1"), _rule(BASE)]
-    url = parse_obj_as(AnyHttpUrl, BASE + "?id=1&id=2")
+    url = _URL.validate_python(BASE + "?id=1&id=2")
 
     assert MappingRulesUtils.extract_mapping_rule_by_request(rules, "GET", url) is rules[1]
 
@@ -259,7 +261,7 @@ def test_a_regex_rule_with_conflicting_values_matters_only_when_it_comes_first(r
         ),
         _rule(ID_RULE.url, priority=10),
     ]
-    url = parse_obj_as(AnyHttpUrl, TAGGED_REQUEST)
+    url = _URL.validate_python(TAGGED_REQUEST)
 
     if conflict:
         with pytest.raises(ConflictingQueryParameterError):

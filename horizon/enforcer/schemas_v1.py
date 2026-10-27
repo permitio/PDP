@@ -1,13 +1,12 @@
 from typing import Any
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
 from horizon.enforcer.schemas import BaseSchema
 
 
 class BaseSchemaV1(BaseSchema):
-    class Config:
-        schema_extra = {"deprecated": True}  # noqa: RUF012
+    model_config = ConfigDict(json_schema_extra={"deprecated": True})
 
 
 class ResourceV1(BaseSchemaV1):

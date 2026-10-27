@@ -526,9 +526,9 @@ jobs:
           # Accept CVEs marked not_affected in the OpenVEX doc (see
           # .docker/scout/pdp-v2.vex.json) so the gate does not fail on
           # vulnerabilities whose code path the PDP never executes and for which
-          # no usable fix is available: starlette CVE-2026-48710 / CVE-2026-48817 /
-          # CVE-2026-48818 / CVE-2026-54283, all fixed only in starlette >=1.x, which
-          # OPAL's starlette<1 cap forbids.
+          # no usable fix is available. The doc holds no statements since PER-16197
+          # (the starlette waivers went with OPAL 0.10); it stays wired so the next
+          # waiver needs no workflow change.
           #
           # NOTE: this gate reads packages, so it does not flag the CPython interpreter
           # itself the way a CPE-based scanner does - CPython CVEs can pass this gate
@@ -889,13 +889,10 @@ jobs:
         with:
           fail-on-severity: high
           show-patched-versions: true
-          # The four CVEs waived in .trivyignore.yaml and .docker/scout/pdp-v2.vex.json,
-          # by GHSA id (this action does not read either file). Without this, a PR that
-          # touches the starlette pin fails here on CVEs every other gate treats as
-          # waived. Keep in step with those two files.
-          allow-ghsas: >-
-            GHSA-wqp7-x3pw-xc5r, GHSA-82w8-qh3p-5jfq, GHSA-86qp-5c8j-p5mr,
-            GHSA-x746-7m8f-x49c
+          # No allow-ghsas: nothing is waived in .trivyignore.yaml or
+          # .docker/scout/pdp-v2.vex.json since PER-16197. This action reads neither file,
+          # so a waiver added there needs its GHSA id here too (`allow-ghsas:`), or a PR
+          # that touches the package fails here on a CVE every other gate treats as waived.
           # This action posts its own sticky comment under its own marker, so it needs
           # none of the github-script plumbing the image report above does. `on-failure`
           # keeps a clean PR silent. `never` on fork and Dependabot PRs, where

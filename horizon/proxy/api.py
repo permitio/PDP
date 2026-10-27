@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from opal_client.config import OpalClientConfig, opal_client_config
 from opal_client.utils import proxy_response
 from opal_common.logger import logger
-from pydantic import BaseModel, Field, parse_obj_as
+from pydantic import BaseModel, Field, TypeAdapter
 
 from horizon.config import sidecar_config
 
@@ -60,7 +60,7 @@ async def patch_handler(response: Response) -> Response:
     try:
         store = OpalClientConfig.load_policy_store()
 
-        patch = parse_obj_as(list[JSONPatchAction], patch_json)
+        patch = TypeAdapter(list[JSONPatchAction]).validate_python(patch_json)
         await store.patch_data("", patch)
     except Exception as ex:  # noqa: BLE001 - the backend write already succeeded; a failed local patch must not 500
         logger.exception("Failed to update OPAL store with: {err}", err=ex)

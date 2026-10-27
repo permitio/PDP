@@ -383,7 +383,7 @@ COPY kong_routes.json /config/kong_routes.json
 # does.
 #
 # check_aiofiles_override.py and check_trust_store.py are bind-mounted, so they never ship,
-# and run last: the first fails the build if opal-client leaves 0.9.6 or the real
+# and run last: the first fails the build if opal-client leaves the version it expects or the real
 # backup_store() stops working here, the second if certifi's bundle or the system trust store
 # (from the apk layer above) still trusts the compromised eMudhra roots (PER-17672).
 RUN --mount=type=cache,target=/root/.cache/uv \

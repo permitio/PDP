@@ -265,8 +265,9 @@ def test_quiet_summary_reports_the_waived_count_so_silence_is_explainable():
 
 
 def test_waived_ids_come_from_the_real_trivyignore():
+    # The real list is empty since PER-16197, so this checks only that it parses; the filter is
+    # exercised against a waiver by the CLI test below.
     ids = watch.waived_cve_ids()
-    assert ids, ".trivyignore.yaml produced no waivers; the alert filter would be inert."
     assert all(i.startswith(("CVE-", "GHSA-")) for i in ids)
 
 
@@ -301,11 +302,25 @@ def test_cli_lists_an_unwaived_alert(tmp_path):
     assert "#77 HIGH starlette CVE-2026-90001" in result.stdout
 
 
-def test_cli_suppresses_an_alert_waived_in_the_real_trivyignore(tmp_path):
-    waived_id = min(watch.waived_cve_ids())
+def test_cli_suppresses_an_alert_waived_in_the_repo_trivyignore(tmp_path):
+    # The script reads the .trivyignore.yaml two levels above itself. The real one is empty since
+    # PER-16197, so the CLI runs from a copy of the layout whose waiver file holds one entry.
+    scripts = tmp_path / ".github" / "scripts"
+    scripts.mkdir(parents=True)
+    for name in ("check_dependabot_alerts.py", "check_waiver_parity.py"):
+        (scripts / name).write_text((SCRIPT.parent / name).read_text(encoding="utf-8"), encoding="utf-8")
+    waived_id = "CVE-2026-0078"
+    (tmp_path / ".trivyignore.yaml").write_text(
+        f"vulnerabilities:\n  - id: {waived_id}\n    expired_at: 2099-01-01\n", encoding="utf-8"
+    )
     feed = tmp_path / "alerts.json"
     feed.write_text(json.dumps([_raw(number=78, cve=waived_id)]), encoding="utf-8")
-    result = _run(["--alerts", str(feed), "--all"])
+    result = subprocess.run(
+        [sys.executable, str(scripts / "check_dependabot_alerts.py"), "--alerts", str(feed), "--all"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     assert result.returncode == 0, result.stderr
     assert "#78" not in result.stdout
     assert "0 unwaived open alert(s); 1 already waived in .trivyignore.yaml." in result.stdout

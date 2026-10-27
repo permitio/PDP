@@ -45,7 +45,7 @@ Error Handling and Validation
 
 Dependencies
 - FastAPI
-- Pydantic v1
+- Pydantic v2
 - OPAL client for policy and data updates
 - loguru for structured logging
 - aiohttp or httpx for asynchronous HTTP requests
