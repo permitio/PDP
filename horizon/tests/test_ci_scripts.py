@@ -826,9 +826,11 @@ def test_exact_pins_reads_dependencies_and_uv_overrides(tmp_path):
         "[dependency-groups]\n"
         'dev = ["pytest==8.0.0"]\n'
         "[tool.uv]\n"
-        'override-dependencies = ["aiofiles==24.1.0"]\n',
+        'override-dependencies = ["aiofiles==24.1.0",\n'
+        '  { package = { name = "opal-common", version = "0.9.6" }, dependencies = ["wrapt==2.0.0", "x>=1"] },\n'
+        "]\n",
     )
-    assert classifier.exact_pins(pyproject) == {"starlette", "ddtrace", "aiofiles"}
+    assert classifier.exact_pins(pyproject) == {"starlette", "ddtrace", "aiofiles", "wrapt"}
 
 
 def test_exact_pins_reads_the_repo_pyproject():
