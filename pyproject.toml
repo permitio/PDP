@@ -55,7 +55,7 @@ dependencies = [
     # pub/sub path: during #329 a rebuild would have taken a new major hours after validation. 17.0
     # is the version pdp-tester validated. Bump it deliberately and let pdp-tester run on the
     # result - a lock refresh must not pick a major on its own. See PER-15358.
-    "websockets==17.0",
+    "websockets==17.3",
     # OPAL's pub/sub transport. horizon/facts/update_subscriber.py imports exception classes from
     # both, to tell a facts update the PDP could not publish from a bug, so they are declared here
     # rather than left to opal-client. OPAL 0.9.6 only bounds them (<2 and <1); pinned exactly at
@@ -103,7 +103,7 @@ dev = [
     # lock refresh must not turn the required `pre-commit` check red on its own. Dependabot
     # still proposes each bump, in its own `ty` group (.github/dependabot.yml) so a release
     # that reports new diagnostics fails only that PR; fix what it reports there.
-    "ty==0.0.84",
+    "ty==0.0.90",
 ]
 
 [tool.uv]
