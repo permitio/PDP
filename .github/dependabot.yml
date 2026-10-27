@@ -46,7 +46,8 @@ updates:
       # starlette, pydantic and scalar-fastapi used to be listed here: opal-common/opal-client
       # 0.9.6 capped starlette<1 and pydantic<2 (and scalar-fastapi 1.9.0+ needs pydantic 2).
       # The PDP is on OPAL 0.10 now, which lifts both caps (PER-16197).
-      # tenacity is still capped <9 by opal-common/opal-client 0.10.
+      # tenacity is still capped <9 by opal-common/opal-client 0.10. Drop this once the OPAL
+      # release the PDP pins allows tenacity 9.
       - dependency-name: "tenacity"
         versions: [">=9"]
       # fastapi 0.137.0 stopped flattening included routers into app.router.routes, which the
