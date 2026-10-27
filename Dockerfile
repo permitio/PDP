@@ -261,7 +261,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # only PR a 3.14 move nobody could merge (#391, #392). .github/dependabot.yml now ignores
 # python minor and major updates, so what it proposes is the next 3.13 patch. Whether the
 # cooldown still holds that back when upstream rebuilds the patch tag in place is untested:
-# do not rely on Dependabot alone for interpreter CVEs. Only a CPE-based scanner (Grype, Wiz)
+# do not rely on Dependabot alone for interpreter CVEs. Only a CPE-based scanner (Grype, for example)
 # reports them; Scout and Trivy do not (see the NOTE in tests.yml).
 #
 # Python 3.10 also reaches end of life in October 2026, so this move was due regardless.
