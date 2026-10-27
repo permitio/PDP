@@ -27,7 +27,7 @@ absorb. Two more cases a plain rebuild cannot fix, because the Dockerfile pins t
     themselves, so a version at or above it can still be vulnerable: a range left open with
     no fix, or a regression on a later line. A fixed Python package is therefore owner
     'lock' (Dependabot's `uv` PR, or `uv lock --upgrade-package NAME`), or 'pinned' when
-    pyproject.toml pins it with `==` (e.g. starlette, ddtrace, websockets) and the pin has
+    pyproject.toml pins it with `==` (e.g. starlette, websockets) and the pin has
     to move first - never 'rebuild'. The one call it does make compares the lock with the
     image, not with FixedVersion: when main's lock still holds the very version Trivy
     flagged, a release reinstalls it, so the finding certainly needs the lock (or the pin)

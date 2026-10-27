@@ -198,7 +198,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # MAIN IMAGE ----------------------------------------
 # Main image setup (optimized)
 # ---------------------------------------------------
-# Python 3.13 (>= 3.13.14) on Alpine 3.23. Moved off python:3.10-alpine3.22 to clear four
+# Python 3.13 (>= 3.13.18 since PER-17853; see the floor in the apk layer) on Alpine 3.23. Moved off python:3.10-alpine3.22 to clear four
 # CPython CVEs that CPE-based scanners raise against the 3.10 interpreter (PER-15358):
 #   CVE-2026-6019  (http.cookies Morsel.js_output escaping) - fixed in 3.13.14
 #   CVE-2026-7210  (expat hash-flooding entropy)            - fixed in 3.13.14 AND needs
@@ -212,12 +212,14 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # CVE-2026-15308 (html.parser CPU-exhaustion DoS) is now cleared too: it was waived here as
 # unreachable while it was patched only in 3.15.0b4, but CPython backported the fix and it
 # landed in 3.13.15 (also 3.14.7), so the waiver has been REMOVED from
-# .docker/scout/pdp-v2.vex.json. The floor is now 3.13.16 / 3.14.8: CVE-2026-19445 (critical,
-# SSL sni_callback use-after-free) and nine more are fixed there (PER-17853), and the base
-# below carries 3.13.18.
-# Do not drop below the patched floor for whichever branch the base resolves to: 3.13.16 on
-# the 3.13 line, 3.14.8 on 3.14. The apk layer below enforces exactly that, per branch -
-# a flat `>= (3,13,16)` would have passed 3.14.0 through 3.14.7, which still lack the fixes.
+# .docker/scout/pdp-v2.vex.json. The floor is now 3.13.18 / 3.14.10 (PER-17853):
+# CVE-2026-19445 (critical, SSL sni_callback use-after-free) and nine more are fixed in
+# 3.13.16 / 3.14.8, and CVE-2026-114583 (http.cookiejar), CVE-2026-115557 (tarfile
+# tar_filter) and CVE-2026-12345 (tempfile.TemporaryDirectory cleanup) in 3.13.18 / 3.14.10.
+# Do not drop below the patched floor for whichever branch the base resolves to. The apk
+# layer below enforces exactly that, per branch - a flat `>= (3,13,18)` would pass 3.14.0
+# through 3.14.9, which still lack the fixes. Scout and Trivy do not report interpreter
+# CVEs, so this check is what stops a digest rollback to an older 3.13 build.
 #
 # Removing the CVE-2026-15308 waiver is NOT what enforces it. Scout indexes the interpreter
 # - `docker scout sbom` reports `pkg:generic/python@3.13.15` for this base - but it does not
@@ -253,16 +255,17 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # 3.13.18 - because "a rebuild will pick it up" only holds if something rebuilds. See the
 # pinning note below.
 #
-# The tag names the patch version (3.13.18-alpine3.23, not 3.13-alpine3.23) since PER-17853,
-# so a CPython release changes the tag, not just the digest. Dependabot never bumped the
-# 3.13.15 digest while the interpreter collected ten CVEs (CVE-2026-19445 among them). Two
-# things kept it away: the 7-day cooldown (the floating tag got a new digest more often than
-# weekly) and the updater's preference for the highest tag of the same shape, which made its
-# only PR a 3.14 move nobody could merge (#391, #392). .github/dependabot.yml now ignores
-# python minor and major updates, so what it proposes is the next 3.13 patch. Whether the
-# cooldown still holds that back when upstream rebuilds the patch tag in place is untested:
-# do not rely on Dependabot alone for interpreter CVEs. Only a CPE-based scanner (Grype, for example)
-# reports them; Scout and Trivy do not (see the NOTE in tests.yml).
+# The tag names the patch version (3.13.18-alpine3.23, not 3.13-alpine3.23) since PER-17853.
+# Dependabot never bumped the 3.13.15 digest while the interpreter collected ten CVEs
+# (CVE-2026-19445 among them): the updater offers the highest tag of the same shape, so its
+# only python PRs were 3.14 moves nobody could merge (#391, #392), and the 7-day cooldown -
+# which dates every candidate tag, and digest-only refreshes, by Docker Hub's last push -
+# restarts whenever upstream re-pushes a tag in place, which it does for patch tags too.
+# What changes the outcome is .github/dependabot.yml's ignore of python minor and major
+# updates: the next 3.13 patch is now a candidate. The cooldown still applies to it, so do
+# not rely on Dependabot alone for interpreter CVEs. Only a CPE-based scanner (Grype, for
+# example) reports them; Scout and Trivy do not (see the NOTE in tests.yml). The floor in the
+# apk layer below is the build-time check.
 #
 # Python 3.10 also reaches end of life in October 2026, so this move was due regardless.
 # Base images are pinned by DIGEST, and Dependabot's docker ecosystem
@@ -343,7 +346,7 @@ RUN --mount=type=cache,target=/var/cache/apk \
     apk add --no-cache --virtual .python-rundeps-nosqlite \
         $(apk info -qR .python-rundeps | grep '^so:' | grep -v 'libsqlite3') && \
     apk del .python-rundeps sqlite-libs && \
-    python3 -c "import sys, _ssl, _hashlib, _decimal, zlib, _lzma, _bz2, _ctypes, pyexpat, _uuid; v = sys.version_info[:3]; v >= {13: (3, 13, 16), 14: (3, 14, 8)}.get(v[1], (3, 15, 0)) or sys.exit('CPython %s is below the patched floor for its branch' % sys.version)"
+    python3 -c "import sys, _ssl, _hashlib, _decimal, zlib, _lzma, _bz2, _ctypes, pyexpat, _uuid; v = sys.version_info[:3]; v >= {13: (3, 13, 18), 14: (3, 14, 10)}.get(v[1], (3, 15, 0)) or sys.exit('CPython %s is below the patched floor for its branch' % sys.version)"
 
 
 # Copy OPA binary from the build stage
@@ -369,7 +372,8 @@ COPY kong_routes.json /config/kong_routes.json
 #
 # uv comes from the `uv` stage and pyproject.toml/uv.lock are bind-mounted, so none of them
 # ship. `uv export` writes the exact, hash-pinned set for this platform - including the
-# [tool.uv] override that lifts opal-client's aiofiles<1 cap (PER-16234) - and `--no-deps`
+# [tool.uv] overrides that lift opal-client's aiofiles<1 cap (PER-16234) and opal-common's
+# ddtrace<4 cap (PER-17853) - and `--no-deps`
 # installs exactly that set. `--compile-bytecode` precompiles .pyc as pip did: the runtime user
 # cannot write to site-packages, so without it every start would recompile. Nothing here
 # resolves: a dependency only changes when uv.lock does.

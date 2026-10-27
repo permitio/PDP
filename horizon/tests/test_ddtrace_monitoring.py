@@ -42,24 +42,36 @@ def _run(code: str) -> subprocess.CompletedProcess:
 
 
 def test_monitoring_setup_runs_without_ddtrace_warnings():
-    """horizon's ``_configure_monitoring`` and OPAL's ``configure_apm`` (what opal-client runs when
-    ``OPAL_ENABLE_DATADOG_APM`` is on) both work on the installed ddtrace. A removal is announced as
-    a deprecation one major ahead, so any ddtrace warning fails too."""
+    """The ddtrace code the PDP runs works on the installed ddtrace:
+
+    - OPAL's: opal_common.logger imports opal_common.monitoring.apm in every process (``patch``,
+      ``tracer``, ``TraceFilter``), configure_logs calls ``fix_ddtrace_logging``, and the topic
+      publisher wraps each publish in ``tracer.trace``. opal-client never calls ``configure_apm``
+      (only opal-server does), so OPAL_ENABLE_DATADOG_APM does nothing in the PDP.
+    - horizon's ``_configure_monitoring`` (``patch(fastapi=True)`` and ``config.fastapi``), run
+      when monitoring is on. A FastAPI app built after it must be patched and serve a request.
+
+    A removal is announced as a deprecation one major ahead, so any DDTraceDeprecationWarning fails
+    too. Filtered by category: ddtrace warns with a stacklevel, so the filename is the caller's."""
     result = _run(
         """
         import warnings
         warnings.simplefilter("always")
+        from ddtrace import DDTraceDeprecationWarning
         with warnings.catch_warnings(record=True) as caught:
+            from opal_common.logger import configure_logs
+            configure_logs()
+            from ddtrace import tracer
+            with tracer.trace("topic_publisher.publish", resource="['policy_data']"):
+                pass
             from horizon.pdp import PermitPDP
             PermitPDP._configure_monitoring(object())  # self is unused
-            from opal_common.monitoring.apm import configure_apm, fix_ddtrace_logging
-            configure_apm(True, "opal-client")
-            fix_ddtrace_logging()
-        from ddtrace import config
-        assert config.fastapi["service_name"] == "permit-pdp", config.fastapi["service_name"]
-        # By category: ddtrace warns with a stacklevel, so the filename is the caller's (OPAL's or
-        # horizon's), and the message need not name ddtrace.
-        from ddtrace import DDTraceDeprecationWarning
+            import fastapi
+            from fastapi.testclient import TestClient
+            app = fastapi.FastAPI()
+            app.get("/probe")(lambda: {"ok": True})
+            assert TestClient(app).get("/probe").json() == {"ok": True}
+        assert getattr(fastapi, "_datadog_patch", False), "patch(fastapi=True) did not patch FastAPI"
         ours = [str(w.message) for w in caught if issubclass(w.category, DDTraceDeprecationWarning)]
         assert not ours, ours
         """
