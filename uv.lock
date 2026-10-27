@@ -3,10 +3,7 @@ revision = 5
 requires-python = "==3.13.*"
 
 [manifest]
-overrides = [
-    { package = { name = "opal-common", version = "0.10.0rc1" }, dependencies = [{ name = "ddtrace", specifier = ">=4.8.2,<5" }] },
-    { name = "aiofiles", specifier = "==24.1.0" },
-]
+overrides = [{ name = "aiofiles", specifier = "==24.1.0" }]
 
 [[package]]
 name = "aiofiles"
@@ -769,7 +766,7 @@ wheels = [
 
 [[package]]
 name = "opal-client"
-version = "0.10.0rc1"
+version = "0.10.0rc2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -792,14 +789,14 @@ dependencies = [
     { name = "uvicorn", extra = ["standard"] },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/bf/08/b9c8e858b09f15c95e82863c93a7fe3c5859fd1a5a3dcf6479f8a9be51b5/opal_client-0.10.0rc1.tar.gz", hash = "sha256:d30bf4c7d36d1d5ede0809b860a08d6e7a1e83d7dbb85e1a772b93ef055672d2", size = 80035, upload-time = "2026-09-23T07:21:10.533Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/98/8b/b95601ec59f1fe5331a82ec7376bc83ae55c53ad4c792dacd9f65219dcee/opal_client-0.10.0rc2.tar.gz", hash = "sha256:475a9e39b7b08f48d73ce49cad10df18906823ed2a939200b0d36cacee2ba0d2", size = 88597, upload-time = "2026-10-27T20:48:29.959Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9e/e5/a0be1dfa5d0411f5907af7505de5b311950c8ad2a9a184ec0023f2a98daa/opal_client-0.10.0rc1-py3-none-any.whl", hash = "sha256:ad2b1776f047605b3383c6b77fedfb1f797fce4f70f4c7bbd96b460c643daba9", size = 92731, upload-time = "2026-09-23T07:21:09.372Z" },
+    { url = "https://files.pythonhosted.org/packages/c2/17/02136c6f0e222042b344405bb43214746a4156883827273fd51d67981fb4/opal_client-0.10.0rc2-py3-none-any.whl", hash = "sha256:a3c4da9e2bbaaa9a368e6c801fae31c833588c4c9d9fd0d4ca795c65eb5be101", size = 104307, upload-time = "2026-10-27T20:48:28.615Z" },
 ]
 
 [[package]]
 name = "opal-common"
-version = "0.10.0rc1"
+version = "0.10.0rc2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -829,9 +826,9 @@ dependencies = [
     { name = "uvicorn", extra = ["standard"] },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a0/0f/76c9c37c50e3aee7e0cbb98bb0b7929351a3c67d12c2708985b2500d35c9/opal_common-0.10.0rc1.tar.gz", hash = "sha256:9176c6726fe1db48468813a8d5fcdb08f77cb211645a2c0c7ff04e0d55874485", size = 134657, upload-time = "2026-09-23T07:21:06.496Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/10/44/1e101faffa0085a1379bad33ceab266bbaaf4e33cdf1fcffdb5714e456d9/opal_common-0.10.0rc2.tar.gz", hash = "sha256:82a77aad6d690729f5f5f50b86ac41ad0f1dbefde373dce5bba992d3a9168c76", size = 162813, upload-time = "2026-10-27T20:48:24.851Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/17/e5/ed21e0a509eefa64df0d5c3ab31bdbf847f53ae981ca4dbf588a95c7ec92/opal_common-0.10.0rc1-py3-none-any.whl", hash = "sha256:57f99042d5f9cb7b0f96d9a9086186e4fc94febabe807a25a808fab3a55aa07b", size = 167058, upload-time = "2026-09-23T07:21:05.053Z" },
+    { url = "https://files.pythonhosted.org/packages/8a/35/ed5d82fcaa81bbd05174fe2520dfaf95d4f5b2553f229766def33807bf06/opal_common-0.10.0rc2-py3-none-any.whl", hash = "sha256:7255d86e00dec4c4b3f556cdc2cd7a32603c8ab701d37478674d1fdc551ca0c9", size = 201714, upload-time = "2026-10-27T20:48:23.294Z" },
 ]
 
 [[package]]
@@ -888,7 +885,6 @@ dependencies = [
     { name = "fastapi" },
     { name = "fastapi-websocket-pubsub" },
     { name = "fastapi-websocket-rpc" },
-    { name = "gitpython" },
     { name = "gunicorn" },
     { name = "httpx" },
     { name = "jinja2" },
@@ -928,13 +924,12 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.135.0,<0.137" },
     { name = "fastapi-websocket-pubsub", specifier = "==1.0.1" },
     { name = "fastapi-websocket-rpc", specifier = "==0.1.29" },
-    { name = "gitpython", specifier = ">=3.2.1,<4" },
     { name = "gunicorn", specifier = ">=23.0.0,<24" },
     { name = "httpx", specifier = ">=0.27.0,<1" },
     { name = "jinja2", specifier = ">=3.1.2,<4" },
     { name = "logzio-python-handler" },
-    { name = "opal-client", specifier = "==0.10.0rc1" },
-    { name = "opal-common", specifier = "==0.10.0rc1" },
+    { name = "opal-client", specifier = "==0.10.0rc2" },
+    { name = "opal-common", specifier = "==0.10.0rc2" },
     { name = "opentelemetry-api", specifier = ">=1.45.1" },
     { name = "protobuf", specifier = ">=7.36.2" },
     { name = "pydantic", extras = ["email"], specifier = ">=2.9.0,<3" },

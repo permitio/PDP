@@ -24,7 +24,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-EXPECTED_OPAL_CLIENT = "0.10.0rc1"
+EXPECTED_OPAL_CLIENT = "0.10.0rc2"
 EXPORT = {"policies": {}, "data": {}}
 
 

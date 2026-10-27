@@ -1,6 +1,6 @@
 """Unit tests for OPAL's offline-mode ``OpalClient.backup_store()`` (PER-16234, permitio/PDP#340).
 
-On CPython >= 3.12 the only aiofiles that opal-client admits (0.8.0; 0.9.6 and 0.10.0rc1 alike) breaks
+On CPython >= 3.12 the only aiofiles that opal-client admits (0.8.0; 0.9.6, 0.10.0rc1 and 0.10.0rc2 alike) breaks
 ``backup_store()``, and the ``override-dependencies`` entry in pyproject.toml installs a working one - see
 its note. These tests run OPAL's real ``backup_store()``, so on CPython >= 3.12 they fail if the
 override is missing.
