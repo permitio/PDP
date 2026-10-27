@@ -20,6 +20,8 @@ from horizon.enforcer.schemas import (
     MappingRuleData,
     UrlAuthorizationQuery,
     UserPermissionsQuery,
+    _coercion_plan,
+    _list_value,
     _UserPermissionsResult,
 )
 from horizon.enforcer.schemas_kong import KongAuthorizationInput
@@ -88,8 +90,6 @@ def test_request_bodies_pydantic1_accepted_are_still_accepted(body, check):
 def test_list_coercion_steps_do_not_short_circuit():
     """A list[str] | dict field: bool items still become strings, a list of pairs still becomes a
     dict, and a valid list of strings stays a list (dict() would turn ["xy"] into {"x": "y"})."""
-    from horizon.enforcer.schemas import _coercion_plan, _list_value
-
     plan = _coercion_plan(list[str] | dict[str, str])
     assert _list_value([True, "a"], plan) == ["True", "a"]
     assert _list_value([["a", "b"]], plan) == {"a": "b"}
