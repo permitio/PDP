@@ -27,6 +27,13 @@ on:
       # out of actionlint's "not defined in object type" list.
       SLACK_WEBHOOK_URL:
         required: false
+      # The `pdp-tester-key-modes` job's keys: a project-level and an organization-level
+      # staging key, both WRITE. `required: false`: release.yml does not pass them yet, and
+      # without them that job is a green no-op that says so in a ::notice::.
+      PDP_TESTER_PROJECT_API_KEY:
+        required: false
+      PDP_TESTER_ORG_API_KEY:
+        required: false
       # No Docker Hub secret is declared: the docker-scout job logs in through OIDC, so a
       # caller must instead grant `id-token: write` to the job that calls this workflow - a
       # called workflow cannot exceed its caller's permissions, and without it the Docker
@@ -403,6 +410,165 @@ jobs:
             echo "--- ${name} ---"
             docker logs --tail 200 "$name" 2>&1 || true
           done
+
+  # The same image, with the PDP authenticating by a project key (PDP_PROJECT_API_KEY with
+  # PDP_ACTIVE_ENV) or an organization key (PDP_ORG_API_KEY with PDP_ACTIVE_PROJECT and
+  # PDP_ACTIVE_ENV) instead of an environment key, so it derives the environment's key
+  # from the control plane itself. Each leg runs pdp-tester on a temporary environment
+  # that pdp-tester creates with the project key at startup and deletes when it ends, so
+  # the legs share no data with each other, with other runs or with `pdp-tester` above.
+  #
+  # Not a required check. Without its secrets - fork PRs, Dependabot runs (unless the
+  # Dependabot store has them too) and release.yml, which does not pass them - each leg
+  # is a green no-op that says so in a ::notice::.
+  pdp-tester-key-modes:
+    name: pdp-tester-key-modes (${{ matrix.mode }})
+    runs-on: ubuntu-24.04
+    needs: build-pdp-image
+    # No GITHUB_TOKEN use at all: the artifact comes with the run's own token, and the
+    # pdp-tester clone with a token minted from the clone App.
+    permissions: {}
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [project, org]
+    # Not `pdp-tester-staging`: these runs write only to their own environments, so they
+    # need no queue across the repository. A newer push to the same PR cancels the older
+    # run; its cleanup step still runs.
+    concurrency:
+      group: pdp-tester-key-modes-${{ github.ref }}-${{ matrix.mode }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    # `pdp-tester`'s 15 minutes, plus the schema generation a new environment needs.
+    timeout-minutes: 20
+    env:
+      API_URL: https://permitio.api.stg.permit.io
+      # Part of the temporary environment's key, and per leg, so that one leg's cleanup
+      # cannot delete the other leg's environment.
+      TEMP_ENV_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.mode }}
+    steps:
+      - name: Check the key-mode secrets are available
+        id: secrets
+        env:
+          HAS_PROJECT_KEY: ${{ secrets.PDP_TESTER_PROJECT_API_KEY != '' }}
+          HAS_ORG_KEY: ${{ secrets.PDP_TESTER_ORG_API_KEY != '' }}
+          MODE: ${{ matrix.mode }}
+        run: |
+          if [ "$HAS_PROJECT_KEY" != "true" ] || { [ "$MODE" = "org" ] && [ "$HAS_ORG_KEY" != "true" ]; }; then
+            echo "::notice::Skipping the ${MODE}-key PDP test: PDP_TESTER_PROJECT_API_KEY" \
+                 "(and, for org, PDP_TESTER_ORG_API_KEY) is not available to this run - not" \
+                 "set yet, a fork PR, a Dependabot run without them in the Dependabot store," \
+                 "or a release.yml call, which does not pass them."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download Docker image artifact
+        if: steps.secrets.outputs.ready == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        env:
+          # See the same step in `pdp-tester`.
+          NODE_OPTIONS: --disable-warning=DEP0005
+        with:
+          name: pdp-image
+
+      - name: Load Docker image
+        if: steps.secrets.outputs.ready == 'true'
+        run: docker load -i pdp-image.tar
+
+      - name: Mint a read-only token for permitio/pdp-tester
+        if: steps.secrets.outputs.ready == 'true'
+        id: pdp-tester-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.CLONE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CLONE_APP_PRIVATE_KEY }}
+          owner: permitio
+          repositories: pdp-tester
+          permission-contents: read
+
+      # Pinned, unlike `pdp-tester`'s checkout of main: this job hands pdp-tester a
+      # project key and an organization key, both WRITE. To bump it, pick a pdp-tester
+      # commit on main and put its full SHA here.
+      - name: Checkout pdp-tester repository
+        if: steps.secrets.outputs.ready == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          repository: "permitio/pdp-tester"
+          ref: 5a9b758feb8af9e63da9504c9ffde70c02f6acec  # permitio/pdp-tester#163 head; move to its merge commit on main
+          token: ${{ steps.pdp-tester-token.outputs.token }}
+          path: './pdp-tester'
+          persist-credentials: false
+
+      - name: Set up Python
+        if: steps.secrets.outputs.ready == 'true'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        if: steps.secrets.outputs.ready == 'true'
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: '0.12.19'
+          enable-cache: false
+
+      - name: Install pdp-tester (docker extra)
+        if: steps.secrets.outputs.ready == 'true'
+        id: install
+        working-directory: ./pdp-tester
+        run: uv pip install --system --editable ".[docker]"
+
+      - name: Run PDP tester in ${{ matrix.mode }}-key mode on a temporary environment
+        if: steps.secrets.outputs.ready == 'true'
+        working-directory: ./pdp-tester
+        env:
+          PDP_AUTH_MODE: ${{ matrix.mode }}
+          TEMP_ENV: "true"
+          PROJECT_API_KEY: ${{ secrets.PDP_TESTER_PROJECT_API_KEY }}
+          # Only the org leg is handed the organization key.
+          ORG_API_KEY: ${{ matrix.mode == 'org' && secrets.PDP_TESTER_ORG_API_KEY || '' }}
+          LOCAL_IMAGE: permitio/pdp-v2
+          START_TIMEOUT: "180"
+          AUTO_REMOVE: "false"
+          # The cases `pdp-tester` runs. policy.* could write freely to a private
+          # environment, but this job is about how the PDP authenticates.
+          EXCLUDE_TESTS: '["policy.*"]'
+        # `exec`, so that a cancel's SIGINT reaches pdp-tester itself, which then deletes
+        # the environment. Its output is not piped into a file: pdp-tester masks the
+        # environment's API key with an `::add-mask::` line on stdout, which carries it.
+        # pdp-tester exits non-zero when any case fails.
+        run: exec python -m pdp_tester --docker --local --tag next
+
+      # In these modes the PDP logs none of the keys (checked locally: the project, org
+      # and derived environment keys, raw, bare and base64, appear nowhere in its log). The
+      # two secrets and the environment key, which pdp-tester registers with
+      # `::add-mask::`, are masked in this job's log in any case.
+      - name: Capture PDP container state and logs
+        if: always() && steps.secrets.outputs.ready == 'true'
+        run: |
+          filter="label=pdp-tester.permit.io/managed-by=pdp-tester"
+          echo "=== PDP containers (all states) ==="
+          docker ps -a --filter "$filter" --format '{{.Names}}\t{{.Status}}' || true
+          echo ""
+          echo "=== PDP container logs ==="
+          for name in $(docker ps -a --filter "$filter" --format '{{.Names}}'); do
+            echo "--- ${name} ---"
+            docker logs --tail 200 "$name" 2>&1 || true
+          done
+
+      # pdp-tester deletes its environment however the run ends, unless it is killed
+      # outright (a runner lost mid-run). This deletes what such a run left: this leg's
+      # environments whatever their age, then any temporary environment in the project
+      # older than 6 hours - far longer than a run takes, so never another run's.
+      - name: Delete leftover temporary environments
+        if: always() && steps.install.outcome == 'success'
+        working-directory: ./pdp-tester
+        env:
+          PROJECT_API_KEY: ${{ secrets.PDP_TESTER_PROJECT_API_KEY }}
+        run: |
+          python -m pdp_tester.sweep_temp_envs --run-id "$TEMP_ENV_RUN_ID" --older-than 0s
+          python -m pdp_tester.sweep_temp_envs --older-than 6h
 
   docker-scout:
     runs-on: ubuntu-24.04
