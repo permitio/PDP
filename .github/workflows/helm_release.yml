@@ -4,14 +4,17 @@ on:
   push:
     paths:
       - 'charts/pdp/Chart.yaml'
+  # Publishes the current chart version by hand, e.g. when the release after a version bump
+  # failed. Re-running a failed run reuses that run's workflow file, so it can't pick up fixes.
+  workflow_dispatch:
 
 jobs:
   helm-release:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    # Read-only: the checkout does not persist GITHUB_TOKEN, and chart-releaser makes its
-    # release API calls and builds its gh-pages push URL from CR_TOKEN (secrets.PAGES).
+    if: github.ref == 'refs/heads/main'
+    # chart-releaser creates the pdp-<version> GitHub release and pushes index.yaml to gh-pages
+    # with CR_TOKEN, which is this job's GITHUB_TOKEN. The checkout still does not persist it.
     permissions:
-      contents: read
+      contents: write
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
@@ -22,8 +25,8 @@ jobs:
 
       - name: Configure Git
         run: |
-          git config user.name "elimoshkovich"
-          git config user.email "eli@permit.io"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Install Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
@@ -31,7 +34,7 @@ jobs:
       - name: Run chart-releaser
         uses: helm/chart-releaser-action@cae68fefc6b5f367a0275617c9f83181ba54714f # v1.7.0
         env:
-          CR_TOKEN: "${{ secrets.PAGES }}"
+          CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
         with:
           skip_existing: true
           mark_as_latest: false
