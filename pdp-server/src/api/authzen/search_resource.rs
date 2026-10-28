@@ -1,6 +1,7 @@
-use crate::api::authzen::common::{PageRequest, PageResponse};
+use crate::api::authzen::common::{tenant_property, PageRequest, PageResponse, TENANT_TYPE};
 use crate::api::authzen::errors::AuthZenError;
 use crate::api::authzen::schema::{AuthZenAction, AuthZenResource, AuthZenSubject};
+use crate::opa_client::resource_instances::query_resource_instances;
 use crate::opa_client::user_permissions::{query_user_permissions, UserPermissionsQuery};
 use crate::openapi::AUTHZEN_TAG;
 use crate::state::AppState;
@@ -10,7 +11,7 @@ use axum::{
 };
 use http::StatusCode;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use utoipa::ToSchema;
 
 /// AuthZen Resource Search Request - to find resources a subject can access
@@ -20,7 +21,8 @@ pub struct ResourceSearchRequest {
     pub subject: AuthZenSubject,
     /// Action being performed
     pub action: AuthZenAction,
-    /// Resource type to filter by
+    /// Resource type to filter by. `properties.tenant`, when set, must be a string and limits
+    /// the search to that tenant.
     pub resource: AuthZenResource,
     /// Context for the evaluation
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -33,7 +35,15 @@ pub struct ResourceSearchRequest {
 /// AuthZen Resource Search Response - contains list of resources a subject can access
 #[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
 pub struct ResourceSearchResponse {
-    /// List of resources the subject can access
+    /// Resources on which the subject can perform the action, one per type and id, sorted by
+    /// type, then id, comparing strings by code point.
+    ///
+    /// A tenant-level role grants its actions on every resource of a type in its tenant. For
+    /// those grants the results list the resource instances that exist in Permit and are
+    /// synced to the PDP. A resource key that was never created as an instance in Permit is
+    /// not listed, even though an access check on it in that tenant is allowed.
+    ///
+    /// Resources granted only by ABAC rules are returned without properties.
     pub results: Vec<AuthZenResource>,
     /// Pagination information
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -43,18 +53,26 @@ pub struct ResourceSearchResponse {
     pub context: Option<HashMap<String, serde_json::Value>>,
 }
 
-// Convert AuthZen request to UserPermissionsQuery
-impl From<ResourceSearchRequest> for UserPermissionsQuery {
-    fn from(req: ResourceSearchRequest) -> Self {
-        let mut properties = req.resource.properties.unwrap_or_default();
-        let tenant = properties.remove("tenant").map(|v| v.to_string());
-        UserPermissionsQuery {
-            user: req.subject.into(),
-            tenants: tenant.map(|v| vec![v]),
-            resources: None,
-            resource_types: Some(vec![req.resource.r#type.clone()]),
-            context: req.context,
-        }
+fn user_permissions_query(
+    req: ResourceSearchRequest,
+    tenant: Option<String>,
+) -> UserPermissionsQuery {
+    UserPermissionsQuery {
+        user: req.subject.into(),
+        tenants: tenant.map(|tenant| vec![tenant]),
+        resources: None,
+        resource_types: Some(vec![req.resource.r#type, TENANT_TYPE.to_string()]),
+        context: req.context,
+    }
+}
+
+fn non_empty(
+    attributes: HashMap<String, serde_json::Value>,
+) -> Option<HashMap<String, serde_json::Value>> {
+    if attributes.is_empty() {
+        None
+    } else {
+        Some(attributes)
     }
 }
 
@@ -79,8 +97,13 @@ pub async fn search_resource_handler(
     State(state): State<AppState>,
     Json(request): Json<ResourceSearchRequest>,
 ) -> Response {
-    // Convert AuthZen request to UserPermissionsQuery
-    let query: UserPermissionsQuery = request.into();
+    let resource_type = request.resource.r#type.clone();
+    let action = request.action.name.clone();
+    let tenant = match tenant_property(&request.resource) {
+        Ok(tenant) => tenant,
+        Err(authzen_error) => return authzen_error.into_response(),
+    };
+    let query = user_permissions_query(request, tenant.clone());
 
     // Query OPA using the existing function
     let permissions = match query_user_permissions(&state, &query).await {
@@ -92,35 +115,110 @@ pub async fn search_resource_handler(
         }
     };
 
-    // Extract unique resources from permissions
-    let mut unique_resources = HashMap::new();
+    // `permissions` is a HashMap, so it iterates in a different order on every call. Reading it
+    // in OPA key order means that when several entries describe the same resource, the same
+    // one (the first by OPA key) supplies the properties every time.
+    let permissions: BTreeMap<_, _> = permissions.into_iter().collect();
 
-    // Process each permission and extract the resources
-    for (_, perm) in permissions {
-        if let Some(resource_details) = perm.resource {
-            let resource = AuthZenResource {
-                r#type: resource_details.r#type.clone(),
-                id: Some(resource_details.key.clone()),
-                properties: if resource_details.attributes.is_empty() {
-                    None
-                } else {
-                    Some(resource_details.attributes)
-                },
-            };
-
-            // Use the resource ID as key to ensure uniqueness
-            unique_resources.insert(resource.id.clone(), resource);
+    // Keyed by (type, id): one result per resource, sorted by type, then id.
+    let mut unique_resources = BTreeMap::new();
+    // Tenants where a tenant-level role grants the action on every resource of the type.
+    let mut granting_tenants = BTreeSet::new();
+    // OPA lists permissions as `<resource type>:<action>`. A tenant-level role lists its
+    // permissions on every resource type in the tenant.
+    let tenant_required_permission = format!("{resource_type}:{action}");
+    let mut unparsable_entries = 0_usize;
+    for (opa_key, perm) in permissions {
+        // OPA applies the tenant filter to role grants, not to ABAC grants.
+        if let Some(tenant) = &tenant {
+            let in_tenant = perm
+                .tenant
+                .as_ref()
+                .is_some_and(|entry_tenant| &entry_tenant.key == tenant);
+            if !in_tenant {
+                continue;
+            }
         }
+        if let Some(granting_tenant) = opa_key
+            .strip_prefix(TENANT_TYPE)
+            .and_then(|rest| rest.strip_prefix(':'))
+        {
+            if perm.permissions.contains(&tenant_required_permission) {
+                granting_tenants.insert(granting_tenant.to_string());
+            }
+            continue;
+        }
+        // An instance granted only by ABAC rules has no `resource` in its entry, so its type
+        // and id come from the `<type>:<key>` OPA key, and it has no properties.
+        let (entry_type, entry_key, attributes) = match perm.resource {
+            Some(resource_details) => (
+                resource_details.r#type,
+                resource_details.key,
+                resource_details.attributes,
+            ),
+            None => {
+                let Some((entry_type, entry_key)) = opa_key.split_once(':') else {
+                    unparsable_entries += 1;
+                    continue;
+                };
+                (
+                    entry_type.to_string(),
+                    entry_key.to_string(),
+                    HashMap::new(),
+                )
+            }
+        };
+        let required_permission = format!("{entry_type}:{action}");
+        if !perm.permissions.contains(&required_permission) {
+            continue;
+        }
+        unique_resources
+            .entry((entry_type.clone(), entry_key.clone()))
+            .or_insert_with(|| AuthZenResource {
+                r#type: entry_type,
+                id: Some(entry_key),
+                properties: non_empty(attributes),
+            });
+    }
+    // Counted rather than listed: values from OPA's response are not written to the log.
+    if unparsable_entries > 0 {
+        log::warn!(
+            "Ignoring {unparsable_entries} user_permissions entr(ies) from OPA that have no \
+             resource and a key that is not <resource type>:<resource key>"
+        );
     }
 
-    // Convert the unique resources HashMap to a Vec
+    if !granting_tenants.is_empty() {
+        let instances =
+            match query_resource_instances(&state, &resource_type, &granting_tenants).await {
+                Ok(instances) => instances,
+                Err(err) => {
+                    // AuthZenError::from logs the error itself.
+                    log::error!(
+                        "Failed to list {resource_type} instances in {} tenant(s) for an \
+                         AuthZen resource search",
+                        granting_tenants.len()
+                    );
+                    return AuthZenError::from(err).into_response();
+                }
+            };
+        for (instance_key, attributes) in instances {
+            unique_resources
+                .entry((resource_type.clone(), instance_key.clone()))
+                .or_insert_with(|| AuthZenResource {
+                    r#type: resource_type.clone(),
+                    id: Some(instance_key),
+                    properties: non_empty(attributes),
+                });
+        }
+    }
     let results = unique_resources.into_values().collect();
 
     // Create the response
     let response = ResourceSearchResponse {
         results,
         page: Some(PageResponse {
-            next_token: None, // Pagination not yet fully implemented
+            next_token: String::new(),
         }),
         context: None,
     };
@@ -131,8 +229,9 @@ pub async fn search_resource_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::TestFixture;
+    use crate::test_utils::{TestFixture, TestResponse};
     use serde_json::json;
+    use wiremock::{matchers, Mock, ResponseTemplate};
 
     #[tokio::test]
     async fn test_resource_search_with_permissions() {
@@ -157,7 +256,7 @@ mod tests {
         let mock_response = json!({
             "result": {
                 "permissions": {
-                    "resource1": {
+                    "document:doc1": {
                         "tenant": {
                             "key": "tenant1",
                             "attributes": {}
@@ -169,10 +268,10 @@ mod tests {
                                 "title": "Important Document"
                             }
                         },
-                        "permissions": ["can_read", "can_edit"],
+                        "permissions": ["document:can_read", "document:can_edit"],
                         "roles": ["editor"]
                     },
-                    "resource2": {
+                    "document:doc2": {
                         "tenant": {
                             "key": "tenant1",
                             "attributes": {}
@@ -184,7 +283,7 @@ mod tests {
                                 "title": "Another Document"
                             }
                         },
-                        "permissions": ["can_read"],
+                        "permissions": ["document:can_read"],
                         "roles": ["viewer"]
                     }
                 }
@@ -326,7 +425,7 @@ mod tests {
         let mock_response = json!({
             "result": {
                 "permissions": {
-                    "resource1": {
+                    "document:doc1": {
                         "tenant": {
                             "key": "tenant1",
                             "attributes": {}
@@ -338,7 +437,7 @@ mod tests {
                                 "title": "Important Document"
                             }
                         },
-                        "permissions": ["can_read"],
+                        "permissions": ["document:can_read"],
                         "roles": ["viewer"]
                     }
                 }
@@ -406,7 +505,7 @@ mod tests {
         let mock_response = json!({
             "result": {
                 "permissions": {
-                    "resource1": {
+                    "document:doc1": {
                         "tenant": {
                             "key": "tenant1",
                             "attributes": {}
@@ -418,7 +517,7 @@ mod tests {
                                 "title": "Important Document"
                             }
                         },
-                        "permissions": ["can_read", "can_edit"],
+                        "permissions": ["document:can_read", "document:can_edit"],
                         "roles": ["editor"]
                     }
                 }
@@ -452,5 +551,593 @@ mod tests {
 
         // Verify page is present
         assert!(search_response.page.is_some());
+    }
+
+    /// One `user_permissions` entry for a resource instance, in the shape OPA returns.
+    fn instance_entry(
+        resource_type: &str,
+        resource_key: &str,
+        attributes: serde_json::Value,
+        permissions: &[&str],
+    ) -> serde_json::Value {
+        json!({
+            "permissions": permissions,
+            "resource": {"attributes": attributes, "key": resource_key, "type": resource_type},
+            "roles": ["viewer"],
+            "tenant": {"attributes": {}, "key": "tenant1", "type": "__tenant"}
+        })
+    }
+
+    /// An instance entry that grants `can_read` on the resource.
+    fn permission_entry(
+        resource_type: &str,
+        resource_key: &str,
+        attributes: serde_json::Value,
+    ) -> serde_json::Value {
+        let can_read = format!("{resource_type}:can_read");
+        instance_entry(resource_type, resource_key, attributes, &[&can_read])
+    }
+
+    /// A `user_permissions` OPA result whose entries are in no particular order. Ids such as
+    /// `doc-10` and `Doc-9` sort by code point, not by number or case. `document:shared`
+    /// appears under three OPA keys with different attributes. The tenant-level entry has no
+    /// resource and grants an action other than `can_read`.
+    fn unordered_permissions_response() -> serde_json::Value {
+        json!({
+            "result": {
+                "permissions": {
+                    "document:doc-2": permission_entry("document", "doc-2", json!({})),
+                    "folder:doc-1": permission_entry("folder", "doc-1", json!({})),
+                    "document:doc-10": permission_entry("document", "doc-10", json!({})),
+                    "shared-copy-b": permission_entry("document", "shared", json!({"copy": "b"})),
+                    "document:Doc-9": permission_entry("document", "Doc-9", json!({})),
+                    "document:doc-1": permission_entry("document", "doc-1", json!({})),
+                    "shared-copy-c": permission_entry("document", "shared", json!({"copy": "c"})),
+                    "document:doc-3": permission_entry("document", "doc-3", json!({})),
+                    "shared-copy-a": permission_entry("document", "shared", json!({"copy": "a"})),
+                    "document:doc-11": permission_entry("document", "doc-11", json!({})),
+                    "__tenant:tenant1": {
+                        "permissions": ["document:can_share"],
+                        "roles": ["sharer"],
+                        "tenant": {"attributes": {}, "key": "tenant1", "type": "__tenant"}
+                    }
+                }
+            }
+        })
+    }
+
+    async fn mock_user_permissions(
+        fixture: &TestFixture,
+        response: serde_json::Value,
+        expected_calls: u64,
+    ) {
+        fixture
+            .add_opa_mock(
+                http::Method::POST,
+                "/v1/data/permit/user_permissions",
+                response,
+                http::StatusCode::OK,
+                expected_calls,
+            )
+            .await;
+    }
+
+    fn resource_search_request() -> serde_json::Value {
+        json!({
+            "subject": {"type": "user", "id": "alice@example.com"},
+            "action": {"name": "can_read"},
+            "resource": {"type": "document"}
+        })
+    }
+
+    #[tokio::test]
+    async fn test_resource_search_sorts_results_by_type_then_id() {
+        let fixture = TestFixture::new().await;
+        mock_user_permissions(&fixture, unordered_permissions_response(), 1).await;
+
+        let response = fixture
+            .post("/access/v1/search/resource", &resource_search_request())
+            .await;
+
+        response.assert_ok();
+        let search_response: ResourceSearchResponse = response.json_as();
+        let mut results = Vec::new();
+        for resource in &search_response.results {
+            results.push((resource.r#type.as_str(), resource.id.as_deref()));
+        }
+        assert_eq!(
+            results,
+            vec![
+                ("document", Some("Doc-9")),
+                ("document", Some("doc-1")),
+                ("document", Some("doc-10")),
+                ("document", Some("doc-11")),
+                ("document", Some("doc-2")),
+                ("document", Some("doc-3")),
+                ("document", Some("shared")),
+                ("folder", Some("doc-1")),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resource_search_returns_one_result_per_resource() {
+        let fixture = TestFixture::new().await;
+        mock_user_permissions(&fixture, unordered_permissions_response(), 1).await;
+
+        let response = fixture
+            .post("/access/v1/search/resource", &resource_search_request())
+            .await;
+
+        response.assert_ok();
+        let search_response: ResourceSearchResponse = response.json_as();
+        let mut shared = Vec::new();
+        for resource in &search_response.results {
+            if resource.id.as_deref() == Some("shared") {
+                shared.push(resource);
+            }
+        }
+        assert_eq!(shared.len(), 1, "expected one `shared` result: {shared:?}");
+        let expected_properties = HashMap::from([("copy".to_string(), json!("a"))]);
+        assert_eq!(
+            shared[0].properties.as_ref(),
+            Some(&expected_properties),
+            "the entry whose OPA key sorts first supplies the properties"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resource_search_repeated_calls_return_identical_bodies() {
+        const CALLS: u64 = 10;
+        let fixture = TestFixture::new().await;
+        mock_user_permissions(&fixture, unordered_permissions_response(), CALLS).await;
+
+        let first = fixture
+            .post("/access/v1/search/resource", &resource_search_request())
+            .await;
+        first.assert_ok();
+        for call in 2..=CALLS {
+            let response = fixture
+                .post("/access/v1/search/resource", &resource_search_request())
+                .await;
+            response.assert_ok();
+            assert_eq!(
+                response.text(),
+                first.text(),
+                "call {call} returned a different body than call 1"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_resource_search_ignores_page_and_returns_empty_next_token() {
+        let fixture = TestFixture::new().await;
+        mock_user_permissions(&fixture, unordered_permissions_response(), 1).await;
+        let mut request = resource_search_request();
+        request["page"] = json!({"size": 1, "next_token": null});
+
+        let response = fixture.post("/access/v1/search/resource", &request).await;
+
+        response.assert_ok();
+        let body = response.json();
+        assert_eq!(body["page"], json!({"next_token": ""}));
+        assert_eq!(body["results"].as_array().map(Vec::len), Some(8));
+    }
+
+    /// `user_permissions` as OPA returns it for frank with `resource_types: ["file"]`: a reader
+    /// on a1 and b1, an owner of a2, and an auditor on c1, whose only action starts with `read`.
+    fn frank_file_permissions_response() -> serde_json::Value {
+        json!({
+            "result": {
+                "permissions": {
+                    "file:a1": instance_entry("file", "a1", json!({}), &["file:read"]),
+                    "file:a2": instance_entry("file", "a2", json!({}), &["file:read", "file:delete"]),
+                    "file:b1": instance_entry("file", "b1", json!({}), &["file:read"]),
+                    "file:c1": instance_entry("file", "c1", json!({}), &["file:read_all"])
+                }
+            }
+        })
+    }
+
+    async fn search_file_ids(fixture: &TestFixture, action: &str) -> Vec<String> {
+        let request = json!({
+            "subject": {"type": "user", "id": "frank"},
+            "action": {"name": action},
+            "resource": {"type": "file"}
+        });
+        let response = fixture.post("/access/v1/search/resource", &request).await;
+        response.assert_ok();
+        let search_response: ResourceSearchResponse = response.json_as();
+        let mut ids = Vec::new();
+        for resource in search_response.results {
+            ids.push(resource.id.unwrap_or_default());
+        }
+        ids
+    }
+
+    #[tokio::test]
+    async fn test_resource_search_returns_only_resources_that_allow_the_action() {
+        let fixture = TestFixture::new().await;
+        mock_user_permissions(&fixture, frank_file_permissions_response(), 2).await;
+
+        assert_eq!(search_file_ids(&fixture, "delete").await, vec!["a2"]);
+        assert_eq!(
+            search_file_ids(&fixture, "read").await,
+            vec!["a1", "a2", "b1"]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resource_search_returns_nothing_when_no_resource_allows_the_action() {
+        let fixture = TestFixture::new().await;
+        let reader_only = json!({
+            "result": {
+                "permissions": {
+                    "file:a1": instance_entry("file", "a1", json!({}), &["file:read"]),
+                    "file:a2": instance_entry("file", "a2", json!({}), &["file:read"]),
+                    "file:b1": instance_entry("file", "b1", json!({}), &["file:read"])
+                }
+            }
+        });
+        mock_user_permissions(&fixture, reader_only, 1).await;
+
+        assert_eq!(
+            search_file_ids(&fixture, "delete").await,
+            Vec::<String>::new()
+        );
+    }
+
+    /// Mounts a mock OPA `user_permissions` that answers like the policy: `response` when the
+    /// input's tenant filter is `[tenant]`, and no entries for any other tenant filter.
+    async fn mock_user_permissions_in_tenant(
+        fixture: &TestFixture,
+        tenant: &str,
+        response: serde_json::Value,
+    ) {
+        Mock::given(matchers::method("POST"))
+            .and(matchers::path("/v1/data/permit/user_permissions"))
+            .and(matchers::body_partial_json(
+                json!({"input": {"tenants": [tenant]}}),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(response))
+            .with_priority(1)
+            .mount(&fixture.opa_mock)
+            .await;
+        Mock::given(matchers::method("POST"))
+            .and(matchers::path("/v1/data/permit/user_permissions"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({"result": {"permissions": {}}})),
+            )
+            .mount(&fixture.opa_mock)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn test_resource_search_filters_by_the_tenant_property() {
+        let fixture = TestFixture::new().await;
+        mock_user_permissions_in_tenant(&fixture, "tenant1", frank_file_permissions_response())
+            .await;
+        let request = json!({
+            "subject": {"type": "user", "id": "frank"},
+            "action": {"name": "delete"},
+            "resource": {"type": "file", "properties": {"tenant": "tenant1"}}
+        });
+
+        let response = fixture.post("/access/v1/search/resource", &request).await;
+
+        response.assert_ok();
+        let search_response: ResourceSearchResponse = response.json_as();
+        let mut ids = Vec::new();
+        for resource in search_response.results {
+            ids.push(resource.id.unwrap_or_default());
+        }
+        assert_eq!(ids, vec!["a2"]);
+    }
+
+    #[tokio::test]
+    async fn test_resource_search_rejects_a_tenant_that_is_not_a_string() {
+        let fixture = TestFixture::new().await;
+        mock_user_permissions(&fixture, json!({"result": {"permissions": {}}}), 0).await;
+
+        for tenant in [
+            json!(7),
+            json!(null),
+            json!(["tenant1"]),
+            json!({"key": "tenant1"}),
+        ] {
+            let request = json!({
+                "subject": {"type": "user", "id": "frank"},
+                "action": {"name": "read"},
+                "resource": {"type": "file", "properties": {"tenant": tenant}}
+            });
+
+            let response = fixture.post("/access/v1/search/resource", &request).await;
+
+            response.assert_status(http::StatusCode::BAD_REQUEST);
+            assert_eq!(
+                response.text(),
+                "resource.properties.tenant must be a string",
+                "tenant {tenant}"
+            );
+        }
+    }
+
+    fn tenant_role_entry(tenant: &str, permissions: &[&str]) -> serde_json::Value {
+        json!({
+            "permissions": permissions,
+            "roles": ["editor"],
+            "tenant": {"attributes": {}, "key": tenant, "type": "__tenant"}
+        })
+    }
+
+    fn d_public_viewer_entry() -> serde_json::Value {
+        json!({
+            "permissions": ["doc:read"],
+            "resource": {"attributes": {"public": true}, "key": "d-public", "type": "doc"},
+            "roles": ["viewer"],
+            "tenant": {"attributes": {}, "key": "t1", "type": "__tenant"}
+        })
+    }
+
+    /// Mounts a mock OPA `user_permissions` for alice, a viewer of d-public, that answers like
+    /// the policy: `tenant_roles` are included only when the input's `resource_types` include
+    /// `__tenant`.
+    async fn mock_alice_user_permissions(fixture: &TestFixture, tenant_roles: serde_json::Value) {
+        let mut with_tenant_roles = tenant_roles;
+        with_tenant_roles["doc:d-public"] = d_public_viewer_entry();
+        Mock::given(matchers::method("POST"))
+            .and(matchers::path("/v1/data/permit/user_permissions"))
+            .and(matchers::body_partial_json(
+                json!({"input": {"resource_types": ["doc", "__tenant"]}}),
+            ))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"result": {"permissions": with_tenant_roles}})),
+            )
+            .with_priority(1)
+            .mount(&fixture.opa_mock)
+            .await;
+        let without_tenant_roles = json!({"doc:d-public": d_public_viewer_entry()});
+        Mock::given(matchers::method("POST"))
+            .and(matchers::path("/v1/data/permit/user_permissions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"result": {"permissions": without_tenant_roles}})),
+            )
+            .mount(&fixture.opa_mock)
+            .await;
+    }
+
+    /// Mounts a mock OPA ad-hoc query for the doc instances in exactly `tenants`.
+    async fn mock_doc_instances_query(
+        fixture: &TestFixture,
+        tenants: &[&str],
+        response: ResponseTemplate,
+        expected_calls: u64,
+    ) {
+        use crate::opa_client::resource_instances::RESOURCE_INSTANCES_QUERY;
+        Mock::given(matchers::method("POST"))
+            .and(matchers::path("/v1/query"))
+            .and(matchers::body_json(json!({
+                "query": RESOURCE_INSTANCES_QUERY,
+                "input": {"key_prefix": "doc:", "tenants": tenants}
+            })))
+            .respond_with(response)
+            .expect(expected_calls)
+            .mount(&fixture.opa_mock)
+            .await;
+    }
+
+    /// OPA's answer to the instances query for the doc instances d-public and d-secret in t1.
+    fn doc_instances_in_t1() -> ResponseTemplate {
+        ResponseTemplate::new(200).set_body_json(json!({"result": [
+            {"instance": {"attributes": {"public": true}, "tenant": "t1"}, "key": "doc:d-public"},
+            {"instance": {"attributes": {}, "tenant": "t1"}, "key": "doc:d-secret"}
+        ]}))
+    }
+
+    async fn search_docs(fixture: &TestFixture, action: &str) -> TestResponse {
+        let request = json!({
+            "subject": {"type": "user", "id": "alice"},
+            "action": {"name": action},
+            "resource": {"type": "doc"}
+        });
+        fixture.post("/access/v1/search/resource", &request).await
+    }
+
+    async fn search_doc_ids(fixture: &TestFixture, action: &str) -> Vec<String> {
+        let response = search_docs(fixture, action).await;
+        response.assert_ok();
+        let search_response: ResourceSearchResponse = response.json_as();
+        let mut ids = Vec::new();
+        for resource in search_response.results {
+            ids.push(resource.id.unwrap_or_default());
+        }
+        ids
+    }
+
+    #[tokio::test]
+    async fn test_resource_search_lists_instances_in_tenants_whose_role_grants_the_action() {
+        let fixture = TestFixture::new().await;
+        let tenant_roles = json!({
+            "__tenant:t1": tenant_role_entry("t1", &["doc:read", "doc:write", "file:read"])
+        });
+        mock_alice_user_permissions(&fixture, tenant_roles).await;
+        mock_doc_instances_query(&fixture, &["t1"], doc_instances_in_t1(), 2).await;
+
+        assert_eq!(
+            search_doc_ids(&fixture, "write").await,
+            vec!["d-public", "d-secret"]
+        );
+        let response = search_docs(&fixture, "read").await;
+        response.assert_ok();
+        let search_response: ResourceSearchResponse = response.json_as();
+        let public_properties = HashMap::from([("public".to_string(), json!(true))]);
+        assert_eq!(
+            search_response.results,
+            vec![
+                AuthZenResource {
+                    r#type: "doc".to_string(),
+                    id: Some("d-public".to_string()),
+                    properties: Some(public_properties),
+                },
+                AuthZenResource {
+                    r#type: "doc".to_string(),
+                    id: Some("d-secret".to_string()),
+                    properties: None,
+                },
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resource_search_skips_tenant_roles_without_the_action() {
+        let fixture = TestFixture::new().await;
+        let tenant_roles = json!({
+            "__tenant:t1": tenant_role_entry("t1", &["doc:read", "doc:write", "file:read"])
+        });
+        mock_alice_user_permissions(&fixture, tenant_roles).await;
+        mock_doc_instances_query(&fixture, &["t1"], doc_instances_in_t1(), 0).await;
+
+        assert_eq!(
+            search_doc_ids(&fixture, "delete").await,
+            Vec::<String>::new()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resource_search_lists_instances_only_in_tenants_whose_role_grants_the_action() {
+        let fixture = TestFixture::new().await;
+        let tenant_roles = json!({
+            "__tenant:t1": tenant_role_entry("t1", &["doc:read"]),
+            "__tenant:t2": tenant_role_entry("t2", &["doc:read", "doc:write"]),
+            "__tenant:t3": tenant_role_entry("t3", &["file:read"])
+        });
+        mock_alice_user_permissions(&fixture, tenant_roles).await;
+        let instances = ResponseTemplate::new(200).set_body_json(json!({"result": [
+            {"instance": {"attributes": {}, "tenant": "t1"}, "key": "doc:d-secret"},
+            {"instance": {"attributes": {}, "tenant": "t2"}, "key": "doc:d-t2"}
+        ]}));
+        mock_doc_instances_query(&fixture, &["t1", "t2"], instances, 1).await;
+
+        assert_eq!(
+            search_doc_ids(&fixture, "read").await,
+            vec!["d-public", "d-secret", "d-t2"]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resource_search_with_a_tenant_role_and_no_synced_instances() {
+        let fixture = TestFixture::new().await;
+        let tenant_roles = json!({"__tenant:t1": tenant_role_entry("t1", &["doc:read"])});
+        mock_alice_user_permissions(&fixture, tenant_roles).await;
+        // OPA leaves `result` out when the query matches nothing.
+        let no_instances = ResponseTemplate::new(200).set_body_json(json!({}));
+        mock_doc_instances_query(&fixture, &["t1"], no_instances, 1).await;
+
+        assert_eq!(search_doc_ids(&fixture, "read").await, vec!["d-public"]);
+    }
+
+    #[tokio::test]
+    async fn test_resource_search_fails_when_the_instances_query_fails() {
+        let fixture = TestFixture::new().await;
+        let tenant_roles = json!({"__tenant:t1": tenant_role_entry("t1", &["doc:read"])});
+        mock_alice_user_permissions(&fixture, tenant_roles).await;
+        mock_doc_instances_query(&fixture, &["t1"], ResponseTemplate::new(500), 1).await;
+
+        let response = search_docs(&fixture, "read").await;
+
+        response.assert_status(http::StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    /// `user_permissions` as OPA returns it with `enable_abac_user_permissions` for user-1: an
+    /// ABAC rule grants `delete` on Document:doc-1 (an entry with no `resource`), and a ReBAC
+    /// role grants `delete` on Document:doc-2. OPA returns the ABAC entry whatever the tenant
+    /// filter is.
+    fn abac_permissions_response() -> serde_json::Value {
+        json!({
+            "result": {
+                "permissions": {
+                    "Document:doc-1": {
+                        "permissions": ["Document:delete"],
+                        "roles": [],
+                        "tenant": {"attributes": {}, "key": "default"}
+                    },
+                    "Document:doc-2": {
+                        "permissions": ["Document:delete", "Document:read"],
+                        "resource": {"attributes": {"cost": 0}, "key": "doc-2", "type": "Document"},
+                        "roles": ["owner"],
+                        "tenant": {"attributes": {}, "key": "default", "type": "__tenant"}
+                    }
+                }
+            }
+        })
+    }
+
+    async fn search_documents(fixture: &TestFixture, tenant: Option<&str>) -> Vec<AuthZenResource> {
+        let mut request = json!({
+            "subject": {"type": "user", "id": "user-1"},
+            "action": {"name": "delete"},
+            "resource": {"type": "Document"},
+            "context": {"enable_abac_user_permissions": true}
+        });
+        if let Some(tenant) = tenant {
+            request["resource"]["properties"] = json!({"tenant": tenant});
+        }
+        let response = fixture.post("/access/v1/search/resource", &request).await;
+        response.assert_ok();
+        let search_response: ResourceSearchResponse = response.json_as();
+        search_response.results
+    }
+
+    #[tokio::test]
+    async fn test_resource_search_returns_resources_granted_by_abac_rules() {
+        let fixture = TestFixture::new().await;
+        mock_user_permissions(&fixture, abac_permissions_response(), 1).await;
+
+        let cost_zero = HashMap::from([("cost".to_string(), json!(0))]);
+        assert_eq!(
+            search_documents(&fixture, None).await,
+            vec![
+                AuthZenResource {
+                    r#type: "Document".to_string(),
+                    id: Some("doc-1".to_string()),
+                    properties: None,
+                },
+                AuthZenResource {
+                    r#type: "Document".to_string(),
+                    id: Some("doc-2".to_string()),
+                    properties: Some(cost_zero),
+                },
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resource_search_applies_the_tenant_property_to_abac_grants() {
+        let fixture = TestFixture::new().await;
+        // For tenant "other", OPA filters out the ReBAC entry but still returns the ABAC one.
+        let mut abac_only = abac_permissions_response();
+        if let Some(permissions) = abac_only["result"]["permissions"].as_object_mut() {
+            permissions.remove("Document:doc-2");
+        }
+        Mock::given(matchers::method("POST"))
+            .and(matchers::path("/v1/data/permit/user_permissions"))
+            .and(matchers::body_partial_json(
+                json!({"input": {"tenants": ["other"]}}),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(abac_only))
+            .with_priority(1)
+            .expect(1)
+            .mount(&fixture.opa_mock)
+            .await;
+        mock_user_permissions(&fixture, abac_permissions_response(), 1).await;
+
+        assert_eq!(search_documents(&fixture, Some("other")).await, Vec::new());
+        let mut ids = Vec::new();
+        for resource in search_documents(&fixture, Some("default")).await {
+            ids.push(resource.id.unwrap_or_default());
+        }
+        assert_eq!(ids, vec!["doc-1", "doc-2"]);
     }
 }
