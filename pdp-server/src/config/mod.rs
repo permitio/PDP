@@ -98,8 +98,10 @@ impl PDPConfig {
                         health_check_timeout: 1,
                         health_check_interval: 5,
                         health_check_failure_threshold: 12,
+                        health_check_unhealthy_threshold: 3,
                         startup_delay: 5,
                         restart_interval: 1,
+                        max_restart_interval: 60,
                         termination_timeout: 30,
                     }),
                 opa: OpaConfig::builder()
@@ -222,6 +224,9 @@ mod tests {
                 assert_eq!(config.opa.url, "http://localhost:8181");
                 assert_eq!(config.opa.client_query_timeout, 1);
                 assert_eq!(config.horizon.client_timeout, 60);
+                assert_eq!(config.horizon.restart_interval, 1);
+                assert_eq!(config.horizon.max_restart_interval, 60);
+                assert_eq!(config.horizon.health_check_unhealthy_threshold, 3);
                 assert_eq!(config.cache.store, CacheStore::None);
                 assert_eq!(config.cache.memory.capacity, 128);
                 assert_eq!(config.cache.redis.url, "");
@@ -299,8 +304,10 @@ mod tests {
                 ("PDP_HORIZON_HEALTH_CHECK_TIMEOUT", "2"),
                 ("PDP_HORIZON_HEALTH_CHECK_INTERVAL", "10"),
                 ("PDP_HORIZON_HEALTH_CHECK_FAILURE_THRESHOLD", "5"),
+                ("PDP_HORIZON_HEALTH_CHECK_UNHEALTHY_THRESHOLD", "4"),
                 ("PDP_HORIZON_STARTUP_DELAY", "3"),
                 ("PDP_HORIZON_RESTART_INTERVAL", "2"),
+                ("PDP_HORIZON_MAX_RESTART_INTERVAL", "120"),
                 ("PDP_HORIZON_TERMINATION_TIMEOUT", "15"),
             ],
             || {
@@ -333,8 +340,10 @@ mod tests {
                 assert_eq!(config.horizon.health_check_timeout, 2);
                 assert_eq!(config.horizon.health_check_interval, 10);
                 assert_eq!(config.horizon.health_check_failure_threshold, 5);
+                assert_eq!(config.horizon.health_check_unhealthy_threshold, 4);
                 assert_eq!(config.horizon.startup_delay, 3);
                 assert_eq!(config.horizon.restart_interval, 2);
+                assert_eq!(config.horizon.max_restart_interval, 120);
                 assert_eq!(config.horizon.termination_timeout, 15);
             },
         );
