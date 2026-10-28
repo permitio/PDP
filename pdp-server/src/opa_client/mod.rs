@@ -113,6 +113,8 @@ pub enum ForwardingError {
     CacheKeyError(String),
     #[error("The PDP has no API key to present to OPA yet")]
     NoApiKey,
+    #[error("OPA returned {results} results for {checks} bulk checks")]
+    BulkResultCount { checks: usize, results: usize },
 }
 
 impl From<String> for ForwardingError {
@@ -138,6 +140,10 @@ impl From<ForwardingError> for ApiError {
                 ApiError::internal(format!("Cache key generation failed: {e}"))
             }
             ForwardingError::NoApiKey => ApiError::new(NO_KEY_YET, StatusCode::SERVICE_UNAVAILABLE),
+            err @ ForwardingError::BulkResultCount {
+                checks: _,
+                results: _,
+            } => ApiError::bad_gateway(err.to_string()),
         }
     }
 }
