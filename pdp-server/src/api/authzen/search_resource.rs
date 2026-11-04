@@ -45,8 +45,10 @@ pub struct ResourceSearchResponse {
     ///
     /// Resources granted only by ABAC rules are returned without properties.
     ///
-    /// A search for the `__tenant` type returns every tenant the subject has a role in, whatever
-    /// the requested action, with the tenant's key as `id` and its attributes as `properties`.
+    /// A search for the `__tenant` type returns every tenant the subject is assigned to (holds a
+    /// role or tenant membership in) that is synced to the PDP, whatever the requested action,
+    /// with the tenant's key as `id` and its attributes as `properties`. It answers "which
+    /// tenants is the subject in", so a caller must not gate an action on its results.
     pub results: Vec<AuthZenResource>,
     /// Pagination information
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -64,7 +66,11 @@ fn user_permissions_query(
         user: req.subject.into(),
         tenants: tenant.map(|tenant| vec![tenant]),
         resources: None,
-        resource_types: Some(vec![req.resource.r#type, TENANT_TYPE.to_string()]),
+        resource_types: Some(if req.resource.r#type == TENANT_TYPE {
+            vec![req.resource.r#type]
+        } else {
+            vec![req.resource.r#type, TENANT_TYPE.to_string()]
+        }),
         context: req.context,
     }
 }
@@ -148,13 +154,17 @@ pub async fn search_resource_handler(
             .and_then(|rest| rest.strip_prefix(':'))
         {
             if searching_tenants {
-                // A `__tenant` search lists the subject's tenants whatever the action, as
-                // `/user-tenants` does. OPA always sends the entry's `tenant`; the key after the
-                // prefix is only a fallback for an entry without one.
+                // A `__tenant` search lists the tenants the subject is assigned to whatever the
+                // action, so a caller must not gate an action on it. OPA always sends the entry's
+                // `tenant`; the key after the prefix is only a fallback for an entry without one.
                 let (tenant_key, attributes) = match perm.tenant {
                     Some(tenant_details) => (tenant_details.key, tenant_details.attributes),
                     None => (granting_tenant.to_string(), HashMap::new()),
                 };
+                if tenant_key.is_empty() {
+                    unparsable_entries += 1;
+                    continue;
+                }
                 unique_resources
                     .entry((TENANT_TYPE.to_string(), tenant_key.clone()))
                     .or_insert_with(|| AuthZenResource {
@@ -203,7 +213,7 @@ pub async fn search_resource_handler(
     if unparsable_entries > 0 {
         log::warn!(
             "Ignoring {unparsable_entries} user_permissions entr(ies) from OPA that have no \
-             resource and a key that is not <resource type>:<resource key>"
+             resource and a key that is not <resource type>:<resource key>, or an empty tenant key"
         );
     }
 
@@ -881,11 +891,15 @@ mod tests {
         }
     }
 
-    fn tenant_role_entry(tenant: &str, permissions: &[&str]) -> serde_json::Value {
+    fn tenant_role_entry(
+        tenant: &str,
+        attributes: serde_json::Value,
+        permissions: &[&str],
+    ) -> serde_json::Value {
         json!({
             "permissions": permissions,
             "roles": ["editor"],
-            "tenant": {"attributes": {}, "key": tenant, "type": "__tenant"}
+            "tenant": {"attributes": attributes, "key": tenant, "type": "__tenant"}
         })
     }
 
@@ -979,7 +993,7 @@ mod tests {
     async fn test_resource_search_lists_instances_in_tenants_whose_role_grants_the_action() {
         let fixture = TestFixture::new().await;
         let tenant_roles = json!({
-            "__tenant:t1": tenant_role_entry("t1", &["doc:read", "doc:write", "file:read"])
+            "__tenant:t1": tenant_role_entry("t1", json!({}), &["doc:read", "doc:write", "file:read"])
         });
         mock_alice_user_permissions(&fixture, tenant_roles).await;
         mock_doc_instances_query(&fixture, &["t1"], doc_instances_in_t1(), 2).await;
@@ -1013,7 +1027,7 @@ mod tests {
     async fn test_resource_search_skips_tenant_roles_without_the_action() {
         let fixture = TestFixture::new().await;
         let tenant_roles = json!({
-            "__tenant:t1": tenant_role_entry("t1", &["doc:read", "doc:write", "file:read"])
+            "__tenant:t1": tenant_role_entry("t1", json!({}), &["doc:read", "doc:write", "file:read"])
         });
         mock_alice_user_permissions(&fixture, tenant_roles).await;
         mock_doc_instances_query(&fixture, &["t1"], doc_instances_in_t1(), 0).await;
@@ -1028,9 +1042,9 @@ mod tests {
     async fn test_resource_search_lists_instances_only_in_tenants_whose_role_grants_the_action() {
         let fixture = TestFixture::new().await;
         let tenant_roles = json!({
-            "__tenant:t1": tenant_role_entry("t1", &["doc:read"]),
-            "__tenant:t2": tenant_role_entry("t2", &["doc:read", "doc:write"]),
-            "__tenant:t3": tenant_role_entry("t3", &["file:read"])
+            "__tenant:t1": tenant_role_entry("t1", json!({}), &["doc:read"]),
+            "__tenant:t2": tenant_role_entry("t2", json!({}), &["doc:read", "doc:write"]),
+            "__tenant:t3": tenant_role_entry("t3", json!({}), &["file:read"])
         });
         mock_alice_user_permissions(&fixture, tenant_roles).await;
         let instances = ResponseTemplate::new(200).set_body_json(json!({"result": [
@@ -1048,7 +1062,8 @@ mod tests {
     #[tokio::test]
     async fn test_resource_search_with_a_tenant_role_and_no_synced_instances() {
         let fixture = TestFixture::new().await;
-        let tenant_roles = json!({"__tenant:t1": tenant_role_entry("t1", &["doc:read"])});
+        let tenant_roles =
+            json!({"__tenant:t1": tenant_role_entry("t1", json!({}), &["doc:read"])});
         mock_alice_user_permissions(&fixture, tenant_roles).await;
         // OPA leaves `result` out when the query matches nothing.
         let no_instances = ResponseTemplate::new(200).set_body_json(json!({}));
@@ -1060,7 +1075,8 @@ mod tests {
     #[tokio::test]
     async fn test_resource_search_fails_when_the_instances_query_fails() {
         let fixture = TestFixture::new().await;
-        let tenant_roles = json!({"__tenant:t1": tenant_role_entry("t1", &["doc:read"])});
+        let tenant_roles =
+            json!({"__tenant:t1": tenant_role_entry("t1", json!({}), &["doc:read"])});
         mock_alice_user_permissions(&fixture, tenant_roles).await;
         mock_doc_instances_query(&fixture, &["t1"], ResponseTemplate::new(500), 1).await;
 
@@ -1160,27 +1176,15 @@ mod tests {
         assert_eq!(ids, vec!["doc-1", "doc-2"]);
     }
 
-    fn tenant_entry(
-        tenant: &str,
-        attributes: serde_json::Value,
-        permissions: &[&str],
-    ) -> serde_json::Value {
-        json!({
-            "permissions": permissions,
-            "roles": ["viewer"],
-            "tenant": {"attributes": attributes, "key": tenant, "type": "__tenant"}
-        })
-    }
-
     /// `user_permissions` as OPA returns it for a `__tenant` search by frank, a member of t2,
     /// acme and beta. None of the tenant roles grants `read` on `__tenant`.
     fn frank_tenant_permissions_response() -> serde_json::Value {
         json!({
             "result": {
                 "permissions": {
-                    "__tenant:t2": tenant_entry("t2", json!({"plan": "pro"}), &["doc:read"]),
-                    "__tenant:acme": tenant_entry("acme", json!({"region": "eu"}), &["doc:write"]),
-                    "__tenant:beta": tenant_entry("beta", json!({}), &[])
+                    "__tenant:t2": tenant_role_entry("t2", json!({"plan": "pro"}), &["doc:read"]),
+                    "__tenant:acme": tenant_role_entry("acme", json!({"region": "eu"}), &["doc:write"]),
+                    "__tenant:beta": tenant_role_entry("beta", json!({}), &[])
                 }
             }
         })
@@ -1205,13 +1209,14 @@ mod tests {
         search_response.results
     }
 
-    fn tenant_result(tenant: &str, properties: Option<serde_json::Value>) -> AuthZenResource {
+    fn tenant_result(
+        tenant: &str,
+        properties: Option<HashMap<String, serde_json::Value>>,
+    ) -> AuthZenResource {
         AuthZenResource {
             r#type: "__tenant".to_string(),
             id: Some(tenant.to_string()),
-            properties: properties.map(|properties| {
-                serde_json::from_value(properties).unwrap_or_else(|err| panic!("{err}"))
-            }),
+            properties,
         }
     }
 
@@ -1230,12 +1235,14 @@ mod tests {
         let fixture = TestFixture::new().await;
         mock_user_permissions(&fixture, frank_tenant_permissions_response(), 1).await;
 
+        let region_eu = HashMap::from([("region".to_string(), json!("eu"))]);
+        let plan_pro = HashMap::from([("plan".to_string(), json!("pro"))]);
         assert_eq!(
             search_tenants(&fixture, "read", None).await,
             vec![
-                tenant_result("acme", Some(json!({"region": "eu"}))),
+                tenant_result("acme", Some(region_eu)),
                 tenant_result("beta", None),
-                tenant_result("t2", Some(json!({"plan": "pro"}))),
+                tenant_result("t2", Some(plan_pro)),
             ]
         );
     }
@@ -1245,9 +1252,10 @@ mod tests {
         let fixture = TestFixture::new().await;
         mock_user_permissions(&fixture, frank_tenant_permissions_response(), 1).await;
 
+        let region_eu = HashMap::from([("region".to_string(), json!("eu"))]);
         assert_eq!(
             search_tenants(&fixture, "read", Some("acme")).await,
-            vec![tenant_result("acme", Some(json!({"region": "eu"})))]
+            vec![tenant_result("acme", Some(region_eu))]
         );
     }
 
@@ -1269,7 +1277,7 @@ mod tests {
         let permissions = json!({
             "result": {
                 "permissions": {
-                    "__tenant:t1": tenant_entry("t1", json!({}), &["__tenant:read"])
+                    "__tenant:t1": tenant_role_entry("t1", json!({}), &["__tenant:read"])
                 }
             }
         });
@@ -1307,7 +1315,7 @@ mod tests {
         let permissions = json!({
             "result": {
                 "permissions": {
-                    "__tenant:row-1": tenant_entry("acme", json!({}), &[])
+                    "__tenant:row-1": tenant_role_entry("acme", json!({}), &[])
                 }
             }
         });
@@ -1316,6 +1324,49 @@ mod tests {
         assert_eq!(
             search_tenants(&fixture, "read", None).await,
             vec![tenant_result("acme", None)]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resource_search_for_tenants_asks_opa_for_tenants_once() {
+        let fixture = TestFixture::new().await;
+        mock_user_permissions(&fixture, frank_tenant_permissions_response(), 1).await;
+
+        search_tenants(&fixture, "read", None).await;
+
+        let requests = fixture
+            .opa_mock
+            .received_requests()
+            .await
+            .unwrap_or_default();
+        let mut resource_types = Vec::new();
+        for request in &requests {
+            if request.url.path() == "/v1/data/permit/user_permissions" {
+                let body: serde_json::Value = serde_json::from_slice(&request.body)
+                    .expect("user_permissions request body is JSON");
+                resource_types.push(body["input"]["resource_types"].clone());
+            }
+        }
+        assert_eq!(resource_types, vec![json!(["__tenant"])]);
+    }
+
+    #[tokio::test]
+    async fn test_resource_search_for_tenants_skips_entries_with_an_empty_tenant_key() {
+        let fixture = TestFixture::new().await;
+        let permissions = json!({
+            "result": {
+                "permissions": {
+                    "__tenant:": {"permissions": [], "roles": ["viewer"]},
+                    "__tenant:row-1": tenant_role_entry("", json!({"plan": "pro"}), &[]),
+                    "__tenant:t1": tenant_role_entry("t1", json!({}), &[])
+                }
+            }
+        });
+        mock_user_permissions(&fixture, permissions, 1).await;
+
+        assert_eq!(
+            search_tenants(&fixture, "read", None).await,
+            vec![tenant_result("t1", None)]
         );
     }
 }
