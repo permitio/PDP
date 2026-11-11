@@ -36,6 +36,8 @@ impl log::Log for StartLines {
     fn flush(&self) {}
 }
 
+/// Installs the logger on first use. Each test calls it before it starts a
+/// watchdog, so no line is logged before the logger is there.
 fn start_lines() -> &'static StartLines {
     static LINES: OnceLock<&'static StartLines> = OnceLock::new();
     LINES.get_or_init(|| {
@@ -115,11 +117,13 @@ async fn wait_for_loop_end(handler: &Arc<Ignore>, within: Duration) -> bool {
 }
 
 /// The child runs when the watchdog is dropped. Before the fix, the loop picked
-/// the closed restart channel about half the time and started the child again.
-/// Thirty rounds: the old code passes them all with odds of about one in a
-/// billion.
+/// the closed restart channel about one time in three (the unbiased select
+/// starts at one of its three branches at random) and started the child again.
+/// Thirty rounds: the old code passes them all with odds of about one in
+/// 200,000.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_dropped_watchdog_does_not_start_a_running_child_again() {
+    start_lines();
     for round in 0..30 {
         let marker = marker("running", round);
         let watchdog = CommandWatchdog::start_with_opt(
@@ -150,10 +154,11 @@ async fn a_dropped_watchdog_does_not_start_a_running_child_again() {
 
 /// A restart was asked for and is still buffered when the watchdog is dropped.
 /// The shutdown must win: before the fix, an unbiased select chose the buffered
-/// request about half the time and started the child again during teardown.
+/// request about one time in three and started the child again during teardown.
 /// On one thread, nothing runs the loop between the request and the drop.
 #[tokio::test(flavor = "current_thread")]
 async fn a_restart_buffered_at_the_drop_does_not_start_the_child_again() {
+    start_lines();
     for round in 0..30 {
         let marker = marker("buffered", round);
         let watchdog = CommandWatchdog::start_with_opt(
@@ -193,6 +198,7 @@ async fn a_restart_buffered_at_the_drop_does_not_start_the_child_again() {
 /// the loop then started the child again.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_restart_under_way_at_the_drop_does_not_start_the_child_again() {
+    start_lines();
     let marker = marker("restarting", 0);
     let watchdog = CommandWatchdog::start_with_opt(
         // An ignored SIGTERM stays ignored across `exec`, so `sleep` ignores it
@@ -225,6 +231,7 @@ async fn a_restart_under_way_at_the_drop_does_not_start_the_child_again() {
 /// started the child again.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_dropped_watchdog_ends_a_crash_loops_delay_at_once() {
+    start_lines();
     let marker = marker("crashing", 0);
     let handler = Arc::new(Ignore);
     let watchdog = CommandWatchdog::start_with_opt(
@@ -253,6 +260,7 @@ async fn a_dropped_watchdog_ends_a_crash_loops_delay_at_once() {
 /// shutdown token, so the loop kept retrying for good.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_dropped_watchdog_stops_retrying_a_command_that_cannot_spawn() {
+    start_lines();
     let marker = marker("missing", 0);
     let handler = Arc::new(Ignore);
     let mut command = Command::new(format!("/nonexistent/{marker}"));

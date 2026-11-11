@@ -181,8 +181,10 @@ impl CommandWatchdog {
             loop {
                 // Teardown may have begun while a restart, a crash's delay or a
                 // failed spawn's retry was under way: start nothing after it.
+                // The two waits below come back here on shutdown, so this is
+                // the one place the loop ends without a child to stop.
                 if shutdown_token.is_cancelled() {
-                    info!("Watchdog shutting down before starting '{program_name}' again");
+                    info!("Watchdog shut down; not starting '{program_name}'");
                     break;
                 }
                 let count = stats.increment_start_counter();
@@ -226,7 +228,7 @@ impl CommandWatchdog {
                     Err(e) => {
                         info!("Failed to start process '{program_name}': {e}");
                         tokio::select! {
-                            _ = shutdown_token.cancelled() => break,
+                            _ = shutdown_token.cancelled() => continue,
                             _ = tokio::time::sleep(opt.restart_interval) => {}
                         }
                         continue;
@@ -287,7 +289,7 @@ impl CommandWatchdog {
                         delay.as_millis()
                     );
                     tokio::select! {
-                        _ = shutdown_token.cancelled() => break,
+                        _ = shutdown_token.cancelled() => continue,
                         _ = tokio::time::sleep(delay) => {}
                     }
                 }
