@@ -183,7 +183,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           repository: permitio/permit-opa
-          ref: 35a8c7fb81e5c1b0f289674a3b0ad67423afb8aa  # permit-opa main at the permitio/permit-opa#61 merge (PER-16921), with #53-#57 and #62
+          ref: bea5c1e1ca87cbda53edbde4011d5e5e7c2a49ab  # permit-opa main at permitio/permit-opa#68: brotli 1.2.8, klauspost/compress 1.20.3, golang.org/x/net 0.62.0
           path: './permit-opa'
           token: ${{ steps.permit-opa-token.outputs.token }}
           # Nothing after the clone needs the token; don't leave it in .git/config.
@@ -237,7 +237,7 @@ jobs:
       # release also builds arm64. opa_build cross-compiles on the build host, so this
       # is cheap, and it stops before the Rust and Python stages. No cache: nothing
       # exports opa_build, and its only layers before `COPY custom*` (an ENV and the
-      # go1.26.6 floor check) take about 2 seconds.
+      # toolchain floor check) take about 2 seconds.
       - name: Build the OPA stage for arm64
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
