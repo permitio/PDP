@@ -182,9 +182,12 @@ impl CommandWatchdog {
                 // Teardown may have begun while a restart, a crash's delay or a
                 // failed spawn's retry was under way: start nothing after it.
                 // The two waits below come back here on shutdown, so this is
-                // the one place the loop ends without a child to stop.
+                // the one place the loop ends without a child to stop. Keep it
+                // before the spawn: a shutdown during a failed spawn's retry
+                // would otherwise spin, since the spawn fails at once and the
+                // token is already cancelled.
                 if shutdown_token.is_cancelled() {
-                    info!("Watchdog shut down; not starting '{program_name}'");
+                    info!("Watchdog shut down; not starting process '{cmd_line}'");
                     break;
                 }
                 let count = stats.increment_start_counter();

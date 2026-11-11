@@ -3,9 +3,9 @@
 //!
 //! The drop cancels the shutdown token and drops the restart sender in the same
 //! moment, so the loop wakes with both its shutdown branch and a closed restart
-//! channel ready. These tests count the loop's own "Starting process" and
-//! "received restart signal" log lines, so they hold no handle that would keep
-//! the restart channel open and hide the race. Whether the loop has ended is
+//! channel ready. These tests count the loop's own "Starting process",
+//! "received restart signal" and "shut down; not starting" log lines, so they
+//! hold no handle that would keep the restart channel open and hide the race. Whether the loop has ended is
 //! read from an output handler it owns: its `Arc` goes back to one owner when
 //! the loop's task drops its options.
 
@@ -15,8 +15,8 @@ use std::time::{Duration, Instant};
 use tokio::process::Command;
 use watchdog::{ChildOutputHandler, ChildStream, CommandWatchdog, CommandWatchdogOptions};
 
-/// Every "Starting process" and "received restart signal" line the watchdog
-/// logs, across the whole binary.
+/// Every "Starting process", "received restart signal" and "shut down; not
+/// starting" line the watchdog logs, across the whole binary.
 struct StartLines(Mutex<Vec<String>>);
 
 impl log::Log for StartLines {
@@ -28,6 +28,7 @@ impl log::Log for StartLines {
         let line = record.args().to_string();
         if line.starts_with("Starting process ")
             || line.starts_with("Watchdog received restart signal")
+            || line.starts_with("Watchdog shut down; not starting")
         {
             self.0.lock().unwrap().push(line);
         }
@@ -67,6 +68,13 @@ fn starts_of(marker: &str) -> usize {
 /// it must take the shutdown branch instead.
 fn restarts_of(marker: &str) -> usize {
     lines_of("Watchdog received restart signal", marker)
+}
+
+/// How many times the loop ended at its top, before a start, for that
+/// command: what a shutdown during a restart, a crash loop's delay or a failed
+/// spawn's retry logs.
+fn stops_of(marker: &str) -> usize {
+    lines_of("Watchdog shut down; not starting", marker)
 }
 
 /// A marker no other test's command line contains.
@@ -224,6 +232,7 @@ async fn a_restart_under_way_at_the_drop_does_not_start_the_child_again() {
     tokio::time::sleep(Duration::from_millis(1200)).await;
 
     assert_eq!(starts_of(&marker), 1, "started again after the drop");
+    assert_eq!(stops_of(&marker), 1, "the loop did not end at its top");
 }
 
 /// The watchdog is dropped while it waits out a crash loop's delay. Before the
@@ -253,6 +262,11 @@ async fn a_dropped_watchdog_ends_a_crash_loops_delay_at_once() {
         "the loop sat out its delay after the drop"
     );
     assert_eq!(starts_of(&marker), 1, "started again after the drop");
+    assert_eq!(
+        stops_of(&marker),
+        1,
+        "the delay's shutdown did not go back to the loop's top"
+    );
 }
 
 /// The command cannot be spawned, and the watchdog is dropped while it waits to
@@ -284,4 +298,9 @@ async fn a_dropped_watchdog_stops_retrying_a_command_that_cannot_spawn() {
         "the loop sat out its retry delay after the drop"
     );
     assert_eq!(starts_of(&marker), 1, "retried after the drop");
+    assert_eq!(
+        stops_of(&marker),
+        1,
+        "the retry's shutdown did not go back to the loop's top"
+    );
 }
