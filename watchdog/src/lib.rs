@@ -179,6 +179,17 @@ impl CommandWatchdog {
             let mut restart_rx = restart_rx;
 
             loop {
+                // Teardown may have begun while a restart, a crash's delay or a
+                // failed spawn's retry was under way: start nothing after it.
+                // The two waits below come back here on shutdown, so this is
+                // the one place the loop ends without a child to stop. Keep it
+                // before the spawn: a shutdown during a failed spawn's retry
+                // would otherwise spin, since the spawn fails at once and the
+                // token is already cancelled.
+                if shutdown_token.is_cancelled() {
+                    info!("Watchdog shut down; not starting process '{cmd_line}'");
+                    break;
+                }
                 let count = stats.increment_start_counter();
                 info!(
                     "Starting process '{}' with command line '{}' (start count: {})",
@@ -219,11 +230,19 @@ impl CommandWatchdog {
                     }
                     Err(e) => {
                         info!("Failed to start process '{program_name}': {e}");
-                        tokio::time::sleep(opt.restart_interval).await;
+                        tokio::select! {
+                            _ = shutdown_token.cancelled() => continue,
+                            _ = tokio::time::sleep(opt.restart_interval) => {}
+                        }
                         continue;
                     }
                 };
                 tokio::select! {
+                    // Shutdown first: at teardown the token is cancelled and the
+                    // restart channel closes together, and an unbiased select
+                    // picked either at random, restarting the child during
+                    // teardown.
+                    biased;
                     _ = shutdown_token.cancelled() => {
                         info!("Watchdog received shutdown signal, terminating process '{cmd_line}'");
                         match terminate_process_with_timeout(&mut child, &program_name, termination_timeout).await {
@@ -236,7 +255,8 @@ impl CommandWatchdog {
                         };
                         break;
                     }
-                    _ = restart_rx.recv() => {
+                    // A closed channel (`None`) is no restart request.
+                    Some(()) = restart_rx.recv() => {
                         info!("Watchdog received restart signal, restarting process '{cmd_line}'");
                         match terminate_process_with_timeout(&mut child, &program_name, termination_timeout).await {
                             Ok(_) => {
@@ -271,7 +291,10 @@ impl CommandWatchdog {
                         "Detected crash loop. Waiting {}ms before restarting process",
                         delay.as_millis()
                     );
-                    tokio::time::sleep(delay).await;
+                    tokio::select! {
+                        _ = shutdown_token.cancelled() => continue,
+                        _ = tokio::time::sleep(delay) => {}
+                    }
                 }
             }
         });
