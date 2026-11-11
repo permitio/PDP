@@ -82,7 +82,7 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       with:
         repository: permitio/permit-opa
-        ref: 35a8c7fb81e5c1b0f289674a3b0ad67423afb8aa  # permit-opa main at the permitio/permit-opa#61 merge (PER-16921), with #53-#57 and #62
+        ref: bea5c1e1ca87cbda53edbde4011d5e5e7c2a49ab  # permit-opa main at permitio/permit-opa#68: brotli 1.2.8, klauspost/compress 1.20.3, golang.org/x/net 0.62.0
         path: './permit-opa'
         token: ${{ steps.permit-opa-token.outputs.token }}
         # Nothing after the clone needs the token; don't leave it in .git/config.
@@ -138,7 +138,7 @@ jobs:
         # `opa_build` is deliberately NOT listed: `COPY custom* /custom` pulls in
         # custom_opa.tar.gz, which the Pre-build step regenerates every run, so that stage
         # re-executes from that COPY on, every run. The two layers before it
-        # (`ENV GOTOOLCHAIN=local` and the go1.26.6 floor check) re-run too, since no
+        # (`ENV GOTOOLCHAIN=local` and the toolchain floor check) re-run too, since no
         # build exports opa_build to the cache; together they take about 2 seconds.
         # Listing the stage would imply this filter controls the OPA binary's Go
         # dependency versions, and it does not - those come from permit-opa's go.sum (see

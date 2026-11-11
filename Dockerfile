@@ -84,14 +84,14 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # `godebug default=go1.25` line).
 # The binary is CGO_ENABLED=0 (below), so the builder's glibc does not reach the image.
 #
-# The FROM line is digest-pinned, so a rebuild of the same commit gets the same
-# toolchain. The `docker` entry in .github/dependabot.yml moves tag and digest together
-# daily, so a Go security release (a new go1.27.x behind the same tag) arrives as a
-# reviewable PR instead of silently on the next build. The exception is a release that the
-# floor check below must require: the digest then moves by hand, in the same commit as the
-# floor, because the old digest would fail the new floor. From then on the floor fails the
-# build if a later FROM edit (a revert, an older digest, an unpinned tag) lands a toolchain
-# below it (go1.27.3, PER-17672).
+# The FROM line pins the patch tag and its digest, so a rebuild of the same commit gets the
+# same toolchain. The `docker` entry in .github/dependabot.yml moves tag and digest together
+# daily, so a Go security release (go1.27.5 and later) arrives as a reviewable PR instead of
+# silently on the next build. The exception is a release that the floor check below must
+# require: the tag and digest then move by hand, in the same commit as the floor, because
+# the old ones would fail the new floor. From then on the floor fails the build if a later
+# FROM edit (a revert, an older digest, an unpinned tag) lands a toolchain below it
+# (go1.27.4).
 #
 # This stage pins nothing beyond that floor, and that is a statement about THIS builder
 # only. permit-opa builds its own artifacts (its own Dockerfile and release workflow)
@@ -104,7 +104,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # audit, not a gate. The gates are the Docker Scout and Trivy scans in tests.yml and
 # release.yml, and scheduled-security-scan.yml re-scans published tags (PER-15358).
 #
-# The floor is go1.27.3. 1.27.2 carried the standard-library fixes for CVE-2026-56857,
+# The floor is go1.27.4, the first 1.27 release whose net/http cannot be made to crash an
+# HTTP/1 server through the MaxBytesReader header race (GO-2026-6859 / CVE-2026-97054). OPA
+# serves HTTP/1 on 8181, so the permit build needs it. Before it the floor was go1.27.3.
+# 1.27.2 carried the standard-library fixes for CVE-2026-56857,
 # CVE-2026-78663 and the other stdlib CVEs Docker Scout reported against 1.27.1; 1.27.3 adds
 # a crypto/x509 deny list that rejects any chain through the eight eMudhra intermediates
 # whose private keys are recoverable (CVE-2026-111943, PER-17672). OPA verifies against the
@@ -132,11 +135,11 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # an ARG, splitting the FROM across lines or renaming the stage turns permit-opa's CI
 # red with "cannot compare go.mod's directive" - which is a fail-closed by design, but
 # it will look like an unrelated repo breaking for no reason.
-FROM --platform=$BUILDPLATFORM golang:1.27-bookworm@sha256:972b4110ba0f47539a975c31e52c64765e1ff19f2d74469ae4a595c6676e80a5 AS opa_build
+FROM --platform=$BUILDPLATFORM golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS opa_build
 ENV GOTOOLCHAIN=local
 RUN v=$(go env GOVERSION) && \
-    [ "$(printf '%s\n' go1.27.3 "$v" | sort -V | head -n1)" = go1.27.3 ] || \
-    { echo "opa_build: $v is below the go1.27.3 floor (eMudhra deny list, CVE-2026-111943; stdlib CVEs fixed in 1.27.2)"; exit 1; } && \
+    [ "$(printf '%s\n' go1.27.4 "$v" | sort -V | head -n1)" = go1.27.4 ] || \
+    { echo "opa_build: $v is below the go1.27.4 floor (net/http MaxBytesReader crash, GO-2026-6859; eMudhra deny list from 1.27.3, CVE-2026-111943; stdlib CVEs fixed in 1.27.2)"; exit 1; } && \
     echo "opa_build: building with $v"
 
 COPY custom* /custom
