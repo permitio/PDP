@@ -15,6 +15,7 @@ pub mod allowed;
 pub mod allowed_bulk;
 pub mod authorized_users;
 pub mod cached;
+pub mod resource_instances;
 pub mod user_permissions;
 
 /// Generic function to send a request to OPA and return a specific response type
@@ -31,12 +32,12 @@ async fn send_request_to_opa<R: DeserializeOwned, B: Serialize>(
     Ok(response.result)
 }
 
-/// Generic function to forward requests to OPA
+/// POSTs `body` to an OPA endpoint and parses the response body as `R`
 async fn send_raw_request_to_opa<B: Serialize, R: DeserializeOwned>(
     state: &AppState,
     endpoint: &str,
-    body: &OpaRequest<B>,
-) -> Result<OpaResponse<R>, ForwardingError> {
+    body: &B,
+) -> Result<R, ForwardingError> {
     // Build the OPA URL from the settings
     let endpoint = endpoint.strip_prefix("/").unwrap_or(endpoint);
     let opa_url = format!("{}/{}", state.config.opa.url, endpoint);
