@@ -364,6 +364,35 @@ mod test {
     }
 
     #[tokio::test]
+    async fn test_cache_health_reports_the_redis_circuit_breaker() {
+        use crate::cache::fake_redis::{FakeRedis, Mode};
+        use crate::cache::{redis::RedisCache, Cache};
+
+        TestFixture::setup_logger(LevelFilter::Info);
+        let (horizon_mock, opa_mock) = setup_healthy_mocks().await;
+        let config = crate::config::PDPConfig::for_test_with_mocks(&horizon_mock, &opa_mock);
+        let redis = FakeRedis::start().await;
+        let cache = Cache::Redis(RedisCache::new(&redis.url(), 60).await.unwrap());
+        let fixture = TestFixture::with_config(config, opa_mock, horizon_mock)
+            .await
+            .with_cache(cache)
+            .await;
+
+        let response = fixture.get("/health?check_cache=true").await;
+        response.assert_ok();
+        let cache = &response.json()["components"]["cache"];
+        assert_eq!(cache["status"], "ok");
+        assert_eq!(cache["details"]["circuit_breaker"], "closed");
+
+        redis.set_mode(Mode::Paused);
+        let response = fixture.get("/health?check_cache=true").await;
+        assert_eq!(response.status, StatusCode::SERVICE_UNAVAILABLE);
+        let cache = &response.json()["components"]["cache"];
+        assert_eq!(cache["status"], "error");
+        assert_eq!(cache["details"]["circuit_breaker"], "open");
+    }
+
+    #[tokio::test]
     async fn test_unhealthy_horizon() {
         TestFixture::setup_logger(LevelFilter::Info);
         let (horizon_mock, opa_mock) = setup_unhealthy_horizon_mock().await;

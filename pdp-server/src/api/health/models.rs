@@ -75,7 +75,8 @@ impl IntoResponse for HealthResponse {
                     "cache".to_string(),
                     json!({
                         "status": cache_status.status,
-                        "error": cache_status.error
+                        "error": cache_status.error,
+                        "details": cache_status.details
                     }),
                 );
             }

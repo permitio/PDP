@@ -1,8 +1,9 @@
-use crate::cache::CacheBackend;
+use crate::cache::{CacheBackend, CacheError};
 use crate::headers::ClientCacheControl;
 use crate::opa_client::ForwardingError;
 use crate::state::AppState;
 use log::{debug, warn};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
@@ -14,6 +15,17 @@ pub use super::allowed::{AllowedQuery, AllowedResult};
 pub use super::allowed_bulk::BulkAuthorizationResult;
 pub use super::authorized_users::{AuthorizedUsersQuery, AuthorizedUsersResult};
 pub use super::user_permissions::{UserPermissionsQuery, UserPermissionsResult};
+
+/// Logs a failed cache operation, unless it is a Redis outage: the Redis backend's circuit
+/// breaker logs those itself, once per state change rather than once per request.
+fn log_cache_error(operation: &str, err: &CacheError) {
+    match err {
+        CacheError::Redis(_) | CacheError::Unavailable => {}
+        CacheError::Serialization(_) | CacheError::Deserialization(_) | CacheError::Config(_) => {
+            warn!("Cache {operation} failed: {err}");
+        }
+    }
+}
 
 /// Common cache handling logic
 async fn handle_cache_get<T: serde::de::DeserializeOwned + Send + Sync>(
@@ -29,18 +41,40 @@ async fn handle_cache_get<T: serde::de::DeserializeOwned + Send + Sync>(
 
     match state.cache.get::<T>(cache_key).await {
         Ok(Some(cached_result)) => {
-            debug!("Cache hit for key: {cache_key}");
+            debug!("Cache hit");
             Some(cached_result)
         }
         Ok(None) => {
-            debug!("Cache miss for key: {cache_key}");
+            debug!("Cache miss");
             None
         }
         Err(cache_err) => {
-            warn!("Cache error for key {cache_key}: {cache_err}");
+            log_cache_error("lookup", &cache_err);
             None
         }
     }
+}
+
+/// Looks up a batch of keys in one cache read. Every key is a miss when the client asked to
+/// bypass the cache or the read fails.
+async fn handle_cache_get_many<T: serde::de::DeserializeOwned + Send + Sync>(
+    state: &AppState,
+    cache_keys: &[String],
+    cache_control: &ClientCacheControl,
+) -> Vec<Option<T>> {
+    if cache_control.should_use_cache() {
+        match state.cache.get_many::<T>(cache_keys).await {
+            Ok(values) => return values,
+            Err(cache_err) => log_cache_error("lookup", &cache_err),
+        }
+    } else {
+        debug!("Skipping cache lookup due to cache control directives: {cache_control:?}");
+    }
+    let mut misses = Vec::with_capacity(cache_keys.len());
+    for _ in cache_keys {
+        misses.push(None);
+    }
+    misses
 }
 
 /// Common cache storage logic
@@ -50,61 +84,67 @@ async fn handle_cache_set<T: serde::Serialize + Send + Sync>(
     value: &T,
     cache_control: &ClientCacheControl,
 ) {
+    handle_cache_set_many(state, &[(cache_key, value)], cache_control).await;
+}
+
+/// Stores a batch of results in one cache write.
+async fn handle_cache_set_many<T: serde::Serialize + Send + Sync>(
+    state: &AppState,
+    entries: &[(&str, &T)],
+    cache_control: &ClientCacheControl,
+) {
     // Skip caching if client requested no-store
     if cache_control.no_store {
         debug!("Skipping cache storage due to no-store directive");
         return;
     }
 
-    if let Err(cache_err) = state.cache.set(cache_key, value).await {
-        warn!("Failed to cache result for {cache_key}: {cache_err}");
+    if let Err(cache_err) = state.cache.set_many(entries).await {
+        log_cache_error("write", &cache_err);
     }
 }
 
-/// The first 16 lowercase hex characters of a digest - the cache-key suffix every key
-/// has used, so existing cache entries keep matching across the sha2 0.11 upgrade.
-fn hex_prefix(digest: &[u8]) -> String {
-    let mut hex = String::with_capacity(16);
-    for byte in digest.iter().take(8) {
+/// A digest as lowercase hex.
+fn to_hex(digest: &[u8]) -> String {
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for byte in digest {
         hex.push_str(&format!("{byte:02x}"));
     }
     hex
 }
 
+/// Hashes a query into a cache key: `opa:{kind}:` and the query's full SHA-256 in hex.
+///
+/// Equal queries must get equal keys, so the hash input is a canonical serialization: the
+/// query goes through `serde_json::Value` and every object's keys are sorted, at every depth.
+/// Serializing the query directly would follow the iteration order of its `HashMap` fields
+/// (`context`, `attributes`), which differs between two maps holding the same entries.
+///
+/// The whole digest is kept: two queries whose keys collided would share one cached
+/// authorization decision.
+fn cache_key<Q: Serialize>(kind: &str, query: &Q) -> Result<String, String> {
+    let mut canonical = serde_json::to_value(query)
+        .map_err(|e| format!("Failed to serialize the {kind} query for its cache key: {e}"))?;
+    // A no-op unless some crate enables serde_json's `preserve_order` feature, which would
+    // turn `Value` objects back into insertion-ordered maps.
+    canonical.sort_all_objects();
+    let digest = Sha256::digest(canonical.to_string().as_bytes());
+    Ok(format!("opa:{kind}:{}", to_hex(digest.as_slice())))
+}
+
 /// Generate a cache key for allowed queries
 fn generate_allowed_cache_key(query: &AllowedQuery) -> Result<String, String> {
-    let mut hasher = Sha256::new();
-    let serialized = serde_json::to_string(query)
-        .map_err(|e| format!("Failed to serialize AllowedQuery for cache key: {e}"))?;
-    hasher.update(serialized.as_bytes());
-    Ok(format!(
-        "opa:allowed:{}",
-        hex_prefix(hasher.finalize().as_slice())
-    ))
+    cache_key("allowed", query)
 }
 
 /// Generate a cache key for user permissions queries
 fn generate_user_permissions_cache_key(query: &UserPermissionsQuery) -> Result<String, String> {
-    let mut hasher = Sha256::new();
-    let serialized = serde_json::to_string(query)
-        .map_err(|e| format!("Failed to serialize UserPermissionsQuery for cache key: {e}"))?;
-    hasher.update(serialized.as_bytes());
-    Ok(format!(
-        "opa:user_permissions:{}",
-        hex_prefix(hasher.finalize().as_slice())
-    ))
+    cache_key("user_permissions", query)
 }
 
 /// Generate a cache key for authorized users queries
 fn generate_authorized_users_cache_key(query: &AuthorizedUsersQuery) -> Result<String, String> {
-    let mut hasher = Sha256::new();
-    let serialized = serde_json::to_string(query)
-        .map_err(|e| format!("Failed to serialize AuthorizedUsersQuery for cache key: {e}"))?;
-    hasher.update(serialized.as_bytes());
-    Ok(format!(
-        "opa:authorized_users:{}",
-        hex_prefix(hasher.finalize().as_slice())
-    ))
+    cache_key("authorized_users", query)
 }
 
 /// Cached version of query_allowed with cache control support
@@ -131,8 +171,10 @@ pub async fn query_allowed_cached(
     Ok(result)
 }
 
-/// Cached version of query_allowed_bulk with cache control support
-/// This function leverages the shared cache with individual allowed queries
+/// Cached version of query_allowed_bulk with cache control support.
+///
+/// It shares cache entries with single allowed queries. The whole batch is looked up with one
+/// cache read, OPA evaluates only the misses, and their results go back in one cache write.
 pub async fn query_allowed_bulk_cached(
     state: &AppState,
     queries: &[AllowedQuery],
@@ -144,57 +186,54 @@ pub async fn query_allowed_bulk_cached(
         return super::allowed_bulk::query_allowed_bulk(state, queries).await;
     }
 
-    let mut results = Vec::with_capacity(queries.len());
-    let mut cache_misses = Vec::new();
-    let mut cache_miss_indices = Vec::new();
+    let mut cache_keys = Vec::with_capacity(queries.len());
+    for query in queries {
+        cache_keys.push(generate_allowed_cache_key(query)?);
+    }
+    let mut results =
+        handle_cache_get_many::<AllowedResult>(state, &cache_keys, cache_control).await;
 
-    // Check cache for each individual query
-    for (index, query) in queries.iter().enumerate() {
-        let cache_key = generate_allowed_cache_key(query)?;
+    let mut miss_indices = Vec::new();
+    let mut misses = Vec::new();
+    for (index, result) in results.iter().enumerate() {
+        if result.is_none() {
+            miss_indices.push(index);
+            misses.push(queries[index].clone());
+        }
+    }
+    debug!(
+        "Bulk check: {} of {} results cached",
+        queries.len() - misses.len(),
+        queries.len()
+    );
 
-        if let Some(cached_result) =
-            handle_cache_get::<AllowedResult>(state, &cache_key, cache_control).await
-        {
-            debug!("Cache hit for bulk allowed query {index}: {cache_key}");
-            results.push(Some(cached_result));
-        } else {
-            debug!("Cache miss for bulk allowed query {index}: {cache_key}");
-            results.push(None);
-            cache_misses.push(query.clone());
-            cache_miss_indices.push(index);
+    if !misses.is_empty() {
+        let fetched = super::allowed_bulk::query_allowed_bulk(state, &misses)
+            .await?
+            .allow;
+        // OPA answers the checks in order. Any other count leaves no way to pair results with
+        // checks, so nothing is cached or returned.
+        if fetched.len() != misses.len() {
+            return Err(ForwardingError::BulkResultCount {
+                checks: misses.len(),
+                results: fetched.len(),
+            });
+        }
+
+        let mut entries = Vec::with_capacity(fetched.len());
+        for (index, result) in miss_indices.iter().zip(&fetched) {
+            entries.push((cache_keys[*index].as_str(), result));
+        }
+        handle_cache_set_many(state, &entries, cache_control).await;
+
+        for (index, result) in miss_indices.into_iter().zip(fetched) {
+            results[index] = Some(result);
         }
     }
 
-    // If we have cache misses, query OPA for them
-    if !cache_misses.is_empty() {
-        debug!(
-            "Querying OPA for {} cache misses out of {} total queries",
-            cache_misses.len(),
-            queries.len()
-        );
-
-        let bulk_result = super::allowed_bulk::query_allowed_bulk(state, &cache_misses).await?;
-
-        // Store individual results in cache and update our results array
-        for (miss_index, opa_result) in cache_miss_indices.iter().zip(bulk_result.allow.iter()) {
-            let query = &queries[*miss_index];
-            let cache_key = generate_allowed_cache_key(query)?;
-
-            // Store in cache if allowed
-            handle_cache_set(state, &cache_key, opa_result, cache_control).await;
-
-            results[*miss_index] = Some(opa_result.clone());
-        }
-    }
-
-    // Convert Option<AllowedResult> to AllowedResult (should all be Some at this point)
-    let final_results: Vec<AllowedResult> = results
-        .into_iter()
-        .map(|opt| opt.expect("All results should be populated by now"))
-        .collect();
-
+    // Every slot holds a result now: a cached one, or OPA's for a miss.
     Ok(BulkAuthorizationResult {
-        allow: final_results,
+        allow: results.into_iter().flatten().collect(),
     })
 }
 
@@ -250,18 +289,527 @@ pub async fn query_authorized_users_cached(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_hex_prefix_matches_the_old_key_format() {
-        // SHA-256("abc") starts ba7816bf8f01cfea; sha2 0.10's `{:x}` rendered the same 16 chars.
-        let digest = Sha256::digest(b"abc");
-        assert_eq!(hex_prefix(digest.as_slice()), "ba7816bf8f01cfea");
-    }
+    use crate::cache::fake_redis::{FakeRedis, Mode};
+    use crate::cache::memory::InMemoryCache;
+    use crate::cache::redis::{RedisCache, OPERATION_TIMEOUT};
+    use crate::cache::Cache;
     use crate::opa_client::allowed::{Resource, User};
-    use crate::test_utils::TestFixture;
+    use crate::test_utils::{LogCapture, TestFixture, TestResponse};
+    use axum::body::Body;
     use http::{Method, StatusCode};
     use serde_json::json;
     use std::collections::HashMap;
+
+    #[test]
+    fn test_to_hex_renders_the_whole_digest() {
+        let digest = Sha256::digest(b"abc");
+        assert_eq!(
+            to_hex(digest.as_slice()),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    /// The key format, pinned: a change here moves every cache entry, so it must be deliberate.
+    #[test]
+    fn test_cache_key_is_the_prefix_and_the_full_sha256() {
+        let allowed: AllowedQuery = serde_json::from_str(
+            r#"{"user":{"key":"u1"},"action":"read","resource":{"type":"doc"}}"#,
+        )
+        .unwrap();
+        // SHA-256 of the canonical JSON {"action":"read","resource":{"type":"doc"},"user":{"key":"u1"}}
+        assert_eq!(
+            generate_allowed_cache_key(&allowed).unwrap(),
+            "opa:allowed:746b996a447e8d4502333e78274ded3cf8632983a2149ee0975d0bfce848650a"
+        );
+
+        let user_permissions: UserPermissionsQuery =
+            serde_json::from_str(r#"{"user":{"key":"u1"}}"#).unwrap();
+        let authorized_users: AuthorizedUsersQuery =
+            serde_json::from_str(r#"{"action":"read","resource":{"type":"doc"}}"#).unwrap();
+        let keys = [
+            (
+                "opa:allowed:",
+                generate_allowed_cache_key(&allowed).unwrap(),
+            ),
+            (
+                "opa:user_permissions:",
+                generate_user_permissions_cache_key(&user_permissions).unwrap(),
+            ),
+            (
+                "opa:authorized_users:",
+                generate_authorized_users_cache_key(&authorized_users).unwrap(),
+            ),
+        ];
+        for (prefix, key) in keys {
+            let Some(hash) = key.strip_prefix(prefix) else {
+                panic!("{key} is not under {prefix}");
+            };
+            assert_eq!(hash.len(), 64, "{key}");
+            assert!(
+                hash.bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+                "{key}"
+            );
+        }
+    }
+
+    /// Every ordering of `items`.
+    fn permutations(items: &[usize]) -> Vec<Vec<usize>> {
+        if items.len() <= 1 {
+            return vec![items.to_vec()];
+        }
+        let mut all = Vec::new();
+        for (index, first) in items.iter().enumerate() {
+            let mut rest = items.to_vec();
+            rest.remove(index);
+            for mut tail in permutations(&rest) {
+                tail.insert(0, *first);
+                all.push(tail);
+            }
+        }
+        all
+    }
+
+    /// The same four-entry JSON object as text, in all 24 entry orders. One entry holds a
+    /// nested object whose own keys also swap order, so sorting has to recurse.
+    fn permuted_objects() -> Vec<String> {
+        let mut objects = Vec::new();
+        for (index, order) in permutations(&[0, 1, 2, 3]).into_iter().enumerate() {
+            let nested = if index % 2 == 0 {
+                r#"{"hour":9,"day":"mon"}"#
+            } else {
+                r#"{"day":"mon","hour":9}"#
+            };
+            let mut entries = Vec::new();
+            for entry in order {
+                entries.push(match entry {
+                    0 => r#""region":"eu""#.to_string(),
+                    1 => r#""ip":"10.0.0.1""#.to_string(),
+                    2 => format!(r#""time":{nested}"#),
+                    _ => r#""tier":["gold",2]"#.to_string(),
+                });
+            }
+            objects.push(format!("{{{}}}", entries.join(",")));
+        }
+        objects
+    }
+
+    /// An `/allowed` request body whose maps all hold `object`.
+    fn allowed_body(object: &str) -> String {
+        format!(
+            r#"{{"user":{{"key":"u1","attributes":{object}}},"action":"read",
+                "resource":{{"type":"doc","key":"d1","tenant":"t1",
+                "attributes":{object},"context":{object}}},"context":{object}}}"#
+        )
+    }
+
+    /// Asserts that `key_of` gives one key, under `prefix`, for every permuted body `body_of`
+    /// builds.
+    fn assert_one_key_for_all_orders(
+        prefix: &str,
+        body_of: impl Fn(&str) -> String,
+        key_of: impl Fn(&str) -> String,
+    ) {
+        let mut keys = std::collections::HashSet::new();
+        for object in permuted_objects() {
+            keys.insert(key_of(&body_of(&object)));
+        }
+        assert_eq!(keys.len(), 1, "map order changed the cache key: {keys:?}");
+        for key in keys {
+            assert!(key.starts_with(prefix), "{key} is not under {prefix}");
+        }
+    }
+
+    #[test]
+    fn test_allowed_cache_key_ignores_map_order() {
+        assert_one_key_for_all_orders("opa:allowed:", allowed_body, |body| {
+            let query: AllowedQuery = serde_json::from_str(body).unwrap();
+            generate_allowed_cache_key(&query).unwrap()
+        });
+    }
+
+    #[test]
+    fn test_user_permissions_cache_key_ignores_map_order() {
+        let body_of = |object: &str| {
+            format!(
+                r#"{{"user":{{"key":"u1","attributes":{object}}},"tenants":["t1"],
+                    "context":{object}}}"#
+            )
+        };
+        assert_one_key_for_all_orders("opa:user_permissions:", body_of, |body| {
+            let query: UserPermissionsQuery = serde_json::from_str(body).unwrap();
+            generate_user_permissions_cache_key(&query).unwrap()
+        });
+    }
+
+    #[test]
+    fn test_authorized_users_cache_key_ignores_map_order() {
+        let body_of = |object: &str| {
+            format!(
+                r#"{{"action":"read","resource":{{"type":"doc","attributes":{object},
+                    "context":{object}}},"context":{object}}}"#
+            )
+        };
+        assert_one_key_for_all_orders("opa:authorized_users:", body_of, |body| {
+            let query: AuthorizedUsersQuery = serde_json::from_str(body).unwrap();
+            generate_authorized_users_cache_key(&query).unwrap()
+        });
+    }
+
+    #[test]
+    fn test_cache_key_changes_with_any_map_value() {
+        let key_of = |body: &str| {
+            let query: AllowedQuery = serde_json::from_str(body).unwrap();
+            generate_allowed_cache_key(&query).unwrap()
+        };
+        let object = r#"{"region":"eu","time":{"hour":9,"day":"mon"}}"#;
+        let base = key_of(&allowed_body(object));
+        let variants = [
+            r#"{"region":"us","time":{"hour":9,"day":"mon"}}"#,
+            r#"{"region":"eu","time":{"hour":10,"day":"mon"}}"#,
+            r#"{"region":"eu","time":{"hour":9}}"#,
+            r#"{"region":"eu"}"#,
+        ];
+        for variant in variants {
+            assert_ne!(base, key_of(&allowed_body(variant)), "{variant}");
+        }
+        assert_ne!(
+            base,
+            key_of(&allowed_body(object).replace(r#""u1""#, r#""u2""#))
+        );
+    }
+
+    /// Sends `bodies` to `uri` in order and returns each response.
+    async fn post_raw(fixture: &TestFixture, uri: &str, bodies: &[String]) -> Vec<TestResponse> {
+        let mut responses = Vec::new();
+        for body in bodies {
+            let request = fixture
+                .request_builder(Method::POST, uri)
+                .body(Body::from(body.clone()))
+                .unwrap();
+            responses.push(fixture.send(request).await);
+        }
+        responses
+    }
+
+    /// Sends one `/allowed` query four times, its maps in a different order each time, and
+    /// expects one OPA call: every request after the first is a cache hit. With `redis`, waits
+    /// for the first result's background write before sending the rest.
+    async fn assert_repeat_allowed_requests_hit(fixture: &TestFixture, redis: Option<&FakeRedis>) {
+        fixture
+            .add_opa_mock(
+                Method::POST,
+                "/v1/data/permit/root",
+                json!({"result": {"allow": true, "result": true}}),
+                StatusCode::OK,
+                1,
+            )
+            .await;
+        let mut bodies = Vec::new();
+        for object in permuted_objects().into_iter().step_by(6) {
+            bodies.push(allowed_body(&object));
+        }
+        assert_eq!(bodies.len(), 4);
+
+        let (first, rest) = bodies.split_at(1);
+        let mut responses = post_raw(fixture, "/allowed", first).await;
+        if let Some(redis) = redis {
+            redis.wait_for_commands("SETEX", 1).await;
+        }
+        responses.extend(post_raw(fixture, "/allowed", rest).await);
+        for response in responses {
+            response.assert_ok();
+            assert!(response.json_as::<AllowedResult>().allow);
+        }
+        fixture.opa_mock.verify().await;
+    }
+
+    #[tokio::test]
+    async fn test_repeat_allowed_request_hits_the_in_memory_cache() {
+        let cache = Cache::InMemory(InMemoryCache::new(60, 128).unwrap());
+        let fixture = TestFixture::new().await.with_cache(cache).await;
+        assert_repeat_allowed_requests_hit(&fixture, None).await;
+    }
+
+    #[tokio::test]
+    async fn test_repeat_allowed_request_hits_the_redis_cache() {
+        let redis = FakeRedis::start().await;
+        let cache = Cache::Redis(RedisCache::new(&redis.url(), 60).await.unwrap());
+        let fixture = TestFixture::new().await.with_cache(cache).await;
+        assert_repeat_allowed_requests_hit(&fixture, Some(&redis)).await;
+        assert_eq!(redis.key_count(), 1);
+        assert_eq!(redis.command_count("GET"), 4);
+        assert_eq!(redis.command_count("SETEX"), 1);
+    }
+
+    /// Mocks OPA to allow exactly the users whose key starts with "allowed", for single and
+    /// bulk checks, so every decision can be checked whatever the cache held.
+    async fn mock_opa_by_user_key(fixture: &TestFixture) {
+        use wiremock::{matchers, Mock, Request, ResponseTemplate};
+
+        fn decide(check: &serde_json::Value) -> serde_json::Value {
+            let user = check["user"]["key"].as_str().unwrap_or_default();
+            let allow = user.starts_with("allowed");
+            json!({"allow": allow, "result": allow})
+        }
+        Mock::given(matchers::method("POST"))
+            .and(matchers::path("/v1/data/permit/root"))
+            .respond_with(|request: &Request| {
+                let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+                ResponseTemplate::new(200).set_body_json(json!({"result": decide(&body["input"])}))
+            })
+            .mount(&fixture.opa_mock)
+            .await;
+        Mock::given(matchers::method("POST"))
+            .and(matchers::path("/v1/data/permit/bulk"))
+            .respond_with(|request: &Request| {
+                let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+                let mut allow = Vec::new();
+                for check in body["input"]["checks"].as_array().unwrap() {
+                    allow.push(decide(check));
+                }
+                ResponseTemplate::new(200).set_body_json(json!({"result": {"allow": allow}}))
+            })
+            .mount(&fixture.opa_mock)
+            .await;
+    }
+
+    fn check(user: &str) -> serde_json::Value {
+        json!({
+            "user": {"key": user, "attributes": {"plan": "pro", "region": "eu"}},
+            "action": "read",
+            "resource": {"type": "doc", "tenant": "t1"},
+            "context": {"ip": "10.0.0.1", "region": "eu", "day": "mon", "tier": 2}
+        })
+    }
+
+    /// 100 bulk checks, alternating allowed and denied users, and their expected decisions.
+    fn hundred_checks() -> (serde_json::Value, Vec<bool>) {
+        let mut checks = Vec::new();
+        let mut expected = Vec::new();
+        for index in 0..100 {
+            let allowed = index % 2 == 0;
+            let prefix = if allowed { "allowed" } else { "denied" };
+            checks.push(check(&format!("{prefix}-{index}")));
+            expected.push(allowed);
+        }
+        (json!(checks), expected)
+    }
+
+    fn bulk_decisions(response: &TestResponse) -> Vec<bool> {
+        response.assert_ok();
+        let mut decisions = Vec::new();
+        for result in response.json_as::<BulkAuthorizationResult>().allow {
+            decisions.push(result.allow);
+        }
+        decisions
+    }
+
+    fn single_decision(response: &TestResponse) -> bool {
+        response.assert_ok();
+        response.json_as::<AllowedResult>().allow
+    }
+
+    fn opa_bulk_calls(requests: &[wiremock::Request]) -> usize {
+        let mut calls = 0;
+        for request in requests {
+            if request.url.path() == "/v1/data/permit/bulk" {
+                calls += 1;
+            }
+        }
+        calls
+    }
+
+    /// Takes Redis down with `outage` and checks that only the first check waits on it: after
+    /// that the breaker is open, single and bulk checks skip Redis, and every decision still
+    /// matches OPA's. Then Redis recovers and the bulk check is served from the cache again.
+    async fn assert_redis_outage_is_cheap(outage: Mode) {
+        let redis = FakeRedis::start().await;
+        let cache = RedisCache::new(&redis.url(), 60).await.unwrap();
+        let fixture = TestFixture::new()
+            .await
+            .with_cache(Cache::Redis(cache.clone()))
+            .await;
+        mock_opa_by_user_key(&fixture).await;
+        let (checks, expected) = hundred_checks();
+
+        // Warm the cache: one MGET, then all 100 results in one background pipeline.
+        let warm = fixture.post("/allowed/bulk", &checks).await;
+        assert_eq!(bulk_decisions(&warm), expected);
+        redis.wait_for_commands("SETEX", 100).await;
+        assert_eq!(redis.command_count("MGET"), 1);
+        assert_eq!(redis.command_count("GET"), 0);
+
+        let logs = LogCapture::start();
+        redis.set_mode(outage);
+
+        // The first check waits for Redis at most once.
+        let started = std::time::Instant::now();
+        let first = fixture.post("/allowed", &check("allowed-first")).await;
+        let first_elapsed = started.elapsed();
+        assert!(single_decision(&first));
+        assert!(
+            first_elapsed < OPERATION_TIMEOUT * 2,
+            "first check took {first_elapsed:?}"
+        );
+        assert_eq!(cache.breaker_state().name(), "open");
+
+        // With the breaker open, nothing reaches Redis. The bound is half the Redis operation
+        // timeout, so even one wait on Redis would fail it.
+        let commands_when_opened = redis.total_commands();
+        let started = std::time::Instant::now();
+        let single = fixture.post("/allowed", &check("denied-single")).await;
+        let single_elapsed = started.elapsed();
+        let started = std::time::Instant::now();
+        let bulk = fixture.post("/allowed/bulk", &checks).await;
+        let bulk_elapsed = started.elapsed();
+
+        assert!(!single_decision(&single));
+        assert_eq!(bulk_decisions(&bulk), expected);
+        let bound = OPERATION_TIMEOUT / 2;
+        assert!(
+            single_elapsed < bound,
+            "single check took {single_elapsed:?}"
+        );
+        assert!(
+            bulk_elapsed < bound,
+            "100 bulk checks took {bulk_elapsed:?}"
+        );
+        assert_eq!(redis.total_commands(), commands_when_opened);
+
+        // One warning for the whole outage, from the breaker, and none per request.
+        let mut warnings = Vec::new();
+        for line in logs.lines() {
+            if line.starts_with("WARN") {
+                warnings.push(line);
+            }
+        }
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains("Circuit breaker open"), "{warnings:?}");
+
+        // Redis recovers: the breaker closes and the cached results serve the bulk check.
+        redis.set_mode(Mode::Serving);
+        cache.probe_until_closed().await;
+        let opa_bulk_calls_before =
+            opa_bulk_calls(&fixture.opa_mock.received_requests().await.unwrap());
+        let cached = fixture.post("/allowed/bulk", &checks).await;
+        assert_eq!(bulk_decisions(&cached), expected);
+        let opa_bulk_calls_after =
+            opa_bulk_calls(&fixture.opa_mock.received_requests().await.unwrap());
+        assert_eq!(opa_bulk_calls_after, opa_bulk_calls_before);
+
+        // The outage and the recovery took under a minute, so the breaker logged one line: the
+        // opening. Its later changes wait for the next minute's summary.
+        let lines = logs.lines();
+        let mut breaker_lines = Vec::new();
+        for line in &lines {
+            if line.to_lowercase().contains("circuit breaker") {
+                breaker_lines.push(line);
+            }
+        }
+        assert_eq!(breaker_lines.len(), 1, "{breaker_lines:?}");
+
+        // Cache keys derive from request data, so no log line may carry one.
+        for line in lines {
+            assert!(
+                !line.contains("opa:allowed:"),
+                "a cache key was logged: {line}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_paused_redis_costs_one_timeout() {
+        assert_redis_outage_is_cheap(Mode::Paused).await;
+    }
+
+    #[tokio::test]
+    async fn test_stopped_redis_costs_one_failure() {
+        assert_redis_outage_is_cheap(Mode::Stopped).await;
+    }
+
+    #[tokio::test]
+    async fn test_bulk_honors_no_store_and_no_cache() {
+        let cache = Cache::InMemory(InMemoryCache::new(60, 128).unwrap());
+        let fixture = TestFixture::new().await.with_cache(cache).await;
+        mock_opa_by_user_key(&fixture).await;
+        let checks = json!([check("allowed-1"), check("denied-2")]);
+
+        let mut opa_calls = Vec::new();
+        for directive in ["no-store", "", "no-cache", ""] {
+            let mut headers = Vec::new();
+            if !directive.is_empty() {
+                headers.push(("Cache-Control", directive));
+            }
+            let response = fixture
+                .post_with_headers("/allowed/bulk", &checks, &headers)
+                .await;
+            assert_eq!(bulk_decisions(&response), [true, false]);
+            let requests = fixture.opa_mock.received_requests().await.unwrap();
+            opa_calls.push(opa_bulk_calls(&requests));
+        }
+
+        // no-store: OPA answers and nothing is cached. No directive: OPA again, and the results
+        // are cached. no-cache: OPA despite the cache. No directive: served from the cache.
+        assert_eq!(opa_calls, [1, 2, 3, 3]);
+    }
+
+    #[tokio::test]
+    async fn test_bulk_rejects_a_short_opa_reply() {
+        let cache = Cache::InMemory(InMemoryCache::new(60, 128).unwrap());
+        let fixture = TestFixture::new().await.with_cache(cache).await;
+        fixture
+            .add_opa_mock(
+                Method::POST,
+                "/v1/data/permit/bulk",
+                json!({"result": {"allow": [{"allow": true, "result": true}]}}),
+                StatusCode::OK,
+                1,
+            )
+            .await;
+        let checks = json!([check("allowed-1"), check("allowed-2")]);
+
+        let response = fixture.post("/allowed/bulk", &checks).await;
+
+        response.assert_status(StatusCode::BAD_GATEWAY);
+        let mut keys = Vec::new();
+        for user in ["allowed-1", "allowed-2"] {
+            let query: AllowedQuery = serde_json::from_value(check(user)).unwrap();
+            keys.push(generate_allowed_cache_key(&query).unwrap());
+        }
+        let cached = fixture.state.cache.get_many::<AllowedResult>(&keys);
+        assert_eq!(
+            cached.await.unwrap(),
+            [None, None],
+            "a short reply was cached"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_repeat_bulk_request_hits_the_cache() {
+        let cache = Cache::InMemory(InMemoryCache::new(60, 128).unwrap());
+        let fixture = TestFixture::new().await.with_cache(cache).await;
+        fixture
+            .add_opa_mock(
+                Method::POST,
+                "/v1/data/permit/bulk",
+                json!({"result": {"allow": [{"allow": true, "result": true}]}}),
+                StatusCode::OK,
+                1,
+            )
+            .await;
+        let objects = permuted_objects();
+        let bodies = [
+            format!("[{}]", allowed_body(&objects[0])),
+            format!("[{}]", allowed_body(&objects[23])),
+        ];
+
+        for response in post_raw(&fixture, "/allowed/bulk", &bodies).await {
+            response.assert_ok();
+            assert!(response.json_as::<BulkAuthorizationResult>().allow[0].allow);
+        }
+        fixture.opa_mock.verify().await;
+    }
 
     #[tokio::test]
     async fn test_allowed_cache_respects_no_cache() {
@@ -390,7 +938,6 @@ mod tests {
         let mut fixture = TestFixture::new().await;
 
         // Replace the null cache with an in-memory cache for this test
-        use crate::cache::{memory::InMemoryCache, Cache};
         fixture.state.cache = Arc::new(Cache::InMemory(InMemoryCache::new(60, 128).unwrap()));
 
         let query = AllowedQuery {
@@ -544,7 +1091,6 @@ mod tests {
         let mut fixture = TestFixture::new().await;
 
         // Replace with in-memory cache to test actual caching
-        use crate::cache::{memory::InMemoryCache, Cache};
         fixture.state.cache = Arc::new(Cache::InMemory(InMemoryCache::new(60, 128).unwrap()));
 
         // Create three queries where we'll cache the first two
@@ -639,7 +1185,6 @@ mod tests {
         let mut fixture = TestFixture::new().await;
 
         // Replace with in-memory cache to test actual caching
-        use crate::cache::{memory::InMemoryCache, Cache};
         fixture.state.cache = Arc::new(Cache::InMemory(InMemoryCache::new(60, 128).unwrap()));
 
         // Create five queries with distinct identifiable results

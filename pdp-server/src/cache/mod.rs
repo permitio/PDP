@@ -1,6 +1,10 @@
 use serde::{de::DeserializeOwned, Serialize};
 use thiserror::Error;
 
+pub(crate) mod breaker_log;
+pub(crate) mod circuit_breaker;
+#[cfg(test)]
+pub(crate) mod fake_redis;
 pub mod memory;
 pub mod null;
 pub mod redis;
@@ -14,6 +18,9 @@ pub enum CacheError {
     Deserialization(String),
     #[error("Redis error: {0}")]
     Redis(String),
+    /// The backend skipped the operation because its circuit breaker is open.
+    #[error("Cache backend unavailable: circuit breaker open")]
+    Unavailable,
     #[error("Configuration error: {0}")]
     Config(String),
 }
@@ -29,7 +36,10 @@ pub enum CacheError {
 #[async_trait::async_trait]
 #[allow(dead_code)]
 pub trait CacheBackend: Send + Sync {
-    /// Store a value in the cache with default TTL
+    /// Store a value in the cache with default TTL.
+    ///
+    /// The Redis backend sends the write in the background: `Ok` means the write was queued,
+    /// not that Redis stored it.
     async fn set<T: Serialize + Send + Sync>(&self, key: &str, value: &T)
         -> Result<(), CacheError>;
 
@@ -38,6 +48,31 @@ pub trait CacheBackend: Send + Sync {
         &self,
         key: &str,
     ) -> Result<Option<T>, CacheError>;
+
+    /// Retrieves several values, one per key and in the same order. The Redis backend reads
+    /// them in one round trip.
+    async fn get_many<T: DeserializeOwned + Send + Sync>(
+        &self,
+        keys: &[String],
+    ) -> Result<Vec<Option<T>>, CacheError> {
+        let mut values = Vec::with_capacity(keys.len());
+        for key in keys {
+            values.push(self.get(key).await?);
+        }
+        Ok(values)
+    }
+
+    /// Stores several values, with the same guarantee as [`CacheBackend::set`]. The Redis
+    /// backend writes them in one pipeline.
+    async fn set_many<T: Serialize + Send + Sync>(
+        &self,
+        entries: &[(&str, &T)],
+    ) -> Result<(), CacheError> {
+        for (key, value) in entries {
+            self.set(key, *value).await?;
+        }
+        Ok(())
+    }
 
     /// Performs a deep health check on the cache backend
     ///
@@ -96,6 +131,28 @@ impl CacheBackend for Cache {
         }
     }
 
+    async fn get_many<T: DeserializeOwned + Send + Sync>(
+        &self,
+        keys: &[String],
+    ) -> Result<Vec<Option<T>>, CacheError> {
+        match self {
+            Self::InMemory(cache) => cache.get_many(keys).await,
+            Self::Redis(cache) => cache.get_many(keys).await,
+            Self::Null(cache) => cache.get_many(keys).await,
+        }
+    }
+
+    async fn set_many<T: Serialize + Send + Sync>(
+        &self,
+        entries: &[(&str, &T)],
+    ) -> Result<(), CacheError> {
+        match self {
+            Self::InMemory(cache) => cache.set_many(entries).await,
+            Self::Redis(cache) => cache.set_many(entries).await,
+            Self::Null(cache) => cache.set_many(entries).await,
+        }
+    }
+
     async fn health_check(&self) -> Result<(), String> {
         match self {
             Self::InMemory(cache) => cache.health_check().await,
@@ -109,6 +166,18 @@ impl CacheBackend for Cache {
             Self::InMemory(cache) => cache.delete(key).await,
             Self::Redis(cache) => cache.delete(key).await,
             Self::Null(cache) => cache.delete(key).await,
+        }
+    }
+}
+
+impl Cache {
+    /// Details for the cache's `/health` component: the Redis circuit breaker state.
+    pub fn health_details(&self) -> Option<serde_json::Value> {
+        match self {
+            Self::Redis(cache) => Some(serde_json::json!({
+                "circuit_breaker": cache.breaker_state().name(),
+            })),
+            Self::InMemory(_) | Self::Null(_) => None,
         }
     }
 }

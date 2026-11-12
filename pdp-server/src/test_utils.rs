@@ -123,6 +123,13 @@ impl TestFixture {
         self
     }
 
+    /// Replaces the cache and recreates the app so requests use it.
+    pub async fn with_cache(mut self, cache: crate::cache::Cache) -> Self {
+        self.state.cache = std::sync::Arc::new(cache);
+        self.app = create_app(self.state.clone()).await;
+        self
+    }
+
     /// Creates a new test fixture with custom configuration.
     ///
     /// This method creates a fixture and then allows modifying its config
