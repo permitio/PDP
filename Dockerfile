@@ -295,7 +295,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # uv installs the locked Python dependencies in the main stage below. It is mounted from this
 # stage for that one RUN, never copied, so it does not ship. Digest-pinned, and bumped by the
 # same Dependabot `docker` entry as the other base images.
-FROM ghcr.io/astral-sh/uv:0.12.19@sha256:04d046b13e60d6bcec73cbc5e1cad25d680dea90c8573340950a0ac2d1aef424 AS uv
+FROM ghcr.io/astral-sh/uv:0.13.8@sha256:5cc1805e2426484abca4ad46ea783bab281fdb225fd82d8ce6d66a81254bac85 AS uv
 
 FROM python:3.13.18-alpine3.23@sha256:d911085e59772e458649b0184ca311c309068961c5efa11d5761ea0c64a91383 AS main
 
