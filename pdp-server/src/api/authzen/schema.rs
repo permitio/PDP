@@ -10,9 +10,23 @@ use crate::opa_client::allowed::{Resource, User};
 pub struct AuthZenSubject {
     /// Type of the subject
     pub r#type: String,
-    /// Unique identifier of the subject
-    #[serde(default)] // default empty because it's optional on Search Subject API
+    /// Unique identifier of the subject (required: a request without it is rejected,
+    /// never evaluated as the user `""`)
     pub id: String,
+    /// Optional properties of the subject
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub properties: Option<HashMap<String, serde_json::Value>>,
+}
+
+/// The subject of a Subject Search request. Unlike [`AuthZenSubject`], its `id` is
+/// optional: the search asks which subjects of `type` have access, so it names none.
+#[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
+pub struct SubjectSearchSubject {
+    /// Type of the subjects being searched for
+    pub r#type: String,
+    /// Optional identifier of the subject
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     /// Optional properties of the subject
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub properties: Option<HashMap<String, serde_json::Value>>,

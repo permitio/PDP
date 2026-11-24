@@ -927,4 +927,25 @@ mod tests {
 
         assert_eq!(result_json, expected_json);
     }
+
+    #[tokio::test]
+    async fn test_access_evaluation_missing_subject_id_is_rejected() {
+        // A subject without an id must be rejected, never evaluated as the user ""
+        let fixture = TestFixture::new().await;
+        wiremock::Mock::given(wiremock::matchers::any())
+            .respond_with(wiremock::ResponseTemplate::new(500))
+            .expect(0)
+            .mount(&fixture.opa_mock)
+            .await;
+
+        let response = fixture.post("/access/v1/evaluation", &json!({"subject": {"type": "user"}, "resource": {"type": "document", "id": "123"}, "action": {"name": "can_read"}})).await;
+
+        response.assert_status(http::StatusCode::UNPROCESSABLE_ENTITY);
+        let text = response.text();
+        assert!(
+            text.contains("subject: missing field `id`"),
+            "unexpected error body: {text}"
+        );
+        fixture.opa_mock.verify().await;
+    }
 }
