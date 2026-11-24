@@ -319,7 +319,7 @@ def test_medium_findings_are_counted_but_not_alerted(run):
         (
             "golang.org/x/net",
             "gobinary",
-            "bump it in permit-opa's `go.mod`, then move the permit-opa pin in tests.yml and release.yml",
+            "bump it in permit-opa's go.mod, then move the permit-opa pin in tests.yml and release.yml",
         ),
         ("stdlib", "gobinary", "needs the golang base-image digest bump"),
         ("examplepkg", "python-pkg", "bump the exact pin in pyproject.toml"),

@@ -44,9 +44,10 @@ Verdicts:
             image from main absorbs, such as an Alpine package through `apk upgrade`. Cut
             a release; no code change needed.
   SOURCE  - at least one finding is not known to clear on a rebuild: no upstream fix exists
-            at all, the fix lives in permit-opa's go.mod, the golang base digest has to
-            move, or it is in a Python package, which needs a uv.lock update or an exact pin
-            in pyproject.toml moved unless main's locked version already carries the fix.
+            at all, the fix is a permit-opa go.mod bump plus a pin move here, the golang
+            base digest has to move, or it is in a Python package, which needs a uv.lock
+            update or an exact pin in pyproject.toml moved unless main's locked version
+            already carries the fix.
 
 SOURCE outranks REBUILD: a report can contain both kinds, and the one that needs a human
 is the one that should set the verdict.
@@ -515,11 +516,11 @@ def _next_steps(by_action: dict[str, list[dict]]) -> list[str]:
     if opa:
         steps.append(
             f"- Bump {', '.join(sorted({_cell(f['pkg']) for f in opa}))} in permit-opa's `go.mod` "
-            "and merge it there. Then move the permit-opa `ref:` pin in "
-            "`.github/workflows/tests.yml` and `.github/workflows/release.yml` to a permit-opa "
-            "main commit that has the bump (the comment above that checkout in `tests.yml` says "
-            "how), and cut a release once that PR merges. Without the pin move, a rebuild "
-            "compiles the old `go.mod`."
+            "and merge it there, unless permit-opa main already has the bump. Then move the "
+            "permit-opa `ref:` pin in `.github/workflows/tests.yml` and "
+            "`.github/workflows/release.yml` to a permit-opa main commit that has the bump (the "
+            "comment above that checkout in `tests.yml` says how), and cut a release once that "
+            "PR merges. Without the pin move, a rebuild compiles the old `go.mod`."
         )
     if base:
         steps.append(
@@ -625,7 +626,7 @@ def render(tag: str, findings: list[dict], verdict: str) -> str:
         "",
         f"- Findings: **{len(findings)}** ({severity_breakdown(findings)})",
         f"- Cleared by rebuilding this repo: **{len(rebuildable)}**",
-        f"- Need a permit-opa `go.mod` bump: **{len(opa)}**",
+        f"- Need a permit-opa `go.mod` bump and a pin move here: **{len(opa)}**",
         f"- Need the golang base digest to move: **{len(base)}**",
         f"- Need a uv.lock update, unless main's lock already has the fix: **{len(lock)}**",
         f"- Need an exact pin in pyproject.toml moved, unless main's pin has the fix: **{len(pinned)}**",
