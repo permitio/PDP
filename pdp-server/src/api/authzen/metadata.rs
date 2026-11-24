@@ -19,6 +19,23 @@ pub struct AuthZenMetadataResponse {
     pub search_resource_endpoint: String,
 }
 
+/// The scheme a TLS-terminating proxy or load balancer saw, from `X-Forwarded-Proto`.
+///
+/// Only the first comma-separated value counts (the proxy nearest the client), trimmed
+/// and compared without case. Returns one of the two literals `"http"` or `"https"`, so
+/// no header text reaches the response; any other value, or no header, returns `None`.
+fn forwarded_proto(headers: &http::HeaderMap) -> Option<&'static str> {
+    let value = headers.get("x-forwarded-proto")?.to_str().ok()?;
+    let first = value.split(',').next()?.trim();
+    if first.eq_ignore_ascii_case("https") {
+        Some("https")
+    } else if first.eq_ignore_ascii_case("http") {
+        Some("http")
+    } else {
+        None
+    }
+}
+
 #[utoipa::path(
     get,
     path = "/.well-known/authzen-configuration",
@@ -31,12 +48,12 @@ pub struct AuthZenMetadataResponse {
 pub async fn authzen_metadata_handler(request: Request<Body>) -> Response {
     // Get the base URL from the request
     // Prioritize Host header for authority, then URI authority, then default.
-    // Scheme is from URI or defaults to "http".
+    // Scheme is from X-Forwarded-Proto (set by a TLS-terminating proxy), then the URI,
+    // then defaults to "http".
     let uri_parts = request.uri().clone().into_parts();
-    let scheme = uri_parts
-        .scheme
-        .as_ref()
-        .map(|s| s.to_string())
+    let scheme = forwarded_proto(request.headers())
+        .map(str::to_string)
+        .or_else(|| uri_parts.scheme.as_ref().map(|s| s.to_string()))
         .unwrap_or_else(|| "http".to_string());
 
     let authority = request
@@ -155,5 +172,94 @@ mod tests {
             metadata.search_resource_endpoint,
             format!("{expected_base}/access/v1/search/resource")
         );
+    }
+
+    /// Sends a discovery request with the given URI and optional `X-Forwarded-Proto`.
+    async fn discovery_with(uri: &str, forwarded_proto: Option<&str>) -> AuthZenMetadataResponse {
+        let fixture = TestFixture::new().await;
+        let mut builder = HttpRequest::builder()
+            .uri(Uri::try_from(uri).expect("Failed to create URI"))
+            .method("GET")
+            .header("Authorization", fixture.auth_header());
+        if let Some(proto) = forwarded_proto {
+            builder = builder.header("X-Forwarded-Proto", proto);
+        }
+        let request = builder
+            .body(Body::empty())
+            .expect("Failed to build request");
+        let response = fixture.send(request).await;
+        response.assert_status(StatusCode::OK);
+        response.json_as()
+    }
+
+    fn assert_all_urls(metadata: &AuthZenMetadataResponse, expected_base: &str) {
+        assert_eq!(metadata.policy_decision_point, expected_base);
+        for (url, path) in [
+            (
+                &metadata.access_evaluation_endpoint,
+                "/access/v1/evaluation",
+            ),
+            (
+                &metadata.access_evaluations_endpoint,
+                "/access/v1/evaluations",
+            ),
+            (
+                &metadata.search_subject_endpoint,
+                "/access/v1/search/subject",
+            ),
+            (&metadata.search_action_endpoint, "/access/v1/search/action"),
+            (
+                &metadata.search_resource_endpoint,
+                "/access/v1/search/resource",
+            ),
+        ] {
+            assert_eq!(url, &format!("{expected_base}{path}"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_authzen_metadata_forwarded_proto_https() {
+        // Behind a TLS-terminating proxy the request arrives as http with X-Forwarded-Proto: https
+        let metadata = discovery_with("/.well-known/authzen-configuration", Some("https")).await;
+        assert_all_urls(&metadata, "https://localhost:7766");
+    }
+
+    #[tokio::test]
+    async fn test_authzen_metadata_forwarded_proto_first_value_any_case() {
+        // A proxy chain appends values; the first one is the client-facing scheme
+        let metadata =
+            discovery_with("/.well-known/authzen-configuration", Some(" HTTPS , http")).await;
+        assert_all_urls(&metadata, "https://localhost:7766");
+    }
+
+    #[tokio::test]
+    async fn test_authzen_metadata_forwarded_proto_overrides_uri_scheme() {
+        let metadata = discovery_with(
+            "http://pdp.example.com/.well-known/authzen-configuration",
+            Some("https"),
+        )
+        .await;
+        assert_all_urls(&metadata, "https://pdp.example.com");
+    }
+
+    #[tokio::test]
+    async fn test_authzen_metadata_unknown_forwarded_proto_is_ignored() {
+        // An unknown value is never reflected; the URI scheme (or http) is used instead
+        let metadata =
+            discovery_with("/.well-known/authzen-configuration", Some("https://evil")).await;
+        assert_all_urls(&metadata, "http://localhost:7766");
+
+        let metadata = discovery_with(
+            "https://pdp.example.com/.well-known/authzen-configuration",
+            Some("ftp"),
+        )
+        .await;
+        assert_all_urls(&metadata, "https://pdp.example.com");
+    }
+
+    #[tokio::test]
+    async fn test_authzen_metadata_no_forwarded_proto_keeps_http() {
+        let metadata = discovery_with("/.well-known/authzen-configuration", None).await;
+        assert_all_urls(&metadata, "http://localhost:7766");
     }
 }

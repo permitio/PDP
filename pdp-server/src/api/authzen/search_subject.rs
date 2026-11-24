@@ -1,6 +1,8 @@
 use crate::api::authzen::common::{PageRequest, PageResponse};
 use crate::api::authzen::errors::AuthZenError;
-use crate::api::authzen::schema::{AuthZenAction, AuthZenResource, AuthZenSubject};
+use crate::api::authzen::schema::{
+    AuthZenAction, AuthZenResource, AuthZenSubject, SubjectSearchSubject,
+};
 use crate::opa_client::authorized_users::{query_authorized_users, AuthorizedUsersQuery};
 use crate::openapi::AUTHZEN_TAG;
 use crate::state::AppState;
@@ -17,7 +19,7 @@ use utoipa::ToSchema;
 #[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq)]
 pub struct SubjectSearchRequest {
     /// Subject being searched for
-    pub subject: AuthZenSubject,
+    pub subject: SubjectSearchSubject,
     /// Resource being accessed
     pub resource: AuthZenResource,
     /// Action being performed
