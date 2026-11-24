@@ -13,10 +13,12 @@ existing Dockerfile absorbs it on the next build. A finding WITHOUT one cannot b
 away and needs a pin, a base-image move, a dependency drop, or a waiver.
 
 One wrinkle: "has a fix" is not the same as "a rebuild of THIS repo picks it up". The
-OPA binary at /app/bin/opa is compiled from permit-opa's source, so a CVE in one of its
-Go modules (google.golang.org/grpc, golang.org/x/crypto, ...) is fixed by bumping
-permit-opa's go.mod - a change in a DIFFERENT repository, which no release cut here will
-absorb. Two more cases a plain rebuild cannot fix, because the Dockerfile pins them:
+OPA binary at /app/bin/opa is compiled from permit-opa's source, at the commit that the
+permit-opa checkout in tests.yml and release.yml pins. A CVE in one of its Go modules
+(google.golang.org/grpc, golang.org/x/crypto, ...) therefore takes two changes: a go.mod
+bump in permit-opa, a DIFFERENT repository, and then a PR here moving both pins to a
+permit-opa main commit that has it. Until the pins move, every release cut here compiles
+the old go.mod. Two more cases a plain rebuild cannot fix, because the Dockerfile pins them:
 
   - The Go *stdlib* comes from the `golang:1.27-bookworm@sha256:...` build stage, which is
     digest-pinned. A rebuild reuses the same toolchain; the fix arrives when Dependabot's
@@ -512,8 +514,12 @@ def _next_steps(by_action: dict[str, list[dict]]) -> list[str]:
         )
     if opa:
         steps.append(
-            f"- Bump {', '.join(sorted({f['pkg'] for f in opa}))} in permit-opa's `go.mod`, "
-            "then rebuild here to pick up the new OPA binary."
+            f"- Bump {', '.join(sorted({_cell(f['pkg']) for f in opa}))} in permit-opa's `go.mod` "
+            "and merge it there. Then move the permit-opa `ref:` pin in "
+            "`.github/workflows/tests.yml` and `.github/workflows/release.yml` to a permit-opa "
+            "main commit that has the bump (the comment above that checkout in `tests.yml` says "
+            "how), and cut a release once that PR merges. Without the pin move, a rebuild "
+            "compiles the old `go.mod`."
         )
     if base:
         steps.append(
@@ -577,8 +583,9 @@ def render(tag: str, findings: list[dict], verdict: str) -> str:
         if opa:
             parts.append(
                 f"{len(opa)} finding(s) are in Go modules linked into `/app/bin/opa`, "
-                "which is built from **permit-opa** - the fix is a `go.mod` bump in that "
-                "repo, so cutting a release here will not clear them"
+                "which is built from the **permit-opa** commit this repo's workflows pin - "
+                "the fix is a `go.mod` bump in that repo, then a PR here moving the pin, so "
+                "cutting a release alone will not clear them"
             )
         if base:
             parts.append(

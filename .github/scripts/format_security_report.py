@@ -47,7 +47,7 @@ _MARKDOWN_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 # classify_image_cves.lock_note() instead, which names main's locked version.
 _ACTION_HINT = {
     "rebuild": "a release rebuild picks it up",
-    "permit-opa": "bump it in permit-opa",
+    "permit-opa": "bump it in permit-opa's `go.mod`, then move the permit-opa pin in tests.yml and release.yml",
     "base-digest": "needs the golang base-image digest bump",
     "lock": "update it in uv.lock",
     "pinned": "bump the exact pin in pyproject.toml",
