@@ -316,7 +316,11 @@ def test_medium_findings_are_counted_but_not_alerted(run):
     ("pkg", "result_type", "hint"),
     [
         ("libssl3", "alpine", "a release rebuild picks it up"),
-        ("golang.org/x/net", "gobinary", "bump it in permit-opa"),
+        (
+            "golang.org/x/net",
+            "gobinary",
+            "bump it in permit-opa's `go.mod`, then move the permit-opa pin in tests.yml and release.yml",
+        ),
         ("stdlib", "gobinary", "needs the golang base-image digest bump"),
         ("examplepkg", "python-pkg", "bump the exact pin in pyproject.toml"),
         ("httpx", "python-pkg", "update it in uv.lock"),
