@@ -82,7 +82,7 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       with:
         repository: permitio/permit-opa
-        ref: bea5c1e1ca87cbda53edbde4011d5e5e7c2a49ab  # permit-opa main at permitio/permit-opa#68: brotli 1.2.8, klauspost/compress 1.20.3, golang.org/x/net 0.62.0
+        ref: 4bc515eb87f154d335f1b4cad8a4532d6c404e1d  # permit-opa main at permitio/permit-opa#73: containerd/containerd/v2 2.2.10 (CVE-2026-95839)
         path: './permit-opa'
         token: ${{ steps.permit-opa-token.outputs.token }}
         # Nothing after the clone needs the token; don't leave it in .git/config.
