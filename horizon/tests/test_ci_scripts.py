@@ -562,27 +562,26 @@ def test_a_go_module_in_the_opa_binary_says_to_move_the_permit_opa_pin(tmp_path)
     # merged there ships only once a PR here moves both pins. PER-19768 stayed red for days
     # because the advice stopped at "bump it in permit-opa, then rebuild".
     vuln = _vuln("CVE-2026-9", pkg="github.com/containerd/containerd/v2", fixed="2.2.10", installed="2.2.9")
-    report = _write(
-        tmp_path / "t.json",
-        {"SchemaVersion": 2, "Results": [{"Target": "app/bin/opa", "Type": "gobinary", "Vulnerabilities": [vuln]}]},
-    )
+    report = _write(tmp_path / "t.json", _trivy(vuln, target_type="gobinary"))
     findings = classifier.collect(report)
     assert [f["action"] for f in findings] == ["permit-opa"]
     body = classifier.render("latest", findings, "SOURCE")
     assert "then a PR here moving the pin" in body
+    assert "- Need a permit-opa `go.mod` bump and a pin move here: **1**" in body.splitlines()
     [step] = [line for line in body.splitlines() if line.startswith("- Bump ")]
     assert step.startswith("- Bump github.com/containerd/containerd/v2 in permit-opa's `go.mod`")
-    assert "permit-opa `ref:` pin" in step
+    # As in PER-19768, the bump may already be on permit-opa main: the pin move is still needed.
+    assert "unless permit-opa main already has the bump. Then move the permit-opa `ref:` pin" in step
     assert "rebuild here to pick up" not in body
     # The step sends a human to these two files: each must hold the one permit-opa pin it describes.
     for workflow in (".github/workflows/tests.yml", ".github/workflows/release.yml"):
         assert f"`{workflow}`" in step
         jobs = yaml.safe_load((REPO_ROOT / workflow).read_text(encoding="utf-8"))["jobs"]
         [pin] = [
-            checkout["with"]["ref"]
+            job_step["with"]["ref"]
             for job in jobs.values()
-            for checkout in job.get("steps", [])
-            if checkout.get("with", {}).get("repository") == "permitio/permit-opa"
+            for job_step in job.get("steps", [])
+            if job_step.get("with", {}).get("repository") == "permitio/permit-opa"
         ]
         assert re.fullmatch(r"[0-9a-f]{40}", pin), f"{workflow} pins permit-opa to {pin!r}, not a full SHA"
 
