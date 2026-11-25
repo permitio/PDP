@@ -101,16 +101,19 @@ pub fn check_cache_health<'a>(
 ) -> Pin<Box<dyn Future<Output = ComponentStatus> + Send + 'a>> {
     let cache_clone = state.cache.clone();
     Box::pin(async move {
-        match cache_clone.as_ref().health_check().await {
+        let result = cache_clone.as_ref().health_check().await;
+        // Read after the check, which can itself open the Redis circuit breaker.
+        let details = cache_clone.health_details();
+        match result {
             Ok(_) => ComponentStatus {
                 status: HealthStatusType::Ok,
                 error: None,
-                details: None,
+                details,
             },
             Err(err) => ComponentStatus {
                 status: HealthStatusType::Error,
                 error: Some(format!("Cache health check failed: {err}")),
-                details: None,
+                details,
             },
         }
     })
