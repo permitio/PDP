@@ -319,7 +319,10 @@ def test_medium_findings_are_counted_but_not_alerted(run):
         (
             "golang.org/x/net",
             "gobinary",
-            "bump it in permit-opa's go.mod, then move the permit-opa pin in tests.yml and release.yml",
+            (
+                "bump it in permit-opa's go.mod, then move the permit-opa pin in tests.yml and release.yml, "
+                "unless main's pin already has the fix"
+            ),
         ),
         ("stdlib", "gobinary", "needs the golang base-image digest bump"),
         ("examplepkg", "python-pkg", "bump the exact pin in pyproject.toml"),
@@ -467,14 +470,28 @@ def test_scout_agreeing_on_an_alpine_package_keeps_the_rebuild_hint(run):
     assert "Trivy latest, Docker Scout latest" in line
 
 
+def test_a_go_cve_in_stdlib_and_a_permit_opa_module_keeps_the_digest_remediation(run):
+    # Go HTTP/2 CVEs hit net/http and golang.org/x/net alike. main's permit-opa pin may already carry
+    # the x/net fix, and that hint says so, but a release never clears the stdlib one.
+    shared = [
+        _vuln(MIXED_CVE, pkg="golang.org/x/net", installed="0.61.0", fixed="0.62.0"),
+        _vuln(MIXED_CVE, pkg="stdlib", installed="1.27.1", fixed="1.27.2"),
+    ]
+    message, _, _ = run(trivy={"latest": _trivy(*shared, result_type="gobinary")}, scout=_sarif(), alerts=[])
+    [line] = [line for line in message.splitlines() if MIXED_CVE in line]
+    assert "`golang.org/x/net@0.61.0, stdlib@1.27.1`" in line
+    assert "fix: 1.27.2, needs the golang base-image digest bump" in line
+
+
 # Owners of one advisory, most work first: (classifier action, lock still holds the flagged version).
+# A release certainly leaves the first three in place; main may already have fixed the next three.
 # "" is a finding no classifier owns: a Dependabot alert, a cargo audit advisory, or a Docker Scout
 # finding outside an Alpine package.
 OWNERS_BY_WORK = [
     ("no-fix", False),
-    ("permit-opa", False),
     ("base-digest", False),
     ("lock", True),
+    ("permit-opa", False),
     ("pinned", False),
     ("lock", False),
     ("", False),
