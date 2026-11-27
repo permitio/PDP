@@ -7,6 +7,7 @@ The scripts are standalone CLI tools rather than a package, so they are loaded b
 
 import importlib.util
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -14,6 +15,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = REPO_ROOT / ".github" / "scripts"
@@ -555,6 +557,68 @@ def test_permit_opa_go_module_forces_source(tmp_path):
     assert findings[0]["action"] == "permit-opa"
 
 
+@pytest.mark.parametrize(
+    ("pkg", "shown"),
+    [
+        pytest.param("github.com/containerd/containerd/v2", "github.com/containerd/containerd/v2", id="containerd"),
+        # Unescaped, the newline would end the step and start a forged "- Cut a release" one.
+        pytest.param("evil|mod`\n- Cut a release", "evil\\|mod' - Cut a release", id="hostile-name"),
+    ],
+)
+def test_a_go_module_in_the_opa_binary_says_to_move_the_permit_opa_pin(tmp_path, pkg, shown):
+    # The image compiles permit-opa at the SHA tests.yml and release.yml pin: permitio/permit-opa#73
+    # fixed CVE-2026-95839 there, but the image kept it until a PR here moved both pins (PER-19768).
+    # The scan reads published tags, which can predate main's pin, so a release alone may clear it.
+    vuln = _vuln("CVE-2026-9", pkg=pkg, fixed="2.2.10", installed="2.2.9")
+    report = _write(tmp_path / "t.json", _trivy(vuln, target_type="gobinary"))
+    body = classifier.render("latest", classifier.collect(report), "SOURCE")
+    lines = body.splitlines()
+    assert _headline(body) == (
+        MIGHT_NOT + "1 finding(s) are in Go modules linked into `/app/bin/opa`, which is built from the "
+        "**permit-opa** commit this repo's workflows pin - unless main's pin already carries the fix, it "
+        "takes a `go.mod` bump in that repo, then a PR here moving the pin."
+    )
+    assert (
+        "- Need a permit-opa `go.mod` bump and a pin move here, unless main's pin already has the fix: **1**" in lines
+    )
+    assert (
+        f"- For {shown}: a release clears each finding whose fix permit-opa's `go.mod` already carries at "
+        "the commit `.github/workflows/tests.yml` pins, since the published image was built from an older "
+        "pin. For the rest, bump the module in permit-opa's `go.mod` and merge that there, unless permit-opa "
+        "main already has the bump. Then move the permit-opa `ref:` pin in `.github/workflows/tests.yml` and "
+        "`.github/workflows/release.yml` to a permit-opa main commit that has the bump (the comment above "
+        "that checkout in `tests.yml` says how), and cut a release once that PR merges. Without the pin "
+        "move, a rebuild compiles the old `go.mod`."
+    ) in lines
+    assert not any(line.startswith("- Cut a release") for line in lines)
+
+
+PERMIT_OPA_PIN_WORKFLOWS = (".github/workflows/tests.yml", ".github/workflows/release.yml")
+
+
+def _permit_opa_refs(workflow: str) -> list[object]:
+    """The `ref:` of every permitio/permit-opa checkout in one workflow, None where it has none."""
+    jobs = yaml.safe_load((REPO_ROOT / workflow).read_text(encoding="utf-8"))["jobs"]
+    return [
+        (step.get("with") or {}).get("ref")
+        for job in jobs.values()
+        for step in job.get("steps", [])
+        if (step.get("with") or {}).get("repository") == "permitio/permit-opa"
+    ]
+
+
+def test_both_workflows_pin_permit_opa_to_one_full_sha():
+    # The Go-module step above sends a human to these two pins. "Pre build PDP tests" in tests.yml
+    # checks the same, but in build-pdp-image, which is not a required check: when it fails, the
+    # required pdp-tester is skipped, and a skipped required check does not block a merge. This does.
+    refs = {workflow: _permit_opa_refs(workflow) for workflow in PERMIT_OPA_PIN_WORKFLOWS}
+    assert all(len(found) == 1 for found in refs.values()), f"one permit-opa checkout per workflow: {refs}"
+    pins = {str(ref) for found in refs.values() for ref in found}
+    assert len(pins) == 1, f"tests.yml and release.yml must pin permit-opa to the same commit: {refs}"
+    [pin] = pins
+    assert re.fullmatch(r"[0-9a-f]{40}", pin), f"permit-opa must be pinned to a full commit SHA, not {pin!r}"
+
+
 def test_go_stdlib_needs_the_golang_base_digest_to_move(tmp_path):
     # The golang build stage is digest-pinned, so a rebuild reuses the same toolchain.
     report = _write(
@@ -1063,10 +1127,11 @@ def test_a_pinned_report_names_mains_pinned_version(tmp_path):
             "1 finding(s) are in the Go stdlib",
             id="base-digest",
         ),
+        # main's permit-opa pin may already carry the fix, which the classifier cannot see.
         pytest.param(
             "gobinary",
             _vuln("CVE-2026-8", pkg="golang.org/x/net", fixed="0.41.0"),
-            WILL_NOT,
+            MIGHT_NOT,
             "1 finding(s) are in Go modules linked into `/app/bin/opa`",
             id="permit-opa",
         ),

@@ -13,10 +13,14 @@ existing Dockerfile absorbs it on the next build. A finding WITHOUT one cannot b
 away and needs a pin, a base-image move, a dependency drop, or a waiver.
 
 One wrinkle: "has a fix" is not the same as "a rebuild of THIS repo picks it up". The
-OPA binary at /app/bin/opa is compiled from permit-opa's source, so a CVE in one of its
-Go modules (google.golang.org/grpc, golang.org/x/crypto, ...) is fixed by bumping
-permit-opa's go.mod - a change in a DIFFERENT repository, which no release cut here will
-absorb. Two more cases a plain rebuild cannot fix, because the Dockerfile pins them:
+OPA binary at /app/bin/opa is compiled from permit-opa's source, at the commit that the
+permit-opa checkout in tests.yml and release.yml pins. A CVE in one of its Go modules
+(google.golang.org/grpc, golang.org/x/crypto, ...) therefore takes two changes: a go.mod
+bump in permit-opa, a DIFFERENT repository, and then a PR here moving both pins to a
+permit-opa main commit that has it. Until the pins move, every release cut here compiles
+the old go.mod. The published tags this script scans can predate main's pin, though, and
+this script cannot see what that pin holds: when it already has the fix, a release alone
+clears the finding. Two more cases a plain rebuild cannot fix, because the Dockerfile pins them:
 
   - The Go *stdlib* comes from the `golang:1.27-bookworm@sha256:...` build stage, which is
     digest-pinned. A rebuild reuses the same toolchain; the fix arrives when Dependabot's
@@ -42,9 +46,10 @@ Verdicts:
             image from main absorbs, such as an Alpine package through `apk upgrade`. Cut
             a release; no code change needed.
   SOURCE  - at least one finding is not known to clear on a rebuild: no upstream fix exists
-            at all, the fix lives in permit-opa's go.mod, the golang base digest has to
-            move, or it is in a Python package, which needs a uv.lock update or an exact pin
-            in pyproject.toml moved unless main's locked version already carries the fix.
+            at all, the golang base digest has to move, the fix is a permit-opa go.mod
+            bump plus a pin move here unless main's permit-opa pin already has it, or it
+            is in a Python package, which needs a uv.lock update or an exact pin in
+            pyproject.toml moved unless main's locked version already carries the fix.
 
 SOURCE outranks REBUILD: a report can contain both kinds, and the one that needs a human
 is the one that should set the verdict.
@@ -512,8 +517,14 @@ def _next_steps(by_action: dict[str, list[dict]]) -> list[str]:
         )
     if opa:
         steps.append(
-            f"- Bump {', '.join(sorted({f['pkg'] for f in opa}))} in permit-opa's `go.mod`, "
-            "then rebuild here to pick up the new OPA binary."
+            f"- For {', '.join(sorted({_cell(f['pkg']) for f in opa}))}: a release clears each finding "
+            "whose fix permit-opa's `go.mod` already carries at the commit `.github/workflows/tests.yml` "
+            "pins, since the published image was built from an older pin. For the rest, bump the module "
+            "in permit-opa's `go.mod` and merge that there, unless permit-opa main already has the bump. "
+            "Then move the permit-opa `ref:` pin in `.github/workflows/tests.yml` and "
+            "`.github/workflows/release.yml` to a permit-opa main commit that has the bump (the "
+            "comment above that checkout in `tests.yml` says how), and cut a release once that "
+            "PR merges. Without the pin move, a rebuild compiles the old `go.mod`."
         )
     if base:
         steps.append(
@@ -577,8 +588,9 @@ def render(tag: str, findings: list[dict], verdict: str) -> str:
         if opa:
             parts.append(
                 f"{len(opa)} finding(s) are in Go modules linked into `/app/bin/opa`, "
-                "which is built from **permit-opa** - the fix is a `go.mod` bump in that "
-                "repo, so cutting a release here will not clear them"
+                "which is built from the **permit-opa** commit this repo's workflows pin - "
+                "unless main's pin already carries the fix, it takes a `go.mod` bump in that "
+                "repo, then a PR here moving the pin"
             )
         if base:
             parts.append(
@@ -607,8 +619,9 @@ def render(tag: str, findings: list[dict], verdict: str) -> str:
                 "pyproject.toml - unless main's pinned version carries the fix, the pin has to "
                 "move, then the lock"
             )
-        # Any other Python finding may already be fixed in main's uv.lock; these certainly are not.
-        certainly = "will NOT" if nofix or opa or base or held else "might not"
+        # Any other Python finding may already be fixed in main's uv.lock, and a permit-opa one in
+        # main's pin, which this script cannot read; these certainly are not.
+        certainly = "will NOT" if nofix or base or held else "might not"
         headline = f"**A rebuild alone {certainly} clear this image.** " + "; ".join(parts) + "."
 
     lines = [
@@ -618,7 +631,7 @@ def render(tag: str, findings: list[dict], verdict: str) -> str:
         "",
         f"- Findings: **{len(findings)}** ({severity_breakdown(findings)})",
         f"- Cleared by rebuilding this repo: **{len(rebuildable)}**",
-        f"- Need a permit-opa `go.mod` bump: **{len(opa)}**",
+        f"- Need a permit-opa `go.mod` bump and a pin move here, unless main's pin already has the fix: **{len(opa)}**",
         f"- Need the golang base digest to move: **{len(base)}**",
         f"- Need a uv.lock update, unless main's lock already has the fix: **{len(lock)}**",
         f"- Need an exact pin in pyproject.toml moved, unless main's pin has the fix: **{len(pinned)}**",

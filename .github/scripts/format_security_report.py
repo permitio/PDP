@@ -47,7 +47,10 @@ _MARKDOWN_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 # classify_image_cves.lock_note() instead, which names main's locked version.
 _ACTION_HINT = {
     "rebuild": "a release rebuild picks it up",
-    "permit-opa": "bump it in permit-opa",
+    "permit-opa": (
+        "bump it in permit-opa's go.mod, then move the permit-opa pin in tests.yml and release.yml, "
+        "unless main's pin already has the fix"
+    ),
     "base-digest": "needs the golang base-image digest bump",
     "lock": "update it in uv.lock",
     "pinned": "bump the exact pin in pyproject.toml",
@@ -406,19 +409,24 @@ def cargo_source(report: Path | None) -> tuple[Source, int]:
 def _work_rank(finding: Finding) -> tuple[int, int]:
     """How much work a finding's owner needs before the advisory goes away; lower is more.
 
-    classify_image_cves.ACTION_ORDER, with two additions. A 'lock' or 'pinned' finding whose
+    classify_image_cves.ACTION_ORDER, with three changes. A 'lock' or 'pinned' finding whose
     flagged version main's uv.lock still holds comes right after 'base-digest', ahead of every
     other 'pinned' or 'lock' one: a release certainly cannot clear it, while the others may
     already be fixed in main's lock. The classifier's verdict headline lists them in that order
-    too. A finding no classifier owns - a Dependabot alert, a cargo audit advisory, a Scout
-    finding outside an Alpine package - comes right before 'rebuild': nothing says a release
-    clears it, so a rebuild hint must not speak for its package.
+    too. A 'permit-opa' finding comes right after that one, not ahead of 'base-digest': main's
+    permit-opa pin may already carry its fix, and its hint says so, so it must not speak for a
+    package a release certainly leaves in place, such as the Go stdlib under a CVE Trivy also
+    reports on golang.org/x/net. A finding no classifier owns - a Dependabot alert, a cargo
+    audit advisory, a Scout finding outside an Alpine package - comes right before 'rebuild':
+    nothing says a release clears it, so a rebuild hint must not speak for its package.
     """
     if finding.lock_still_flagged:
         return classifier.ACTION_ORDER["pinned"], 0
+    if finding.action == "permit-opa":
+        return classifier.ACTION_ORDER["pinned"], 1
     if not finding.action:
         return classifier.ACTION_ORDER["rebuild"], 0
-    return classifier.ACTION_ORDER[finding.action], 1
+    return classifier.ACTION_ORDER[finding.action], 2
 
 
 def merge(sources: list[Source]) -> list[Finding]:
